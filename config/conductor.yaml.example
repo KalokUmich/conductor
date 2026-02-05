@@ -1,0 +1,96 @@
+# Conductor Configuration File
+# Copy this file to conductor.yaml and fill in your values
+#
+# Usage:
+#   cp config/conductor.yaml.example config/conductor.yaml
+#   # Then edit conductor.yaml with your actual values
+
+# =============================================================================
+# Server Configuration
+# =============================================================================
+server:
+  # Backend server host and port
+  host: "localhost"
+  port: 8000
+  
+  # Public URL for external access (set by ngrok or other tunnel service)
+  # Leave empty to use localhost
+  public_url: ""
+
+# =============================================================================
+# Ngrok Configuration
+# =============================================================================
+ngrok:
+  # Ngrok authentication token
+  # Get your token from: https://dashboard.ngrok.com/get-started/your-authtoken
+  authtoken: "YOUR_NGROK_AUTHTOKEN_HERE"
+  
+  # Region (us, eu, ap, au, sa, jp, in)
+  region: "us"
+  
+  # Enable ngrok tunnel on startup
+  enabled: false
+
+# =============================================================================
+# LLM Configuration (for future use)
+# =============================================================================
+llm:
+  # Provider: openai, anthropic, azure, local
+  provider: "openai"
+  
+  # Model name
+  model: "gpt-4"
+  
+  # API key (can also be set via environment variable OPENAI_API_KEY)
+  api_key: ""
+  
+  # Temperature for generation
+  temperature: 0.7
+  
+  # Max tokens per request
+  max_tokens: 4096
+
+# =============================================================================
+# Change Limits Configuration
+# =============================================================================
+change_limits:
+  # Maximum number of file changes per request
+  max_files_per_request: 10
+  
+  # Maximum lines changed per file
+  max_lines_per_file: 500
+  
+  # Maximum total lines changed per request
+  max_total_lines: 2000
+  
+  # Auto-apply settings
+  auto_apply:
+    # Enable auto-apply by default
+    enabled: false
+    
+    # Maximum lines for auto-apply (larger changes require manual review)
+    max_lines: 50
+
+# =============================================================================
+# Session Configuration
+# =============================================================================
+session:
+  # Session timeout in minutes (0 = no timeout)
+  timeout_minutes: 0
+  
+  # Maximum participants per room
+  max_participants: 10
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  # Log level: debug, info, warning, error
+  level: "info"
+  
+  # Enable audit logging
+  audit_enabled: true
+  
+  # Audit log file path
+  audit_path: "audit_logs.duckdb"
+

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guest Chat - Room {{ room_id }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'avatar-purple': '#9333ea',
+                        'avatar-blue': '#3b82f6',
+                        'avatar-green': '#22c55e',
+                        'avatar-orange': '#f97316',
+                        'avatar-pink': '#ec4899',
+                        'avatar-cyan': '#06b6d4',
+                        'avatar-yellow': '#eab308',
+                        'avatar-red': '#ef4444',
+                        'avatar-amber': '#f59e0b',
+                    }
+                }
+            }
+        }
+
+        // Generate a stable fingerprint-based userId for guests
+        // This ensures the same browser/machine gets the same ID
+        async function generateGuestId() {
+            const components = [
+                navigator.userAgent,
+                navigator.language,
+                screen.width + 'x' + screen.height,
+                screen.colorDepth,
+                new Date().getTimezoneOffset(),
+                navigator.hardwareConcurrency || 'unknown',
+                navigator.platform
+            ];
+            const fingerprint = components.join('|');
+
+            // Use SubtleCrypto to hash the fingerprint
+            const encoder = new TextEncoder();
+            const data = encoder.encode(fingerprint);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+            // Return first 16 chars as guest ID
+            return 'guest-' + hashHex.substring(0, 16);
+        }
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-100 h-screen overflow-hidden">
+    <div class="flex h-full">
+        <!-- Main Chat Area -->
+        <div class="flex flex-col flex-1">
+            <!-- Header -->
+            <header class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex-shrink-0">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-xl font-semibold text-white">Conductor Chat</h1>
+                        <p class="text-sm text-gray-400 mt-1">
+                            Room: <span class="font-mono text-xs text-gray-500">{{ room_id[:8] }}...</span>
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div id="connection-badge" class="px-3 py-1 rounded-full text-xs font-medium bg-yellow-600 text-white">
+                            Connecting...
+                        </div>
+                        <div id="my-role-badge" class="px-3 py-1 rounded-full text-xs font-medium bg-purple-600 text-white">
+                            {{ role | capitalize }}
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Messages Area -->
+            <div id="messages-container" class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+                <div id="connection-status" class="flex justify-center">
+                    <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700">
+                        <span>Connecting to chat...</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="flex-shrink-0 border-t border-gray-700 bg-gray-800 px-6 py-4">
+                <div class="flex items-end gap-3">
+                    <div class="flex-1">
+                        <textarea
+                            id="chat-input"
+                            rows="1"
+                            placeholder="Type your message..."
+                            class="w-full bg-gray-900 text-gray-100 border border-gray-700 rounded-lg px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent placeholder-gray-500 text-sm"
+                        ></textarea>
+                    </div>
+                    <button
+                        id="btn-send"
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-medium px-6 py-3 rounded-lg transition-colors duration-200 flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                        </svg>
+                        <span class="text-sm">Send</span>
+                    </button>
+                </div>
+                <div class="mt-2 text-xs text-gray-500">
+                    Press Enter to send, Shift+Enter for new line
+                </div>
+            </div>
+        </div>
+
+        <!-- Users Sidebar -->
+        <aside class="w-64 bg-gray-800 border-l border-gray-700 flex-shrink-0 hidden md:flex flex-col">
+            <div class="px-4 py-4 border-b border-gray-700">
+                <h2 class="text-sm font-semibold text-gray-300">Participants</h2>
+                <p id="user-count" class="text-xs text-gray-500 mt-1">0 online</p>
+            </div>
+            <div id="users-list" class="flex-1 overflow-y-auto p-4 space-y-2">
+                <!-- Users will be rendered here -->
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // Session config from server (userId will be set after fingerprint generation)
+        const config = {
+            roomId: "{{ room_id }}",
+            userId: null,  // Will be set by fingerprint
+            displayName: "",  // Will be assigned by server
+            role: "{{ role }}",
+            wsUrl: "ws://" + window.location.host + "/ws/chat/{{ room_id }}"
+        };
+
+        // Users map: userId -> user info
+        const usersMap = new Map();
+
+        let ws = null;
+        let reconnectAttempts = 0;
+        const MAX_RECONNECT_ATTEMPTS = 5;
+        const RECONNECT_DELAY_MS = 2000;
+        let sessionEnded = false;
+
+        const messagesContainer = document.getElementById('messages-container');
+        const connectionStatus = document.getElementById('connection-status');
+        const connectionBadge = document.getElementById('connection-badge');
+        const chatInput = document.getElementById('chat-input');
+        const btnSend = document.getElementById('btn-send');
+        const usersList = document.getElementById('users-list');
+        const userCount = document.getElementById('user-count');
+        const myRoleBadge = document.getElementById('my-role-badge');
+
+        // Avatar color mapping
+        const avatarColors = {
+            purple: 'bg-purple-600',
+            blue: 'bg-blue-600',
+            green: 'bg-green-600',
+            orange: 'bg-orange-600',
+            pink: 'bg-pink-600',
+            cyan: 'bg-cyan-600',
+            yellow: 'bg-yellow-600',
+            red: 'bg-red-600',
+            amber: 'bg-amber-500'
+        };
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatTime(ts) {
+            return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function getInitials(name) {
+            return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+        }
+
+        function renderUsersList(users) {
+            usersMap.clear();
+            users.forEach(u => usersMap.set(u.userId, u));
+
+            userCount.textContent = `${users.length} online`;
+            usersList.innerHTML = users.map(user => {
+                const colorClass = avatarColors[user.avatarColor] || 'bg-purple-600';
+                const isHost = user.role === 'host';
+                const isMe = user.userId === config.userId;
+                return `
+                    <div class="flex items-center gap-3 p-2 rounded-lg ${isMe ? 'bg-gray-700/50' : 'hover:bg-gray-700/30'}">
+                        <div class="w-8 h-8 ${colorClass} rounded-full flex items-center justify-center text-white text-xs font-medium">
+                            ${getInitials(user.displayName)}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-1">
+                                <span class="text-sm text-gray-200 truncate">${escapeHtml(user.displayName)}</span>
+                                ${isHost ? '<span class="text-xs">👑</span>' : ''}
+                                ${isMe ? '<span class="text-xs text-gray-500">(you)</span>' : ''}
+                            </div>
+                            <span class="text-xs text-gray-500">${user.role}</span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderMessage(msg) {
+            const isOwnMessage = msg.userId === config.userId;
+            const div = document.createElement('div');
+            div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2`;
+
+            const bubbleColor = isOwnMessage
+                ? 'bg-purple-600 text-white rounded-2xl rounded-tr-sm'
+                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm border border-gray-700';
+
+            const timeAlign = isOwnMessage ? 'text-right' : '';
+            const roleLabel = msg.role === 'host' ? '👑 ' : '';
+            const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
+
+            // Get avatar color from users map or default
+            const userInfo = usersMap.get(msg.userId);
+            const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
+
+            const avatarHtml = !isOwnMessage ? `
+                <div class="w-8 h-8 ${colorClass} rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
+                    ${getInitials(displayName)}
+                </div>
+            ` : '';
+
+            div.innerHTML = `
+                ${avatarHtml}
+                <div class="max-w-[75%]">
+                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
+                    <div class="${bubbleColor} px-4 py-3 shadow-lg">
+                        <p class="text-sm leading-relaxed">${escapeHtml(msg.content)}</p>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'}">${formatTime(msg.ts)}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(div);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function renderSystemMessage(text) {
+            const div = document.createElement('div');
+            div.className = 'flex justify-center';
+            div.innerHTML = `
+                <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700">
+                    ${escapeHtml(text)}
+                </div>
+            `;
+            messagesContainer.appendChild(div);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function updateConnectionStatus(status, isError = false) {
+            if (connectionStatus) {
+                const colorClass = isError ? 'text-red-400 border-red-700' : 'text-gray-400 border-gray-700';
+                connectionStatus.innerHTML = `
+                    <div class="bg-gray-800/50 ${colorClass} text-xs px-3 py-1.5 rounded-full border">
+                        <span>${status}</span>
+                    </div>
+                `;
+            }
+        }
+
+        function updateConnectionBadge(connected) {
+            if (connected) {
+                connectionBadge.textContent = 'Connected';
+                connectionBadge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-green-600 text-white';
+            } else {
+                connectionBadge.textContent = 'Disconnected';
+                connectionBadge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white';
+            }
+        }
+
+        function connectWebSocket() {
+            console.log('[Guest] Connecting to:', config.wsUrl);
+            updateConnectionStatus('Connecting...');
+
+            ws = new WebSocket(config.wsUrl);
+
+            ws.onopen = () => {
+                console.log('[Guest] WebSocket connected');
+                reconnectAttempts = 0;
+                updateConnectionStatus('✅ Connected');
+                updateConnectionBadge(true);
+                setTimeout(() => {
+                    if (connectionStatus) connectionStatus.style.display = 'none';
+                }, 2000);
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    console.log('[Guest] Received:', data);
+
+                    if (data.type === 'history') {
+                        if (connectionStatus) connectionStatus.remove();
+                        // Render existing users
+                        if (data.users) {
+                            renderUsersList(data.users);
+                        }
+                        // Render message history
+                        data.messages.forEach(msg => renderMessage(msg));
+
+                        // Send join message to register ourselves
+                        ws.send(JSON.stringify({
+                            type: 'join',
+                            userId: config.userId,
+                            displayName: config.displayName,
+                            role: config.role
+                        }));
+                    } else if (data.type === 'message') {
+                        renderMessage(data);
+                    } else if (data.type === 'user_joined') {
+                        renderUsersList(data.users);
+                        renderSystemMessage(`${data.user.displayName} joined the chat`);
+                        // Update my display name if it's me
+                        if (data.user.userId === config.userId) {
+                            config.displayName = data.user.displayName;
+                            myRoleBadge.textContent = data.user.displayName;
+                        }
+                    } else if (data.type === 'user_left') {
+                        renderUsersList(data.users);
+                        renderSystemMessage(`${data.user.displayName} left the chat`);
+                    } else if (data.type === 'session_ended') {
+                        sessionEnded = true;
+                        renderSystemMessage('🔴 ' + data.message);
+                        // Disable input
+                        chatInput.disabled = true;
+                        chatInput.placeholder = 'Chat session has ended';
+                        btnSend.disabled = true;
+                        btnSend.classList.add('opacity-50', 'cursor-not-allowed');
+                        // Update connection badge
+                        connectionBadge.textContent = 'Session Ended';
+                        connectionBadge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white';
+                        // Clear users list
+                        usersList.innerHTML = '';
+                        userCount.textContent = '0 online';
+                    }
+                } catch (err) {
+                    console.error('[Guest] Failed to parse message:', err);
+                }
+            };
+
+            ws.onclose = (event) => {
+                console.log('[Guest] WebSocket closed:', event.code, event.reason);
+                updateConnectionBadge(false);
+                // Don't reconnect if session was ended by host
+                if (sessionEnded) {
+                    updateConnectionStatus('Session ended by host', false);
+                    return;
+                }
+                if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    reconnectAttempts++;
+                    updateConnectionStatus(`Reconnecting (${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS})...`);
+                    setTimeout(connectWebSocket, RECONNECT_DELAY_MS);
+                } else {
+                    updateConnectionStatus('❌ Connection lost', true);
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('[Guest] WebSocket error:', error);
+                updateConnectionStatus('❌ Connection error', true);
+            };
+        }
+
+        function sendMessage() {
+            const content = chatInput.value.trim();
+            if (!content || !ws || ws.readyState !== WebSocket.OPEN) {
+                return;
+            }
+
+            const message = {
+                userId: config.userId,
+                displayName: config.displayName,
+                role: config.role,
+                content: content
+            };
+
+            console.log('[Guest] Sending:', message);
+            ws.send(JSON.stringify(message));
+            chatInput.value = '';
+        }
+
+        // Event listeners
+        btnSend.addEventListener('click', sendMessage);
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Initialize and start connection
+        (async function init() {
+            // Generate stable guest ID based on browser fingerprint
+            config.userId = await generateGuestId();
+            console.log('[Guest] Generated userId:', config.userId);
+
+            // Start WebSocket connection
+            connectWebSocket();
+        })();
+    </script>
+</body>
+</html>
+

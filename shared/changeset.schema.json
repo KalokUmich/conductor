@@ -1,0 +1,100 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://conductor.dev/schemas/changeset.schema.json",
+  "title": "ChangeSet",
+  "description": "A set of file changes to apply",
+  "type": "object",
+  "required": ["changes"],
+  "properties": {
+    "changes": {
+      "type": "array",
+      "description": "List of file changes",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/FileChange"
+      }
+    },
+    "summary": {
+      "type": "string",
+      "description": "Brief summary of the changes",
+      "default": ""
+    }
+  },
+  "$defs": {
+    "FileChange": {
+      "type": "object",
+      "description": "A single file change",
+      "required": ["id", "file", "type"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this change (UUID)",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "description": "Path to the file being changed",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string",
+          "description": "Type of change operation",
+          "enum": ["replace_range", "create_file"]
+        },
+        "range": {
+          "oneOf": [
+            { "$ref": "#/$defs/Range" },
+            { "type": "null" }
+          ],
+          "description": "Line range to replace (required for replace_range, null for create_file)"
+        },
+        "content": {
+          "type": "string",
+          "description": "New content (for replace_range: replacement content, for create_file: file content)"
+        },
+        "original_content": {
+          "type": ["string", "null"],
+          "description": "Original content being replaced (for reference)",
+          "default": null
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "replace_range" } }
+          },
+          "then": {
+            "required": ["range", "content"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "create_file" } }
+          },
+          "then": {
+            "required": ["content"]
+          }
+        }
+      ]
+    },
+    "Range": {
+      "type": "object",
+      "description": "A range of lines in a file",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {
+          "type": "integer",
+          "description": "Starting line number (1-based, inclusive)",
+          "minimum": 1
+        },
+        "end": {
+          "type": "integer",
+          "description": "Ending line number (1-based, inclusive)",
+          "minimum": 1
+        }
+      }
+    }
+  }
+}
+
