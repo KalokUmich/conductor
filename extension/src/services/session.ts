@@ -65,6 +65,8 @@ export class SessionService {
     private _createdAt: number | null = null;
     /** Live Share URL (set when host starts session). */
     private _liveShareUrl: string | null = null;
+    /** Cached ngrok URL (detected at startup). */
+    private _ngrokUrl: string | null = null;
 
     // GlobalState persistence keys
     private static readonly ROOM_ID_KEY = 'aiCollab.roomId';
@@ -180,11 +182,79 @@ export class SessionService {
     }
 
     /**
-     * Get the backend URL from configuration.
+     * Get the backend URL.
+     * Priority: ngrok URL (if detected) > config setting > default localhost
      */
     public getBackendUrl(): string {
+        // If ngrok URL was detected, use it
+        if (this._ngrokUrl) {
+            return this._ngrokUrl;
+        }
+        // Otherwise use config setting
         const config = vscode.workspace.getConfiguration('aiCollab');
         return config.get<string>('backendUrl', 'http://localhost:8000');
+    }
+
+    /**
+     * Detect and cache ngrok URL if ngrok is running.
+     * Ngrok exposes its API at http://localhost:4040/api/tunnels
+     *
+     * @returns The ngrok public URL if available, null otherwise
+     */
+    public async detectNgrokUrl(): Promise<string | null> {
+        try {
+            // Use dynamic import for node-fetch or use built-in fetch
+            const response = await fetch('http://localhost:4040/api/tunnels', {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+            });
+
+            if (!response.ok) {
+                console.log('[Session] Ngrok API not available');
+                return null;
+            }
+
+            const data = await response.json() as {
+                tunnels: Array<{
+                    public_url: string;
+                    proto: string;
+                    config: { addr: string };
+                }>;
+            };
+
+            // Find the HTTPS tunnel that points to our backend port (8000)
+            const tunnel = data.tunnels.find(t =>
+                t.proto === 'https' && t.config.addr.includes('8000')
+            );
+
+            if (tunnel) {
+                this._ngrokUrl = tunnel.public_url;
+                console.log('[Session] Detected ngrok URL:', this._ngrokUrl);
+                return this._ngrokUrl;
+            }
+
+            // If no specific tunnel found, try to get any HTTPS tunnel
+            const httpsTunnel = data.tunnels.find(t => t.proto === 'https');
+            if (httpsTunnel) {
+                this._ngrokUrl = httpsTunnel.public_url;
+                console.log('[Session] Detected ngrok URL (fallback):', this._ngrokUrl);
+                return this._ngrokUrl;
+            }
+
+            console.log('[Session] No suitable ngrok tunnel found');
+            return null;
+        } catch (error) {
+            // Ngrok is not running or API is not accessible
+            console.log('[Session] Ngrok not detected:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get the cached ngrok URL (if any).
+     */
+    public getNgrokUrl(): string | null {
+        return this._ngrokUrl;
     }
 
     /**

@@ -50,6 +50,16 @@ export function activate(context: vscode.ExtensionContext): void {
     getSessionService().initialize(context);
     console.log(`[AI Collab] Session initialized with roomId: ${getSessionService().getRoomId()}`);
 
+    // Detect ngrok URL if ngrok is running (async, non-blocking)
+    getSessionService().detectNgrokUrl().then(ngrokUrl => {
+        if (ngrokUrl) {
+            console.log(`[AI Collab] Using ngrok URL: ${ngrokUrl}`);
+            vscode.window.showInformationMessage(`🌐 Ngrok detected: ${ngrokUrl}`);
+        } else {
+            console.log('[AI Collab] Ngrok not detected, using localhost');
+        }
+    });
+
     // Register the WebView provider for the sidebar chat panel
     const provider = new AICollabViewProvider(context.extensionUri, context);
     context.subscriptions.push(
