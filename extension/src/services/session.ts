@@ -310,6 +310,41 @@ export class SessionService {
     }
 
     /**
+     * Configure this session as a guest joining an existing room.
+     *
+     * Overwrites roomId and Live Share URL with values from the invite.
+     * The backendUrl is stored as the ngrok URL override so that
+     * {@link getBackendUrl} returns the invite origin.
+     *
+     * @param roomId       - Room ID from the invite link.
+     * @param backendUrl   - Backend origin from the invite link.
+     * @param liveShareUrl - Live Share URL from the invite link (optional).
+     */
+    public joinAsGuest(
+        roomId: string,
+        backendUrl: string,
+        liveShareUrl?: string,
+    ): void {
+        if (!this._context) {
+            throw new Error('SessionService not initialized. Call initialize() first.');
+        }
+
+        this._roomId = roomId;
+        this._ngrokUrl = backendUrl; // so getBackendUrl() returns the invite origin
+        this._liveShareUrl = liveShareUrl ?? null;
+
+        // Persist to globalState
+        this._context.globalState.update(SessionService.ROOM_ID_KEY, this._roomId);
+        if (liveShareUrl) {
+            this._context.globalState.update(SessionService.LIVE_SHARE_URL_KEY, liveShareUrl);
+        }
+
+        console.log(
+            `[SessionService] Joined as guest: roomId=${roomId}, backendUrl=${backendUrl}`,
+        );
+    }
+
+    /**
      * Reset the session (create new roomId).
      * Used when host ends the chat session.
      */

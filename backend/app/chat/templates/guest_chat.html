@@ -232,10 +232,10 @@
 
             div.innerHTML = `
                 ${avatarHtml}
-                <div class="max-w-[75%]">
+                <div class="max-w-[75%] min-w-0">
                     ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
-                    <div class="${bubbleColor} px-4 py-3 shadow-lg">
-                        <p class="text-sm leading-relaxed">${escapeHtml(msg.content)}</p>
+                    <div class="${bubbleColor} px-4 py-3 shadow-lg overflow-hidden">
+                        <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
                     <div class="text-xs text-gray-500 mt-1 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'}">${formatTime(msg.ts)}</div>
                 </div>

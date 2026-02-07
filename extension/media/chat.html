@@ -10,7 +10,100 @@
     <div class="flex h-full">
         <!-- Main Chat Area -->
         <div class="flex flex-col flex-1">
-            <!-- Header -->
+
+            <!-- ============================================================ -->
+            <!-- STATE PANEL: Idle — Start / Join buttons                     -->
+            <!-- ============================================================ -->
+            <div id="panel-idle" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6">
+                <h2 class="text-lg font-semibold text-white">Conductor</h2>
+                <p class="text-sm text-gray-400 text-center">Start a new session or join an existing one.</p>
+                <button
+                    id="btn-idle-start"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg flex items-center gap-2"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                    </svg>
+                    Start
+                </button>
+                <div class="flex items-center gap-2 w-full max-w-xs">
+                    <input
+                        id="invite-url-input"
+                        type="text"
+                        placeholder="Paste invite link…"
+                        class="flex-1 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                        id="btn-idle-join"
+                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                    >
+                        Join
+                    </button>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STATE PANEL: BackendDisconnected — error + retry             -->
+            <!-- ============================================================ -->
+            <div id="panel-disconnected" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6">
+                <span class="text-3xl">⚠</span>
+                <h2 class="text-lg font-semibold text-white">Backend Not Reachable</h2>
+                <p class="text-sm text-gray-400 text-center">Could not connect to the backend server.</p>
+                <button
+                    id="btn-retry"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg flex items-center gap-2"
+                >
+                    Retry
+                </button>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STATE PANEL: ReadyToHost — start session                     -->
+            <!-- ============================================================ -->
+            <div id="panel-ready" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6">
+                <h2 class="text-lg font-semibold text-white">Ready</h2>
+                <p class="text-sm text-gray-400 text-center">Backend connected. Start a session or join an existing one.</p>
+                <button
+                    id="btn-start-session"
+                    class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-6 py-2 rounded-lg flex items-center gap-2"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
+                    </svg>
+                    Start Session
+                </button>
+                <div class="flex items-center gap-2 w-full max-w-xs">
+                    <input
+                        id="ready-invite-url-input"
+                        type="text"
+                        placeholder="Paste invite link…"
+                        class="flex-1 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
+                    />
+                    <button
+                        id="btn-ready-join"
+                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                    >
+                        Join
+                    </button>
+                </div>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STATE PANEL: Joining — loading indicator                     -->
+            <!-- ============================================================ -->
+            <div id="panel-joining" class="hidden flex-1 flex flex-col items-center justify-center gap-3 px-6">
+                <div class="h-8 w-8 border-4 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                <p class="text-sm text-gray-400">Joining session…</p>
+            </div>
+
+            <!-- ============================================================ -->
+            <!-- STATE PANELS: Hosting / Joined — full chat UI                -->
+            <!-- ============================================================ -->
+            <div id="panel-chat" class="hidden flex flex-1">
+            <!-- Chat content column (header + messages + input) -->
+            <div class="flex flex-col flex-1">
+
+            <!-- Header (only visible in Hosting / Joined) -->
             <header class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex-shrink-0">
                 <div class="flex items-center justify-between">
                     <div>
@@ -39,6 +132,40 @@
                         </div>
                     </div>
                 </div>
+
+            <!-- Hosting-only controls: invite + stop -->
+            <div id="hosting-controls" class="hidden mt-4 flex items-center gap-2">
+                <span class="text-xs text-green-400 flex items-center gap-1">
+                    <span class="inline-block h-2 w-2 rounded-full bg-green-400"></span>
+                    Hosting
+                </span>
+                <button
+                    id="btn-copy-invite"
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                >
+                    Copy Invite Link
+                </button>
+                <button
+                    id="btn-stop-session"
+                    class="bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+                >
+                    Stop
+                </button>
+            </div>
+
+            <!-- Joined-only controls: leave -->
+            <div id="joined-controls" class="hidden mt-4 flex items-center gap-2">
+                <span class="text-xs text-blue-400 flex items-center gap-1">
+                    <span class="inline-block h-2 w-2 rounded-full bg-blue-400"></span>
+                    Joined
+                </span>
+                <button
+                    id="btn-leave-session"
+                    class="bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+                >
+                    Leave
+                </button>
+            </div>
 
             <!-- Lead-only Action Buttons -->
             <div id="lead-actions" class="hidden mt-4 flex gap-2">
@@ -185,8 +312,8 @@
             </div>
         </div>
 
-        <!-- Users Sidebar -->
-        <aside class="w-56 bg-gray-800 border-l border-gray-700 flex-shrink-0 hidden md:flex flex-col">
+        <!-- Users Sidebar (inside panel-chat) -->
+        <aside id="sidebar" class="w-56 bg-gray-800 border-l border-gray-700 flex-shrink-0 hidden md:flex flex-col">
             <div class="px-4 py-4 border-b border-gray-700">
                 <h2 class="text-sm font-semibold text-gray-300">Participants</h2>
                 <p id="user-count" class="text-xs text-gray-500 mt-1">0 online</p>
@@ -195,15 +322,21 @@
                 <!-- Users will be rendered here -->
             </div>
         </aside>
-    </div>
+        </div> <!-- close panel-chat -->
+    </div> <!-- close main area flex-col -->
+    </div> <!-- close outer flex h-full -->
 
     <script>
         // VS Code API for communication with the extension
         const vscode = acquireVsCodeApi();
 
         // Session state (injected by extension)
-        const session = window.initialSession || { roomId: null, hostId: null, userId: null, createdAt: null, backendUrl: 'http://localhost:8000', displayName: 'Host' };
+        let session = window.initialSession || { roomId: null, hostId: null, userId: null, createdAt: null, backendUrl: 'http://localhost:8000', displayName: 'Host' };
         console.log('[WebView] Session initialized:', session.roomId ? `roomId=${session.roomId}, userId=${session.userId}` : 'no session');
+
+        // Conductor FSM state (injected by extension)
+        let conductorState = window.initialConductorState || 'Idle';
+        console.log('[WebView] Conductor state:', conductorState);
 
         // Users map: userId -> user info
         const usersMap = new Map();
@@ -257,6 +390,27 @@
         const usersList = document.getElementById('users-list');
         const userCount = document.getElementById('user-count');
 
+        // State panels (render() toggles these)
+        const panelIdle = document.getElementById('panel-idle');
+        const panelDisconnected = document.getElementById('panel-disconnected');
+        const panelReady = document.getElementById('panel-ready');
+        const panelJoining = document.getElementById('panel-joining');
+        const panelChat = document.getElementById('panel-chat');
+        const hostingControls = document.getElementById('hosting-controls');
+        const joinedControls = document.getElementById('joined-controls');
+
+        // Buttons inside state panels
+        const btnIdleStart = document.getElementById('btn-idle-start');
+        const btnIdleJoin = document.getElementById('btn-idle-join');
+        const btnRetry = document.getElementById('btn-retry');
+        const btnStartSession = document.getElementById('btn-start-session');
+        const btnReadyJoin = document.getElementById('btn-ready-join');
+        const readyInviteUrlInput = document.getElementById('ready-invite-url-input');
+        const btnStopSession = document.getElementById('btn-stop-session');
+        const btnCopyInvite = document.getElementById('btn-copy-invite');
+        const inviteUrlInput = document.getElementById('invite-url-input');
+        const btnLeaveSession = document.getElementById('btn-leave-session');
+
         // Track session state
         let sessionEnded = false;
 
@@ -309,6 +463,102 @@
             } else {
                 autoApplyToggleContainer.classList.add('hidden');
                 autoApplyToggleContainer.classList.remove('flex');
+            }
+        }
+
+        /**
+         * Single render function — deterministically updates the entire UI
+         * based on the ConductorState. No conditional UI logic exists
+         * outside this function.
+         */
+        function render(state, newSession) {
+            const prevState = conductorState;
+            conductorState = state;
+
+            // Track if roomId changed (need to reconnect WebSocket)
+            const prevRoomId = session.roomId;
+
+            // Update session data if provided (e.g. after startHosting or joinSucceeded)
+            if (newSession) {
+                session = { ...session, ...newSession };
+                if (roomIdDisplay && session.roomId) {
+                    roomIdDisplay.textContent = session.roomId.substring(0, 8) + '...';
+                    roomIdDisplay.title = session.roomId;
+                }
+            }
+
+            const roomIdChanged = newSession && newSession.roomId && newSession.roomId !== prevRoomId;
+
+            // --- 1. Hide every panel ----------------------------------------
+            panelIdle.classList.add('hidden');
+            panelIdle.classList.remove('flex');
+            panelDisconnected.classList.add('hidden');
+            panelDisconnected.classList.remove('flex');
+            panelReady.classList.add('hidden');
+            panelReady.classList.remove('flex');
+            panelJoining.classList.add('hidden');
+            panelJoining.classList.remove('flex');
+            panelChat.classList.add('hidden');
+            panelChat.classList.remove('flex');
+            hostingControls.classList.add('hidden');
+            hostingControls.classList.remove('flex');
+            joinedControls.classList.add('hidden');
+            joinedControls.classList.remove('flex');
+
+            // --- 2. Show the panel for the current state --------------------
+            if (state === 'Idle') {
+                panelIdle.classList.remove('hidden');
+                panelIdle.classList.add('flex');
+            } else if (state === 'BackendDisconnected') {
+                panelDisconnected.classList.remove('hidden');
+                panelDisconnected.classList.add('flex');
+            } else if (state === 'ReadyToHost') {
+                panelReady.classList.remove('hidden');
+                panelReady.classList.add('flex');
+            } else if (state === 'Joining') {
+                panelJoining.classList.remove('hidden');
+                panelJoining.classList.add('flex');
+            } else if (state === 'Hosting') {
+                panelChat.classList.remove('hidden');
+                panelChat.classList.add('flex');
+                hostingControls.classList.remove('hidden');
+                hostingControls.classList.add('flex');
+            } else if (state === 'Joined') {
+                panelChat.classList.remove('hidden');
+                panelChat.classList.add('flex');
+                joinedControls.classList.remove('hidden');
+                joinedControls.classList.add('flex');
+            }
+
+            // --- 3. WebSocket lifecycle -------------------------------------
+            const chatStates = ['Hosting', 'Joined'];
+            const wasInChat = chatStates.includes(prevState);
+            const nowInChat = chatStates.includes(state);
+
+            if (nowInChat && !wasInChat) {
+                // Entering chat state — connect
+                connectWebSocket();
+            } else if (!nowInChat && wasInChat) {
+                // Leaving chat state — disconnect
+                disconnectWebSocket();
+            } else if (nowInChat && wasInChat && roomIdChanged) {
+                // Staying in chat but roomId changed — reconnect to new room
+                console.log('[WebView] roomId changed, reconnecting WebSocket');
+                disconnectWebSocket();
+                connectWebSocket();
+            }
+
+            console.log('[WebView] render:', prevState, '→', state, roomIdChanged ? '(roomId changed)' : '');
+        }
+
+        /**
+         * Disconnect the WebSocket if open.
+         */
+        function disconnectWebSocket() {
+            if (ws) {
+                console.log('[WebView] Disconnecting WebSocket');
+                ws.close();
+                ws = null;
             }
         }
 
@@ -483,7 +733,57 @@
                 case 'endChatConfirmed':
                     handleEndChatConfirmed();
                     break;
+                case 'conductorStateChanged':
+                    render(message.state, message.session);
+                    break;
             }
+        });
+
+        // ----- Conductor session button handlers -----
+
+        // Idle panel: Start (triggers health check → ReadyToHost → startSession)
+        btnIdleStart.addEventListener('click', () => {
+            vscode.postMessage({ command: 'startSession' });
+        });
+
+        // Idle panel: Join (paste invite URL)
+        btnIdleJoin.addEventListener('click', () => {
+            const url = inviteUrlInput.value.trim();
+            if (!url) { return; }
+            vscode.postMessage({ command: 'joinSession', inviteUrl: url });
+            inviteUrlInput.value = '';
+        });
+
+        // BackendDisconnected panel: Retry
+        btnRetry.addEventListener('click', () => {
+            vscode.postMessage({ command: 'retryConnection' });
+        });
+
+        // ReadyToHost panel: Start Session
+        btnStartSession.addEventListener('click', () => {
+            vscode.postMessage({ command: 'startSession' });
+        });
+
+        // ReadyToHost panel: Join (paste invite URL)
+        btnReadyJoin.addEventListener('click', () => {
+            const url = readyInviteUrlInput.value.trim();
+            if (!url) { return; }
+            vscode.postMessage({ command: 'joinSession', inviteUrl: url });
+            readyInviteUrlInput.value = '';
+        });
+
+        // Hosting: Stop + Copy Invite
+        btnStopSession.addEventListener('click', () => {
+            vscode.postMessage({ command: 'stopSession' });
+        });
+
+        btnCopyInvite.addEventListener('click', () => {
+            vscode.postMessage({ command: 'copyInviteLink' });
+        });
+
+        // Joined: Leave
+        btnLeaveSession.addEventListener('click', () => {
+            vscode.postMessage({ command: 'leaveSession' });
         });
 
         // Button click handlers
@@ -622,10 +922,10 @@
 
             div.innerHTML = `
                 ${avatarHtml}
-                <div class="max-w-[75%]">
+                <div class="max-w-[75%] min-w-0">
                     ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
-                    <div class="${bubbleColor} px-4 py-3 shadow-lg">
-                        <p class="text-sm leading-relaxed">${escapeHtml(msg.content)}</p>
+                    <div class="${bubbleColor} px-4 py-3 shadow-lg overflow-hidden">
+                        <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
                     <div class="text-xs text-gray-500 mt-1 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'}">${formatTime(msg.ts)}</div>
                 </div>
@@ -845,8 +1145,11 @@
             }
         }
 
-        // Initialize WebSocket connection
-        connectWebSocket();
+        // Initialize UI from the current FSM state
+        render(conductorState, null);
+
+        // Request latest conductor state from extension (in case it changed since HTML was built)
+        vscode.postMessage({ command: 'getConductorState' });
     </script>
 </body>
 </html>

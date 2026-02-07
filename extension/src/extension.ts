@@ -16,12 +16,21 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 
+import { checkBackendHealth } from './services/backendHealthCheck';
+import { ConductorController } from './services/conductorController';
+import {
+    ConductorState,
+    ConductorStateMachine,
+} from './services/conductorStateMachine';
 import { ChangeSet, FileChange, getDiffPreviewService } from './services/diffPreview';
 import { getPermissionsService } from './services/permissions';
 import { getSessionService } from './services/session';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
+
+/** GlobalState key for persisting FSM state across reloads. */
+const FSM_STATE_KEY = 'conductor.fsmState';
 
 /**
  * Get the backend server URL from configuration.
@@ -60,8 +69,44 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     });
 
+    // ---------------------------------------------------------------
+    // Conductor FSM + Controller
+    // ---------------------------------------------------------------
+
+    // Always start fresh from Idle state on extension activation.
+    // We don't restore Hosting/Joined states because:
+    // 1. Live Share session may have ended
+    // 2. WebSocket connections are lost on reload
+    // 3. User should explicitly start a new session
+    const fsm = new ConductorStateMachine();
+    console.log('[Conductor] Starting FSM from Idle (fresh start)');
+
+    // Create the controller with injected dependencies
+    const controller = new ConductorController(
+        fsm,
+        checkBackendHealth,
+        () => getSessionService().getBackendUrl(),
+        () => {
+            getSessionService().resetSession();
+            return getSessionService().getRoomId();
+        },
+    );
+
+    // Persist FSM state to globalState on every transition
+    controller.onStateChange((_prev, next) => {
+        context.globalState.update(FSM_STATE_KEY, next);
+        console.log(`[Conductor] FSM state persisted: ${next}`);
+    });
+
+    // Auto-start the controller (health check) — async, non-blocking
+    controller.start().then(state => {
+        console.log(`[Conductor] Initial health check complete → ${state}`);
+    }).catch(err => {
+        console.warn('[Conductor] Health check start failed:', err);
+    });
+
     // Register the WebView provider for the sidebar chat panel
-    const provider = new AICollabViewProvider(context.extensionUri, context);
+    const provider = new AICollabViewProvider(context.extensionUri, context, controller);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider('aiCollabView', provider, {
             webviewOptions: {
@@ -140,6 +185,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private _extensionUri: vscode.Uri;
     /** Extension context for accessing globalState. */
     private _context: vscode.ExtensionContext;
+    /** Conductor controller for driving the state machine. */
+    private _controller: ConductorController;
     /** Whether auto-apply is enabled for this session. */
     private _autoApplyEnabled: boolean = false;
 
@@ -151,11 +198,21 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     /** Policy evaluation result for the current changeset. */
     private _policyResult?: PolicyResult;
 
-    constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
+    constructor(
+        extensionUri: vscode.Uri,
+        context: vscode.ExtensionContext,
+        controller: ConductorController,
+    ) {
         this._extensionUri = extensionUri;
         this._context = context;
+        this._controller = controller;
         // Load auto-apply state from global state
         this._autoApplyEnabled = context.globalState.get<boolean>('autoApplyEnabled', false);
+
+        // Push state updates to WebView whenever FSM state changes
+        this._controller.onStateChange((_prev, next) => {
+            this._sendConductorState(next);
+        });
     }
 
     public resolveWebviewView(
@@ -223,6 +280,30 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         this._view.webview.html = this._getHtmlContent(this._view.webview);
                     }
                     return;
+
+                // ----- Conductor FSM commands -----
+
+                case 'startSession':
+                    this._handleStartSession();
+                    return;
+                case 'stopSession':
+                    this._handleStopSession();
+                    return;
+                case 'retryConnection':
+                    this._handleRetryConnection();
+                    return;
+                case 'getConductorState':
+                    this._sendConductorState(this._controller.getState());
+                    return;
+                case 'copyInviteLink':
+                    this._handleCopyInviteLink();
+                    return;
+                case 'joinSession':
+                    this._handleJoinSession(message.inviteUrl);
+                    return;
+                case 'leaveSession':
+                    this._handleLeaveSession();
+                    return;
             }
         });
 
@@ -236,88 +317,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        // Auto-start Live Share for lead role if enabled
-        this._autoStartLiveShareIfNeeded();
-    }
-
-    /**
-     * Auto-start Live Share session for lead role if configured.
-     */
-    private async _autoStartLiveShareIfNeeded(): Promise<void> {
-        const role = getPermissionsService().getRole();
-        const config = vscode.workspace.getConfiguration('aiCollab');
-        const autoStart = config.get<boolean>('autoStartLiveShare', true);
-
-        if (role !== 'lead' || !autoStart) {
-            return;
-        }
-
-        // Check if we already have a Live Share URL
-        if (getSessionService().getLiveShareUrl()) {
-            console.log('[AI Collab] Live Share URL already exists, skipping auto-start');
-            return;
-        }
-
-        try {
-            console.log('[AI Collab] Auto-starting Live Share session...');
-
-            // Start Live Share session
-            // Note: liveshare.start may return the URL or copy it to clipboard
-            const liveShareResult = await vscode.commands.executeCommand('liveshare.start');
-
-            let liveShareUrl: string | null = null;
-
-            // Check if the command returned a URL directly
-            if (liveShareResult && typeof liveShareResult === 'string') {
-                liveShareUrl = liveShareResult;
-                console.log('[AI Collab] Live Share returned URL directly:', liveShareUrl);
-            } else {
-                // Live Share might have copied the URL to clipboard instead
-                // Wait a moment for the clipboard to be updated
-                await new Promise(resolve => setTimeout(resolve, 500));
-                const clipboardContent = await vscode.env.clipboard.readText();
-
-                // Check if clipboard contains a Live Share URL
-                if (clipboardContent && clipboardContent.includes('liveshare.vsengsaas.visualstudio.com')) {
-                    liveShareUrl = clipboardContent;
-                    console.log('[AI Collab] Got Live Share URL from clipboard:', liveShareUrl);
-                } else {
-                    console.log('[AI Collab] Could not get Live Share URL. Clipboard:', clipboardContent);
-                }
-            }
-
-            if (liveShareUrl) {
-                // Store in session
-                getSessionService().setLiveShareUrl(liveShareUrl);
-
-                // Generate invite URL
-                const inviteUrl = getSessionService().getInviteUrl();
-
-                if (inviteUrl) {
-                    // Log to output channel
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.appendLine('🎉 Conductor Session Started!');
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.appendLine('');
-                    outputChannel.appendLine('📋 Share this link with your team:');
-                    outputChannel.appendLine(inviteUrl);
-                    outputChannel.appendLine('');
-                    outputChannel.appendLine('📌 Room ID: ' + getSessionService().getRoomId());
-                    outputChannel.appendLine('🔗 Live Share URL: ' + liveShareUrl);
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.show();
-
-                    // Copy our invite URL to clipboard (overwrites Live Share's URL)
-                    await vscode.env.clipboard.writeText(inviteUrl);
-                    vscode.window.showInformationMessage('📋 Conductor invite link copied to clipboard! Check "Conductor Invite Links" output for details.');
-                }
-            } else {
-                console.log('[AI Collab] Live Share did not return a URL and clipboard did not contain one');
-            }
-        } catch (error) {
-            console.error('[AI Collab] Failed to auto-start Live Share:', error);
-            // Don't show error to user - Live Share might not be installed
-        }
+        // Note: We no longer auto-start Live Share here.
+        // User must explicitly click "Start Session" to begin hosting.
     }
 
     /**
@@ -342,6 +343,259 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 command: 'autoApplyState',
                 enabled: this._autoApplyEnabled
             });
+        }
+    }
+
+    // ----- Conductor FSM helpers ----------------------------------------
+
+    /**
+     * Handle "Start Session" command from WebView.
+     * 1. Runs health check if needed
+     * 2. Resets session (new roomId)
+     * 3. Transitions FSM to Hosting
+     * 4. Starts Live Share and generates invite link
+     */
+    private async _handleStartSession(): Promise<void> {
+        try {
+            const currentState = this._controller.getState();
+
+            // If in Idle or BackendDisconnected, run health check first
+            if (
+                currentState === ConductorState.Idle ||
+                currentState === ConductorState.BackendDisconnected
+            ) {
+                const afterHealth = await this._controller.start();
+                if (afterHealth !== ConductorState.ReadyToHost) {
+                    // Health check failed — state already moved to BackendDisconnected
+                    return;
+                }
+            }
+
+            const roomId = this._controller.startHosting();
+            console.log(`[Conductor] Hosting started, roomId=${roomId}`);
+            // Send the fresh session state so the WebView can connect WebSocket
+            this._sendSessionAndState();
+
+            // Now start Live Share and generate invite link
+            await this._startLiveShareAndGenerateInvite();
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.warn('[Conductor] startSession failed:', msg);
+            vscode.window.showWarningMessage(`Cannot start session: ${msg}`);
+        }
+    }
+
+    /**
+     * Start Live Share session and generate invite link.
+     * Called when user clicks "Start Session".
+     */
+    private async _startLiveShareAndGenerateInvite(): Promise<void> {
+        try {
+            console.log('[Conductor] Starting Live Share session...');
+
+            // Start Live Share session
+            const liveShareResult = await vscode.commands.executeCommand('liveshare.start');
+
+            let liveShareUrl: string | null = null;
+
+            // Check if the command returned a URL directly
+            if (liveShareResult && typeof liveShareResult === 'string') {
+                liveShareUrl = liveShareResult;
+                console.log('[Conductor] Live Share returned URL directly:', liveShareUrl);
+            } else {
+                // Live Share might have copied the URL to clipboard instead
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const clipboardContent = await vscode.env.clipboard.readText();
+
+                if (clipboardContent && clipboardContent.includes('liveshare.vsengsaas.visualstudio.com')) {
+                    liveShareUrl = clipboardContent;
+                    console.log('[Conductor] Got Live Share URL from clipboard:', liveShareUrl);
+                } else {
+                    console.log('[Conductor] Could not get Live Share URL from clipboard');
+                }
+            }
+
+            if (liveShareUrl) {
+                // Store in session
+                getSessionService().setLiveShareUrl(liveShareUrl);
+
+                // Generate invite URL
+                const inviteUrl = getSessionService().getInviteUrl();
+
+                if (inviteUrl) {
+                    // Log to output channel
+                    outputChannel.appendLine('='.repeat(80));
+                    outputChannel.appendLine('🎉 Conductor Session Started!');
+                    outputChannel.appendLine('='.repeat(80));
+                    outputChannel.appendLine('');
+                    outputChannel.appendLine('📋 Share this link with your team:');
+                    outputChannel.appendLine(inviteUrl);
+                    outputChannel.appendLine('');
+                    outputChannel.appendLine('📌 Room ID: ' + getSessionService().getRoomId());
+                    outputChannel.appendLine('🔗 Live Share URL: ' + liveShareUrl);
+                    outputChannel.appendLine('='.repeat(80));
+                    outputChannel.show();
+
+                    // Copy invite URL to clipboard
+                    await vscode.env.clipboard.writeText(inviteUrl);
+                    vscode.window.showInformationMessage('📋 Conductor invite link copied to clipboard!');
+                }
+            } else {
+                vscode.window.showWarningMessage('Could not get Live Share URL. You can still use "Copy Invite Link" later.');
+            }
+        } catch (error) {
+            console.error('[Conductor] Failed to start Live Share:', error);
+            vscode.window.showWarningMessage('Failed to start Live Share. Make sure Live Share extension is installed.');
+        }
+    }
+
+    /**
+     * Handle "Retry Connection" command from WebView.
+     * Re-runs the health check from BackendDisconnected (or Idle).
+     */
+    private async _handleRetryConnection(): Promise<void> {
+        try {
+            await this._controller.start();
+            console.log('[Conductor] Retry connection → state:', this._controller.getState());
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.warn('[Conductor] retryConnection failed:', msg);
+        }
+    }
+
+    /**
+     * Handle "Stop Session" command from WebView.
+     * Transitions FSM back to ReadyToHost.
+     */
+    private _handleStopSession(): void {
+        try {
+            this._controller.stopHosting();
+            console.log('[Conductor] Hosting stopped');
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.warn('[Conductor] stopSession failed:', msg);
+            vscode.window.showWarningMessage(`Cannot stop session: ${msg}`);
+        }
+    }
+
+    /**
+     * Send the current Conductor FSM state to the WebView.
+     */
+    private _sendConductorState(state: ConductorState): void {
+        if (this._view) {
+            this._view.webview.postMessage({
+                command: 'conductorStateChanged',
+                state,
+                session: getSessionService().getSessionStateForWebView(),
+            });
+        }
+    }
+
+    /**
+     * Send both session state and conductor state to the WebView.
+     * Used after startHosting to give the WebView everything it needs.
+     */
+    private _sendSessionAndState(): void {
+        this._sendConductorState(this._controller.getState());
+    }
+
+    /**
+     * Copy the invite link to the clipboard and show in the output channel.
+     */
+    private _handleCopyInviteLink(): void {
+        const inviteUrl = getSessionService().getInviteUrl();
+        if (inviteUrl) {
+            vscode.env.clipboard.writeText(inviteUrl);
+            vscode.window.showInformationMessage('📋 Invite link copied to clipboard!');
+            outputChannel.appendLine(`📋 Invite link: ${inviteUrl}`);
+        } else {
+            // Build a simple invite URL with just roomId + backendUrl (no Live Share yet)
+            const roomId = getSessionService().getRoomId();
+            const backendUrl = getSessionService().getBackendUrl();
+            const simpleUrl = `${backendUrl}/invite?roomId=${roomId}`;
+            vscode.env.clipboard.writeText(simpleUrl);
+            vscode.window.showInformationMessage('📋 Invite link copied (no Live Share URL yet)');
+            outputChannel.appendLine(`📋 Invite link (no Live Share): ${simpleUrl}`);
+        }
+    }
+
+    /**
+     * Handle "Join Session" command from WebView.
+     * Parses the invite URL, configures the session as a guest,
+     * opens Live Share if a URL is present, and transitions FSM.
+     */
+    private async _handleJoinSession(inviteUrl: string): Promise<void> {
+        try {
+            const currentState = this._controller.getState();
+
+            // If in Idle or BackendDisconnected, run health check first
+            if (
+                currentState === ConductorState.Idle ||
+                currentState === ConductorState.BackendDisconnected
+            ) {
+                const afterHealth = await this._controller.start();
+                if (afterHealth !== ConductorState.ReadyToHost) {
+                    // Health check failed — state already moved to BackendDisconnected
+                    return;
+                }
+            }
+
+            // Parse and transition to Joining
+            const parsed = this._controller.startJoining(inviteUrl);
+            console.log(
+                `[Conductor] Joining session: roomId=${parsed.roomId}, ` +
+                `backendUrl=${parsed.backendUrl}`,
+            );
+
+            // Configure session service as guest
+            getSessionService().joinAsGuest(
+                parsed.roomId,
+                parsed.backendUrl,
+                parsed.liveShareUrl,
+            );
+
+            // Open Live Share URL if available
+            if (parsed.liveShareUrl) {
+                try {
+                    await vscode.commands.executeCommand(
+                        'liveshare.join',
+                        vscode.Uri.parse(parsed.liveShareUrl),
+                    );
+                } catch (lsError) {
+                    console.warn('[Conductor] Live Share join failed:', lsError);
+                    // Non-fatal — guest can still use chat without Live Share
+                }
+            }
+
+            // Transition to Joined
+            this._controller.joinSucceeded();
+            console.log('[Conductor] Joined session successfully');
+            this._sendSessionAndState();
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.warn('[Conductor] joinSession failed:', msg);
+            vscode.window.showWarningMessage(`Cannot join session: ${msg}`);
+
+            // If we're stuck in Joining (parse succeeded but later step failed),
+            // transition back to ReadyToHost.
+            if (this._controller.getState() === ConductorState.Joining) {
+                this._controller.joinFailed();
+            }
+        }
+    }
+
+    /**
+     * Handle "Leave Session" command from WebView.
+     * Transitions FSM from Joined back to ReadyToHost.
+     */
+    private _handleLeaveSession(): void {
+        try {
+            this._controller.leaveSession();
+            console.log('[Conductor] Left session');
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.warn('[Conductor] leaveSession failed:', msg);
+            vscode.window.showWarningMessage(`Cannot leave session: ${msg}`);
         }
     }
 
@@ -899,7 +1153,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         const sessionState = getSessionService().getSessionStateForWebView();
         const sessionScript = `<script>window.initialSession = ${JSON.stringify(sessionState)};</script>`;
 
-        html = html.replace('</head>', `${permissionsScript}${sessionScript}</head>`);
+        // Inject current conductor FSM state so WebView can render correctly on reload
+        const conductorState = this._controller.getState();
+        const conductorScript = `<script>window.initialConductorState = ${JSON.stringify(conductorState)};</script>`;
+
+        html = html.replace('</head>', `${permissionsScript}${sessionScript}${conductorScript}</head>`);
 
         return html;
     }

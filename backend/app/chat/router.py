@@ -12,7 +12,12 @@ The WebSocket protocol supports:
     - Host-initiated session termination
 """
 import html
+import logging
 from pathlib import Path
+
+# Configure logging for debugging
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -128,8 +133,10 @@ async def websocket_chat_endpoint(websocket: WebSocket, room_id: str) -> None:
         websocket: The WebSocket connection.
         room_id: The room ID to join.
     """
+    logger.info(f"[WS] New connection to room: {room_id}")
     # Accept connection and get existing message history
     history = await manager.connect(websocket, room_id)
+    logger.info(f"[WS] Connection accepted. Room {room_id} now has {manager.get_room_size(room_id)} connections")
 
     try:
         # Send message history and user list to the newly connected client
@@ -146,9 +153,11 @@ async def websocket_chat_endpoint(websocket: WebSocket, room_id: str) -> None:
         while True:
             data = await websocket.receive_json()
             message_type = data.get("type")
+            logger.debug(f"[WS] Room {room_id} received: {data}")
 
             # --- Handle JOIN message (user registration) ---
             if message_type == "join":
+                logger.info(f"[WS] JOIN from userId={data.get('userId')}, role={data.get('role')}")
                 user = manager.register_user(
                     websocket=websocket,
                     room_id=room_id,
@@ -159,6 +168,7 @@ async def websocket_chat_endpoint(websocket: WebSocket, room_id: str) -> None:
 
                 # Broadcast updated user list to all clients
                 users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
+                logger.info(f"[WS] Broadcasting user_joined. Total users: {len(users_data)}")
                 await manager.broadcast({
                     "type": "user_joined",
                     "user": user.model_dump(),
@@ -183,10 +193,12 @@ async def websocket_chat_endpoint(websocket: WebSocket, room_id: str) -> None:
                 continue
 
             # --- Handle regular CHAT message ---
+            logger.info(f"[WS] CHAT message from userId={data.get('userId')}: {data.get('content', '')[:50]}")
             try:
                 input_msg = ChatMessageInput(**data)
             except Exception as e:
                 # Invalid message format - notify sender only
+                logger.error(f"[WS] Invalid message format: {e}")
                 await websocket.send_json({
                     "type": "error",
                     "error": f"Invalid message format: {str(e)}"
@@ -208,6 +220,7 @@ async def websocket_chat_endpoint(websocket: WebSocket, room_id: str) -> None:
             manager.add_message(room_id, full_message)
 
             # Broadcast to all clients in the room
+            logger.info(f"[WS] Broadcasting message to {manager.get_room_size(room_id)} connections")
             await manager.broadcast(
                 {"type": "message", **full_message.model_dump()},
                 room_id
