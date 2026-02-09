@@ -377,9 +377,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 }
             }
 
+            // Ensure ngrok URL is detected BEFORE sending session to WebView
+            // This is critical for WebSocket connection to use the correct URL
+            if (!getSessionService().getNgrokUrl()) {
+                console.log('[Conductor] Detecting ngrok URL before starting session...');
+                await getSessionService().detectNgrokUrl();
+            }
+
             const roomId = this._controller.startHosting();
             console.log(`[Conductor] Hosting started, roomId=${roomId}`);
             // Send the fresh session state so the WebView can connect WebSocket
+            // At this point, backendUrl will include ngrok URL if available
             this._sendSessionAndState();
 
             // Now start Live Share and generate invite link
@@ -394,17 +402,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     /**
      * Start Live Share session and generate invite link.
      * Called when user clicks "Start Session".
+     * Note: ngrok URL detection is done in _handleStartSession before this is called.
      */
     private async _startLiveShareAndGenerateInvite(): Promise<void> {
         try {
-            // Ensure ngrok URL is detected before generating invite link
-            // This handles the case where user clicks "Start Session" quickly
-            // before the async ngrok detection at startup completes
-            if (!getSessionService().getNgrokUrl()) {
-                console.log('[Conductor] Re-checking for ngrok URL...');
-                await getSessionService().detectNgrokUrl();
-            }
-
             console.log('[Conductor] Starting Live Share session...');
 
             // Start Live Share session
@@ -421,11 +422,18 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 const clipboardContent = await vscode.env.clipboard.readText();
 
-                if (clipboardContent && clipboardContent.includes('liveshare.vsengsaas.visualstudio.com')) {
+                // Validate that it's a direct Live Share URL, not our invite URL
+                // Live Share URLs look like: https://prod.liveshare.vsengsaas.visualstudio.com/join?XXXXX
+                // Our invite URLs contain /invite? which we should NOT accept
+                if (
+                    clipboardContent &&
+                    clipboardContent.includes('liveshare.vsengsaas.visualstudio.com') &&
+                    !clipboardContent.includes('/invite?')
+                ) {
                     liveShareUrl = clipboardContent;
                     console.log('[Conductor] Got Live Share URL from clipboard:', liveShareUrl);
                 } else {
-                    console.log('[Conductor] Could not get Live Share URL from clipboard');
+                    console.log('[Conductor] Could not get Live Share URL from clipboard. Content:', clipboardContent?.substring(0, 100));
                 }
             }
 
@@ -546,7 +554,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // If in BackendDisconnected, we can still join (no local backend needed)
             if (currentState === ConductorState.Idle) {
                 await this._controller.start();
-                // Regardless of health check result (ReadyToHost or BackendDisconnected),
+                // Regardless of health check result (ReadyToHost or BackendDisHost),
                 // we can proceed with joining since JOIN_SESSION is valid in both states
             }
 
@@ -565,23 +573,41 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 parsed.liveShareUrl,
             );
 
-            // Open Live Share URL if available
-            if (parsed.liveShareUrl) {
-                try {
-                    await vscode.commands.executeCommand(
-                        'liveshare.join',
-                        vscode.Uri.parse(parsed.liveShareUrl),
-                    );
-                } catch (lsError) {
-                    console.warn('[Conductor] Live Share join failed:', lsError);
-                    // Non-fatal — guest can still use chat without Live Share
-                }
-            }
-
-            // Transition to Joined
+            // Transition to Joined FIRST so user can start chatting immediately
+            // Don't wait for Live Share - it can connect in the background
             this._controller.joinSucceeded();
             console.log('[Conductor] Joined session successfully');
             this._sendSessionAndState();
+
+            // Offer to join Live Share (optional - user can decline)
+            // This is non-blocking - user can chat while deciding
+            if (parsed.liveShareUrl) {
+                // Ask user if they want to join Live Share
+                // This is async and non-blocking
+                vscode.window.showInformationMessage(
+                    '🔗 This session has Live Share. Join to collaborate on code?',
+                    'Join Live Share',
+                    'Chat Only'
+                ).then(async (choice) => {
+                    if (choice === 'Join Live Share') {
+                        try {
+                            console.log('[Conductor] User chose to join Live Share...');
+                            await vscode.commands.executeCommand(
+                                'liveshare.join',
+                                vscode.Uri.parse(parsed.liveShareUrl!),
+                            );
+                            console.log('[Conductor] Live Share joined successfully');
+                        } catch (lsError) {
+                            console.warn('[Conductor] Live Share join failed:', lsError);
+                            vscode.window.showWarningMessage(
+                                'Could not join Live Share. You can still use chat.'
+                            );
+                        }
+                    } else {
+                        console.log('[Conductor] User chose chat only, skipping Live Share');
+                    }
+                });
+            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.warn('[Conductor] joinSession failed:', msg);
@@ -1318,6 +1344,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         // Replace the relative CSS path with the webview URI
         html = html.replace('href="tailwind.css"', `href="${cssUri}"`);
 
+        // Build Content Security Policy that allows WebSocket connections
+        // We need to allow ws: and wss: for both localhost and ngrok URLs
+        const backendUrl = getSessionService().getBackendUrl();
+        const wsUrl = backendUrl.replace('http', 'ws');
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${backendUrl} ${wsUrl} ws://localhost:* wss://localhost:* ws://*.ngrok-free.dev wss://*.ngrok-free.dev ws://*.ngrok.io wss://*.ngrok.io;">`;
+
         // Inject initial permissions data
         const permissions = getPermissionsService().getPermissionsForWebView();
         const permissionsScript = `<script>window.initialPermissions = ${JSON.stringify(permissions)};</script>`;
@@ -1330,9 +1362,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         const conductorState = this._controller.getState();
         const conductorScript = `<script>window.initialConductorState = ${JSON.stringify(conductorState)};</script>`;
 
-        html = html.replace('</head>', `${permissionsScript}${sessionScript}${conductorScript}</head>`);
+        html = html.replace('</head>', `${cspMeta}${permissionsScript}${sessionScript}${conductorScript}</head>`);
 
         return html;
     }
 }
-
