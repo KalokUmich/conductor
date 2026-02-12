@@ -40,6 +40,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .manager import (
     ChatMessage,
     ChatMessageInput,
+    MessageType,
+    UserRole,
     manager,
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -173,6 +175,79 @@ async def get_message_history(
         "messages": [msg.model_dump() for msg in messages],
         "hasMore": has_more
     })
+
+
+@router.post("/chat/{room_id}/ai-message")
+async def post_ai_message(
+    room_id: str,
+    message_type: str = Query(..., description="Message type: ai_summary or ai_code_prompt"),
+    model_name: str = Query(..., description="AI model name (e.g., claude_bedrock)"),
+    content: str = Query(..., description="Message content (summary text or code prompt)"),
+    ai_data: Optional[str] = Query(None, description="JSON string of AI-specific data")
+) -> JSONResponse:
+    """Post an AI-generated message to a chat room.
+
+    This endpoint allows the extension to post AI-generated summaries and code prompts
+    as chat messages. The message is stored in history and broadcast to all clients.
+
+    Args:
+        room_id: The room ID to post to.
+        message_type: Either 'ai_summary' or 'ai_code_prompt'.
+        model_name: The AI model name (used in userId as AI-{model_name}).
+        content: The message content.
+        ai_data: Optional JSON string with AI-specific data.
+
+    Returns:
+        JSONResponse with the created message.
+    """
+    import json
+
+    # Validate message type
+    if message_type not in ("ai_summary", "ai_code_prompt"):
+        return JSONResponse(
+            {"error": f"Invalid message type: {message_type}"},
+            status_code=400
+        )
+
+    # Parse AI data if provided
+    parsed_ai_data = None
+    if ai_data:
+        try:
+            parsed_ai_data = json.loads(ai_data)
+        except json.JSONDecodeError:
+            return JSONResponse(
+                {"error": "Invalid ai_data JSON"},
+                status_code=400
+            )
+
+    # Create AI user ID
+    ai_user_id = f"AI-{model_name}"
+    ai_display_name = f"AI ({model_name})"
+
+    # Create the message
+    msg_type = MessageType.AI_SUMMARY if message_type == "ai_summary" else MessageType.AI_CODE_PROMPT
+    message = ChatMessage(
+        type=msg_type,
+        roomId=room_id,
+        userId=ai_user_id,
+        displayName=ai_display_name,
+        role=UserRole.AI,
+        content=content,
+        aiData=parsed_ai_data
+    )
+
+    # Store in history
+    manager.add_message(room_id, message)
+
+    # Broadcast to all clients in the room
+    await manager.broadcast(
+        {"type": message_type, **message.model_dump()},
+        room_id
+    )
+
+    logger.info(f"[AI] Posted {message_type} to room {room_id} from {ai_user_id}")
+
+    return JSONResponse(message.model_dump())
 
 
 @router.websocket("/ws/chat/{room_id}")

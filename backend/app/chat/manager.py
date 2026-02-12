@@ -65,10 +65,29 @@ class UserRole(str, Enum):
         HOST: The lead user who can end sessions and use AI features.
         GUEST: A participant who joined an existing room (limited permissions).
         ENGINEER: Legacy alias for guest (kept for backwards compatibility).
+        AI: AI assistant that generates summaries and code prompts.
     """
     HOST = "host"
     GUEST = "guest"
     ENGINEER = "engineer"  # Legacy alias
+    AI = "ai"  # AI assistant
+
+
+class MessageType(str, Enum):
+    """Type of chat message.
+
+    Attributes:
+        MESSAGE: Regular text message.
+        CODE_SNIPPET: Code snippet with file info.
+        FILE: File attachment.
+        AI_SUMMARY: AI-generated decision summary.
+        AI_CODE_PROMPT: AI-generated code prompt for code agents.
+    """
+    MESSAGE = "message"
+    CODE_SNIPPET = "code_snippet"
+    FILE = "file"
+    AI_SUMMARY = "ai_summary"
+    AI_CODE_PROMPT = "ai_code_prompt"
 
 
 class RoomUser(BaseModel):
@@ -93,16 +112,22 @@ class ChatMessage(BaseModel):
 
     Attributes:
         id: Unique message identifier (auto-generated UUID).
+        type: Message type (message, code_snippet, file, ai_summary, ai_code_prompt).
         roomId: Room this message belongs to.
         userId: Sender's user ID.
         displayName: Sender's display name.
         role: Sender's role.
         content: Message text content.
         ts: Unix timestamp (seconds since epoch).
+        aiData: Optional AI-specific data (for ai_summary and ai_code_prompt types).
     """
     id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         description="Unique message ID"
+    )
+    type: MessageType = Field(
+        default=MessageType.MESSAGE,
+        description="Message type"
     )
     roomId: str = Field(..., description="Room ID this message belongs to")
     userId: str = Field(..., description="User ID of the sender")
@@ -112,6 +137,11 @@ class ChatMessage(BaseModel):
     ts: float = Field(
         default_factory=time.time,
         description="Timestamp in seconds since epoch"
+    )
+    # AI-specific data (only for ai_summary and ai_code_prompt types)
+    aiData: Optional[dict] = Field(
+        default=None,
+        description="AI-specific data (summary details or code prompt)"
     )
 
 

@@ -52,6 +52,14 @@
             0%, 100% { opacity: 1; }
             50% { opacity: 0.7; }
         }
+
+        /* Disable syntax highlighting in code snippets */
+        .code-snippet-plain,
+        .code-snippet-plain code,
+        .code-snippet-plain * {
+            color: #d1d5db !important; /* text-gray-300 */
+            background: transparent !important;
+        }
     </style>
 </head>
 <body class="bg-gray-900 text-gray-100 h-screen overflow-hidden">
@@ -451,7 +459,7 @@
                         </svg>
                     </button>
                 </div>
-                <pre id="code-snippet-content" class="p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-32 overflow-y-auto"></pre>
+                <pre id="code-snippet-content" class="code-snippet-plain p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-32 overflow-y-auto"></pre>
             </div>
 
             <div class="flex items-end gap-3">
@@ -628,6 +636,105 @@
                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
                     </svg>
                     Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Summarize Options Modal                                       -->
+    <!-- ============================================================ -->
+    <div id="summarize-options-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+        <!-- Backdrop -->
+        <div id="summarize-options-backdrop" class="absolute inset-0 bg-black/60"></div>
+        <!-- Modal Content -->
+        <div class="relative bg-gray-800 rounded-lg shadow-xl border border-gray-700 w-full max-w-md mx-4">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                    </svg>
+                    Summarize Chat
+                </h3>
+                <button id="btn-close-summarize-options" class="text-gray-400 hover:text-white p-1 rounded transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+            <!-- Body -->
+            <div class="px-5 py-4 space-y-4">
+                <p class="text-gray-300 text-sm">How would you like to summarize the conversation?</p>
+
+                <!-- Option: Summarize All -->
+                <button id="btn-summarize-all" class="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-3 rounded-lg transition-colors flex items-center gap-3">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
+                        <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="text-left">
+                        <span class="block font-medium">Summarize All Messages</span>
+                        <span id="summarize-all-count" class="text-xs text-purple-200">0 messages</span>
+                    </div>
+                </button>
+
+                <!-- Option: Select Messages -->
+                <button id="btn-summarize-select" class="w-full bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-3 rounded-lg transition-colors flex items-center gap-3 border border-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <div class="text-left">
+                        <span class="block font-medium">Select Messages to Summarize</span>
+                        <span class="text-xs text-gray-400">Choose specific messages</span>
+                    </div>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Message Selection Modal                                       -->
+    <!-- ============================================================ -->
+    <div id="message-selection-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+        <!-- Backdrop -->
+        <div id="message-selection-backdrop" class="absolute inset-0 bg-black/60"></div>
+        <!-- Modal Content -->
+        <div class="relative bg-gray-800 rounded-lg shadow-xl border border-gray-700 w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-700 flex-shrink-0">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    Select Messages
+                </h3>
+                <button id="btn-close-message-selection" class="text-gray-400 hover:text-white p-1 rounded transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+            <!-- Selection controls -->
+            <div class="px-5 py-3 border-b border-gray-700 flex items-center justify-between flex-shrink-0">
+                <div class="flex items-center gap-3">
+                    <button id="btn-select-all-messages" class="text-xs text-purple-400 hover:text-purple-300 transition-colors">Select All</button>
+                    <span class="text-gray-600">|</span>
+                    <button id="btn-deselect-all-messages" class="text-xs text-gray-400 hover:text-gray-300 transition-colors">Deselect All</button>
+                </div>
+                <span id="selected-messages-count" class="text-xs text-gray-400">0 selected</span>
+            </div>
+            <!-- Message list (scrollable) -->
+            <div id="message-selection-list" class="px-5 py-3 overflow-y-auto flex-1 space-y-2">
+                <!-- Messages will be populated here -->
+            </div>
+            <!-- Footer -->
+            <div class="px-5 py-4 border-t border-gray-700 flex justify-end gap-3 flex-shrink-0">
+                <button id="btn-cancel-message-selection" class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
+                    Cancel
+                </button>
+                <button id="btn-confirm-message-selection" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
+                    Summarize Selected
                 </button>
             </div>
         </div>
@@ -930,12 +1037,37 @@
         const btnCopyCodePrompt = document.getElementById('btn-copy-code-prompt');
         const btnCopyCodePromptText = document.getElementById('btn-copy-code-prompt-text');
 
+        // Summarize options modal elements
+        const summarizeOptionsModal = document.getElementById('summarize-options-modal');
+        const summarizeOptionsBackdrop = document.getElementById('summarize-options-backdrop');
+        const btnCloseSummarizeOptions = document.getElementById('btn-close-summarize-options');
+        const btnSummarizeAll = document.getElementById('btn-summarize-all');
+        const btnSummarizeSelect = document.getElementById('btn-summarize-select');
+        const summarizeAllCount = document.getElementById('summarize-all-count');
+
+        // Message selection modal elements
+        const messageSelectionModal = document.getElementById('message-selection-modal');
+        const messageSelectionBackdrop = document.getElementById('message-selection-backdrop');
+        const btnCloseMessageSelection = document.getElementById('btn-close-message-selection');
+        const btnSelectAllMessages = document.getElementById('btn-select-all-messages');
+        const btnDeselectAllMessages = document.getElementById('btn-deselect-all-messages');
+        const selectedMessagesCount = document.getElementById('selected-messages-count');
+        const messageSelectionList = document.getElementById('message-selection-list');
+        const btnCancelMessageSelection = document.getElementById('btn-cancel-message-selection');
+        const btnConfirmMessageSelection = document.getElementById('btn-confirm-message-selection');
+
+        // Track selected message indices for summarization
+        let selectedMessageIndices = new Set();
+
         // Track AI status
         let aiSummaryEnabledState = false;
         let aiActiveProviderState = null;
 
         // Track current summary for code prompt generation
         let currentSummaryData = null;
+
+        // Track the button ID for the current code prompt generation
+        let currentCodePromptButtonId = null;
 
         // Track generated code prompt
         let generatedCodePrompt = null;
@@ -1321,6 +1453,7 @@
                     break;
                 case 'aiStatus':
                     // Received AI status from extension (proxied from backend)
+                    console.log('[WebView] Received aiStatus:', message.data);
                     handleAiStatusResponse(message.data);
                     break;
                 case 'summarizeResult':
@@ -1330,6 +1463,10 @@
                 case 'codePromptResult':
                     // Received code prompt result from extension
                     handleCodePromptResponse(message.data);
+                    break;
+                case 'codePromptPostResult':
+                    // Received code prompt post result from extension
+                    handleCodePromptPostResponse(message.data);
                     break;
             }
         });
@@ -1895,6 +2032,19 @@
          * @param {Object} msg - Message object with codeSnippet data.
          */
         function renderCodeSnippetMessage(msg) {
+            // Store code snippet message for summarization
+            const snippet = msg.codeSnippet || {};
+            const lineInfo = snippet.startLine === snippet.endLine
+                ? `Line ${snippet.startLine}`
+                : `Lines ${snippet.startLine}-${snippet.endLine}`;
+            const snippetText = `[Code Snippet: ${snippet.relativePath || snippet.filename || 'code'} ${lineInfo}]\n${snippet.code || ''}${msg.content ? '\nComment: ' + msg.content : ''}`;
+            const apiRole = msg.role === 'host' ? 'host' : 'engineer';
+            chatMessages.push({
+                role: apiRole,
+                text: snippetText,
+                timestamp: msg.ts || Date.now() / 1000
+            });
+
             const isOwnMessage = msg.userId === session.userId;
             const isGrouped = shouldGroupMessage(msg);
 
@@ -1923,10 +2073,6 @@
             ` : (!isOwnMessage && isGrouped) ? '<div class="w-7 flex-shrink-0"></div>' : '';
 
             const showName = !isOwnMessage && !isGrouped;
-            const snippet = msg.codeSnippet || {};
-            const lineInfo = snippet.startLine === snippet.endLine
-                ? `Line ${snippet.startLine}`
-                : `Lines ${snippet.startLine}-${snippet.endLine}`;
 
             // Status indicator for own messages
             const statusHtml = isOwnMessage ? '<span class="message-status text-blue-300 ml-1">✓</span>' : '';
@@ -1959,7 +2105,7 @@
                                 </svg>
                             </button>
                         </div>
-                        <pre class="p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-48 overflow-y-auto bg-gray-900/50"><code>${escapeHtml(snippet.code || '')}</code></pre>
+                        <pre class="code-snippet-plain p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-48 overflow-y-auto">${escapeHtml(snippet.code || '')}</pre>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'} flex items-center ${isOwnMessage ? 'justify-end' : ''}">
                         <span>${formatTime(msg.ts)}</span>${statusHtml}
@@ -1989,6 +2135,241 @@
             if (!isOwnMessage && msg.id && messageReadObserver) {
                 messageReadObserver.observe(div);
             }
+        }
+
+        /**
+         * Render an AI summary message in the UI.
+         * Shows structured summary with special styling and "Generate Code Prompt" button for hosts.
+         * @param {Object} msg - AI summary message object with aiData containing summary fields.
+         */
+        function renderAiSummaryMessage(msg) {
+            // Check if we need a date separator
+            if (needsDateSeparator(msg)) {
+                renderDateSeparator(new Date(msg.ts * 1000));
+            }
+
+            // Update grouping state
+            lastMessageUserId = msg.userId;
+            lastMessageTime = msg.ts * 1000;
+
+            const div = document.createElement('div');
+            div.setAttribute('data-message-id', msg.id || '');
+            div.setAttribute('data-timestamp', msg.ts || '');
+            div.className = 'flex justify-start gap-2';
+
+            const aiData = msg.aiData || {};
+            const riskLevel = aiData.risk_level || 'low';
+            const components = aiData.affected_components || [];
+            const steps = aiData.next_steps || [];
+
+            // Risk badge color
+            let riskBadgeClass = 'bg-green-600';
+            if (riskLevel === 'high') riskBadgeClass = 'bg-red-600';
+            else if (riskLevel === 'medium') riskBadgeClass = 'bg-yellow-600';
+
+            // Components HTML
+            const componentsHtml = components.length > 0 ? `
+                <div class="mt-3">
+                    <div class="text-xs font-medium text-gray-400 mb-1">Affected Components:</div>
+                    <div class="flex flex-wrap gap-1">
+                        ${components.map(c => `<span class="px-2 py-0.5 bg-gray-700 text-gray-300 text-xs rounded">${escapeHtml(c)}</span>`).join('')}
+                    </div>
+                </div>
+            ` : '';
+
+            // Next steps HTML
+            const stepsHtml = steps.length > 0 ? `
+                <div class="mt-3">
+                    <div class="text-xs font-medium text-gray-400 mb-1">Next Steps:</div>
+                    <ul class="list-disc list-inside text-sm text-gray-300 space-y-0.5">
+                        ${steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : '';
+
+            // Generate Code Prompt button - only shown to hosts when requires_code_change is true
+            const isHost = session.sessionRole === 'host';
+            const showCodePromptBtn = isHost && aiData.requires_code_change;
+            const codePromptBtnId = `gen-code-btn-${msg.id || Date.now()}`;
+            const codePromptBtnHtml = showCodePromptBtn ? `
+                <div class="mt-4 pt-3 border-t border-gray-600">
+                    <button id="${codePromptBtnId}" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                        </svg>
+                        Generate Code Prompt
+                    </button>
+                </div>
+            ` : '';
+
+            div.innerHTML = `
+                <div class="w-7 h-7 bg-purple-600 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
+                    🤖
+                </div>
+                <div class="max-w-[85%] min-w-0 flex-1">
+                    <div class="text-xs text-gray-400 mb-1 ml-1">🤖 ${escapeHtml(msg.displayName || 'AI')}</div>
+                    <div class="bg-gradient-to-br from-purple-900/50 to-gray-800 rounded-lg overflow-hidden border border-purple-700/50 shadow-lg">
+                        <div class="px-4 py-3 bg-purple-800/30 border-b border-purple-700/50 flex items-center gap-2">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+                            </svg>
+                            <span class="text-sm font-medium text-purple-200">AI Summary</span>
+                        </div>
+                        <div class="p-4 space-y-3">
+                            <div>
+                                <div class="text-xs font-medium text-gray-400 mb-1">Topic:</div>
+                                <div class="text-sm font-semibold text-white">${escapeHtml(aiData.topic || 'No topic')}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs font-medium text-gray-400 mb-1">Problem Statement:</div>
+                                <div class="text-sm text-gray-200">${escapeHtml(aiData.problem_statement || 'No problem statement')}</div>
+                            </div>
+                            <div>
+                                <div class="text-xs font-medium text-gray-400 mb-1">Proposed Solution:</div>
+                                <div class="text-sm text-gray-200">${escapeHtml(aiData.proposed_solution || 'No solution proposed')}</div>
+                            </div>
+                            <div class="flex items-center gap-4">
+                                <div>
+                                    <div class="text-xs font-medium text-gray-400 mb-1">Risk Level:</div>
+                                    <span class="px-2 py-0.5 rounded text-xs font-medium ${riskBadgeClass} text-white">${riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1)}</span>
+                                </div>
+                                ${aiData.requires_code_change ? `
+                                <div>
+                                    <div class="text-xs font-medium text-gray-400 mb-1">Code Change:</div>
+                                    <span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-600 text-white">Required</span>
+                                </div>
+                                ` : ''}
+                            </div>
+                            ${componentsHtml}
+                            ${stepsHtml}
+                        </div>
+                        ${codePromptBtnHtml}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5 ml-1">
+                        <span>${formatTime(msg.ts)}</span>
+                    </div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(div);
+
+            // Add click handler for Generate Code Prompt button
+            if (showCodePromptBtn) {
+                const codePromptBtn = document.getElementById(codePromptBtnId);
+                if (codePromptBtn) {
+                    codePromptBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        // Store the AI data for code prompt generation
+                        currentSummaryData = aiData;
+                        // Store the button ID for later update
+                        currentCodePromptButtonId = codePromptBtnId;
+                        // Request code prompt generation
+                        vscode.postMessage({
+                            command: 'generateCodePromptAndPost',
+                            decisionSummary: aiData,
+                            roomId: session.roomId
+                        });
+                        // Disable button and show loading state
+                        codePromptBtn.disabled = true;
+                        codePromptBtn.innerHTML = `
+                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Generating...
+                        `;
+                    });
+                }
+            }
+
+            smartScroll(false);
+        }
+
+        /**
+         * Render an AI code prompt message in the UI.
+         * Shows code prompt with copy button and special styling.
+         * @param {Object} msg - AI code prompt message object.
+         */
+        function renderAiCodePromptMessage(msg) {
+            // Check if we need a date separator
+            if (needsDateSeparator(msg)) {
+                renderDateSeparator(new Date(msg.ts * 1000));
+            }
+
+            // Update grouping state
+            lastMessageUserId = msg.userId;
+            lastMessageTime = msg.ts * 1000;
+
+            const div = document.createElement('div');
+            div.setAttribute('data-message-id', msg.id || '');
+            div.setAttribute('data-timestamp', msg.ts || '');
+            div.className = 'flex justify-start gap-2';
+
+            const copyBtnId = `copy-prompt-btn-${msg.id || Date.now()}`;
+
+            div.innerHTML = `
+                <div class="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
+                    🤖
+                </div>
+                <div class="max-w-[85%] min-w-0 flex-1">
+                    <div class="text-xs text-gray-400 mb-1 ml-1">🤖 ${escapeHtml(msg.displayName || 'AI')}</div>
+                    <div class="bg-gradient-to-br from-blue-900/50 to-gray-800 rounded-lg overflow-hidden border border-blue-700/50 shadow-lg">
+                        <div class="px-4 py-3 bg-blue-800/30 border-b border-blue-700/50 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                <span class="text-sm font-medium text-blue-200">Code Generation Prompt</span>
+                            </div>
+                            <button id="${copyBtnId}" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center gap-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                </svg>
+                                Copy
+                            </button>
+                        </div>
+                        <div class="p-4">
+                            <pre class="text-sm text-gray-200 whitespace-pre-wrap font-mono bg-gray-900/50 p-3 rounded border border-gray-700 max-h-96 overflow-y-auto">${escapeHtml(msg.content || '')}</pre>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5 ml-1">
+                        <span>${formatTime(msg.ts)}</span>
+                    </div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(div);
+
+            // Add click handler for copy button
+            const copyBtn = document.getElementById(copyBtnId);
+            if (copyBtn) {
+                copyBtn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    try {
+                        await navigator.clipboard.writeText(msg.content || '');
+                        copyBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                            </svg>
+                            Copied!
+                        `;
+                        setTimeout(() => {
+                            copyBtn.innerHTML = `
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                </svg>
+                                Copy
+                            `;
+                        }, 2000);
+                    } catch (err) {
+                        console.error('[WebView] Failed to copy:', err);
+                    }
+                });
+            }
+
+            smartScroll(false);
         }
 
         /**
@@ -2502,6 +2883,16 @@
                             renderCodeSnippetMessage(data);
                             updateLastMessageTimestamp(data.ts);
                         }
+                    } else if (data.type === 'ai_summary') {
+                        if (!isDuplicateMessage(data.id)) {
+                            renderAiSummaryMessage(data);
+                            updateLastMessageTimestamp(data.ts);
+                        }
+                    } else if (data.type === 'ai_code_prompt') {
+                        if (!isDuplicateMessage(data.id)) {
+                            renderAiCodePromptMessage(data);
+                            updateLastMessageTimestamp(data.ts);
+                        }
                     } else if (data.type === 'user_joined') {
                         renderUsersList(data.users);
                         renderSystemMessage(`${data.user.displayName} joined the chat`);
@@ -2975,12 +3366,14 @@
          * Fetch AI status from the backend via extension.
          */
         function fetchAiStatus() {
+            console.log('[WebView] fetchAiStatus called');
             // Show loading state
             aiConfigLoading.classList.remove('hidden');
             aiConfigError.classList.add('hidden');
             aiConfigContent.classList.add('hidden');
 
             // Request AI status from extension (which proxies to backend)
+            console.log('[WebView] Sending getAiStatus message to extension');
             vscode.postMessage({ command: 'getAiStatus' });
         }
 
@@ -2989,11 +3382,14 @@
          * @param {Object} data - AI status data or error
          */
         function handleAiStatusResponse(data) {
+            console.log('[WebView] handleAiStatusResponse called with:', JSON.stringify(data));
+
             // Hide loading
             aiConfigLoading.classList.add('hidden');
 
             if (data.error) {
                 // Show error state
+                console.log('[WebView] AI status error:', data.error);
                 aiConfigError.classList.remove('hidden');
                 aiConfigErrorText.textContent = data.error;
                 aiConfigContent.classList.add('hidden');
@@ -3007,6 +3403,7 @@
             // Update global AI status state
             aiSummaryEnabledState = data.summary_enabled;
             aiActiveProviderState = data.active_provider;
+            console.log('[WebView] AI status updated: enabled=', aiSummaryEnabledState, ', provider=', aiActiveProviderState);
 
             // Update summary enabled section
             if (data.summary_enabled) {
@@ -3184,10 +3581,13 @@
 
         /**
          * Request AI summary of the current chat.
+         * If there's only 1 message, summarizes directly.
+         * If there are more than 1 message, shows the options modal to let user choose.
          */
         function requestSummarize() {
+            console.log('[WebView] requestSummarize called, aiSummaryEnabledState=', aiSummaryEnabledState, ', aiActiveProviderState=', aiActiveProviderState, ', chatMessages.length=', chatMessages.length);
             if (!aiSummaryEnabledState || !aiActiveProviderState) {
-                console.warn('[WebView] Cannot summarize: AI not available');
+                console.warn('[WebView] Cannot summarize: AI not available. enabled=', aiSummaryEnabledState, ', provider=', aiActiveProviderState);
                 vscode.postMessage({
                     command: 'alert',
                     text: 'AI summarization is not available. Please check AI configuration.'
@@ -3204,6 +3604,160 @@
                 return;
             }
 
+            // If only 1 message, summarize directly without showing options
+            if (chatMessages.length === 1) {
+                console.log('[WebView] Only 1 message, summarizing directly');
+                executeSummarize(chatMessages);
+                return;
+            }
+
+            // More than 1 message - show options modal to let user choose
+            console.log('[WebView] Multiple messages detected, showing options modal');
+            openSummarizeOptionsModal();
+        }
+
+        /**
+         * Open the summarize options modal.
+         */
+        function openSummarizeOptionsModal() {
+            console.log('[WebView] Opening summarize options modal, element exists:', !!summarizeOptionsModal);
+            if (!summarizeOptionsModal) {
+                console.error('[WebView] summarizeOptionsModal element not found!');
+                return;
+            }
+            summarizeOptionsModal.classList.remove('hidden');
+            console.log('[WebView] Modal classList after remove hidden:', summarizeOptionsModal.classList.toString());
+            // Update message count
+            if (summarizeAllCount) {
+                summarizeAllCount.textContent = `${chatMessages.length} messages`;
+            }
+        }
+
+        /**
+         * Close the summarize options modal.
+         */
+        function closeSummarizeOptionsModal() {
+            summarizeOptionsModal.classList.add('hidden');
+        }
+
+        /**
+         * Handle "Summarize All" button click.
+         * Summarizes all messages in the chat.
+         */
+        function handleSummarizeAll() {
+            closeSummarizeOptionsModal();
+            executeSummarize(chatMessages);
+        }
+
+        /**
+         * Open the message selection modal.
+         */
+        function openMessageSelectionModal() {
+            closeSummarizeOptionsModal();
+            messageSelectionModal.classList.remove('hidden');
+            selectedMessageIndices.clear();
+            populateMessageSelectionList();
+            updateSelectedCount();
+        }
+
+        /**
+         * Close the message selection modal.
+         */
+        function closeMessageSelectionModal() {
+            messageSelectionModal.classList.add('hidden');
+        }
+
+        /**
+         * Populate the message selection list with checkboxes.
+         */
+        function populateMessageSelectionList() {
+            messageSelectionList.innerHTML = '';
+            chatMessages.forEach((msg, index) => {
+                const messageItem = document.createElement('div');
+                messageItem.className = 'flex items-start gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors';
+
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.id = `msg-checkbox-${index}`;
+                checkbox.className = 'mt-1 h-4 w-4 rounded border-gray-600 bg-gray-700 text-purple-600 focus:ring-purple-500 cursor-pointer';
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        selectedMessageIndices.add(index);
+                    } else {
+                        selectedMessageIndices.delete(index);
+                    }
+                    updateSelectedCount();
+                });
+
+                const label = document.createElement('label');
+                label.htmlFor = `msg-checkbox-${index}`;
+                label.className = 'flex-1 cursor-pointer';
+
+                const roleSpan = document.createElement('span');
+                roleSpan.className = msg.role === 'host' ? 'text-amber-400 text-xs font-medium' : 'text-blue-400 text-xs font-medium';
+                roleSpan.textContent = msg.role === 'host' ? 'Host' : 'Engineer';
+
+                const textSpan = document.createElement('span');
+                textSpan.className = 'text-gray-300 text-sm block mt-1';
+                textSpan.textContent = msg.text.length > 100 ? msg.text.substring(0, 100) + '...' : msg.text;
+
+                label.appendChild(roleSpan);
+                label.appendChild(textSpan);
+
+                messageItem.appendChild(checkbox);
+                messageItem.appendChild(label);
+                messageSelectionList.appendChild(messageItem);
+            });
+        }
+
+        /**
+         * Update the selected messages count display.
+         */
+        function updateSelectedCount() {
+            selectedMessagesCount.textContent = `${selectedMessageIndices.size} selected`;
+            btnConfirmMessageSelection.disabled = selectedMessageIndices.size === 0;
+        }
+
+        /**
+         * Select all messages in the selection list.
+         */
+        function handleSelectAllMessages() {
+            chatMessages.forEach((_, index) => selectedMessageIndices.add(index));
+            document.querySelectorAll('#message-selection-list input[type="checkbox"]').forEach(cb => cb.checked = true);
+            updateSelectedCount();
+        }
+
+        /**
+         * Deselect all messages in the selection list.
+         */
+        function handleDeselectAllMessages() {
+            selectedMessageIndices.clear();
+            document.querySelectorAll('#message-selection-list input[type="checkbox"]').forEach(cb => cb.checked = false);
+            updateSelectedCount();
+        }
+
+        /**
+         * Handle confirm button click in message selection modal.
+         * Summarizes only the selected messages.
+         */
+        function handleConfirmMessageSelection() {
+            if (selectedMessageIndices.size === 0) return;
+
+            closeMessageSelectionModal();
+
+            // Get selected messages in order
+            const selectedMessages = Array.from(selectedMessageIndices)
+                .sort((a, b) => a - b)
+                .map(index => chatMessages[index]);
+
+            executeSummarize(selectedMessages);
+        }
+
+        /**
+         * Execute the summarization with the given messages.
+         * @param {Array} messages - The messages to summarize
+         */
+        function executeSummarize(messages) {
             // Open modal and show loading state
             openSummaryModal();
 
@@ -3215,17 +3769,19 @@
                 btnSummarizeText.textContent = 'Summarizing...';
             }
 
-            console.log('[WebView] Requesting summary for', chatMessages.length, 'messages');
+            console.log('[WebView] Requesting summary for', messages.length, 'messages');
 
             // Request summary from extension with properly formatted messages
             vscode.postMessage({
                 command: 'summarize',
-                messages: chatMessages
+                messages: messages
             });
         }
 
         /**
          * Handle summarize response from extension.
+         * Since the summary is now posted as an AI message in chat,
+         * this just closes the modal on success.
          * @param {Object} data - The structured summary response or error
          */
         function handleSummarizeResponse(data) {
@@ -3248,63 +3804,10 @@
                 return;
             }
 
-            // Store summary data for code prompt generation
-            currentSummaryData = data;
-
-            // Display structured summary
-            summaryError.classList.add('hidden');
-            summaryContent.classList.remove('hidden');
-
-            // Topic
-            summaryTopic.textContent = data.topic || 'No topic identified';
-
-            // Problem Statement
-            summaryProblem.textContent = data.problem_statement || 'No problem statement identified';
-
-            // Proposed Solution
-            summarySolution.textContent = data.proposed_solution || 'No solution proposed';
-
-            // Risk Level with color coding
-            const riskLevel = data.risk_level || 'low';
-            summaryRisk.textContent = riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1);
-            if (riskLevel === 'high') {
-                summaryRisk.className = 'px-2 py-0.5 rounded text-xs font-medium bg-red-600 text-white';
-            } else if (riskLevel === 'medium') {
-                summaryRisk.className = 'px-2 py-0.5 rounded text-xs font-medium bg-yellow-600 text-white';
-            } else {
-                summaryRisk.className = 'px-2 py-0.5 rounded text-xs font-medium bg-green-600 text-white';
-            }
-
-            // Affected Components
-            const components = data.affected_components || [];
-            if (components.length > 0) {
-                summaryComponentsSection.classList.remove('hidden');
-                summaryComponents.innerHTML = components.map(c =>
-                    `<span class="px-2 py-1 bg-gray-700 text-gray-200 text-xs rounded">${escapeHtml(c)}</span>`
-                ).join('');
-            } else {
-                summaryComponentsSection.classList.add('hidden');
-            }
-
-            // Next Steps
-            const steps = data.next_steps || [];
-            if (steps.length > 0) {
-                summaryStepsSection.classList.remove('hidden');
-                summarySteps.innerHTML = steps.map(s =>
-                    `<li>${escapeHtml(s)}</li>`
-                ).join('');
-            } else {
-                summaryStepsSection.classList.add('hidden');
-            }
-
-            // Code Change Required section
-            if (data.requires_code_change) {
-                summaryCodeChangeSection.classList.remove('hidden');
-            } else {
-                summaryCodeChangeSection.classList.add('hidden');
-            }
-
-            console.log('[WebView] Summary displayed successfully');
+            // Success - the summary is now posted as an AI message in chat
+            // Close the modal since the summary appears in the chat
+            closeSummaryModal();
+            console.log('[WebView] Summary posted to chat successfully');
         }
 
         // Summary modal event listeners
@@ -3316,6 +3819,40 @@
         }
         if (summaryModalBackdrop) {
             summaryModalBackdrop.addEventListener('click', closeSummaryModal);
+        }
+
+        // Summarize options modal event listeners
+        if (btnCloseSummarizeOptions) {
+            btnCloseSummarizeOptions.addEventListener('click', closeSummarizeOptionsModal);
+        }
+        if (summarizeOptionsBackdrop) {
+            summarizeOptionsBackdrop.addEventListener('click', closeSummarizeOptionsModal);
+        }
+        if (btnSummarizeAll) {
+            btnSummarizeAll.addEventListener('click', handleSummarizeAll);
+        }
+        if (btnSummarizeSelect) {
+            btnSummarizeSelect.addEventListener('click', openMessageSelectionModal);
+        }
+
+        // Message selection modal event listeners
+        if (btnCloseMessageSelection) {
+            btnCloseMessageSelection.addEventListener('click', closeMessageSelectionModal);
+        }
+        if (messageSelectionBackdrop) {
+            messageSelectionBackdrop.addEventListener('click', closeMessageSelectionModal);
+        }
+        if (btnSelectAllMessages) {
+            btnSelectAllMessages.addEventListener('click', handleSelectAllMessages);
+        }
+        if (btnDeselectAllMessages) {
+            btnDeselectAllMessages.addEventListener('click', handleDeselectAllMessages);
+        }
+        if (btnCancelMessageSelection) {
+            btnCancelMessageSelection.addEventListener('click', closeMessageSelectionModal);
+        }
+        if (btnConfirmMessageSelection) {
+            btnConfirmMessageSelection.addEventListener('click', handleConfirmMessageSelection);
         }
 
         /**
@@ -3378,6 +3915,54 @@
                 codePromptTextarea.value = data.code_prompt;
 
                 console.log('[WebView] Code prompt generated successfully');
+            }
+        }
+
+        /**
+         * Handle code prompt post result from extension.
+         * This is called after the code prompt is posted to chat as an AI message.
+         * @param {Object} data - The result with success or error
+         */
+        function handleCodePromptPostResponse(data) {
+            if (data.error) {
+                console.error('[WebView] Code prompt post error:', data.error);
+                // Re-enable button on error so user can retry
+                if (currentCodePromptButtonId) {
+                    const btn = document.getElementById(currentCodePromptButtonId);
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                            Generate Code Prompt
+                        `;
+                    }
+                    currentCodePromptButtonId = null;
+                }
+                // Show error to user
+                vscode.postMessage({
+                    command: 'alert',
+                    text: `Failed to post code prompt: ${data.error}`
+                });
+            } else if (data.success) {
+                console.log('[WebView] Code prompt posted to chat successfully');
+                // Update button to "Done" state
+                if (currentCodePromptButtonId) {
+                    const btn = document.getElementById(currentCodePromptButtonId);
+                    if (btn) {
+                        btn.disabled = true;
+                        btn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                        btn.classList.add('bg-green-600', 'cursor-not-allowed');
+                        btn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                            </svg>
+                            Done
+                        `;
+                    }
+                    currentCodePromptButtonId = null;
+                }
             }
         }
 

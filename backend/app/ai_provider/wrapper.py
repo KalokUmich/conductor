@@ -19,7 +19,8 @@ from typing import List, Optional
 from fastapi import HTTPException
 
 from .base import ChatMessage, DecisionSummary
-from .prompts import get_code_prompt
+from .pipeline import PipelineSummary, run_summary_pipeline
+from .prompts import get_code_prompt, get_selective_code_prompt
 from .resolver import get_resolver
 
 logger = logging.getLogger(__name__)
@@ -227,3 +228,197 @@ def call_summary_http(messages: List[ChatMessage]) -> DecisionSummary:
     except AIProviderError as e:
         raise handle_provider_error(e)
 
+
+def call_summary_pipeline(messages: List[ChatMessage]) -> PipelineSummary:
+    """Call the two-stage AI summary pipeline.
+
+    This function runs the complete pipeline:
+    1. Classification: Determine the discussion type
+    2. Targeted Summary: Generate a specialized summary
+
+    Args:
+        messages: List of ChatMessage objects to process.
+
+    Returns:
+        PipelineSummary with structured summary data and classification metadata.
+
+    Raises:
+        ProviderNotAvailableError: If no provider is available (503).
+        JSONParseError: If AI response parsing fails (500).
+        ProviderCallError: If the provider call fails (500).
+    """
+    provider, provider_name, _ = _get_active_provider()
+
+    logger.info(
+        f"Starting summary pipeline with provider: {provider_name}, "
+        f"messages: {len(messages)}"
+    )
+
+    try:
+        summary = run_summary_pipeline(messages, provider)
+        logger.info(
+            f"Pipeline complete with provider: {provider_name}, "
+            f"type={summary.discussion_type}, confidence={summary.classification_confidence:.2f}"
+        )
+        return summary
+
+    except ValueError as e:
+        # ValueError is raised when JSON parsing fails in the pipeline
+        error_msg = str(e)
+        logger.error(f"JSON parsing error in pipeline from {provider_name}: {error_msg}")
+        raise JSONParseError(error_msg, provider_name)
+
+    except Exception as e:
+        # Catch-all for other errors
+        error_msg = str(e)
+        logger.error(f"Provider {provider_name} error during pipeline: {error_msg}")
+        raise ProviderCallError(error_msg, provider_name)
+
+
+def call_summary_pipeline_http(messages: List[ChatMessage]) -> PipelineSummary:
+    """Call summary pipeline with automatic HTTP exception conversion.
+
+    Convenience wrapper that catches AIProviderError and converts
+    to HTTPException for use in FastAPI endpoints.
+
+    Args:
+        messages: List of ChatMessage objects to process.
+
+    Returns:
+        PipelineSummary with structured summary data.
+
+    Raises:
+        HTTPException: On any provider error.
+    """
+    try:
+        return call_summary_pipeline(messages)
+    except AIProviderError as e:
+        raise handle_provider_error(e)
+
+
+def pipeline_summary_to_decision_summary(pipeline_summary: PipelineSummary) -> DecisionSummary:
+    """Convert a PipelineSummary to a DecisionSummary for backward compatibility.
+
+    Maps the new pipeline fields to the legacy DecisionSummary format.
+
+    Args:
+        pipeline_summary: The PipelineSummary to convert.
+
+    Returns:
+        DecisionSummary with mapped fields.
+    """
+    return DecisionSummary(
+        type="decision_summary",
+        topic=pipeline_summary.topic,
+        problem_statement=pipeline_summary.core_problem,  # Map core_problem -> problem_statement
+        proposed_solution=pipeline_summary.proposed_solution,
+        requires_code_change=pipeline_summary.requires_code_change,
+        affected_components=pipeline_summary.affected_components,
+        risk_level=pipeline_summary.risk_level,
+        next_steps=pipeline_summary.next_steps,
+    )
+
+
+def filter_code_relevant_summaries(
+    summaries: List[dict],
+    code_relevant_types: List[str],
+) -> List[dict]:
+    """Filter summaries to only include code-relevant types.
+
+    This ensures only code-relevant discussion summaries are passed
+    to the AI for code prompt generation, excluding innovation-only
+    or product brainstorming sections.
+
+    Args:
+        summaries: List of summary dictionaries with discussion_type.
+        code_relevant_types: List of discussion types considered code-relevant.
+
+    Returns:
+        Filtered list containing only summaries with code-relevant types.
+    """
+    if not code_relevant_types:
+        logger.warning("No code_relevant_types specified, returning empty list")
+        return []
+
+    filtered = []
+    for summary in summaries:
+        # Handle both dict and object-like summaries
+        if hasattr(summary, "discussion_type"):
+            disc_type = summary.discussion_type
+        else:
+            disc_type = summary.get("discussion_type", "")
+
+        if disc_type in code_relevant_types:
+            filtered.append(summary)
+            logger.debug(f"Including summary of type '{disc_type}' in code prompt")
+        else:
+            logger.debug(f"Excluding summary of type '{disc_type}' - not in code_relevant_types")
+
+    logger.info(
+        f"Filtered {len(summaries)} summaries to {len(filtered)} code-relevant summaries"
+    )
+    return filtered
+
+
+def call_selective_code_prompt(
+    primary_focus: str,
+    impact_scope: str,
+    summaries: List[dict],
+    code_relevant_types: List[str],
+    context_snippet: Optional[str] = None,
+) -> tuple:
+    """Generate a selective code prompt from multi-type summaries.
+
+    This function:
+    1. Filters summaries to only include code-relevant types
+    2. Merges information from multiple summaries if needed
+    3. Generates a focused coding task prompt
+
+    Important: Only code-relevant summaries are included. Innovation-only
+    or pure product brainstorming sections are excluded.
+
+    Args:
+        primary_focus: The primary focus area of the implementation.
+        impact_scope: The scope of impact (local, module, system, cross-system).
+        summaries: List of all summary dictionaries.
+        code_relevant_types: List of types to include in code prompt.
+        context_snippet: Optional code snippet for context.
+
+    Returns:
+        Tuple of (code_prompt_str, filtered_types_used)
+    """
+    logger.info(
+        f"Generating selective code prompt with {len(summaries)} summaries, "
+        f"code_relevant_types={code_relevant_types}"
+    )
+
+    # Filter to only code-relevant summaries
+    filtered_summaries = filter_code_relevant_summaries(summaries, code_relevant_types)
+
+    if not filtered_summaries:
+        logger.warning("No code-relevant summaries after filtering")
+        return (
+            "No code-relevant discussion summaries available for code generation.",
+            []
+        )
+
+    # Track which types were actually used
+    types_used = list(set(
+        s.discussion_type if hasattr(s, "discussion_type") else s.get("discussion_type", "")
+        for s in filtered_summaries
+    ))
+
+    # Generate the selective code prompt
+    code_prompt = get_selective_code_prompt(
+        primary_focus=primary_focus,
+        impact_scope=impact_scope,
+        summaries=filtered_summaries,
+        context_snippet=context_snippet,
+    )
+
+    logger.info(
+        f"Generated selective code prompt with {len(code_prompt)} characters, "
+        f"using types: {types_used}"
+    )
+
+    return code_prompt, types_used

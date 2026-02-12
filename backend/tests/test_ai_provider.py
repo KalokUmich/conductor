@@ -806,21 +806,26 @@ class TestSummarizeEndpoint:
             resolver.resolve()
             set_resolver(resolver)
 
-            # Mock summarize_structured to return a DecisionSummary
-            mock_summary = DecisionSummary(
-                type="decision_summary",
-                topic="Test topic",
-                problem_statement="Test problem",
-                proposed_solution="Test solution",
-                requires_code_change=True,
-                affected_components=["file1.py", "file2.py"],
-                risk_level="medium",
-                next_steps=["Step 1", "Step 2"]
-            )
+            # Mock call_model for the pipeline (classification + summary)
             with patch.object(
                 resolver.active_provider,
-                "summarize_structured",
-                return_value=mock_summary
+                "call_model",
+                side_effect=[
+                    # First call: classification
+                    json.dumps({"discussion_type": "general", "confidence": 0.8}),
+                    # Second call: targeted summary
+                    json.dumps({
+                        "type": "decision_summary",
+                        "topic": "Test topic",
+                        "core_problem": "Test problem",
+                        "proposed_solution": "Test solution",
+                        "requires_code_change": True,
+                        "impact_scope": "module",
+                        "affected_components": ["file1.py", "file2.py"],
+                        "risk_level": "medium",
+                        "next_steps": ["Step 1", "Step 2"]
+                    })
+                ]
             ):
                 client = TestClient(test_app)
                 response = client.post(
@@ -838,12 +843,15 @@ class TestSummarizeEndpoint:
                 # Verify all required JSON keys exist
                 assert data["type"] == "decision_summary"
                 assert data["topic"] == "Test topic"
-                assert data["problem_statement"] == "Test problem"
+                assert data["problem_statement"] == "Test problem"  # Mapped from core_problem
                 assert data["proposed_solution"] == "Test solution"
                 assert data["requires_code_change"] is True
                 assert data["affected_components"] == ["file1.py", "file2.py"]
                 assert data["risk_level"] == "medium"
                 assert data["next_steps"] == ["Step 1", "Step 2"]
+                # Verify pipeline metadata
+                assert data["discussion_type"] == "general"
+                assert data["classification_confidence"] == 0.8
 
         # Clean up
         set_resolver(None)
@@ -1461,17 +1469,25 @@ class TestSummarizeEndpointWithMockProvider:
             resolver.resolve()
             set_resolver(resolver)
 
-            mock_summary = DecisionSummary(
-                type="decision_summary",
-                topic="Multi-role discussion",
-                problem_statement="Complex problem",
-                proposed_solution="Team solution",
-                requires_code_change=True,
-                affected_components=["api.py"],
-                risk_level="high",
-                next_steps=["Review", "Implement"]
-            )
-            with patch.object(resolver.active_provider, "summarize_structured", return_value=mock_summary):
+            # Mock call_model for the pipeline
+            with patch.object(
+                resolver.active_provider,
+                "call_model",
+                side_effect=[
+                    json.dumps({"discussion_type": "api_design", "confidence": 0.9}),
+                    json.dumps({
+                        "type": "decision_summary",
+                        "topic": "Multi-role discussion",
+                        "core_problem": "Complex problem",
+                        "proposed_solution": "Team solution",
+                        "requires_code_change": True,
+                        "impact_scope": "module",
+                        "affected_components": ["api.py"],
+                        "risk_level": "high",
+                        "next_steps": ["Review", "Implement"]
+                    })
+                ]
+            ):
                 client = TestClient(test_app)
                 response = client.post("/ai/summarize", json={
                     "messages": [
@@ -1512,17 +1528,25 @@ class TestSummarizeEndpointWithMockProvider:
             resolver.resolve()
             set_resolver(resolver)
 
-            mock_summary = DecisionSummary(
-                type="decision_summary",
-                topic="Long discussion",
-                problem_statement="Detailed problem",
-                proposed_solution="Comprehensive solution",
-                requires_code_change=False,
-                affected_components=[],
-                risk_level="low",
-                next_steps=[]
-            )
-            with patch.object(resolver.active_provider, "summarize_structured", return_value=mock_summary):
+            # Mock call_model for the pipeline
+            with patch.object(
+                resolver.active_provider,
+                "call_model",
+                side_effect=[
+                    json.dumps({"discussion_type": "general", "confidence": 0.7}),
+                    json.dumps({
+                        "type": "decision_summary",
+                        "topic": "Long discussion",
+                        "core_problem": "Detailed problem",
+                        "proposed_solution": "Comprehensive solution",
+                        "requires_code_change": False,
+                        "impact_scope": "local",
+                        "affected_components": [],
+                        "risk_level": "low",
+                        "next_steps": []
+                    })
+                ]
+            ):
                 client = TestClient(test_app)
                 # Create a long message (10KB of text)
                 long_text = "This is a detailed technical discussion. " * 250
@@ -1573,17 +1597,25 @@ class TestSummarizeEndpointWithMockProvider:
             # Should have fallen back to claude_direct
             assert resolver.active_provider_name == "claude_direct"
 
-            mock_summary = DecisionSummary(
-                type="decision_summary",
-                topic="Fallback test",
-                problem_statement="Test",
-                proposed_solution="Solution",
-                requires_code_change=False,
-                affected_components=[],
-                risk_level="low",
-                next_steps=[]
-            )
-            with patch.object(resolver.active_provider, "summarize_structured", return_value=mock_summary):
+            # Mock call_model for the pipeline
+            with patch.object(
+                resolver.active_provider,
+                "call_model",
+                side_effect=[
+                    json.dumps({"discussion_type": "general", "confidence": 0.6}),
+                    json.dumps({
+                        "type": "decision_summary",
+                        "topic": "Fallback test",
+                        "core_problem": "Test",
+                        "proposed_solution": "Solution",
+                        "requires_code_change": False,
+                        "impact_scope": "local",
+                        "affected_components": [],
+                        "risk_level": "low",
+                        "next_steps": []
+                    })
+                ]
+            ):
                 client = TestClient(test_app)
                 response = client.post("/ai/summarize", json={
                     "messages": [{"role": "host", "text": "Test", "timestamp": 1000}]
@@ -1640,17 +1672,25 @@ class TestSummarizeEndpointWithMockProvider:
             resolver.resolve()
             set_resolver(resolver)
 
-            mock_summary = DecisionSummary(
-                type="decision_summary",
-                topic="Special chars",
-                problem_statement="Test <script>alert('xss')</script>",
-                proposed_solution="Sanitize input",
-                requires_code_change=True,
-                affected_components=["security.py"],
-                risk_level="high",
-                next_steps=["Review"]
-            )
-            with patch.object(resolver.active_provider, "summarize_structured", return_value=mock_summary):
+            # Mock call_model for the pipeline
+            with patch.object(
+                resolver.active_provider,
+                "call_model",
+                side_effect=[
+                    json.dumps({"discussion_type": "debugging", "confidence": 0.85}),
+                    json.dumps({
+                        "type": "decision_summary",
+                        "topic": "Special chars",
+                        "core_problem": "Test <script>alert('xss')</script>",
+                        "proposed_solution": "Sanitize input",
+                        "requires_code_change": True,
+                        "impact_scope": "module",
+                        "affected_components": ["security.py"],
+                        "risk_level": "high",
+                        "next_steps": ["Review"]
+                    })
+                ]
+            ):
                 client = TestClient(test_app)
                 response = client.post("/ai/summarize", json={
                     "messages": [
@@ -1955,3 +1995,261 @@ class TestAIStatusEndpointHealthChecks:
         assert "providers" in data
         assert isinstance(data["summary_enabled"], bool)
         assert isinstance(data["providers"], list)
+
+
+class TestAISummaryPipeline:
+    """Tests for the two-stage AI summary pipeline."""
+
+    def test_strip_markdown_code_block(self):
+        """Test markdown code block stripping helper."""
+        from app.ai_provider.pipeline import _strip_markdown_code_block
+
+        # Test with json code block
+        text = '```json\n{"key": "value"}\n```'
+        assert _strip_markdown_code_block(text) == '{"key": "value"}'
+
+        # Test with plain code block
+        text = '```\n{"key": "value"}\n```'
+        assert _strip_markdown_code_block(text) == '{"key": "value"}'
+
+        # Test without code block
+        text = '{"key": "value"}'
+        assert _strip_markdown_code_block(text) == '{"key": "value"}'
+
+    def test_classify_discussion_empty_messages(self):
+        """Test classification with empty messages defaults to general."""
+        from app.ai_provider.pipeline import classify_discussion, ClassificationResult
+
+        mock_provider = MagicMock()
+        result = classify_discussion([], mock_provider)
+
+        assert isinstance(result, ClassificationResult)
+        assert result.discussion_type == "general"
+        assert result.confidence == 0.0
+        mock_provider.call_model.assert_not_called()
+
+    def test_classify_discussion_success(self):
+        """Test successful discussion classification."""
+        from app.ai_provider.pipeline import classify_discussion, ClassificationResult
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps({
+            "discussion_type": "api_design",
+            "confidence": 0.85
+        })
+
+        messages = [
+            ChatMessage(role="host", text="Let's design a new REST API", timestamp=1234567890),
+            ChatMessage(role="engineer", text="I suggest using POST for creation", timestamp=1234567891),
+        ]
+
+        result = classify_discussion(messages, mock_provider)
+
+        assert isinstance(result, ClassificationResult)
+        assert result.discussion_type == "api_design"
+        assert result.confidence == 0.85
+        mock_provider.call_model.assert_called_once()
+
+    def test_classify_discussion_with_markdown_wrapper(self):
+        """Test classification handles markdown-wrapped response."""
+        from app.ai_provider.pipeline import classify_discussion
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '```json\n{"discussion_type": "debugging", "confidence": 0.9}\n```'
+
+        messages = [ChatMessage(role="host", text="The app is crashing", timestamp=1234567890)]
+        result = classify_discussion(messages, mock_provider)
+
+        assert result.discussion_type == "debugging"
+        assert result.confidence == 0.9
+
+    def test_classify_discussion_invalid_type_defaults_to_general(self):
+        """Test classification defaults to general for invalid types."""
+        from app.ai_provider.pipeline import classify_discussion
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps({
+            "discussion_type": "unknown_type",
+            "confidence": 0.5
+        })
+
+        messages = [ChatMessage(role="host", text="Hello", timestamp=1234567890)]
+        result = classify_discussion(messages, mock_provider)
+
+        assert result.discussion_type == "general"
+
+    def test_classify_discussion_invalid_json_raises_error(self):
+        """Test classification raises ValueError for invalid JSON."""
+        from app.ai_provider.pipeline import classify_discussion
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = "not valid json"
+
+        messages = [ChatMessage(role="host", text="Hello", timestamp=1234567890)]
+
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            classify_discussion(messages, mock_provider)
+
+    def test_generate_targeted_summary_empty_messages(self):
+        """Test targeted summary with empty messages returns default."""
+        from app.ai_provider.pipeline import generate_targeted_summary, PipelineSummary
+
+        mock_provider = MagicMock()
+        result = generate_targeted_summary([], mock_provider, "general")
+
+        assert isinstance(result, PipelineSummary)
+        assert result.discussion_type == "general"
+        mock_provider.call_model.assert_not_called()
+
+    def test_generate_targeted_summary_success(self):
+        """Test successful targeted summary generation."""
+        from app.ai_provider.pipeline import generate_targeted_summary, PipelineSummary
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps({
+            "type": "decision_summary",
+            "topic": "API Design Discussion",
+            "core_problem": "Need new endpoints",
+            "proposed_solution": "Create REST API",
+            "requires_code_change": True,
+            "impact_scope": "module",
+            "affected_components": ["api.py", "router.py"],
+            "risk_level": "medium",
+            "next_steps": ["Design endpoints", "Write tests"]
+        })
+
+        messages = [
+            ChatMessage(role="host", text="Let's design the API", timestamp=1234567890),
+        ]
+
+        result = generate_targeted_summary(messages, mock_provider, "api_design")
+
+        assert isinstance(result, PipelineSummary)
+        assert result.topic == "API Design Discussion"
+        assert result.core_problem == "Need new endpoints"
+        assert result.proposed_solution == "Create REST API"
+        assert result.requires_code_change is True
+        assert result.impact_scope == "module"
+        assert result.affected_components == ["api.py", "router.py"]
+        assert result.risk_level == "medium"
+        assert result.next_steps == ["Design endpoints", "Write tests"]
+        assert result.discussion_type == "api_design"
+
+    def test_generate_targeted_summary_invalid_json_raises_error(self):
+        """Test targeted summary raises ValueError for invalid JSON."""
+        from app.ai_provider.pipeline import generate_targeted_summary
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = "not valid json"
+
+        messages = [ChatMessage(role="host", text="Hello", timestamp=1234567890)]
+
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            generate_targeted_summary(messages, mock_provider, "general")
+
+    def test_infer_requires_code_change_for_code_change_type(self):
+        """Test code_change type always requires code change."""
+        from app.ai_provider.pipeline import _infer_requires_code_change
+
+        # Even if AI says false, code_change type should be true
+        data = {"requires_code_change": False}
+        assert _infer_requires_code_change(data, "code_change") is True
+
+    def test_infer_requires_code_change_for_debugging_with_solution(self):
+        """Test debugging with solution requires code change."""
+        from app.ai_provider.pipeline import _infer_requires_code_change
+
+        data = {
+            "requires_code_change": False,
+            "proposed_solution": "We need to fix this bug by adding null checks in the handler"
+        }
+        assert _infer_requires_code_change(data, "debugging") is True
+
+    def test_infer_requires_code_change_for_api_design_with_components(self):
+        """Test api_design with components requires code change."""
+        from app.ai_provider.pipeline import _infer_requires_code_change
+
+        data = {
+            "requires_code_change": False,
+            "affected_components": ["api.py"]
+        }
+        assert _infer_requires_code_change(data, "api_design") is True
+
+    def test_infer_requires_code_change_respects_ai_for_other_types(self):
+        """Test general type respects AI assessment."""
+        from app.ai_provider.pipeline import _infer_requires_code_change
+
+        data = {"requires_code_change": False}
+        assert _infer_requires_code_change(data, "general") is False
+
+        data = {"requires_code_change": True}
+        assert _infer_requires_code_change(data, "general") is True
+
+    def test_run_summary_pipeline_complete(self):
+        """Test complete pipeline execution."""
+        from app.ai_provider.pipeline import run_summary_pipeline, PipelineSummary
+        from app.ai_provider import ChatMessage
+
+        mock_provider = MagicMock()
+        # First call for classification
+        mock_provider.call_model.side_effect = [
+            json.dumps({"discussion_type": "code_change", "confidence": 0.95}),
+            json.dumps({
+                "type": "decision_summary",
+                "topic": "Bug Fix",
+                "core_problem": "Null pointer error",
+                "proposed_solution": "Add null check",
+                "requires_code_change": True,
+                "impact_scope": "local",
+                "affected_components": ["handler.py"],
+                "risk_level": "low",
+                "next_steps": ["Fix the bug"]
+            })
+        ]
+
+        messages = [
+            ChatMessage(role="host", text="There's a bug in handler.py", timestamp=1234567890),
+            ChatMessage(role="engineer", text="I'll add a null check", timestamp=1234567891),
+        ]
+
+        result = run_summary_pipeline(messages, mock_provider)
+
+        assert isinstance(result, PipelineSummary)
+        assert result.discussion_type == "code_change"
+        assert result.classification_confidence == 0.95
+        assert result.topic == "Bug Fix"
+        assert result.requires_code_change is True  # code_change type always true
+        assert mock_provider.call_model.call_count == 2
+
+    def test_pipeline_summary_dataclass_defaults(self):
+        """Test PipelineSummary dataclass default values."""
+        from app.ai_provider.pipeline import PipelineSummary
+
+        summary = PipelineSummary()
+
+        assert summary.type == "decision_summary"
+        assert summary.topic == ""
+        assert summary.core_problem == ""
+        assert summary.proposed_solution == ""
+        assert summary.requires_code_change is False
+        assert summary.impact_scope == "local"
+        assert summary.affected_components == []
+        assert summary.risk_level == "low"
+        assert summary.next_steps == []
+        assert summary.discussion_type == "general"
+        assert summary.classification_confidence == 0.0
+
+    def test_classification_result_dataclass(self):
+        """Test ClassificationResult dataclass."""
+        from app.ai_provider.pipeline import ClassificationResult
+
+        result = ClassificationResult(discussion_type="api_design", confidence=0.9)
+
+        assert result.discussion_type == "api_design"
+        assert result.confidence == 0.9

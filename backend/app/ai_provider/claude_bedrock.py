@@ -28,14 +28,20 @@ class ClaudeBedrockProvider(AIProvider):
     This provider connects to Claude through AWS Bedrock, which requires
     AWS credentials with appropriate Bedrock permissions.
 
+    Note: Newer Claude models (like Claude Sonnet 4) require using cross-region
+    inference profiles instead of direct model IDs. The default uses the US
+    inference profile for Claude Sonnet 4.
+
     Attributes:
         aws_access_key_id: AWS access key ID.
         aws_secret_access_key: AWS secret access key.
         region_name: AWS region for Bedrock service.
-        model_id: Bedrock model ID for Claude.
+        model_id: Bedrock model ID or inference profile ID for Claude.
     """
 
-    DEFAULT_MODEL_ID = "anthropic.claude-sonnet-4-5-20250929-v1:0"
+    # Use cross-region inference profile for Claude Sonnet 4
+    # Format: {region}.{model_id} for inference profiles
+    DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     DEFAULT_REGION = "us-east-1"
 
     def __init__(
@@ -182,6 +188,17 @@ class ClaudeBedrockProvider(AIProvider):
         response_body = json.loads(response["body"].read())
         response_text = response_body["content"][0]["text"].strip()
 
+        # Remove markdown code block wrapper if present
+        # AI sometimes returns ```json ... ``` wrapped response
+        if response_text.startswith("```"):
+            # Find the end of the first line (```json or ```)
+            first_newline = response_text.find("\n")
+            if first_newline != -1:
+                response_text = response_text[first_newline + 1:]
+            # Remove trailing ```
+            if response_text.endswith("```"):
+                response_text = response_text[:-3].strip()
+
         # Parse JSON response
         try:
             data = json.loads(response_text)
@@ -200,3 +217,37 @@ class ClaudeBedrockProvider(AIProvider):
             risk_level=data.get("risk_level", "low"),
             next_steps=data.get("next_steps", []),
         )
+
+    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+        """Call the Claude model via Bedrock with a raw prompt.
+
+        Args:
+            prompt: The prompt to send to the model.
+            max_tokens: Maximum tokens in the response.
+
+        Returns:
+            str: The model's response text.
+
+        Raises:
+            Exception: If the API call fails.
+        """
+        client = self._get_client()
+
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": max_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        })
+
+        response = client.invoke_model(
+            modelId=self.model_id,
+            body=body,
+        )
+
+        response_body = json.loads(response["body"].read())
+        return response_body["content"][0]["text"].strip()

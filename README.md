@@ -7,37 +7,49 @@
 <a name="english"></a>
 ## English
 
-Conductor is a VS Code collaboration extension plus a FastAPI backend for team chat, Live Share session flow, and AI-assisted code-change review.
+Conductor is a VS Code collaboration extension plus a FastAPI backend for team chat, Live Share session flow, file sharing, and AI-assisted decision/code workflows.
 
 ### Current Capabilities
 
-- VS Code WebView collaboration panel
-- Live Share host/join workflow
+- VS Code WebView collaboration panel with FSM-driven session lifecycle:
+  - `Idle`
+  - `BackendDisconnected` (join-only mode)
+  - `ReadyToHost`
+  - `Hosting`
+  - `Joining`
+  - `Joined`
+- Live Share host/join flow with conflict checks before starting a new host session
 - Real-time WebSocket chat with:
-  - reconnection recovery (`since`)
+  - reconnect recovery (`since`)
+  - typing indicators
   - read receipts
+  - message deduplication
   - paginated history
-- File upload/download (20MB max)
-- Code snippet sharing and editor navigation
-- MockAgent-based change generation + diff preview + sequential apply
-- Auto-apply policy evaluation
-- DuckDB audit logging
+- File upload/download (20MB limit, extension-host upload proxy)
+- Code snippet sharing + editor navigation
+- Change review workflow:
+  - `POST /generate-changes` (MockAgent)
+  - policy check (`POST /policy/evaluate-auto-apply`)
+  - per-change diff preview
+  - sequential apply/skip
+  - audit logging (`POST /audit/log-apply`)
+- AI provider workflow:
+  - provider health/status (`GET /ai/status`)
+  - two-stage summary pipeline (`POST /ai/summarize`)
+  - code prompt generation (`POST /ai/code-prompt`)
+  - AI message posting to room (`POST /chat/{room_id}/ai-message`)
 
-### Implemented vs Not Fully Connected
+### Implemented vs Not Fully Wired
 
-Implemented:
-- Session FSM (`Idle`, `BackendDisconnected`, `ReadyToHost`, `Hosting`, `Joining`, `Joined`)
-- Join-only mode when local backend is unavailable
-- Invite page (`GET /invite`) and guest chat page (`GET /chat`)
-- Audit logging, file lifecycle management, policy checks
+Implemented end-to-end:
+- Session FSM + host/join UX
+- Chat/file/snippet workflow
+- AI summarize + code-prompt generation in extension UI
 
-Available backend API but not fully wired in extension UI:
-- `POST /summary` exists in backend
-- `Create Summary` button in WebView is currently a placeholder action
-
-AI generation status:
-- `POST /generate-changes` currently uses deterministic `MockAgent`
-- Real LLM integration is not connected yet
+Still limited:
+- `POST /generate-changes` is deterministic MockAgent output (not LLM edits)
+- Backend supports `POST /ai/code-prompt/selective`, extension currently calls legacy `POST /ai/code-prompt`
+- Legacy `POST /summary` (keyword extraction) still exists but is not extension's main summarize path
 
 ### Architecture (High Level)
 
@@ -52,20 +64,21 @@ VS Code Extension (TypeScript)
              ▼
 Backend (FastAPI)
   ├─ /ws/chat/{room_id} + /chat/*
+  ├─ /ai/* (status, summarize, code prompt)
   ├─ /generate-changes
-  ├─ /policy/evaluate-auto-apply
+  ├─ /policy/*
   ├─ /audit/*
   ├─ /files/*
-  └─ /summary
+  └─ /summary (legacy keyword extractor)
 ```
 
-### Two Role Models (Important)
+### Role Models (Important)
 
 1. Local extension role (`aiCollab.role`): `lead` / `member`
-- Controls UI feature visibility in VS Code extension.
+- Controls extension UI feature access.
 
-2. Backend session role (assigned on WebSocket connect): `host` / `guest`
-- Backend is the source of truth for sensitive operations (for example, ending a session).
+2. Backend session role (WebSocket assigned): `host` / `guest`
+- Backend is authoritative for sensitive actions (for example, ending a session).
 
 ### Project Structure
 
@@ -74,6 +87,7 @@ Backend (FastAPI)
 ├─ backend/
 │  ├─ app/
 │  │  ├─ chat/
+│  │  ├─ ai_provider/
 │  │  ├─ agent/
 │  │  ├─ policy/
 │  │  ├─ audit/
@@ -109,24 +123,25 @@ make run-backend
 - Swagger: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-3. Start extension development host:
+3. Start extension development:
 
 ```bash
 cd extension
 npm run compile
 ```
 
-Open `extension/` in VS Code and press `F5`.
+Then debug in VS Code:
+- Preferred: open repo root and press `F5`, choose `Run VS Code Extension (extension/)`.
+- Alternative: open `extension/` folder directly and press `F5`.
 
-4. Build extension package (VSIX, sometimes referred to as VSX):
+4. Package extension:
 
 ```bash
 cd extension
 npx @vscode/vsce package
 ```
 
-This generates `ai-collab-0.0.1.vsix`.  
-Install it in VS Code via `Extensions: Install from VSIX...`.
+Generates `ai-collab-0.0.1.vsix`.
 
 ### Docs
 
@@ -140,37 +155,49 @@ Install it in VS Code via `Extensions: Install from VSIX...`.
 <a name="中文"></a>
 ## 中文
 
-Conductor 是一个 VS Code 协作扩展 + FastAPI 后端，提供团队聊天、Live Share 会话流程和 AI 代码变更审查能力。
+Conductor 是一个 VS Code 协作扩展 + FastAPI 后端，提供团队聊天、Live Share 会话流程、文件共享，以及 AI 决策/代码协作流程。
 
 ### 当前能力
 
-- VS Code WebView 协作面板
-- Live Share 主持/加入流程
-- WebSocket 实时聊天，支持：
+- 基于状态机的会话生命周期：
+  - `Idle`
+  - `BackendDisconnected`（仅加入模式）
+  - `ReadyToHost`
+  - `Hosting`
+  - `Joining`
+  - `Joined`
+- Live Share 主持/加入流程，启动新会话前会做冲突检查
+- WebSocket 实时聊天：
   - 断线恢复（`since`）
+  - 输入状态
   - 已读回执
+  - 消息去重
   - 历史分页
-- 文件上传/下载（最大 20MB）
+- 文件上传/下载（20MB 上限，上传由 extension host 代理）
 - 代码片段分享与编辑器定位跳转
-- 基于 MockAgent 的变更生成 + Diff 预览 + 顺序应用
-- Auto-Apply 策略评估
-- DuckDB 审计日志
+- 变更审查流程：
+  - `POST /generate-changes`（MockAgent）
+  - 策略评估（`POST /policy/evaluate-auto-apply`）
+  - 单条 Diff 预览
+  - 顺序应用/跳过
+  - 审计日志（`POST /audit/log-apply`）
+- AI 流程：
+  - Provider 状态（`GET /ai/status`）
+  - 两阶段摘要（`POST /ai/summarize`）
+  - 代码提示词生成（`POST /ai/code-prompt`）
+  - AI 消息入房间（`POST /chat/{room_id}/ai-message`）
 
 ### 已实现与未完全接入
 
 已实现：
-- 会话状态机（`Idle`、`BackendDisconnected`、`ReadyToHost`、`Hosting`、`Joining`、`Joined`）
-- 本地后端不可用时的 Join Only 模式
-- 邀请页（`GET /invite`）与访客聊天页（`GET /chat`）
-- 审计、文件生命周期、策略检查
+- 会话状态机 + Host/Guest 交互
+- 聊天/文件/代码片段流程
+- 扩展端 AI 摘要与代码提示词流程
 
-后端已提供但前端尚未完全接入：
-- 后端有 `POST /summary`
-- WebView 的 `Create Summary` 按钮当前仍是占位行为
-
-AI 生成现状：
-- `POST /generate-changes` 当前使用确定性 `MockAgent`
-- 真实 LLM 尚未接入
+仍有限制：
+- `POST /generate-changes` 仍是确定性 MockAgent，不是 LLM 实时改码
+- 后端已支持 `POST /ai/code-prompt/selective`，扩展目前仍调用旧的 `POST /ai/code-prompt`
+- 旧的 `POST /summary`（关键词提取）仍保留，但不是扩展当前主摘要路径
 
 ### 架构概览
 
@@ -185,45 +212,21 @@ VS Code Extension (TypeScript)
              ▼
 Backend (FastAPI)
   ├─ /ws/chat/{room_id} + /chat/*
+  ├─ /ai/*（status/summarize/code-prompt）
   ├─ /generate-changes
-  ├─ /policy/evaluate-auto-apply
+  ├─ /policy/*
   ├─ /audit/*
   ├─ /files/*
-  └─ /summary
+  └─ /summary（旧关键词提取）
 ```
 
-### 两套角色模型（重要）
+### 角色模型（重要）
 
 1. 扩展本地角色（`aiCollab.role`）：`lead` / `member`
-- 决定扩展 UI 功能可见性。
+- 控制扩展 UI 功能入口。
 
 2. 后端会话角色（WebSocket 连接后分配）：`host` / `guest`
-- 后端是敏感操作（如结束会话）的权限判定来源。
-
-### 目录结构
-
-```text
-.
-├─ backend/
-│  ├─ app/
-│  │  ├─ chat/
-│  │  ├─ agent/
-│  │  ├─ policy/
-│  │  ├─ audit/
-│  │  ├─ files/
-│  │  └─ summary/
-│  └─ tests/
-├─ extension/
-│  ├─ src/
-│  └─ media/
-├─ docs/
-│  └─ ARCHITECTURE.md
-├─ config/
-│  └─ conductor.yaml.example
-├─ shared/
-│  └─ changeset.schema.json
-└─ TESTING.md
-```
+- 敏感操作（如结束会话）以后端判定为准。
 
 ### 快速开始
 
@@ -242,32 +245,22 @@ make run-backend
 - Swagger: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
-3. 启动扩展开发调试：
+3. 启动扩展开发：
 
 ```bash
 cd extension
 npm run compile
 ```
 
-在 VS Code 打开 `extension/` 后按 `F5`。
+然后在 VS Code 调试：
+- 推荐：打开仓库根目录，按 `F5`，选择 `Run VS Code Extension (extension/)`
+- 备选：直接打开 `extension/` 后按 `F5`
 
-4. 打包扩展（VSIX，你说的 VSX 一般指这个）：
+4. 打包扩展：
 
 ```bash
 cd extension
 npx @vscode/vsce package
 ```
 
-会生成 `ai-collab-0.0.1.vsix`。  
-在 VS Code 里通过 `Extensions: Install from VSIX...` 安装即可。
-
-### 文档索引
-
-- 后端说明：`backend/README.md`
-- 扩展说明：`extension/README.md`
-- 架构文档：`docs/ARCHITECTURE.md`
-- 测试文档：`TESTING.md`
-
-## License
-
-MIT, see `LICENSE`.
+会生成 `ai-collab-0.0.1.vsix`。

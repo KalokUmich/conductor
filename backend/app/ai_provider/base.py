@@ -127,3 +127,22 @@ class AIProvider(ABC):
         """
         pass
 
+    @abstractmethod
+    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+        """Call the AI model with a raw prompt and return the response text.
+
+        This is a low-level method for direct model interaction, used by
+        the pipeline for classification and targeted summarization.
+
+        Args:
+            prompt: The prompt to send to the model.
+            max_tokens: Maximum tokens in the response (default: 2048).
+
+        Returns:
+            str: The model's response text.
+
+        Raises:
+            Exception: If the API call fails.
+        """
+        pass
+

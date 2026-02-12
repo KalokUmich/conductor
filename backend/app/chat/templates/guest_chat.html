@@ -795,6 +795,150 @@
         }
 
         /**
+         * Render an AI summary message in the UI.
+         * Shows structured summary with special styling.
+         * @param {Object} msg - AI summary message object.
+         */
+        function renderAiSummaryMessage(msg) {
+            const aiData = msg.aiData || {};
+            const displayName = msg.displayName || 'AI Assistant';
+
+            // Check if we need a date separator
+            if (needsDateSeparator(msg)) {
+                renderDateSeparator(new Date(msg.ts * 1000));
+            }
+
+            const div = document.createElement('div');
+            div.className = 'flex justify-start mb-4';
+            div.dataset.messageId = msg.id;
+
+            // Build summary content
+            const riskLevel = aiData.risk_level || 'low';
+            const riskColor = riskLevel === 'high' ? 'bg-red-600' : (riskLevel === 'medium' ? 'bg-yellow-600' : 'bg-green-600');
+
+            const componentsHtml = (aiData.affected_components || []).length > 0
+                ? `<div class="mt-2">
+                    <span class="text-xs text-gray-400">Affected Components:</span>
+                    <div class="flex flex-wrap gap-1 mt-1">
+                        ${aiData.affected_components.map(c => `<span class="px-2 py-0.5 bg-gray-700 text-gray-300 text-xs rounded">${escapeHtml(c)}</span>`).join('')}
+                    </div>
+                </div>`
+                : '';
+
+            const stepsHtml = (aiData.next_steps || []).length > 0
+                ? `<div class="mt-2">
+                    <span class="text-xs text-gray-400">Next Steps:</span>
+                    <ul class="list-disc list-inside text-xs text-gray-300 mt-1">
+                        ${aiData.next_steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
+                    </ul>
+                </div>`
+                : '';
+
+            div.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center text-white text-sm font-bold mr-2 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                    </svg>
+                </div>
+                <div class="max-w-[85%] min-w-0">
+                    <div class="text-xs text-purple-400 mb-1 ml-1">🤖 ${escapeHtml(displayName)}</div>
+                    <div class="bg-gradient-to-br from-purple-900/50 to-indigo-900/50 border border-purple-700/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-sm font-semibold text-purple-300">📋 Decision Summary</span>
+                            <span class="px-2 py-0.5 ${riskColor} text-white text-xs rounded">${riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1)} Risk</span>
+                        </div>
+                        <div class="text-sm font-medium text-white mb-2">${escapeHtml(aiData.topic || 'Summary')}</div>
+                        <div class="text-xs text-gray-300 mb-2">
+                            <span class="text-gray-400">Problem:</span> ${escapeHtml(aiData.problem_statement || '')}
+                        </div>
+                        <div class="text-xs text-gray-300">
+                            <span class="text-gray-400">Solution:</span> ${escapeHtml(aiData.proposed_solution || '')}
+                        </div>
+                        ${componentsHtml}
+                        ${stepsHtml}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(div);
+            smartScroll(false);
+        }
+
+        /**
+         * Render an AI code prompt message in the UI.
+         * Shows code prompt with copy button and special styling.
+         * @param {Object} msg - AI code prompt message object.
+         */
+        function renderAiCodePromptMessage(msg) {
+            const displayName = msg.displayName || 'AI Assistant';
+            const codePrompt = msg.content || '';
+            const copyBtnId = `copy-prompt-${msg.id || Date.now()}`;
+
+            // Check if we need a date separator
+            if (needsDateSeparator(msg)) {
+                renderDateSeparator(new Date(msg.ts * 1000));
+            }
+
+            const div = document.createElement('div');
+            div.className = 'flex justify-start mb-4';
+            div.dataset.messageId = msg.id;
+
+            div.innerHTML = `
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-cyan-600 flex items-center justify-center text-white text-sm font-bold mr-2 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+                <div class="max-w-[85%] min-w-0">
+                    <div class="text-xs text-blue-400 mb-1 ml-1">🤖 ${escapeHtml(displayName)}</div>
+                    <div class="bg-gradient-to-br from-blue-900/50 to-cyan-900/50 border border-blue-700/50 rounded-2xl rounded-tl-sm px-4 py-3 shadow-lg">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm font-semibold text-blue-300">💻 Code Generation Prompt</span>
+                            <button id="${copyBtnId}" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded flex items-center gap-1 transition-colors">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                </svg>
+                                Copy
+                            </button>
+                        </div>
+                        <pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono bg-gray-900/50 rounded p-2 max-h-48 overflow-y-auto">${escapeHtml(codePrompt)}</pre>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
+                </div>
+            `;
+
+            messagesContainer.appendChild(div);
+
+            // Add copy button handler
+            const copyBtn = document.getElementById(copyBtnId);
+            if (copyBtn) {
+                copyBtn.addEventListener('click', () => {
+                    navigator.clipboard.writeText(codePrompt).then(() => {
+                        copyBtn.innerHTML = `
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                            </svg>
+                            Copied!
+                        `;
+                        setTimeout(() => {
+                            copyBtn.innerHTML = `
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                </svg>
+                                Copy
+                            `;
+                        }, 2000);
+                    });
+                });
+            }
+
+            smartScroll(false);
+        }
+
+        /**
          * Load more message history (pagination).
          * Fetches older messages from the server and prepends them.
          */
@@ -1125,6 +1269,16 @@
                     } else if (data.type === 'file') {
                         if (!isDuplicateMessage(data.id)) {
                             renderFileMessage(data);
+                            updateLastMessageTimestamp(data.ts);
+                        }
+                    } else if (data.type === 'ai_summary') {
+                        if (!isDuplicateMessage(data.id)) {
+                            renderAiSummaryMessage(data);
+                            updateLastMessageTimestamp(data.ts);
+                        }
+                    } else if (data.type === 'ai_code_prompt') {
+                        if (!isDuplicateMessage(data.id)) {
+                            renderAiCodePromptMessage(data);
                             updateLastMessageTimestamp(data.ts);
                         }
                     } else if (data.type === 'user_joined') {

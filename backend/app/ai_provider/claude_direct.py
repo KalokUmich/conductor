@@ -181,3 +181,31 @@ class ClaudeDirectProvider(AIProvider):
             risk_level=data.get("risk_level", "low"),
             next_steps=data.get("next_steps", []),
         )
+
+    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+        """Call the Claude model with a raw prompt.
+
+        Args:
+            prompt: The prompt to send to the model.
+            max_tokens: Maximum tokens in the response.
+
+        Returns:
+            str: The model's response text.
+
+        Raises:
+            Exception: If the API call fails.
+        """
+        client = self._get_client()
+
+        response = client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+        )
+
+        return response.content[0].text.strip()

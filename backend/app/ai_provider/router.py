@@ -5,21 +5,23 @@ This module provides the REST API endpoints for AI provider status and summariza
 Endpoints:
     GET /ai/status - Get current AI provider status
     POST /ai/summarize - Summarize messages using the active AI provider
-    POST /ai/code-prompt - Generate a code prompt from a decision summary
+    POST /ai/code-prompt - Generate a code prompt from a decision summary (supports multi-type)
 """
 import logging
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .base import ChatMessage
 from .resolver import get_resolver
 from .wrapper import (
     AIProviderError,
     call_code_prompt,
-    call_summary,
+    call_selective_code_prompt,
+    call_summary_pipeline,
     handle_provider_error,
+    pipeline_summary_to_decision_summary,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,14 @@ class DecisionSummaryResponse(BaseModel):
     affected_components: List[str]
     risk_level: Literal["low", "medium", "high"]
     next_steps: List[str]
+    # Pipeline metadata (optional, for observability)
+    discussion_type: Optional[str] = None
+    classification_confidence: Optional[float] = None
+    # Code-relevant types for selective code prompt generation
+    code_relevant_types: List[str] = Field(
+        default_factory=list,
+        description="Discussion types that are code-relevant for this summary"
+    )
 
 
 class DecisionSummaryInput(BaseModel):
@@ -80,7 +90,7 @@ class DecisionSummaryInput(BaseModel):
 
 
 class CodePromptRequest(BaseModel):
-    """Request model for POST /ai/code-prompt endpoint."""
+    """Request model for POST /ai/code-prompt endpoint (legacy single summary)."""
     decision_summary: DecisionSummaryInput
     context_snippet: Optional[str] = None
 
@@ -88,6 +98,72 @@ class CodePromptRequest(BaseModel):
 class CodePromptResponse(BaseModel):
     """Response model for POST /ai/code-prompt endpoint."""
     code_prompt: str
+
+
+# =============================================================================
+# Multi-Type Summary Models for Selective Code Prompt Generation
+# =============================================================================
+
+
+class TypedSummaryInput(BaseModel):
+    """Input model for a single typed summary within multi-type summary.
+
+    Represents a summary for a specific discussion type with all relevant
+    fields for code prompt generation.
+    """
+    discussion_type: str
+    topic: str
+    core_problem: str
+    proposed_solution: str
+    requires_code_change: bool
+    impact_scope: str = "local"
+    affected_components: List[str] = []
+    risk_level: Literal["low", "medium", "high"] = "low"
+    next_steps: List[str] = []
+
+
+class MultiTypeSummaryInput(BaseModel):
+    """Input model for multi-type summary in selective code-prompt request.
+
+    Contains summaries from potentially multiple discussion types along with
+    code_relevant_types to determine which summaries to include in code prompt.
+    """
+    primary_focus: str
+    summaries: List[TypedSummaryInput]
+    code_relevant_types: List[str]
+    impact_scope: str = "local"
+
+
+class SelectiveCodePromptRequest(BaseModel):
+    """Request model for POST /ai/code-prompt with multi-type summary support."""
+    multi_type_summary: MultiTypeSummaryInput
+    context_snippet: Optional[str] = None
+
+
+class FileLevelChange(BaseModel):
+    """A single file-level change in the implementation plan."""
+    file: str
+    change_type: Literal["modify", "create", "delete"]
+    description: str
+
+
+class ImplementationPlan(BaseModel):
+    """Structured implementation plan output."""
+    affected_components: List[str]
+    file_level_changes: List[FileLevelChange]
+    tests_required: bool
+    migration_required: bool
+    risk_level: Literal["low", "medium", "high"]
+
+
+class SelectiveCodePromptResponse(BaseModel):
+    """Response model for selective code-prompt generation.
+
+    Returns the generated prompt along with the implementation plan structure.
+    """
+    code_prompt: str
+    implementation_plan: Optional[ImplementationPlan] = None
+    code_relevant_types_used: List[str]
 
 
 @router.get("/status", response_model=AIStatusResponse)
@@ -157,8 +233,11 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
     ]
 
     try:
-        # Use the wrapper to call the provider
-        summary = call_summary(chat_messages)
+        # Use the two-stage pipeline for improved summarization
+        pipeline_summary = call_summary_pipeline(chat_messages)
+
+        # Convert to DecisionSummary for backward compatibility
+        summary = pipeline_summary_to_decision_summary(pipeline_summary)
 
         return DecisionSummaryResponse(
             type=summary.type,
@@ -169,6 +248,11 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
             affected_components=summary.affected_components,
             risk_level=summary.risk_level,
             next_steps=summary.next_steps,
+            # Include pipeline metadata for observability
+            discussion_type=pipeline_summary.discussion_type,
+            classification_confidence=pipeline_summary.classification_confidence,
+            # Include code-relevant types for selective code prompt generation
+            code_relevant_types=pipeline_summary.code_relevant_types,
         )
 
     except AIProviderError as e:
@@ -231,3 +315,123 @@ async def generate_code_prompt(request: CodePromptRequest) -> CodePromptResponse
     )
 
     return CodePromptResponse(code_prompt=code_prompt_str)
+
+
+@router.post("/code-prompt/selective", response_model=SelectiveCodePromptResponse)
+async def generate_selective_code_prompt(
+    request: SelectiveCodePromptRequest
+) -> SelectiveCodePromptResponse:
+    """Generate a selective code prompt from multi-type summary.
+
+    Takes a multi-type summary with code_relevant_types and generates a focused
+    coding prompt that only includes code-relevant discussion summaries.
+
+    This endpoint filters out non-code-relevant types (like innovation-only
+    or product brainstorming sections) and builds a focused implementation prompt.
+
+    Key behaviors:
+    - If only one code-relevant type exists, generates a focused prompt for that type
+    - If multiple code-relevant types exist, merges them logically
+    - Non-code types (innovation without code, pure brainstorming) are excluded
+    - Output is strictly JSON with structured implementation plan
+
+    Args:
+        request: SelectiveCodePromptRequest with:
+            - multi_type_summary: Contains summaries and code_relevant_types
+            - context_snippet: Optional code snippet for additional context
+
+    Returns:
+        SelectiveCodePromptResponse with:
+            - code_prompt: A formatted prompt string for code generation
+            - implementation_plan: Structured plan (populated by AI, null here)
+            - code_relevant_types_used: Which types were actually included
+
+    Example:
+        Request:
+        {
+            "multi_type_summary": {
+                "primary_focus": "Add user authentication feature",
+                "impact_scope": "system",
+                "code_relevant_types": ["code_change", "api_design"],
+                "summaries": [
+                    {
+                        "discussion_type": "code_change",
+                        "topic": "Implement JWT tokens",
+                        "core_problem": "No secure auth mechanism",
+                        "proposed_solution": "Add JWT middleware",
+                        "requires_code_change": true,
+                        "affected_components": ["auth/jwt.py"],
+                        "risk_level": "medium",
+                        "next_steps": ["Create JWT utility"]
+                    },
+                    {
+                        "discussion_type": "api_design",
+                        "topic": "Auth endpoints",
+                        "core_problem": "Need login/logout endpoints",
+                        "proposed_solution": "REST endpoints for auth",
+                        "requires_code_change": true,
+                        "affected_components": ["api/auth.py"],
+                        "risk_level": "medium",
+                        "next_steps": ["Design endpoint schema"]
+                    },
+                    {
+                        "discussion_type": "innovation",
+                        "topic": "Future biometric auth",
+                        "core_problem": "Long-term auth improvements",
+                        "proposed_solution": "Research biometric options",
+                        "requires_code_change": false,
+                        "affected_components": [],
+                        "risk_level": "low",
+                        "next_steps": ["Research phase"]
+                    }
+                ]
+            }
+        }
+
+        Response:
+        {
+            "code_prompt": "You are a senior software engineer...",
+            "implementation_plan": null,
+            "code_relevant_types_used": ["code_change", "api_design"]
+        }
+
+    Note:
+        The innovation summary is excluded because it's not in code_relevant_types.
+    """
+    multi_summary = request.multi_type_summary
+
+    logger.info(
+        f"Generating selective code prompt for focus: {multi_summary.primary_focus}, "
+        f"code_relevant_types: {multi_summary.code_relevant_types}"
+    )
+
+    # Convert TypedSummaryInput models to dictionaries for the wrapper
+    summaries_dicts = [
+        {
+            "discussion_type": s.discussion_type,
+            "topic": s.topic,
+            "core_problem": s.core_problem,
+            "proposed_solution": s.proposed_solution,
+            "requires_code_change": s.requires_code_change,
+            "impact_scope": s.impact_scope,
+            "affected_components": s.affected_components,
+            "risk_level": s.risk_level,
+            "next_steps": s.next_steps,
+        }
+        for s in multi_summary.summaries
+    ]
+
+    # Use the selective code prompt wrapper
+    code_prompt_str, types_used = call_selective_code_prompt(
+        primary_focus=multi_summary.primary_focus,
+        impact_scope=multi_summary.impact_scope,
+        summaries=summaries_dicts,
+        code_relevant_types=multi_summary.code_relevant_types,
+        context_snippet=request.context_snippet,
+    )
+
+    return SelectiveCodePromptResponse(
+        code_prompt=code_prompt_str,
+        implementation_plan=None,  # AI would populate this after processing the prompt
+        code_relevant_types_used=types_used,
+    )

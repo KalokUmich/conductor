@@ -318,13 +318,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     this._handleNavigateToCode(message);
                     return;
                 case 'getAiStatus':
+                    console.log('[Conductor] Received getAiStatus message from WebView');
                     this._handleGetAiStatus();
                     return;
                 case 'summarize':
-                    this._handleSummarize(message.messages);
+                    this._handleSummarizeAndPost(message.messages);
                     return;
                 case 'generateCodePrompt':
                     this._handleGenerateCodePrompt(message.decisionSummary);
+                    return;
+                case 'generateCodePromptAndPost':
+                    this._handleGenerateCodePromptAndPost(message.decisionSummary, message.roomId);
                     return;
             }
         });
@@ -1047,12 +1051,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Handle request to summarize chat messages.
-     * Sends messages to /ai/summarize and returns the structured decision summary.
+     * Handle request to summarize chat messages and post as AI message.
+     * Sends messages to /ai/summarize, then posts the summary to chat via /chat/{room_id}/ai-message.
      *
      * @param messages Array of message objects with role, text, and timestamp
      */
-    private async _handleSummarize(messages: Array<{ role: 'host' | 'engineer'; text: string; timestamp: number }>): Promise<void> {
+    private async _handleSummarizeAndPost(messages: Array<{ role: 'host' | 'engineer'; text: string; timestamp: number }>): Promise<void> {
         try {
             console.log('[Conductor] Requesting AI summary for', messages.length, 'messages');
             const response = await fetch(`${getBackendUrl()}/ai/summarize`, {
@@ -1074,7 +1078,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             }
 
             // Structured DecisionSummaryResponse from backend
-            const data = await response.json() as {
+            const summaryData = await response.json() as {
                 type: 'decision_summary';
                 topic: string;
                 problem_statement: string;
@@ -1084,11 +1088,39 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 risk_level: 'low' | 'medium' | 'high';
                 next_steps: string[];
             };
-            console.log('[Conductor] Summary received:', data.topic);
+            console.log('[Conductor] Summary received:', summaryData.topic);
 
+            // Post the summary as an AI message to the chat
+            const roomId = getSessionService().getRoomId();
+            const contentText = `Topic: ${summaryData.topic}\n\nProblem: ${summaryData.problem_statement}\n\nSolution: ${summaryData.proposed_solution}`;
+
+            const postParams = new URLSearchParams({
+                message_type: 'ai_summary',
+                model_name: 'claude_bedrock',  // TODO: Get from active provider
+                content: contentText,
+                ai_data: JSON.stringify(summaryData)
+            });
+
+            const postResponse = await fetch(`${getBackendUrl()}/chat/${roomId}/ai-message?${postParams.toString()}`, {
+                method: 'POST'
+            });
+
+            if (!postResponse.ok) {
+                const errorText = await postResponse.text();
+                console.warn('[Conductor] Failed to post AI summary message:', postResponse.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'summarizeResult',
+                    data: { error: `Failed to post summary to chat: ${postResponse.status}` }
+                });
+                return;
+            }
+
+            console.log('[Conductor] AI summary posted to chat successfully');
+
+            // Send summarize result to close the modal
             this._view?.webview.postMessage({
                 command: 'summarizeResult',
-                data: data
+                data: summaryData
             });
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
@@ -1147,6 +1179,82 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             console.error('[Conductor] Failed to generate code prompt:', msg);
             this._view?.webview.postMessage({
                 command: 'codePromptResult',
+                data: { error: `Cannot connect to backend: ${msg}` }
+            });
+        }
+    }
+
+    /**
+     * Handle code prompt generation request and post as AI message.
+     * Calls POST /ai/code-prompt, then posts the prompt to chat via /chat/{room_id}/ai-message.
+     * @param decisionSummary The decision summary from the summarize result
+     * @param roomId The room ID to post the message to
+     */
+    private async _handleGenerateCodePromptAndPost(decisionSummary: {
+        topic: string;
+        problem_statement: string;
+        proposed_solution: string;
+        requires_code_change: boolean;
+        affected_components: string[];
+        risk_level: 'low' | 'medium' | 'high';
+        next_steps: string[];
+    }, roomId: string): Promise<void> {
+        try {
+            console.log('[Conductor] Requesting code prompt for:', decisionSummary.topic);
+            const response = await fetch(`${getBackendUrl()}/ai/code-prompt`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ decision_summary: { ...decisionSummary, type: 'decision_summary' } })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.warn('[Conductor] Code prompt request failed:', response.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'codePromptPostResult',
+                    data: { error: `Failed to generate code prompt: ${response.status} - ${errorText}` }
+                });
+                return;
+            }
+
+            const data = await response.json() as { code_prompt: string };
+            console.log('[Conductor] Code prompt generated successfully');
+
+            // Post the code prompt as an AI message to the chat
+            const postParams = new URLSearchParams({
+                message_type: 'ai_code_prompt',
+                model_name: 'claude_bedrock',  // TODO: Get from active provider
+                content: data.code_prompt
+            });
+
+            const postResponse = await fetch(`${getBackendUrl()}/chat/${roomId}/ai-message?${postParams.toString()}`, {
+                method: 'POST'
+            });
+
+            if (!postResponse.ok) {
+                const errorText = await postResponse.text();
+                console.warn('[Conductor] Failed to post AI code prompt message:', postResponse.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'codePromptPostResult',
+                    data: { error: `Failed to post code prompt to chat: ${postResponse.status}` }
+                });
+                return;
+            }
+
+            console.log('[Conductor] AI code prompt posted to chat successfully');
+
+            // Notify WebView that code prompt was posted successfully
+            this._view?.webview.postMessage({
+                command: 'codePromptPostResult',
+                data: { success: true }
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] Failed to generate/post code prompt:', msg);
+            this._view?.webview.postMessage({
+                command: 'codePromptPostResult',
                 data: { error: `Cannot connect to backend: ${msg}` }
             });
         }

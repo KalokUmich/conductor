@@ -7,24 +7,24 @@
 <a name="english"></a>
 ## English
 
-This document describes the architecture that is currently implemented in the repository, and explicitly separates planned/not-yet-wired parts.
+This document describes the architecture that is currently implemented in the repository.
 
 ### 1. System Boundary
 
 Conductor has two runtime parts:
 
 1. VS Code extension (TypeScript)
-- WebView UI
-- state machine orchestration
+- WebView UI (`extension/media/chat.html`)
+- session FSM and orchestration
 - Live Share integration
 - diff preview/apply in workspace
 
 2. FastAPI backend (Python)
 - WebSocket chat + REST APIs
-- file storage
+- AI provider resolution and summary pipeline
 - policy checks
 - audit logs
-- summary extraction endpoint
+- file storage
 
 ```text
 WebView <-> Extension Host <-> FastAPI
@@ -47,11 +47,12 @@ extension/
 backend/app/
   main.py
     ├─ chat.router
+    ├─ ai_provider.router
     ├─ agent.router
     ├─ policy.router
     ├─ audit.router
     ├─ files.router
-    └─ summary.router
+    └─ summary.router (legacy keyword path)
 ```
 
 ### 3. Backend Architecture
@@ -62,6 +63,7 @@ backend/app/
 - registers routers
 - exposes `/health` and `/public-url`
 - optionally starts ngrok from config
+- initializes AI provider resolver when `summary.enabled=true`
 - stops ngrok on shutdown
 
 #### Router Responsibilities
@@ -70,9 +72,15 @@ backend/app/
   - `GET /invite`
   - `GET /chat`
   - `GET /chat/{room_id}/history`
+  - `POST /chat/{room_id}/ai-message`
   - `WS /ws/chat/{room_id}`
+- `ai_provider`:
+  - `GET /ai/status`
+  - `POST /ai/summarize`
+  - `POST /ai/code-prompt`
+  - `POST /ai/code-prompt/selective`
 - `agent`:
-  - `POST /generate-changes` (currently MockAgent)
+  - `POST /generate-changes` (MockAgent)
 - `policy`:
   - `POST /policy/evaluate-auto-apply`
 - `audit`:
@@ -83,30 +91,46 @@ backend/app/
   - `GET /files/download/{file_id}`
   - `DELETE /files/room/{room_id}`
 - `summary`:
-  - `POST /summary`
+  - `POST /summary` (legacy keyword extraction)
+
+#### AI Summary Pipeline
+
+Implemented in `backend/app/ai_provider/pipeline.py`:
+
+1. Classification stage
+- classify discussion into one type:
+  - `api_design`, `product_flow`, `code_change`, `architecture`, `innovation`, `debugging`, `general`
+
+2. Targeted summary stage
+- generate structured summary based on classified type
+- includes `topic`, `core_problem`, `proposed_solution`, `impact_scope`, `risk_level`, etc.
+
+3. Code relevance stage
+- compute `code_relevant_types` for selective code prompt generation
+
+Provider resolution:
+- configured in `summary` section of `conductor.yaml`
+- priority order: `claude_bedrock` -> `claude_direct`
+- first healthy provider becomes active
 
 #### Chat Core: ConnectionManager
 
-Current implemented responsibilities:
+Current responsibilities:
 - room-scoped active WebSocket connections
-- room user registry
+- backend-assigned user identity (`host` first, then `guest`)
 - in-memory message history
 - read receipt tracking
 - message dedup (LRU)
+- paginated history
 - broadcast cleanup for dead sockets
-
-#### Security Model (Chat)
-
-- backend assigns `userId` on WebSocket connect
-- first user in room becomes `host`, others become `guest`
-- backend ignores forged client identity data for sensitive behavior
-- only host can end a room session
 
 ### 4. Extension Architecture
 
-#### FSM
+#### FSM and Controller
 
-File: `extension/src/services/conductorStateMachine.ts`
+Files:
+- `extension/src/services/conductorStateMachine.ts`
+- `extension/src/services/conductorController.ts`
 
 States:
 - `Idle`
@@ -117,37 +141,28 @@ States:
 - `Joined`
 
 Key behavior:
-- join-only mode is supported via `BackendDisconnected -> JOIN_SESSION -> Joining`
+- join-only mode supported via `BackendDisconnected -> JOIN_SESSION -> Joining`
+- start hosting checks backend health and Live Share conflict first
 
-#### Controller
+#### Session and Permissions
 
-File: `extension/src/services/conductorController.ts`
-
-Responsibilities:
-- backend health check orchestration
-- FSM transition control
-- invite URL parsing (`roomId`, `backendUrl`, `liveShareUrl`)
-
-#### Session Service
-
-File: `extension/src/services/session.ts`
-
-Responsibilities:
-- manage/persist room/session identifiers via VS Code `globalState`
-- backend URL resolution (including ngrok detection)
-- guest session override from invite link
+- `SessionService` (`extension/src/services/session.ts`):
+  - globalState persistence for room/session IDs
+  - backend URL resolution (including ngrok detection)
+  - guest override from invite URL
+- `PermissionsService` (`extension/src/services/permissions.ts`):
+  - local role model (`lead` / `member`)
 
 #### WebView and Host Message Bridge
 
 WebView: `extension/media/chat.html`
 Host: `extension/src/extension.ts`
 
-Implemented command bridge includes:
-- session control: `startSession`, `joinSession`, `retryConnection`, `leaveSession`
-- AI/review flow: `generateChanges`, `applyChanges`, `viewDiff`
-- file flow: `uploadFile`, `downloadFile`
-- code snippet flow: `getCodeSnippet`, `navigateToCode`
-- session end confirmation: `confirmEndChat`
+Implemented host commands include:
+- Session: `startSession`, `stopSession`, `retryConnection`, `joinSession`, `leaveSession`, `copyInviteLink`
+- Files/snippets: `uploadFile`, `downloadFile`, `getCodeSnippet`, `navigateToCode`
+- Review flow: `generateChanges`, `applyChanges`, `viewDiff`, `setAutoApply`
+- AI flow: `getAiStatus`, `summarize`, `generateCodePrompt`, `generateCodePromptAndPost`
 
 ### 5. Data Contract
 
@@ -159,251 +174,149 @@ Core concepts:
 - `FileChange.type` in `create_file | replace_range`
 - `replace_range` requires `range` and `content`
 
-### 6. Runtime Sequence (Implemented)
+### 6. Runtime Sequences (Implemented)
 
 Host start:
 1. user clicks `Start Session`
-2. extension runs health check
+2. extension checks backend health and Live Share conflicts
 3. FSM enters `Hosting`
-4. extension starts Live Share
-5. invite URL generated and distributed
-6. WebView connects to room WebSocket
+4. extension starts Live Share and generates invite URL
+5. WebView connects to room WebSocket
 
 Guest join:
 1. guest pastes invite URL
-2. controller parses invite
-3. session service updates room/backend target
+2. controller parses `roomId` / `backendUrl` / `liveShareUrl`
+3. session service switches to guest room/backend
 4. FSM transitions to `Joined`
-5. WebView connects and starts chat
+5. optional Live Share join prompt runs in background
+
+AI summary and prompt:
+1. WebView requests `/ai/status` for provider state
+2. WebView sends selected messages to extension
+3. extension calls `/ai/summarize`
+4. extension posts AI summary via `/chat/{room_id}/ai-message`
+5. user can request `/ai/code-prompt`
+6. prompt can be posted as `ai_code_prompt` message
 
 Change review:
 1. extension calls `/generate-changes`
 2. extension calls `/policy/evaluate-auto-apply`
-3. changes queued in sequential review
+3. changes enter sequential review queue
 4. each change diff-previewed and applied/skipped
 5. applied changes logged to `/audit/log-apply`
-
-File upload:
-1. WebView sends file payload to extension host
-2. extension host uploads multipart to `/files/upload/{room_id}`
-3. backend returns metadata + download URL
-4. WebView broadcasts file message through WebSocket
 
 ### 7. Persistence
 
 - audit DB: `audit_logs.duckdb`
 - file metadata DB: `file_metadata.duckdb`
 - file binaries: `uploads/`
-- chat room state is in-memory per process
+- chat room state: in-memory per process
 
-### 8. Implemented vs Not Fully Wired
+### 8. Implemented vs Limited
 
 Implemented:
-- chat/file/snippet/session/review/policy/audit workflows
+- chat/file/snippet/session/review workflow
+- AI provider status + summary + code prompt workflow in extension UI
 
-Not fully wired:
-- real LLM integration for change generation
-- complete extension-side summary workflow (`/summary` exists, UI flow is placeholder)
+Limited:
+- `/generate-changes` is still MockAgent-based
+- `/summary` remains legacy keyword extractor
+- extension currently uses `/ai/code-prompt` (not selective endpoint)
 
 ---
 
 <a name="中文"></a>
 ## 中文
 
-本文档描述仓库中当前已经实现的架构，并明确区分“已实现”和“尚未完整接入”的部分。
+本文档描述仓库中当前已经实现的架构。
 
 ### 1. 系统边界
 
 Conductor 由两部分运行时组成：
 
 1. VS Code 扩展（TypeScript）
-- WebView UI
-- 状态机编排
+- WebView UI（`extension/media/chat.html`）
+- 会话状态机与编排
 - Live Share 集成
 - 工作区 Diff 预览与应用
 
 2. FastAPI 后端（Python）
-- WebSocket 聊天与 REST API
-- 文件存储
+- WebSocket 聊天 + REST API
+- AI Provider 解析与摘要流水线
 - 策略评估
 - 审计日志
-- 摘要提取接口
+- 文件存储
 
-```text
-WebView <-> Extension Host <-> FastAPI
-              |                |
-              |                +-> DuckDB + 本地文件存储
-              +-> Live Share
-```
+### 2. 后端路由职责（当前实现）
 
-### 2. 主要模块图
+- `chat`：`/invite`、`/chat`、`/chat/{room_id}/history`、`/chat/{room_id}/ai-message`、`/ws/chat/{room_id}`
+- `ai_provider`：`/ai/status`、`/ai/summarize`、`/ai/code-prompt`、`/ai/code-prompt/selective`
+- `agent`：`/generate-changes`（MockAgent）
+- `policy`：`/policy/evaluate-auto-apply`
+- `audit`：`/audit/log-apply`、`/audit/logs`
+- `files`：上传/下载/房间清理
+- `summary`：`/summary`（旧关键词提取路径）
 
-```text
-extension/
-  src/extension.ts
-    ├─ SessionService
-    ├─ PermissionsService
-    ├─ ConductorStateMachine + ConductorController
-    └─ DiffPreviewService
-  media/chat.html
+### 3. AI 摘要流水线
 
-backend/app/
-  main.py
-    ├─ chat.router
-    ├─ agent.router
-    ├─ policy.router
-    ├─ audit.router
-    ├─ files.router
-    └─ summary.router
-```
+`backend/app/ai_provider/pipeline.py` 当前实现三阶段：
 
-### 3. 后端架构
+1. 对话分类（7 类讨论类型）
+2. 按分类生成定向结构化摘要
+3. 计算 `code_relevant_types`（用于 selective code prompt）
 
-#### 入口与生命周期
+Provider 选择由 `conductor.yaml` 的 `summary` 配置驱动，优先级 `claude_bedrock -> claude_direct`。
 
-`backend/app/main.py`：
-- 注册所有 router
-- 暴露 `/health` 与 `/public-url`
-- 根据配置可选启动 ngrok
-- 关闭时停止 ngrok
+### 4. 扩展侧关键模块
 
-#### 路由职责
+- 状态机/控制器：`conductorStateMachine.ts`、`conductorController.ts`
+- 会话服务：`session.ts`（globalState、ngrok 检测、guest 覆盖）
+- 权限服务：`permissions.ts`（`lead/member`）
+- WebView + Host 消息桥：`chat.html` + `extension.ts`
 
-- `chat`：
-  - `GET /invite`
-  - `GET /chat`
-  - `GET /chat/{room_id}/history`
-  - `WS /ws/chat/{room_id}`
-- `agent`：
-  - `POST /generate-changes`（当前 MockAgent）
-- `policy`：
-  - `POST /policy/evaluate-auto-apply`
-- `audit`：
-  - `POST /audit/log-apply`
-  - `GET /audit/logs`
-- `files`：
-  - `POST /files/upload/{room_id}`
-  - `GET /files/download/{file_id}`
-  - `DELETE /files/room/{room_id}`
-- `summary`：
-  - `POST /summary`
+已接入的 AI 命令：
+- `getAiStatus`
+- `summarize`
+- `generateCodePrompt`
+- `generateCodePromptAndPost`
 
-#### 聊天核心：ConnectionManager
-
-当前实现职责：
-- 按房间管理活跃 WebSocket 连接
-- 房间用户注册
-- 内存消息历史
-- 已读回执记录
-- 消息去重（LRU）
-- 广播失败连接清理
-
-#### 聊天安全模型
-
-- WebSocket 连接时由后端分配 `userId`
-- 房间首个用户为 `host`，其余为 `guest`
-- 敏感行为不信任客户端伪造身份
-- 仅 host 可结束会话
-
-### 4. 扩展架构
-
-#### 状态机
-
-文件：`extension/src/services/conductorStateMachine.ts`
-
-状态：
-- `Idle`
-- `BackendDisconnected`
-- `ReadyToHost`
-- `Hosting`
-- `Joining`
-- `Joined`
-
-关键行为：
-- 支持 `BackendDisconnected -> JOIN_SESSION -> Joining` 的仅加入模式
-
-#### 控制器
-
-文件：`extension/src/services/conductorController.ts`
-
-职责：
-- 编排后端健康检查
-- 驱动状态机转换
-- 解析邀请链接（`roomId`、`backendUrl`、`liveShareUrl`）
-
-#### SessionService
-
-文件：`extension/src/services/session.ts`
-
-职责：
-- 用 VS Code `globalState` 管理会话标识
-- 解析后端地址（含 ngrok 探测）
-- 根据邀请链接覆盖 guest 侧会话目标
-
-#### WebView 与宿主消息桥
-
-WebView：`extension/media/chat.html`
-宿主：`extension/src/extension.ts`
-
-已实现命令桥包括：
-- 会话控制：`startSession`、`joinSession`、`retryConnection`、`leaveSession`
-- AI/审查流：`generateChanges`、`applyChanges`、`viewDiff`
-- 文件流：`uploadFile`、`downloadFile`
-- 代码片段流：`getCodeSnippet`、`navigateToCode`
-- 结束会话确认：`confirmEndChat`
-
-### 5. 数据契约
-
-共享 schema：
-- `shared/changeset.schema.json`
-
-核心约束：
-- `ChangeSet.changes[]`
-- `FileChange.type` 取值 `create_file | replace_range`
-- `replace_range` 必须带 `range` 与 `content`
-
-### 6. 关键运行时序（已实现）
+### 5. 关键运行时序
 
 Host 发起：
 1. 点击 `Start Session`
-2. 扩展做健康检查
+2. 扩展检查后端健康与 Live Share 冲突
 3. FSM 进入 `Hosting`
-4. 启动 Live Share
-5. 生成并分发邀请链接
-6. WebView 连接房间 WebSocket
+4. 启动 Live Share 并生成邀请链接
+5. WebView 建立房间 WebSocket
 
 Guest 加入：
 1. 粘贴邀请链接
-2. 控制器解析链接
-3. SessionService 更新 room/backend 目标
+2. 解析 `roomId/backendUrl/liveShareUrl`
+3. SessionService 切换到 guest 房间与后端
 4. FSM 转到 `Joined`
-5. WebView 建连并开始聊天
+5. Live Share 加入提示异步执行（可只聊天）
 
-变更审查：
-1. 调用 `/generate-changes`
-2. 调用 `/policy/evaluate-auto-apply`
-3. 扩展建立顺序审查队列
-4. 每条变更逐条预览并应用/跳过
-5. 成功应用写入 `/audit/log-apply`
+AI 摘要与代码提示词：
+1. WebView 拉取 `/ai/status`
+2. WebView 发送消息集合给 extension
+3. extension 调 `/ai/summarize`
+4. extension 通过 `/chat/{room_id}/ai-message` 写回 AI 摘要
+5. 用户可继续请求 `/ai/code-prompt` 并回写聊天
 
-文件上传：
-1. WebView 把文件负载发给扩展宿主
-2. 宿主用 multipart 上传到 `/files/upload/{room_id}`
-3. 后端返回元数据与下载地址
-4. WebView 通过 WebSocket 广播文件消息
-
-### 7. 持久化
+### 6. 持久化
 
 - 审计库：`audit_logs.duckdb`
 - 文件元数据库：`file_metadata.duckdb`
-- 文件二进制目录：`uploads/`
-- 聊天房间状态为进程内内存数据
+- 文件目录：`uploads/`
+- 聊天房间状态：进程内内存
 
-### 8. 已实现 vs 未完整接入
+### 7. 已实现与限制
 
 已实现：
-- 聊天、文件、代码片段、会话、审查、策略、审计流程
+- 聊天、文件、片段、会话、审查流程
+- 扩展 UI 内 AI 状态/摘要/代码提示词流程
 
-未完整接入：
-- 真实 LLM 变更生成
-- 扩展端摘要完整流程（后端 `/summary` 已存在，前端流程仍为占位）
+限制：
+- `/generate-changes` 仍为 MockAgent
+- `/summary` 仍是旧关键词提取
+- 扩展目前调用 `/ai/code-prompt`，未走 selective 接口

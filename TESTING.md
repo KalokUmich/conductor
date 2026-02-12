@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-This guide describes how to test Conductor backend and extension with current repository setup.
+This guide describes how to test Conductor backend and extension with the current repository setup.
 
 ### 1. Test Scope
 
@@ -38,14 +38,15 @@ cd backend
 ```
 
 Current collected count:
-- `104` tests
+- `199`
 
 Current breakdown:
-- `tests/test_main.py`: 1
-- `tests/test_chat.py`: 8
-- `tests/test_mock_agent.py`: 26
-- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_ai_provider.py`: 95
 - `tests/test_audit.py`: 14
+- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_chat.py`: 8
+- `tests/test_main.py`: 1
+- `tests/test_mock_agent.py`: 26
 - `tests/test_style_loader.py`: 14
 - `tests/test_summary.py`: 13
 
@@ -53,6 +54,7 @@ Run specific modules:
 
 ```bash
 cd backend
+../.venv/bin/pytest tests/test_ai_provider.py -v
 ../.venv/bin/pytest tests/test_chat.py -v
 ../.venv/bin/pytest tests/test_mock_agent.py -v
 ../.venv/bin/pytest tests/test_auto_apply_policy.py -v
@@ -60,7 +62,7 @@ cd backend
 ../.venv/bin/pytest tests/test_summary.py -v
 ```
 
-### 3. Extension Service Tests
+### 3. Extension Tests
 
 Compile first:
 
@@ -70,18 +72,20 @@ npm install
 npm run compile
 ```
 
-Run existing test files:
+Run tests:
 
 ```bash
 cd extension
 node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
+node --test out/tests/aiMessageHandlers.test.js
 ```
 
 Notes:
-- These tests target service logic, not full VS Code UI automation.
+- These tests target service logic and API handler behavior, not full VS Code UI automation.
 - `package.json` currently does not include a default `npm test` script.
+- Some tests start local HTTP servers; in restricted sandbox environments they can fail with socket permission errors (`EPERM`).
 
 ### 4. Manual E2E Checklist
 
@@ -92,11 +96,11 @@ make run-backend
 ```
 
 2. Start extension dev host:
-- Open `extension/` in VS Code
+- Open repo root or `extension/` in VS Code
 - Press `F5`
 
 3. Host flow validation:
-- Panel state transitions to `ReadyToHost`
+- Panel transitions to `ReadyToHost`
 - Click `Start Session`
 - Verify invite link generation and copy behavior
 
@@ -109,13 +113,19 @@ make run-backend
 - Upload and download files
 - Share code snippet and navigate to source location
 
-6. AI review flow validation:
+6. AI workflow validation:
+- Open AI config and verify `/ai/status`
+- Use `Summarize Chat` (all or selected messages)
+- Verify AI summary appears in room chat
+- Generate coding prompt and verify posting to chat
+
+7. Change review flow validation:
 - Trigger `Generate Changes`
 - Verify sequential diff preview
-- Apply change(s)
+- Apply or skip changes
 - Confirm audit log endpoint is called
 
-7. Session termination validation:
+8. Session termination validation:
 - Host ends session
 - Guests receive `session_ended`
 - Room files are deleted on backend
@@ -126,6 +136,20 @@ Health check:
 
 ```bash
 curl http://localhost:8000/health
+```
+
+AI status:
+
+```bash
+curl http://localhost:8000/ai/status
+```
+
+AI summarize:
+
+```bash
+curl -X POST http://localhost:8000/ai/summarize \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"host","text":"Need auth","timestamp":1}]}'
 ```
 
 Generate changes:
@@ -149,8 +173,11 @@ curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
 - Backend not reachable:
   - verify `make run-backend` is active
   - verify extension setting `aiCollab.backendUrl`
+- AI summarize disabled:
+  - check `summary.enabled` and provider keys in `config/conductor.yaml`
+  - check `/ai/status` response
 - Extension UI seems stale:
-  - run `npm run compile` again, restart debug host
+  - run `npm run compile` again and restart debug host
 - File upload fails:
   - verify backend `/files/upload/{room_id}` is reachable
   - verify file size <= 20MB
@@ -191,29 +218,19 @@ cd backend
 ```
 
 当前收集数量：
-- `104`
+- `199`
 
 当前分布：
-- `tests/test_main.py`: 1
-- `tests/test_chat.py`: 8
-- `tests/test_mock_agent.py`: 26
-- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_ai_provider.py`: 95
 - `tests/test_audit.py`: 14
+- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_chat.py`: 8
+- `tests/test_main.py`: 1
+- `tests/test_mock_agent.py`: 26
 - `tests/test_style_loader.py`: 14
 - `tests/test_summary.py`: 13
 
-运行指定模块：
-
-```bash
-cd backend
-../.venv/bin/pytest tests/test_chat.py -v
-../.venv/bin/pytest tests/test_mock_agent.py -v
-../.venv/bin/pytest tests/test_auto_apply_policy.py -v
-../.venv/bin/pytest tests/test_audit.py -v
-../.venv/bin/pytest tests/test_summary.py -v
-```
-
-### 3. 扩展服务测试
+### 3. 扩展测试
 
 先编译：
 
@@ -223,18 +240,20 @@ npm install
 npm run compile
 ```
 
-运行现有测试文件：
+运行测试：
 
 ```bash
 cd extension
 node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
+node --test out/tests/aiMessageHandlers.test.js
 ```
 
 说明：
-- 这些测试主要覆盖服务逻辑，不是完整 VS Code UI 自动化。
+- 这些测试覆盖服务逻辑和 API 处理逻辑，不是完整 VS Code UI 自动化。
 - `package.json` 当前没有默认 `npm test` 脚本。
+- 部分测试会启动本地 HTTP 服务；在受限沙箱环境中可能出现 `EPERM` 端口权限错误。
 
 ### 4. 手动 E2E 检查清单
 
@@ -245,7 +264,7 @@ make run-backend
 ```
 
 2. 启动扩展开发主机：
-- 在 VS Code 打开 `extension/`
+- 在 VS Code 打开仓库根目录或 `extension/`
 - 按 `F5`
 
 3. Host 流程验证：
@@ -262,48 +281,19 @@ make run-backend
 - 上传并下载文件
 - 发送代码片段并跳转到源代码位置
 
-6. AI 审查流验证：
+6. AI 流程验证：
+- 打开 AI 配置并确认 `/ai/status`
+- 执行 `Summarize Chat`（全量或选中消息）
+- 确认 AI 摘要回写到聊天
+- 生成代码提示词并确认回写聊天
+
+7. 变更审查流验证：
 - 触发 `Generate Changes`
 - 验证逐条 Diff 预览
-- 应用变更
+- 应用或跳过变更
 - 确认调用审计日志接口
 
-7. 会话结束验证：
+8. 会话结束验证：
 - Host 结束会话
 - Guest 收到 `session_ended`
 - 后端删除该房间上传文件
-
-### 5. 快速 API 冒烟命令
-
-健康检查：
-
-```bash
-curl http://localhost:8000/health
-```
-
-生成变更：
-
-```bash
-curl -X POST http://localhost:8000/generate-changes \
-  -H "Content-Type: application/json" \
-  -d '{"instruction":"Generate mock changes"}'
-```
-
-策略评估：
-
-```bash
-curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
-  -H "Content-Type: application/json" \
-  -d '{"change_set":{"changes":[{"id":"1","file":"a.py","type":"create_file","content":"print(1)\n"}],"summary":"demo"}}'
-```
-
-### 6. 常见问题排查
-
-- 后端不可达：
-  - 确认 `make run-backend` 正在运行
-  - 检查扩展配置 `aiCollab.backendUrl`
-- 扩展 UI 内容旧：
-  - 重新执行 `npm run compile` 并重启调试主机
-- 文件上传失败：
-  - 确认后端 `/files/upload/{room_id}` 可达
-  - 确认文件大小不超过 20MB
