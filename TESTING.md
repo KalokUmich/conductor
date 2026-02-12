@@ -1,4 +1,4 @@
-# Testing Guide / 测试指南
+# Testing Guide
 
 [English](#english) | [中文](#中文)
 
@@ -7,71 +7,62 @@
 <a name="english"></a>
 ## English
 
-This document provides comprehensive testing instructions for the Conductor project.
+This guide describes how to test Conductor backend and extension with current repository setup.
 
-### 📋 Test Overview
+### 1. Test Scope
 
-| Component | Test Type | Tests | Coverage |
-|-----------|-----------|-------|----------|
-| Backend | Unit + Integration | 104 | Full API coverage |
-| Extension | Manual | N/A | UI + functionality |
-| End-to-End | Manual | N/A | Full workflow |
+- Backend automated tests (pytest)
+- Extension service tests (Node test runner)
+- Manual E2E workflow checks
 
----
+### 2. Backend Tests
 
-### 🔧 Backend Testing
-
-#### Prerequisites
+Prerequisite (from repo root):
 
 ```bash
-# Activate virtual environment
-source .venv/bin/activate  # Linux/Mac
-# or: .venv\Scripts\activate  # Windows
+make setup-backend
 ```
 
-#### Run All Tests
+Run all backend tests:
 
 ```bash
 cd backend
-pytest tests/ -v
+../.venv/bin/pytest tests -v
 ```
 
-Expected output:
-```
-============================= 104 passed in 1.5s ==============================
-```
-
-#### Run Specific Test Modules
+Collect-only (verify current count):
 
 ```bash
-# Chat tests
-pytest tests/test_chat.py -v
-
-# Agent tests (MockAgent)
-pytest tests/test_mock_agent.py -v
-
-# Policy tests
-pytest tests/test_policy.py -v
-
-# Audit tests
-pytest tests/test_audit.py -v
-
-# Summary tests
-pytest tests/test_summary.py -v
+cd backend
+../.venv/bin/pytest tests --collect-only -q
 ```
 
-#### Test Coverage Report
+Current collected count:
+- `104` tests
+
+Current breakdown:
+- `tests/test_main.py`: 1
+- `tests/test_chat.py`: 8
+- `tests/test_mock_agent.py`: 26
+- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_audit.py`: 14
+- `tests/test_style_loader.py`: 14
+- `tests/test_summary.py`: 13
+
+Run specific modules:
 
 ```bash
-pytest tests/ --cov=app --cov-report=html
-open htmlcov/index.html  # View in browser
+cd backend
+../.venv/bin/pytest tests/test_chat.py -v
+../.venv/bin/pytest tests/test_mock_agent.py -v
+../.venv/bin/pytest tests/test_auto_apply_policy.py -v
+../.venv/bin/pytest tests/test_audit.py -v
+../.venv/bin/pytest tests/test_summary.py -v
 ```
 
----
+### 3. Extension Service Tests
 
-### 🖥️ Extension Testing
-
-#### 1. Compile and Launch
+Compile first:
 
 ```bash
 cd extension
@@ -79,157 +70,152 @@ npm install
 npm run compile
 ```
 
-Then in VS Code:
-1. Press `F5` to launch Extension Development Host
-2. Open the Conductor panel in the sidebar
-
-#### 2. Test Checklist
-
-| # | Feature | Steps | Expected |
-|---|---------|-------|----------|
-| 1 | Panel Opens | Click Conductor icon | Chat UI displays |
-| 2 | Role Badge | Check header | Shows "👤 Member" or "👑 Lead" |
-| 3 | Change Role | Settings → `aiCollab.role` → "lead" | Notification + UI updates |
-| 4 | Generate Changes | Click "Generate Changes" (Lead only) | Changes preview appears |
-| 5 | View Diff | Click "View Diff" | Diff viewer opens |
-| 6 | Apply Changes | Click "Apply" | Changes applied to files |
-| 7 | Auto Apply | Toggle Auto Apply | State persists |
-
-#### 3. Test with VSIX Package
+Run existing test files:
 
 ```bash
 cd extension
-npx vsce package
+node --test out/tests/conductorStateMachine.test.js
+node --test out/tests/conductorController.test.js
+node --test out/tests/backendHealthCheck.test.js
 ```
 
-Install the VSIX:
-1. `Ctrl+Shift+P` → "Extensions: Install from VSIX..."
-2. Select `ai-collab-0.0.1.vsix`
-3. Reload VS Code
+Notes:
+- These tests target service logic, not full VS Code UI automation.
+- `package.json` currently does not include a default `npm test` script.
 
----
+### 4. Manual E2E Checklist
 
-### 🔄 End-to-End Testing (Multi-User)
-
-This tests the complete collaboration workflow.
-
-#### Prerequisites
-
-- Backend server running (`uvicorn app.main:app --reload`)
-- Two VS Code instances (or two computers)
-
-#### Scenario: Host + Guest Collaboration
-
-| Step | Actor | Action | Expected |
-|------|-------|--------|----------|
-| 1 | Host | Open Conductor panel | Live Share starts, invite URL logged |
-| 2 | Host | Copy invite URL from Output | URL copied |
-| 3 | Guest | Open invite URL in browser | Invite page shows |
-| 4 | Guest | Click "Join Live Share in VS Code" | VS Code opens |
-| 5 | Guest | Install Conductor extension | Extension installed |
-| 6 | Both | Send chat messages | Messages appear in both |
-| 7 | Host | Click "Generate Changes" | Changes generated |
-| 8 | Host | Review and Apply | Changes applied |
-| 9 | Guest | Verify file changes | Files updated via Live Share |
-| 10 | Host | Click "End Chat" | Session ends for all |
-
-#### Testing WebSocket Chat
+1. Start backend:
 
 ```bash
-# In terminal 1: Start backend
-cd backend && uvicorn app.main:app --reload
-
-# In browser: Open chat page
-open "http://localhost:8000/chat?roomId=test-room&role=engineer"
-
-# In terminal 2: Send a test message via WebSocket
-# (Use a WebSocket client like wscat)
-npx wscat -c ws://localhost:8000/ws/chat/test-room
-> {"type":"join","userId":"user1","displayName":"Test","role":"engineer"}
-> {"userId":"user1","displayName":"Test","role":"engineer","content":"Hello!"}
+make run-backend
 ```
 
----
+2. Start extension dev host:
+- Open `extension/` in VS Code
+- Press `F5`
 
-### 🐛 Debugging Tips
+3. Host flow validation:
+- Panel state transitions to `ReadyToHost`
+- Click `Start Session`
+- Verify invite link generation and copy behavior
 
-#### Backend Debug
+4. Guest flow validation:
+- Paste invite URL in another VS Code instance
+- Verify join success and chat connectivity
+
+5. Chat/file/snippet validation:
+- Send text messages
+- Upload and download files
+- Share code snippet and navigate to source location
+
+6. AI review flow validation:
+- Trigger `Generate Changes`
+- Verify sequential diff preview
+- Apply change(s)
+- Confirm audit log endpoint is called
+
+7. Session termination validation:
+- Host ends session
+- Guests receive `session_ended`
+- Room files are deleted on backend
+
+### 5. Quick API Smoke Commands
+
+Health check:
 
 ```bash
-# Run with debug logging
-LOG_LEVEL=DEBUG uvicorn app.main:app --reload
-
-# Check DuckDB audit logs
-cd backend
-python -c "import duckdb; print(duckdb.connect('audit_logs.duckdb').execute('SELECT * FROM audit_logs').fetchall())"
+curl http://localhost:8000/health
 ```
 
-#### Extension Debug
+Generate changes:
 
-1. Open Output panel (`Ctrl+Shift+U`)
-2. Select "Conductor Invite Links" from dropdown
-3. View WebSocket and session logs
+```bash
+curl -X POST http://localhost:8000/generate-changes \
+  -H "Content-Type: application/json" \
+  -d '{"instruction":"Generate mock changes"}'
+```
+
+Policy evaluation:
+
+```bash
+curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
+  -H "Content-Type: application/json" \
+  -d '{"change_set":{"changes":[{"id":"1","file":"a.py","type":"create_file","content":"print(1)\n"}],"summary":"demo"}}'
+```
+
+### 6. Common Troubleshooting
+
+- Backend not reachable:
+  - verify `make run-backend` is active
+  - verify extension setting `aiCollab.backendUrl`
+- Extension UI seems stale:
+  - run `npm run compile` again, restart debug host
+- File upload fails:
+  - verify backend `/files/upload/{room_id}` is reachable
+  - verify file size <= 20MB
 
 ---
 
 <a name="中文"></a>
 ## 中文
 
-本文档提供 Conductor 项目的完整测试说明。
+本指南说明在当前仓库下如何测试 Conductor 后端与扩展。
 
-### 📋 测试概览
+### 1. 测试范围
 
-| 组件 | 测试类型 | 测试数量 | 覆盖范围 |
-|------|----------|----------|----------|
-| 后端 | 单元 + 集成 | 104 | 完整 API 覆盖 |
-| 扩展 | 手动 | N/A | UI + 功能 |
-| 端到端 | 手动 | N/A | 完整工作流 |
+- 后端自动化测试（pytest）
+- 扩展服务层测试（Node test runner）
+- 手动端到端流程验证
 
----
+### 2. 后端测试
 
-### 🔧 后端测试
-
-#### 前置条件
+前置（仓库根目录）：
 
 ```bash
-# 激活虚拟环境
-source .venv/bin/activate  # Linux/Mac
-# 或: .venv\Scripts\activate  # Windows
+make setup-backend
 ```
 
-#### 运行所有测试
+运行后端全部测试：
 
 ```bash
 cd backend
-pytest tests/ -v
+../.venv/bin/pytest tests -v
 ```
 
-预期输出：
-```
-============================= 104 passed in 1.5s ==============================
-```
-
-#### 运行特定测试模块
+仅收集（确认当前数量）：
 
 ```bash
-# 聊天测试
-pytest tests/test_chat.py -v
-
-# Agent 测试 (MockAgent)
-pytest tests/test_mock_agent.py -v
-
-# 策略测试
-pytest tests/test_policy.py -v
-
-# 审计测试
-pytest tests/test_audit.py -v
+cd backend
+../.venv/bin/pytest tests --collect-only -q
 ```
 
----
+当前收集数量：
+- `104`
 
-### 🖥️ 扩展测试
+当前分布：
+- `tests/test_main.py`: 1
+- `tests/test_chat.py`: 8
+- `tests/test_mock_agent.py`: 26
+- `tests/test_auto_apply_policy.py`: 28
+- `tests/test_audit.py`: 14
+- `tests/test_style_loader.py`: 14
+- `tests/test_summary.py`: 13
 
-#### 1. 编译和启动
+运行指定模块：
+
+```bash
+cd backend
+../.venv/bin/pytest tests/test_chat.py -v
+../.venv/bin/pytest tests/test_mock_agent.py -v
+../.venv/bin/pytest tests/test_auto_apply_policy.py -v
+../.venv/bin/pytest tests/test_audit.py -v
+../.venv/bin/pytest tests/test_summary.py -v
+```
+
+### 3. 扩展服务测试
+
+先编译：
 
 ```bash
 cd extension
@@ -237,73 +223,87 @@ npm install
 npm run compile
 ```
 
-然后在 VS Code 中：
-1. 按 `F5` 启动扩展开发主机
-2. 在侧边栏打开 Conductor 面板
-
-#### 2. 测试清单
-
-| # | 功能 | 步骤 | 预期结果 |
-|---|------|------|----------|
-| 1 | 面板打开 | 点击 Conductor 图标 | 聊天 UI 显示 |
-| 2 | 角色徽章 | 检查头部 | 显示"👤 Member"或"👑 Lead" |
-| 3 | 更改角色 | 设置 → `aiCollab.role` → "lead" | 通知 + UI 更新 |
-| 4 | 生成更改 | 点击"Generate Changes"（仅Lead） | 更改预览出现 |
-| 5 | 查看差异 | 点击"View Diff" | 差异查看器打开 |
-| 6 | 应用更改 | 点击"Apply" | 更改应用到文件 |
-
-#### 3. 使用 VSIX 包测试
+运行现有测试文件：
 
 ```bash
 cd extension
-npx vsce package
+node --test out/tests/conductorStateMachine.test.js
+node --test out/tests/conductorController.test.js
+node --test out/tests/backendHealthCheck.test.js
 ```
 
-安装 VSIX：
-1. `Ctrl+Shift+P` → "Extensions: Install from VSIX..."
-2. 选择 `ai-collab-0.0.1.vsix`
-3. 重新加载 VS Code
+说明：
+- 这些测试主要覆盖服务逻辑，不是完整 VS Code UI 自动化。
+- `package.json` 当前没有默认 `npm test` 脚本。
 
----
+### 4. 手动 E2E 检查清单
 
-### 🔄 端到端测试（多用户）
-
-此测试完整的协作工作流。
-
-#### 前置条件
-
-- 后端服务器运行中 (`uvicorn app.main:app --reload`)
-- 两个 VS Code 实例（或两台电脑）
-
-#### 场景：Host + Guest 协作
-
-| 步骤 | 角色 | 操作 | 预期结果 |
-|------|------|------|----------|
-| 1 | Host | 打开 Conductor 面板 | Live Share 启动，邀请 URL 记录 |
-| 2 | Host | 从 Output 复制邀请 URL | URL 已复制 |
-| 3 | Guest | 在浏览器中打开邀请 URL | 邀请页面显示 |
-| 4 | Guest | 点击"Join Live Share in VS Code" | VS Code 打开 |
-| 5 | Guest | 安装 Conductor 扩展 | 扩展已安装 |
-| 6 | 两者 | 发送聊天消息 | 消息在两边都出现 |
-| 7 | Host | 点击"Generate Changes" | 更改已生成 |
-| 8 | Host | 审查并应用 | 更改已应用 |
-| 9 | Guest | 验证文件更改 | 文件通过 Live Share 更新 |
-| 10 | Host | 点击"End Chat" | 所有人的会话结束 |
-
----
-
-### 🐛 调试技巧
-
-#### 后端调试
+1. 启动后端：
 
 ```bash
-# 带调试日志运行
-LOG_LEVEL=DEBUG uvicorn app.main:app --reload
+make run-backend
 ```
 
-#### 扩展调试
+2. 启动扩展开发主机：
+- 在 VS Code 打开 `extension/`
+- 按 `F5`
 
-1. 打开输出面板 (`Ctrl+Shift+U`)
-2. 从下拉菜单选择"Conductor Invite Links"
-3. 查看 WebSocket 和会话日志
+3. Host 流程验证：
+- 面板状态进入 `ReadyToHost`
+- 点击 `Start Session`
+- 验证邀请链接生成与复制
 
+4. Guest 流程验证：
+- 在另一 VS Code 实例粘贴邀请链接
+- 验证加入成功与聊天连通
+
+5. 聊天/文件/片段验证：
+- 发送文本消息
+- 上传并下载文件
+- 发送代码片段并跳转到源代码位置
+
+6. AI 审查流验证：
+- 触发 `Generate Changes`
+- 验证逐条 Diff 预览
+- 应用变更
+- 确认调用审计日志接口
+
+7. 会话结束验证：
+- Host 结束会话
+- Guest 收到 `session_ended`
+- 后端删除该房间上传文件
+
+### 5. 快速 API 冒烟命令
+
+健康检查：
+
+```bash
+curl http://localhost:8000/health
+```
+
+生成变更：
+
+```bash
+curl -X POST http://localhost:8000/generate-changes \
+  -H "Content-Type: application/json" \
+  -d '{"instruction":"Generate mock changes"}'
+```
+
+策略评估：
+
+```bash
+curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
+  -H "Content-Type: application/json" \
+  -d '{"change_set":{"changes":[{"id":"1","file":"a.py","type":"create_file","content":"print(1)\n"}],"summary":"demo"}}'
+```
+
+### 6. 常见问题排查
+
+- 后端不可达：
+  - 确认 `make run-backend` 正在运行
+  - 检查扩展配置 `aiCollab.backendUrl`
+- 扩展 UI 内容旧：
+  - 重新执行 `npm run compile` 并重启调试主机
+- 文件上传失败：
+  - 确认后端 `/files/upload/{room_id}` 可达
+  - 确认文件大小不超过 20MB
