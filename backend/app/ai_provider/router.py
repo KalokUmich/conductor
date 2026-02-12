@@ -32,14 +32,27 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 class ProviderStatusResponse(BaseModel):
     """Response model for individual provider status."""
     name: str
+    enabled: bool
+    configured: bool
     healthy: bool
+
+
+class ModelStatusResponse(BaseModel):
+    """Response model for individual model status."""
+    id: str
+    provider: str
+    display_name: str
+    available: bool
 
 
 class AIStatusResponse(BaseModel):
     """Response model for GET /ai/status endpoint."""
     summary_enabled: bool
     active_provider: Optional[str]
+    active_model: Optional[str]
     providers: List[ProviderStatusResponse]
+    models: List[ModelStatusResponse]
+    default_model: str
 
 
 class MessageInput(BaseModel):
@@ -170,14 +183,17 @@ class SelectiveCodePromptResponse(BaseModel):
 async def get_ai_status() -> AIStatusResponse:
     """Get the current AI provider status.
 
-    Returns the summary enabled flag, active provider name,
-    and health status of all configured providers.
+    Returns the summary enabled flag, active provider/model,
+    and health status of all configured providers and models.
 
     Returns:
         AIStatusResponse with:
             - summary_enabled: Whether AI summarization is enabled
-            - active_provider: Name of the active provider (or null)
-            - providers: List of provider statuses with name and healthy flag
+            - active_provider: Name of the active provider type (or null)
+            - active_model: ID of the active model (or null)
+            - providers: List of provider statuses with name, configured, and healthy flags
+            - models: List of model statuses with id, provider, display_name, and available flag
+            - default_model: The configured default model ID
     """
     resolver = get_resolver()
 
@@ -186,7 +202,10 @@ async def get_ai_status() -> AIStatusResponse:
         return AIStatusResponse(
             summary_enabled=False,
             active_provider=None,
+            active_model=None,
             providers=[],
+            models=[],
+            default_model="",
         )
 
     status = resolver.get_status()
@@ -194,11 +213,79 @@ async def get_ai_status() -> AIStatusResponse:
     return AIStatusResponse(
         summary_enabled=status.summary_enabled,
         active_provider=status.active_provider,
+        active_model=status.active_model,
         providers=[
-            ProviderStatusResponse(name=p.name, healthy=p.healthy)
+            ProviderStatusResponse(
+                name=p.name,
+                enabled=p.enabled,
+                configured=p.configured,
+                healthy=p.healthy,
+            )
             for p in status.providers
         ],
+        models=[
+            ModelStatusResponse(
+                id=m.id,
+                provider=m.provider,
+                display_name=m.display_name,
+                available=m.available,
+            )
+            for m in status.models
+        ],
+        default_model=status.default_model,
     )
+
+
+class SetModelRequest(BaseModel):
+    """Request model for POST /ai/model endpoint."""
+    model_id: str
+
+
+class SetModelResponse(BaseModel):
+    """Response model for POST /ai/model endpoint."""
+    success: bool
+    active_model: Optional[str]
+    message: str
+
+
+@router.post("/model", response_model=SetModelResponse)
+async def set_active_model(request: SetModelRequest) -> SetModelResponse:
+    """Set the active AI model for summarization.
+
+    Changes the model used for AI summarization. The model must be
+    enabled and its provider must be healthy.
+
+    Args:
+        request: SetModelRequest with model_id to set as active.
+
+    Returns:
+        SetModelResponse with success status and message.
+
+    Raises:
+        HTTPException 503: If summary is disabled or resolver not initialized.
+        HTTPException 400: If the model is not available.
+    """
+    resolver = get_resolver()
+
+    if resolver is None:
+        raise HTTPException(
+            status_code=503,
+            detail="AI summary is disabled or not initialized",
+        )
+
+    success = resolver.set_active_model(request.model_id)
+
+    if success:
+        return SetModelResponse(
+            success=True,
+            active_model=request.model_id,
+            message=f"Active model set to: {request.model_id}",
+        )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot set model '{request.model_id}': model not found, disabled, or provider not healthy",
+        )
 
 
 @router.post("/summarize", response_model=DecisionSummaryResponse)

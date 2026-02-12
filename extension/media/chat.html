@@ -599,18 +599,18 @@
                         </div>
                     </div>
 
-                    <!-- Active Provider Card -->
+                    <!-- Model Selection Dropdown -->
                     <div class="bg-purple-900/20 rounded-lg border border-purple-700/50 p-4">
-                        <div class="flex items-center gap-2 mb-2">
+                        <div class="flex items-center gap-2 mb-3">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                             </svg>
-                            <span class="text-purple-300 text-xs font-medium uppercase tracking-wide">Active Provider</span>
+                            <span class="text-purple-300 text-xs font-medium uppercase tracking-wide">Active Model</span>
                         </div>
-                        <div class="flex items-center justify-between">
-                            <span id="ai-active-provider" class="text-white font-mono text-lg"></span>
-                            <span id="ai-active-provider-status" class="flex items-center gap-1 text-xs"></span>
-                        </div>
+                        <select id="ai-model-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                            <option value="">No models available</option>
+                        </select>
+                        <p id="ai-model-select-hint" class="text-xs text-gray-500 mt-2">Select a model to use for AI summarization</p>
                     </div>
 
                     <!-- Provider Health List -->
@@ -997,11 +997,15 @@
         const aiSummaryEnabled = document.getElementById('ai-summary-enabled');
         const aiSummaryIcon = document.getElementById('ai-summary-icon');
         const aiSummaryStatusText = document.getElementById('ai-summary-status-text');
-        const aiActiveProvider = document.getElementById('ai-active-provider');
-        const aiActiveProviderStatus = document.getElementById('ai-active-provider-status');
+        const aiModelSelect = document.getElementById('ai-model-select');
+        const aiModelSelectHint = document.getElementById('ai-model-select-hint');
         const aiLastUpdated = document.getElementById('ai-last-updated');
         const aiProvidersList = document.getElementById('ai-providers-list');
         const aiNoProviders = document.getElementById('ai-no-providers');
+
+        // Track models state
+        let aiModelsState = [];
+        let aiActiveModelState = null;
 
         // AI Summarize elements
         const btnSummarize = document.getElementById('btn-summarize');
@@ -1455,6 +1459,11 @@
                     // Received AI status from extension (proxied from backend)
                     console.log('[WebView] Received aiStatus:', message.data);
                     handleAiStatusResponse(message.data);
+                    break;
+                case 'setAiModelResult':
+                    // Received result of setting AI model
+                    console.log('[WebView] Received setAiModelResult:', message.data);
+                    handleSetAiModelResult(message.data);
                     break;
                 case 'summarizeResult':
                     // Received summarize result from extension
@@ -3403,15 +3412,17 @@
             // Update global AI status state
             aiSummaryEnabledState = data.summary_enabled;
             aiActiveProviderState = data.active_provider;
-            console.log('[WebView] AI status updated: enabled=', aiSummaryEnabledState, ', provider=', aiActiveProviderState);
+            aiModelsState = data.models || [];
+            aiActiveModelState = data.active_model;
+            console.log('[WebView] AI status updated: enabled=', aiSummaryEnabledState, ', provider=', aiActiveProviderState, ', model=', aiActiveModelState);
 
             // Update summary enabled section
             if (data.summary_enabled) {
                 aiSummaryEnabled.textContent = 'Enabled';
                 aiSummaryEnabled.className = 'px-3 py-1 rounded-full text-xs font-medium bg-green-600 text-white';
                 aiSummaryIcon.className = 'h-10 w-10 rounded-full flex items-center justify-center bg-green-600/20 text-green-400';
-                aiSummaryStatusText.textContent = data.active_provider ? 'Ready to summarize' : 'No provider available';
-                aiSummaryStatusText.className = data.active_provider ? 'text-xs text-green-400' : 'text-xs text-yellow-400';
+                aiSummaryStatusText.textContent = data.active_model ? `Using ${data.active_model}` : 'No model available';
+                aiSummaryStatusText.className = data.active_model ? 'text-xs text-green-400' : 'text-xs text-yellow-400';
             } else {
                 aiSummaryEnabled.textContent = 'Disabled';
                 aiSummaryEnabled.className = 'px-3 py-1 rounded-full text-xs font-medium bg-gray-600 text-gray-300';
@@ -3420,29 +3431,8 @@
                 aiSummaryStatusText.className = 'text-xs text-gray-400';
             }
 
-            // Update active provider card
-            aiActiveProvider.textContent = data.active_provider || 'None';
-
-            // Find active provider health status
-            const activeProviderData = data.providers?.find(p => p.name === data.active_provider);
-            if (data.active_provider && activeProviderData) {
-                if (activeProviderData.healthy) {
-                    aiActiveProviderStatus.className = 'flex items-center gap-1 text-xs text-green-400';
-                    aiActiveProviderStatus.innerHTML = `
-                        <span class="inline-block h-2 w-2 rounded-full bg-green-400 animate-pulse"></span>
-                        Healthy
-                    `;
-                } else {
-                    aiActiveProviderStatus.className = 'flex items-center gap-1 text-xs text-red-400';
-                    aiActiveProviderStatus.innerHTML = `
-                        <span class="inline-block h-2 w-2 rounded-full bg-red-400"></span>
-                        Unhealthy
-                    `;
-                }
-            } else {
-                aiActiveProviderStatus.className = 'flex items-center gap-1 text-xs text-gray-400';
-                aiActiveProviderStatus.innerHTML = '';
-            }
+            // Update model selection dropdown
+            updateModelSelect(data.models || [], data.active_model);
 
             // Update last updated timestamp
             const now = new Date();
@@ -3482,13 +3472,29 @@
                     }
 
                     const statusSpan = document.createElement('span');
-                    if (provider.healthy) {
+                    if (!provider.enabled) {
+                        // Provider is disabled in settings
+                        statusSpan.className = 'flex items-center gap-1.5 text-xs text-gray-500';
+                        statusSpan.innerHTML = `
+                            <span class="inline-block h-2 w-2 rounded-full bg-gray-500"></span>
+                            Disabled
+                        `;
+                    } else if (!provider.configured) {
+                        // Provider is enabled but no API key configured
+                        statusSpan.className = 'flex items-center gap-1.5 text-xs text-yellow-500';
+                        statusSpan.innerHTML = `
+                            <span class="inline-block h-2 w-2 rounded-full bg-yellow-500"></span>
+                            Not configured
+                        `;
+                    } else if (provider.healthy) {
+                        // Provider is enabled, configured, and healthy
                         statusSpan.className = 'flex items-center gap-1.5 text-xs text-green-400';
                         statusSpan.innerHTML = `
                             <span class="inline-block h-2 w-2 rounded-full bg-green-400"></span>
                             Healthy
                         `;
                     } else {
+                        // Provider is enabled and configured but unhealthy
                         statusSpan.className = 'flex items-center gap-1.5 text-xs text-red-400';
                         statusSpan.innerHTML = `
                             <span class="inline-block h-2 w-2 rounded-full bg-red-400"></span>
@@ -3506,6 +3512,111 @@
             }
         }
 
+        /**
+         * Update model selection dropdown.
+         * @param {Array} models - Array of model status objects
+         * @param {string|null} activeModel - Currently active model ID
+         */
+        function updateModelSelect(models, activeModel) {
+            if (!aiModelSelect) return;
+
+            aiModelSelect.innerHTML = '';
+
+            if (models.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No models available';
+                option.disabled = true;
+                aiModelSelect.appendChild(option);
+                aiModelSelect.disabled = true;
+                if (aiModelSelectHint) {
+                    aiModelSelectHint.textContent = 'Configure AI providers to enable models';
+                }
+                return;
+            }
+
+            // Group models by provider
+            const availableModels = models.filter(m => m.available);
+            const unavailableModels = models.filter(m => !m.available);
+
+            // Add available models first
+            if (availableModels.length > 0) {
+                availableModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = `${model.display_name}`;
+                    if (model.id === activeModel) {
+                        option.selected = true;
+                    }
+                    aiModelSelect.appendChild(option);
+                });
+            }
+
+            // Add unavailable models (grayed out)
+            if (unavailableModels.length > 0 && availableModels.length > 0) {
+                const separator = document.createElement('option');
+                separator.disabled = true;
+                separator.textContent = '── Unavailable ──';
+                aiModelSelect.appendChild(separator);
+            }
+            unavailableModels.forEach(model => {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = `${model.display_name} (no provider)`;
+                option.disabled = true;
+                aiModelSelect.appendChild(option);
+            });
+
+            aiModelSelect.disabled = availableModels.length === 0;
+
+            if (aiModelSelectHint) {
+                if (availableModels.length === 0) {
+                    aiModelSelectHint.textContent = 'No providers configured - add API keys to enable models';
+                    aiModelSelectHint.className = 'text-xs text-yellow-500 mt-2';
+                } else {
+                    aiModelSelectHint.textContent = `${availableModels.length} model(s) available`;
+                    aiModelSelectHint.className = 'text-xs text-gray-500 mt-2';
+                }
+            }
+        }
+
+        /**
+         * Handle model selection change.
+         */
+        function handleModelChange(modelId) {
+            if (!modelId) return;
+
+            console.log('[WebView] Changing active model to:', modelId);
+            // Disable select while changing
+            if (aiModelSelect) {
+                aiModelSelect.disabled = true;
+            }
+            vscode.postMessage({
+                command: 'setAiModel',
+                modelId: modelId
+            });
+        }
+
+        /**
+         * Handle result of setting AI model.
+         * @param {Object} data - Result data from backend
+         */
+        function handleSetAiModelResult(data) {
+            // Re-enable the select
+            if (aiModelSelect) {
+                aiModelSelect.disabled = false;
+            }
+
+            if (data.error) {
+                console.error('[WebView] Failed to set AI model:', data.error);
+                // The extension will automatically refresh status, which will restore the select
+                return;
+            }
+
+            console.log('[WebView] AI model set successfully:', data.message);
+            // Status will be refreshed automatically by the extension
+        }
+
         // AI Config modal event listeners
         if (btnAiConfig) {
             btnAiConfig.addEventListener('click', openAiConfigModal);
@@ -3520,6 +3631,11 @@
         }
         if (btnRefreshAiStatus) {
             btnRefreshAiStatus.addEventListener('click', fetchAiStatus);
+        }
+        if (aiModelSelect) {
+            aiModelSelect.addEventListener('change', (e) => {
+                handleModelChange(e.target.value);
+            });
         }
 
         // Close modal on Escape key
@@ -3539,14 +3655,16 @@
         function updateAiStatusIndicator() {
             if (!aiStatusText) return;
 
-            if (aiSummaryEnabledState && aiActiveProviderState) {
-                aiStatusText.textContent = aiActiveProviderState;
+            if (aiSummaryEnabledState && aiActiveModelState) {
+                // Find the display name for the active model
+                const activeModel = aiModelsState.find(m => m.id === aiActiveModelState);
+                aiStatusText.textContent = activeModel ? activeModel.display_name : aiActiveModelState;
                 aiStatusText.className = 'text-green-400';
                 if (btnSummarize) {
                     btnSummarize.disabled = false;
                 }
             } else if (aiSummaryEnabledState) {
-                aiStatusText.textContent = 'No provider';
+                aiStatusText.textContent = 'No model';
                 aiStatusText.className = 'text-yellow-400';
                 if (btnSummarize) {
                     btnSummarize.disabled = true;

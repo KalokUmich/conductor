@@ -1,7 +1,12 @@
 """Claude Bedrock provider implementation.
 
 This module provides an AIProvider implementation that connects to Claude
-via AWS Bedrock service.
+via AWS Bedrock service using the Converse API.
+
+The Converse API is AWS Bedrock's unified API that supports:
+- All Claude models (Claude 3, Claude 3.5, Claude 4, etc.)
+- Cross-region inference profiles (e.g., us.anthropic.claude-sonnet-4-5-20250929-v1:0)
+- Single-region models (e.g., anthropic.claude-3-haiku-20240307-v1:0)
 
 Usage:
     provider = ClaudeBedrockProvider(
@@ -23,14 +28,11 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeBedrockProvider(AIProvider):
-    """AIProvider implementation using Claude via AWS Bedrock.
+    """AIProvider implementation using Claude via AWS Bedrock Converse API.
 
-    This provider connects to Claude through AWS Bedrock, which requires
-    AWS credentials with appropriate Bedrock permissions.
-
-    Note: Newer Claude models (like Claude Sonnet 4) require using cross-region
-    inference profiles instead of direct model IDs. The default uses the US
-    inference profile for Claude Sonnet 4.
+    This provider connects to Claude through AWS Bedrock using the Converse API,
+    which is the recommended unified API for all Bedrock models. It supports both
+    single-region models and cross-region inference profiles.
 
     Attributes:
         aws_access_key_id: AWS access key ID.
@@ -39,7 +41,7 @@ class ClaudeBedrockProvider(AIProvider):
         model_id: Bedrock model ID or inference profile ID for Claude.
     """
 
-    # Use cross-region inference profile for Claude Sonnet 4
+    # Use cross-region inference profile for Claude Sonnet 4.5
     # Format: {region}.{model_id} for inference profiles
     DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
     DEFAULT_REGION = "us-east-1"
@@ -97,19 +99,28 @@ class ClaudeBedrockProvider(AIProvider):
     def health_check(self) -> bool:
         """Check if Claude via Bedrock is accessible.
 
-        Attempts a minimal API call to verify connectivity.
+        Attempts a minimal API call using the Converse API to verify connectivity.
+        The Converse API supports both single-region models and cross-region
+        inference profiles.
 
         Returns:
             bool: True if Bedrock is accessible, False otherwise.
         """
         try:
             client = self._get_client()
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1,
-                "messages": [{"role": "user", "content": "hi"}],
-            })
-            client.invoke_model(modelId=self.model_id, body=body)
+            # Use Converse API for health check - works with all model types
+            response = client.converse(
+                modelId=self.model_id,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [{"text": "hi"}]
+                    }
+                ],
+                inferenceConfig={
+                    "maxTokens": 1,
+                }
+            )
             return True
         except Exception as e:
             logger.warning(f"Claude Bedrock health check failed: {e}")
@@ -117,6 +128,8 @@ class ClaudeBedrockProvider(AIProvider):
 
     def summarize(self, messages: List[str]) -> str:
         """Generate a summary of the provided messages using Claude via Bedrock.
+
+        Uses the Converse API for compatibility with all model types.
 
         Args:
             messages: List of message strings to summarize.
@@ -133,27 +146,30 @@ class ClaudeBedrockProvider(AIProvider):
         client = self._get_client()
         combined_messages = "\n".join(messages)
 
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1024,
-            "messages": [
+        prompt = (
+            "Please provide a concise summary of the following messages:\n\n"
+            f"{combined_messages}"
+        )
+
+        response = client.converse(
+            modelId=self.model_id,
+            messages=[
                 {
                     "role": "user",
-                    "content": (
-                        "Please provide a concise summary of the following messages:\n\n"
-                        f"{combined_messages}"
-                    ),
+                    "content": [{"text": prompt}]
                 }
             ],
-        })
+            inferenceConfig={
+                "maxTokens": 1024,
+            }
+        )
 
-        response = client.invoke_model(modelId=self.model_id, body=body)
-        response_body = json.loads(response["body"].read())
-
-        return response_body["content"][0]["text"]
+        return response["output"]["message"]["content"][0]["text"]
 
     def summarize_structured(self, messages: List[ChatMessage]) -> DecisionSummary:
         """Generate a structured decision summary from chat messages.
+
+        Uses the Converse API for compatibility with all model types.
 
         Args:
             messages: List of ChatMessage objects to summarize.
@@ -173,20 +189,20 @@ class ClaudeBedrockProvider(AIProvider):
         # Generate prompt using shared template
         prompt = get_summary_prompt(messages)
 
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 2048,
-            "messages": [
+        response = client.converse(
+            modelId=self.model_id,
+            messages=[
                 {
                     "role": "user",
-                    "content": prompt,
+                    "content": [{"text": prompt}]
                 }
             ],
-        })
+            inferenceConfig={
+                "maxTokens": 2048,
+            }
+        )
 
-        response = client.invoke_model(modelId=self.model_id, body=body)
-        response_body = json.loads(response["body"].read())
-        response_text = response_body["content"][0]["text"].strip()
+        response_text = response["output"]["message"]["content"][0]["text"].strip()
 
         # Remove markdown code block wrapper if present
         # AI sometimes returns ```json ... ``` wrapped response
@@ -221,6 +237,8 @@ class ClaudeBedrockProvider(AIProvider):
     def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
         """Call the Claude model via Bedrock with a raw prompt.
 
+        Uses the Converse API for compatibility with all model types.
+
         Args:
             prompt: The prompt to send to the model.
             max_tokens: Maximum tokens in the response.
@@ -233,21 +251,17 @@ class ClaudeBedrockProvider(AIProvider):
         """
         client = self._get_client()
 
-        body = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": max_tokens,
-            "messages": [
+        response = client.converse(
+            modelId=self.model_id,
+            messages=[
                 {
                     "role": "user",
-                    "content": prompt,
+                    "content": [{"text": prompt}]
                 }
             ],
-        })
-
-        response = client.invoke_model(
-            modelId=self.model_id,
-            body=body,
+            inferenceConfig={
+                "maxTokens": max_tokens,
+            }
         )
 
-        response_body = json.loads(response["body"].read())
-        return response_body["content"][0]["text"].strip()
+        return response["output"]["message"]["content"][0]["text"].strip()

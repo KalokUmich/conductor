@@ -1,0 +1,134 @@
+# Conductor Settings Configuration
+# Copy this file to conductor.settings.yaml and customize your settings
+#
+# This file contains non-sensitive settings and CAN be committed to git.
+# For API keys and secrets, use conductor.secrets.yaml (gitignored).
+#
+# Usage:
+#   cp config/conductor.settings.yaml.example config/conductor.settings.yaml
+#   # Then edit conductor.settings.yaml with your preferences
+
+# =============================================================================
+# Server Configuration
+# =============================================================================
+server:
+  # Backend server host and port
+  host: "localhost"
+  port: 8000
+  
+  # Public URL for external access (set by ngrok or other tunnel service)
+  # Leave empty to use localhost
+  public_url: ""
+
+# =============================================================================
+# Ngrok Settings (non-secrets)
+# =============================================================================
+# Note: Ngrok authtoken is in conductor.secrets.yaml
+ngrok:
+  # Region (us, eu, ap, au, sa, jp, in)
+  region: "eu"
+
+  # Enable ngrok tunnel on startup
+  enabled: true
+
+# =============================================================================
+# AI Summary Configuration
+# =============================================================================
+summary:
+  # Enable AI-powered summarization feature
+  enabled: true
+  
+  # Default model to use for summarization
+  # Must match an id from ai_models below
+  default_model: "claude-sonnet-4-anthropic"
+
+# =============================================================================
+# AI Provider Settings
+# =============================================================================
+# Enable/disable providers. Even if enabled here, providers need valid API keys
+# in conductor.secrets.yaml to function. UI will show grayed out if unavailable.
+ai_provider_settings:
+  anthropic_enabled: true
+  aws_bedrock_enabled: true
+  openai_enabled: true
+
+# =============================================================================
+# AI Models Configuration
+# =============================================================================
+# Define available models for each provider.
+# Only models for enabled providers with valid API keys will be usable.
+#
+# Note for AWS Bedrock:
+# - Some models (like Claude Sonnet 4) only support cross-region inference
+# - Use the inference profile ID format: us.anthropic.claude-sonnet-4-20250514-v1:0
+# - Or use models that support single-region: anthropic.claude-3-haiku-20240307-v1:0
+ai_models:
+  - id: "claude-sonnet-4-anthropic"
+    provider: "anthropic"
+    model_name: "claude-sonnet-4-20250514"
+    display_name: "Claude Sonnet 4 (Anthropic)"
+    enabled: true
+
+  - id: "claude-3-haiku-bedrock"
+    provider: "aws_bedrock"
+    model_name: "anthropic.claude-3-haiku-20240307-v1:0"
+    display_name: "Claude 3 Haiku (Bedrock)"
+    enabled: true
+
+  - id: "claude-sonnet-4-bedrock"
+    provider: "aws_bedrock"
+    model_name: "eu.anthropic.claude-sonnet-4-20250514-v1:0"
+    display_name: "Claude Sonnet 4 (Bedrock EU)"
+    enabled: true
+
+  - id: "claude-sonnet-4-5-bedrock"
+    provider: "aws_bedrock"
+    model_name: "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    display_name: "Claude Sonnet 4.5 (Bedrock EU)"
+    enabled: true
+
+  - id: "gpt-4o"
+    provider: "openai"
+    model_name: "gpt-4o"
+    display_name: "GPT-4o"
+    enabled: true
+
+  - id: "gpt-4o-mini"
+    provider: "openai"
+    model_name: "gpt-4o-mini"
+    display_name: "GPT-4o Mini"
+    enabled: true
+
+# =============================================================================
+# Session Configuration
+# =============================================================================
+session:
+  # Session timeout in minutes (0 = no timeout)
+  timeout_minutes: 0
+  
+  # Maximum participants per room
+  max_participants: 10
+
+# =============================================================================
+# Change Limits Configuration
+# =============================================================================
+change_limits:
+  max_files_per_request: 10
+  max_lines_per_file: 500
+  max_total_lines: 2000
+  auto_apply:
+    enabled: false
+    max_lines: 50
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+logging:
+  # Log level (debug, info, warning, error)
+  level: "info"
+  
+  # Enable DuckDB audit logging
+  audit_enabled: true
+  
+  # Path to audit log database file
+  audit_path: "audit_logs.duckdb"

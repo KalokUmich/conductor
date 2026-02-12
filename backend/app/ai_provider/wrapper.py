@@ -93,7 +93,7 @@ def _get_active_provider():
             "AI summarization service is not initialized. Please check server configuration."
         )
 
-    if not resolver.config.enabled:
+    if not resolver.summary_config.enabled:
         logger.info("AI provider call rejected: summary feature is disabled")
         raise ProviderNotAvailableError(
             "AI summarization is not enabled in configuration."

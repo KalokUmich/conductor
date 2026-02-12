@@ -1,25 +1,29 @@
 """Configuration loader for Conductor backend.
 
 This module provides YAML-based configuration loading with Pydantic validation.
-It searches for configuration files in standard locations and provides
-sensible defaults for all settings.
+Configuration is split into two files:
+    - conductor.secrets.yaml: Contains API keys and secrets (gitignored)
+    - conductor.settings.yaml: Contains all other settings (can be committed)
 
-Configuration file search order:
-    1. ./config/conductor.yaml (current directory)
-    2. ./conductor.yaml (current directory)
-    3. ../config/conductor.yaml (parent directory)
-    4. ~/.conductor/conductor.yaml (user home)
+Configuration file search order (for each file type):
+    1. ./config/conductor.{secrets,settings}.yaml (current directory)
+    2. ./conductor.{secrets,settings}.yaml (current directory)
+    3. ../config/conductor.{secrets,settings}.yaml (parent directory)
+    4. ~/.conductor/conductor.{secrets,settings}.yaml (user home)
 
 Example:
     >>> from app.config import get_config
     >>> config = get_config()
     >>> print(config.server.port)  # 8000
 """
+import logging
 from pathlib import Path
 from typing import Optional
 
 import yaml
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -40,17 +44,24 @@ class ServerConfig(BaseModel):
     public_url: str = ""
 
 
-class NgrokConfig(BaseModel):
-    """Ngrok tunnel configuration for external access.
+class NgrokSettingsConfig(BaseModel):
+    """Ngrok tunnel settings (non-secrets).
 
     Attributes:
-        authtoken: Ngrok authentication token.
         region: Ngrok region (us, eu, ap, au, sa, jp, in).
         enabled: Whether to enable ngrok tunnel on startup.
     """
-    authtoken: str = ""
     region: str = "us"
     enabled: bool = False
+
+
+class NgrokSecretsConfig(BaseModel):
+    """Ngrok secrets configuration.
+
+    Attributes:
+        authtoken: Ngrok authentication token (secret).
+    """
+    authtoken: str = ""
 
 
 class LLMConfig(BaseModel):
@@ -122,42 +133,225 @@ class LoggingConfig(BaseModel):
     audit_path: str = "audit_logs.duckdb"
 
 
-class SummaryConfig(BaseModel):
-    """Summary/AI provider configuration.
+# =============================================================================
+# AI Provider Secrets Configuration (should be in gitignored secrets file)
+# =============================================================================
 
-    API keys are configured directly in YAML. Empty string means the provider is disabled.
-    The resolver will try providers in order: claude_bedrock first, then claude_direct.
-    Only providers with non-empty API keys will be health-checked.
+
+class AnthropicSecretsConfig(BaseModel):
+    """Anthropic API secrets configuration.
+
+    Attributes:
+        api_key: Anthropic API key (starts with sk-ant-...).
+    """
+    api_key: str = ""
+
+
+class AWSBedrockSecretsConfig(BaseModel):
+    """AWS Bedrock secrets configuration.
+
+    Attributes:
+        access_key_id: AWS access key ID.
+        secret_access_key: AWS secret access key.
+        session_token: Optional AWS session token for temporary credentials.
+        region: AWS region for Bedrock service.
+    """
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    session_token: str = ""
+    region: str = "us-east-1"
+
+
+class OpenAISecretsConfig(BaseModel):
+    """OpenAI API secrets configuration.
+
+    Attributes:
+        api_key: OpenAI API key (starts with sk-...).
+        organization: Optional organization ID.
+    """
+    api_key: str = ""
+    organization: str = ""
+
+
+class AIProvidersSecretsConfig(BaseModel):
+    """AI providers secrets configuration.
+
+    This section contains API keys and should be in conductor.secrets.yaml.
+
+    Attributes:
+        anthropic: Anthropic API secrets.
+        aws_bedrock: AWS Bedrock secrets.
+        openai: OpenAI API secrets.
+    """
+    anthropic: AnthropicSecretsConfig = AnthropicSecretsConfig()
+    aws_bedrock: AWSBedrockSecretsConfig = AWSBedrockSecretsConfig()
+    openai: OpenAISecretsConfig = OpenAISecretsConfig()
+
+
+# =============================================================================
+# Secrets Config (conductor.secrets.yaml)
+# =============================================================================
+
+
+class SecretsConfig(BaseModel):
+    """All secrets configuration (conductor.secrets.yaml).
+
+    This file should be gitignored and contains all sensitive data.
+
+    Attributes:
+        ai_providers: AI provider API keys and credentials.
+        ngrok: Ngrok authentication token.
+    """
+    ai_providers: AIProvidersSecretsConfig = AIProvidersSecretsConfig()
+    ngrok: NgrokSecretsConfig = NgrokSecretsConfig()
+
+
+# =============================================================================
+# AI Settings Configuration (Non-secrets - can be committed)
+# =============================================================================
+
+
+class AIProviderSettingsConfig(BaseModel):
+    """Settings for enabling/disabling AI providers.
+
+    These are settings (not secrets) that control which providers are enabled.
+    Even if enabled here, providers will only work if properly configured with secrets.
+
+    Attributes:
+        anthropic_enabled: Whether Anthropic provider is enabled.
+        aws_bedrock_enabled: Whether AWS Bedrock provider is enabled.
+        openai_enabled: Whether OpenAI provider is enabled.
+    """
+    anthropic_enabled: bool = True
+    aws_bedrock_enabled: bool = True
+    openai_enabled: bool = True
+
+
+class AIModelConfig(BaseModel):
+    """Configuration for a single AI model.
+
+    Attributes:
+        id: Unique identifier for the model (used in API).
+        provider: Provider type (anthropic, aws_bedrock, openai).
+        model_name: Actual model name/ID used by the provider.
+        display_name: Human-readable name for UI display.
+        enabled: Whether this model is enabled.
+    """
+    id: str
+    provider: str  # anthropic, aws_bedrock, openai
+    model_name: str
+    display_name: str
+    enabled: bool = True
+
+
+# Default models configuration
+# Note: For AWS Bedrock, use models that support single-region inference
+# Cross-region inference profiles (us.anthropic.*) require Converse API
+DEFAULT_AI_MODELS = [
+    AIModelConfig(
+        id="claude-sonnet-4-anthropic",
+        provider="anthropic",
+        model_name="claude-sonnet-4-20250514",
+        display_name="Claude Sonnet 4 (Anthropic)",
+    ),
+    AIModelConfig(
+        id="claude-3-haiku-bedrock",
+        provider="aws_bedrock",
+        model_name="anthropic.claude-3-haiku-20240307-v1:0",
+        display_name="Claude 3 Haiku (Bedrock)",
+    ),
+    AIModelConfig(
+        id="gpt-4o",
+        provider="openai",
+        model_name="gpt-4o",
+        display_name="GPT-4o",
+    ),
+    AIModelConfig(
+        id="gpt-4o-mini",
+        provider="openai",
+        model_name="gpt-4o-mini",
+        display_name="GPT-4o Mini",
+    ),
+]
+
+
+class SummaryConfig(BaseModel):
+    """Summary/AI configuration.
 
     Attributes:
         enabled: Whether AI-powered summarization is enabled.
-        claude_bedrock_api_key: AWS credentials for Bedrock (format: "ACCESS_KEY:SECRET_KEY" or "ACCESS_KEY:SECRET_KEY:SESSION_TOKEN").
-        claude_direct_api_key: Anthropic API key for direct Claude access.
+        default_model: Default model ID to use for summarization.
     """
     enabled: bool = False
-    claude_bedrock_api_key: str = ""
-    claude_direct_api_key: str = ""
+    default_model: str = "claude-sonnet-4-anthropic"
 
 
-class ConductorConfig(BaseModel):
-    """Main configuration container for all Conductor settings.
+# =============================================================================
+# Settings Config (conductor.settings.yaml)
+# =============================================================================
+
+
+class SettingsConfig(BaseModel):
+    """All settings configuration (conductor.settings.yaml).
+
+    This file can be committed to git and contains all non-sensitive settings.
 
     Attributes:
         server: Backend server settings.
-        ngrok: Ngrok tunnel settings.
-        llm: LLM/AI settings.
+        ngrok: Ngrok settings (region, enabled - NOT authtoken).
+        llm: LLM/AI settings (legacy, for future use).
         change_limits: Code change limits.
         session: Chat session settings.
         logging: Logging and audit settings.
-        summary: Summary/AI provider settings.
+        summary: Summary/AI settings.
+        ai_provider_settings: AI provider enable flags.
+        ai_models: AI model configurations.
     """
     server: ServerConfig = ServerConfig()
-    ngrok: NgrokConfig = NgrokConfig()
+    ngrok: NgrokSettingsConfig = NgrokSettingsConfig()
     llm: LLMConfig = LLMConfig()
     change_limits: ChangeLimitsConfig = ChangeLimitsConfig()
     session: SessionConfig = SessionConfig()
     logging: LoggingConfig = LoggingConfig()
     summary: SummaryConfig = SummaryConfig()
+    ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
+    ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
+
+
+# =============================================================================
+# Combined Config (merged from secrets + settings)
+# =============================================================================
+
+
+class ConductorConfig(BaseModel):
+    """Main configuration container for all Conductor settings.
+
+    This is the merged configuration from both secrets and settings files.
+
+    Attributes:
+        server: Backend server settings.
+        ngrok_settings: Ngrok settings (region, enabled).
+        ngrok_secrets: Ngrok secrets (authtoken).
+        llm: LLM/AI settings (legacy, for future use).
+        change_limits: Code change limits.
+        session: Chat session settings.
+        logging: Logging and audit settings.
+        summary: Summary/AI settings.
+        ai_provider_settings: AI provider enable flags.
+        ai_providers: AI provider credentials (secrets).
+        ai_models: AI model configurations.
+    """
+    server: ServerConfig = ServerConfig()
+    ngrok_settings: NgrokSettingsConfig = NgrokSettingsConfig()
+    ngrok_secrets: NgrokSecretsConfig = NgrokSecretsConfig()
+    llm: LLMConfig = LLMConfig()
+    change_limits: ChangeLimitsConfig = ChangeLimitsConfig()
+    session: SessionConfig = SessionConfig()
+    logging: LoggingConfig = LoggingConfig()
+    summary: SummaryConfig = SummaryConfig()
+    ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
+    ai_providers: AIProvidersSecretsConfig = AIProvidersSecretsConfig()
+    ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
 
 
 # =============================================================================
@@ -165,59 +359,143 @@ class ConductorConfig(BaseModel):
 # =============================================================================
 
 
-def find_config_file() -> Path | None:
-    """Find the configuration file in standard locations."""
+def _find_config_file(filename: str) -> Path | None:
+    """Find a configuration file in standard locations.
+
+    Args:
+        filename: Name of the file to find (e.g., 'conductor.secrets.yaml').
+
+    Returns:
+        Path to the file if found, None otherwise.
+    """
     # Check locations in order of priority
     locations = [
-        Path.cwd() / "config" / "conductor.yaml",
-        Path.cwd() / "conductor.yaml",
-        Path.cwd().parent / "config" / "conductor.yaml",
-        Path.home() / ".conductor" / "conductor.yaml",
+        Path.cwd() / "config" / filename,
+        Path.cwd() / filename,
+        Path.cwd().parent / "config" / filename,
+        Path.home() / ".conductor" / filename,
     ]
-    
+
     for path in locations:
         if path.exists():
             return path
-    
+
     return None
 
 
-def load_config(config_path: Path | str | None = None) -> ConductorConfig:
-    """Load configuration from YAML file.
-    
+def find_secrets_file() -> Path | None:
+    """Find the secrets configuration file."""
+    return _find_config_file("conductor.secrets.yaml")
+
+
+def find_settings_file() -> Path | None:
+    """Find the settings configuration file."""
+    return _find_config_file("conductor.settings.yaml")
+
+
+def _load_yaml_file(path: Path | None) -> dict:
+    """Load a YAML file and return its contents as a dict.
+
     Args:
-        config_path: Optional path to config file. If not provided,
-                     searches standard locations.
-    
+        path: Path to the YAML file, or None.
+
     Returns:
-        ConductorConfig instance with loaded settings.
+        Dictionary with file contents, or empty dict if file not found.
     """
-    if config_path is None:
-        config_path = find_config_file()
-    
-    if config_path is None:
-        # Return default config if no file found
-        return ConductorConfig()
-    
-    config_path = Path(config_path)
-    
-    if not config_path.exists():
-        return ConductorConfig()
-    
-    with open(config_path) as f:
-        data = yaml.safe_load(f) or {}
-    
-    return ConductorConfig(**data)
+    if path is None or not path.exists():
+        return {}
+
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except Exception as e:
+        logger.warning(f"Failed to load config file {path}: {e}")
+        return {}
+
+
+def load_config(
+    secrets_path: Path | str | None = None,
+    settings_path: Path | str | None = None,
+) -> ConductorConfig:
+    """Load configuration from secrets and settings YAML files.
+
+    Args:
+        secrets_path: Optional path to secrets file. If not provided,
+                      searches standard locations.
+        settings_path: Optional path to settings file. If not provided,
+                       searches standard locations.
+
+    Returns:
+        ConductorConfig instance with merged settings.
+    """
+    # Find files if not provided
+    if secrets_path is None:
+        secrets_path = find_secrets_file()
+    elif isinstance(secrets_path, str):
+        secrets_path = Path(secrets_path)
+
+    if settings_path is None:
+        settings_path = find_settings_file()
+    elif isinstance(settings_path, str):
+        settings_path = Path(settings_path)
+
+    # Load both files
+    secrets_data = _load_yaml_file(secrets_path)
+    settings_data = _load_yaml_file(settings_path)
+
+    # Log what files were found
+    if secrets_path and secrets_path.exists():
+        logger.info(f"Loaded secrets from: {secrets_path}")
+    else:
+        logger.info("No secrets file found, using defaults")
+
+    if settings_path and settings_path.exists():
+        logger.info(f"Loaded settings from: {settings_path}")
+    else:
+        logger.info("No settings file found, using defaults")
+
+    # Build the merged config
+    # Settings file structure matches SettingsConfig
+    # Secrets file structure matches SecretsConfig
+    config_data = {}
+
+    # From settings file
+    if "server" in settings_data:
+        config_data["server"] = settings_data["server"]
+    if "ngrok" in settings_data:
+        config_data["ngrok_settings"] = settings_data["ngrok"]
+    if "llm" in settings_data:
+        config_data["llm"] = settings_data["llm"]
+    if "change_limits" in settings_data:
+        config_data["change_limits"] = settings_data["change_limits"]
+    if "session" in settings_data:
+        config_data["session"] = settings_data["session"]
+    if "logging" in settings_data:
+        config_data["logging"] = settings_data["logging"]
+    if "summary" in settings_data:
+        config_data["summary"] = settings_data["summary"]
+    if "ai_provider_settings" in settings_data:
+        config_data["ai_provider_settings"] = settings_data["ai_provider_settings"]
+    if "ai_models" in settings_data:
+        config_data["ai_models"] = settings_data["ai_models"]
+
+    # From secrets file
+    if "ai_providers" in secrets_data:
+        config_data["ai_providers"] = secrets_data["ai_providers"]
+    if "ngrok" in secrets_data:
+        config_data["ngrok_secrets"] = secrets_data["ngrok"]
+
+    return ConductorConfig(**config_data)
 
 
 def get_public_url(config: ConductorConfig) -> str:
     """Get the public URL for the backend.
-    
+
     Returns ngrok URL if configured, otherwise localhost.
     """
     if config.server.public_url:
         return config.server.public_url
-    
+
     return f"http://{config.server.host}:{config.server.port}"
 
 

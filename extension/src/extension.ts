@@ -321,6 +321,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     console.log('[Conductor] Received getAiStatus message from WebView');
                     this._handleGetAiStatus();
                     return;
+                case 'setAiModel':
+                    console.log('[Conductor] Received setAiModel message from WebView:', message.modelId);
+                    this._handleSetAiModel(message.modelId);
+                    return;
                 case 'summarize':
                     this._handleSummarizeAndPost(message.messages);
                     return;
@@ -1032,7 +1036,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             const data = await response.json() as {
                 summary_enabled: boolean;
                 active_provider: string | null;
-                providers: Array<{ name: string; healthy: boolean }>;
+                active_model: string | null;
+                providers: Array<{ name: string; enabled: boolean; configured: boolean; healthy: boolean }>;
+                models: Array<{ id: string; provider: string; display_name: string; available: boolean }>;
+                default_model: string;
             };
             console.log('[Conductor] AI status received:', data);
 
@@ -1047,6 +1054,59 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 command: 'aiStatus',
                 data: { error: `Cannot connect to backend: ${msg}` }
             });
+        }
+    }
+
+    /**
+     * Handle request to set the active AI model.
+     * Posts to /ai/model and sends the result to the WebView.
+     */
+    private async _handleSetAiModel(modelId: string): Promise<void> {
+        try {
+            console.log('[Conductor] Setting AI model to:', modelId);
+            const response = await fetch(`${getBackendUrl()}/ai/model`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ model_id: modelId })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.warn('[Conductor] Set AI model request failed:', response.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'setAiModelResult',
+                    data: { error: `Failed to set model: ${response.status}` }
+                });
+                // Refresh status to restore UI to current state
+                this._handleGetAiStatus();
+                return;
+            }
+
+            const data = await response.json() as {
+                success: boolean;
+                active_model: string | null;
+                message: string;
+            };
+            console.log('[Conductor] AI model set successfully:', data);
+
+            this._view?.webview.postMessage({
+                command: 'setAiModelResult',
+                data: data
+            });
+
+            // Refresh full AI status to update all UI elements
+            this._handleGetAiStatus();
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] Failed to set AI model:', msg);
+            this._view?.webview.postMessage({
+                command: 'setAiModelResult',
+                data: { error: `Cannot connect to backend: ${msg}` }
+            });
+            // Refresh status to restore UI to current state
+            this._handleGetAiStatus();
         }
     }
 

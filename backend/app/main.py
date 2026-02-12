@@ -42,12 +42,12 @@ async def lifespan(app: FastAPI):
     # Startup
     config = get_config()
 
-    if config.ngrok.enabled:
+    if config.ngrok_settings.enabled:
         logger.info("Ngrok is enabled in config, starting tunnel...")
         public_url = start_ngrok(
             port=config.server.port,
-            authtoken=config.ngrok.authtoken,
-            region=config.ngrok.region
+            authtoken=config.ngrok_secrets.authtoken,
+            region=config.ngrok_settings.region
         )
         if public_url:
             logger.info(f"✅ Ngrok tunnel active: {public_url}")
@@ -70,12 +70,12 @@ async def lifespan(app: FastAPI):
 
     # Initialize AI provider resolver if summary is enabled
     if config.summary.enabled:
-        logger.info("Summary enabled, resolving AI provider...")
-        resolver = ProviderResolver(config.summary)
+        logger.info("Summary enabled, resolving AI providers...")
+        resolver = ProviderResolver(config)  # Pass full config for new architecture
         active = resolver.resolve()
         set_resolver(resolver)
         if active:
-            logger.info(f"✅ AI provider active: {resolver.active_provider_name}")
+            logger.info(f"✅ AI active: model={resolver.active_model_id}, provider={resolver.active_provider_type}")
         else:
             logger.warning("⚠️ No healthy AI provider found")
     else:

@@ -78,8 +78,14 @@ logs/
 *.pem
 *.key
 
-# Config file with secrets (use conductor.yaml.example as template)
+# Config files with secrets (use .example files as templates)
+# conductor.secrets.yaml contains API keys - MUST be gitignored
+config/conductor.secrets.yaml
+conductor.secrets.yaml
+# Legacy config file (replaced by separate secrets/settings files)
 config/conductor.yaml
+conductor.yaml
+# Note: conductor.settings.yaml is NOT gitignored - it can be committed
 
 # =============================================================================
 # Build & Temp Files
