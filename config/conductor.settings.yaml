@@ -132,3 +132,18 @@ logging:
   
   # Path to audit log database file
   audit_path: "audit_logs.duckdb"
+
+# =============================================================================
+# AWS SSO Configuration
+# =============================================================================
+# Enable SSO login for user identification via AWS IAM Identity Center.
+# Users can sign in before starting/joining a session.
+sso:
+  # Enable SSO login button in the extension
+  enabled: true
+
+  # Your AWS SSO portal start URL (from IAM Identity Center settings)
+  start_url: "https://xxxx.awsapps.com/start"
+
+  # AWS region where your IAM Identity Center is configured
+  region: "eu-west-2"
