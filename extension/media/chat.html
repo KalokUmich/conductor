@@ -327,6 +327,16 @@
                                 <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
                             </svg>
                         </button>
+                        <!-- Room Settings Button (Lead only) -->
+                        <button
+                            id="btn-room-settings"
+                            class="hidden text-gray-400 hover:text-blue-400 p-1.5 rounded transition-colors"
+                            title="Room Settings"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
                         <!-- Auto Apply Toggle (Lead only) -->
                         <div id="auto-apply-toggle-container" class="hidden flex items-center gap-2">
                             <span class="text-xs text-gray-400">Auto</span>
@@ -387,15 +397,6 @@
                         <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clip-rule="evenodd" />
                     </svg>
                     Create Summary
-                </button>
-                <button
-                    id="btn-generate-changes"
-                    class="bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors duration-200 flex items-center gap-2"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
-                    </svg>
-                    Generate Changes
                 </button>
                 <button
                     id="btn-end-chat"
@@ -625,22 +626,6 @@
             <div id="users-list" class="flex-1 overflow-y-auto p-2 space-y-1">
                 <!-- Users will be rendered here -->
             </div>
-            <!-- AI Summary Footer -->
-            <div class="px-3 py-3 border-t border-gray-700 bg-gray-800/50 space-y-2">
-                <button
-                    id="btn-summarize"
-                    class="w-full bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors flex items-center justify-center gap-2"
-                    title="Generate AI summary of this conversation"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
-                    </svg>
-                    <span id="btn-summarize-text">Summarize Chat</span>
-                </button>
-                <div id="ai-status-indicator" class="text-xs text-gray-500 text-center">
-                    AI: <span id="ai-status-text" class="text-gray-400">--</span>
-                </div>
-            </div>
         </aside>
         </div> <!-- close panel-chat -->
     </div> <!-- close main area flex-col -->
@@ -736,6 +721,66 @@
                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
                     </svg>
                     Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Room Settings Modal                                           -->
+    <!-- ============================================================ -->
+    <div id="room-settings-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+        <!-- Backdrop -->
+        <div id="room-settings-backdrop" class="absolute inset-0 bg-black/60"></div>
+        <!-- Modal Content -->
+        <div class="relative bg-gray-800 rounded-lg shadow-xl border border-gray-700 w-full max-w-md mx-4">
+            <!-- Header -->
+            <div class="flex items-center justify-between px-5 py-4 border-b border-gray-700">
+                <h3 class="text-lg font-semibold text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+                    </svg>
+                    Room Settings
+                </h3>
+                <button id="btn-close-room-settings" class="text-gray-400 hover:text-white p-1 rounded transition-colors">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+            </div>
+            <!-- Body -->
+            <div class="px-5 py-4 space-y-4">
+                <!-- Loading State -->
+                <div id="room-settings-loading" class="hidden flex items-center justify-center py-8">
+                    <div class="h-6 w-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                    <span class="ml-3 text-gray-400 text-sm">Loading settings...</span>
+                </div>
+                <!-- Error State -->
+                <div id="room-settings-error" class="hidden bg-red-900/30 border border-red-700 rounded-lg p-3">
+                    <p class="text-red-400 text-sm" id="room-settings-error-text">Failed to fetch settings</p>
+                </div>
+                <!-- Content -->
+                <div id="room-settings-content" class="hidden space-y-4">
+                    <!-- Code Style Textarea -->
+                    <div>
+                        <label for="room-code-style" class="block text-sm font-medium text-gray-300 mb-2">Code Style Guidelines</label>
+                        <textarea
+                            id="room-code-style"
+                            rows="8"
+                            class="w-full bg-gray-900 border border-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono resize-y"
+                            placeholder="Enter code style guidelines for this room (e.g., indentation rules, naming conventions, patterns to follow)..."
+                        ></textarea>
+                        <p class="text-xs text-gray-500 mt-1">These guidelines will be included in AI-generated code prompts for this room.</p>
+                    </div>
+                </div>
+            </div>
+            <!-- Footer -->
+            <div id="room-settings-footer" class="hidden flex items-center justify-end gap-3 px-5 py-4 border-t border-gray-700">
+                <button id="btn-cancel-room-settings" class="text-gray-400 hover:text-white text-sm px-4 py-2 rounded-lg transition-colors">
+                    Cancel
+                </button>
+                <button id="btn-save-room-settings" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                    Save
                 </button>
             </div>
         </div>
@@ -973,7 +1018,7 @@
         const vscode = acquireVsCodeApi();
 
         // Session state (injected by extension)
-        let session = window.initialSession || { roomId: null, hostId: null, userId: null, createdAt: null, backendUrl: 'http://localhost:8000', displayName: 'Host' };
+        let session = window.initialSession || { roomId: null, hostId: null, userId: null, createdAt: null, backendUrl: 'http://localhost:8000', displayName: 'Host', leadId: null };
         console.log('[WebView] Session initialized:', session.roomId ? `roomId=${session.roomId}, userId=${session.userId}` : 'no session');
 
         // Conductor FSM state (injected by extension)
@@ -1017,7 +1062,6 @@
         const roleBadge = document.getElementById('role-badge');
         const leadActions = document.getElementById('lead-actions');
         const btnCreateSummary = document.getElementById('btn-create-summary');
-        const btnGenerateChanges = document.getElementById('btn-generate-changes');
         const autoApplyToggleContainer = document.getElementById('auto-apply-toggle-container');
         const autoApplyToggle = document.getElementById('auto-apply-toggle');
         const pendingChangesCard = document.getElementById('pending-changes-card');
@@ -1107,10 +1151,21 @@
         let aiModelsState = [];
         let aiActiveModelState = null;
 
+        // Room Settings modal elements
+        const roomSettingsModal = document.getElementById('room-settings-modal');
+        const roomSettingsBackdrop = document.getElementById('room-settings-backdrop');
+        const btnRoomSettings = document.getElementById('btn-room-settings');
+        const btnCloseRoomSettings = document.getElementById('btn-close-room-settings');
+        const btnCancelRoomSettings = document.getElementById('btn-cancel-room-settings');
+        const btnSaveRoomSettings = document.getElementById('btn-save-room-settings');
+        const roomSettingsLoading = document.getElementById('room-settings-loading');
+        const roomSettingsError = document.getElementById('room-settings-error');
+        const roomSettingsErrorText = document.getElementById('room-settings-error-text');
+        const roomSettingsContent = document.getElementById('room-settings-content');
+        const roomSettingsFooter = document.getElementById('room-settings-footer');
+        const roomCodeStyleTextarea = document.getElementById('room-code-style');
+
         // AI Summarize elements
-        const btnSummarize = document.getElementById('btn-summarize');
-        const btnSummarizeText = document.getElementById('btn-summarize-text');
-        const aiStatusText = document.getElementById('ai-status-text');
 
         // Summary modal elements
         const summaryModal = document.getElementById('summary-modal');
@@ -1355,13 +1410,93 @@
         };
 
         /**
-         * Update the UI based on permissions.
+         * Update UI based on dynamic lead permissions from WebSocket.
+         * This replaces the static isEffectiveLead logic with server-tracked lead state.
+         */
+        function updateLeadPermissions() {
+            const isHost = session.sessionRole === 'host';
+            const isLead = session.userId === session.leadId;
+            const canUseAI = isLead;
+            const canConfigure = isHost || isLead;
+
+            // Update role badge to reflect lead status
+            const headerName = escapeHtml(session.displayName || 'User');
+            if (isHost && isLead) {
+                roleBadge.innerHTML = `<span class="font-semibold text-amber-300">${headerName}</span>
+                    <span class="mx-1.5 text-gray-600">&middot;</span>
+                    <span class="text-amber-400 font-medium">Host + Lead</span>`;
+                roleBadge.className = 'flex items-center px-3 py-1 rounded-full text-xs bg-amber-500/10 border border-amber-500/20';
+            } else if (isHost) {
+                roleBadge.innerHTML = `<span class="font-semibold text-amber-300">${headerName}</span>
+                    <span class="mx-1.5 text-gray-600">&middot;</span>
+                    <span class="text-amber-400 font-medium">Host</span>`;
+                roleBadge.className = 'flex items-center px-3 py-1 rounded-full text-xs bg-amber-500/10 border border-amber-500/20';
+            } else if (isLead) {
+                roleBadge.innerHTML = `<span class="font-semibold text-purple-300">${headerName}</span>
+                    <span class="mx-1.5 text-gray-600">&middot;</span>
+                    <span class="text-purple-400 font-medium">Lead</span>`;
+                roleBadge.className = 'flex items-center px-3 py-1 rounded-full text-xs bg-purple-500/10 border border-purple-500/20';
+            } else {
+                roleBadge.innerHTML = `<span class="font-semibold text-gray-300">${headerName}</span>
+                    <span class="mx-1.5 text-gray-600">&middot;</span>
+                    <span class="text-gray-400 font-medium">Member</span>`;
+                roleBadge.className = 'flex items-center px-3 py-1 rounded-full text-xs bg-gray-700/50 border border-gray-600/30';
+            }
+
+            // AI buttons: only lead
+            btnCreateSummary.style.display = canUseAI ? 'flex' : 'none';
+
+            // Config buttons: host OR lead
+            if (btnAiConfig) btnAiConfig.style.display = canConfigure ? 'flex' : 'none';
+            if (btnRoomSettings) btnRoomSettings.classList.toggle('hidden', !canConfigure);
+
+            // End session: host only
+            btnEndChat.style.display = isHost ? 'flex' : 'none';
+
+            // Auto-apply toggle: lead only
+            if (canUseAI) {
+                autoApplyToggleContainer.classList.remove('hidden');
+                autoApplyToggleContainer.classList.add('flex');
+            } else {
+                autoApplyToggleContainer.classList.add('hidden');
+                autoApplyToggleContainer.classList.remove('flex');
+            }
+
+            // AI toolbar section: show if user has any AI-related permissions
+            if (canUseAI || canConfigure) {
+                leadActions.classList.remove('hidden');
+                leadActions.classList.add('flex');
+            } else {
+                leadActions.classList.add('hidden');
+                leadActions.classList.remove('flex');
+            }
+        }
+
+        /**
+         * Update the UI based on permissions from extension host.
+         * After setting sessionRole, delegates to updateLeadPermissions() for
+         * dynamic lead-based visibility.
          */
         function updateUIForPermissions(permissions) {
             // Store session role for use in messages
             if (permissions.sessionRole) {
                 session.sessionRole = permissions.sessionRole;
             }
+
+            // Hide SSO header badge since name is now shown in role badge
+            if (ssoHeaderBadge) {
+                ssoHeaderBadge.classList.add('hidden');
+            }
+
+            // Delegate to dynamic lead permissions if leadId is known
+            // (leadId comes from WebSocket, not from extension permissions)
+            if (session.leadId) {
+                updateLeadPermissions();
+                return;
+            }
+
+            // Fallback: use old isEffectiveLead logic if WebSocket hasn't sent leadId yet
+            const isEffectiveLead = permissions.role === 'lead' || permissions.sessionRole === 'host';
 
             // Update role badge based on session role (host/guest) or config role (lead/member)
             const headerName = escapeHtml(session.displayName || 'User');
@@ -1386,14 +1521,9 @@
                     <span class="text-gray-400 font-medium">Member</span>`;
                 roleBadge.className = 'flex items-center px-3 py-1 rounded-full text-xs bg-gray-700/50 border border-gray-600/30';
             }
-            // Hide SSO header badge since name is now shown in role badge
-            if (ssoHeaderBadge) {
-                ssoHeaderBadge.classList.add('hidden');
-            }
 
-            // Show/hide lead-only actions (show if any lead action is available OR if lead role)
-            // End Chat button is always available for leads
-            if (permissions.role === 'lead' || permissions.canCreateSummary || permissions.canGenerateChanges) {
+            // Show/hide lead-only actions: host or lead get full access
+            if (isEffectiveLead || permissions.canCreateSummary) {
                 leadActions.classList.remove('hidden');
                 leadActions.classList.add('flex');
             } else {
@@ -1401,19 +1531,22 @@
                 leadActions.classList.remove('flex');
             }
 
-            // Individual button visibility
-            btnCreateSummary.style.display = permissions.canCreateSummary ? 'flex' : 'none';
-            btnGenerateChanges.style.display = permissions.canGenerateChanges ? 'flex' : 'none';
-            // End Chat button is always visible for leads
-            btnEndChat.style.display = permissions.role === 'lead' ? 'flex' : 'none';
+            // Individual button visibility — host gets same access as lead
+            btnCreateSummary.style.display = (permissions.canCreateSummary || isEffectiveLead) ? 'flex' : 'none';
+            btnEndChat.style.display = isEffectiveLead ? 'flex' : 'none';
 
-            // Show auto-apply toggle for leads
-            if (permissions.canAutoApply) {
+            // Show auto-apply toggle for leads/hosts
+            if (permissions.canAutoApply || isEffectiveLead) {
                 autoApplyToggleContainer.classList.remove('hidden');
                 autoApplyToggleContainer.classList.add('flex');
             } else {
                 autoApplyToggleContainer.classList.add('hidden');
                 autoApplyToggleContainer.classList.remove('flex');
+            }
+
+            // Show room settings button for leads/hosts
+            if (btnRoomSettings) {
+                btnRoomSettings.classList.toggle('hidden', !isEffectiveLead);
             }
         }
 
@@ -1726,6 +1859,14 @@
                     // Received code prompt post result from extension
                     handleCodePromptPostResponse(message.data);
                     break;
+                case 'roomSettings':
+                    // Received room settings from extension
+                    handleRoomSettingsResponse(message.data);
+                    break;
+                case 'saveRoomSettingsResult':
+                    // Received save room settings result from extension
+                    handleSaveRoomSettingsResult(message.data);
+                    break;
                 case 'ssoLoginPending':
                     showSSOPendingState(message.userCode);
                     break;
@@ -1870,11 +2011,6 @@
             requestSummarize();
         });
 
-        btnGenerateChanges.addEventListener('click', () => {
-            // Trigger generate changes - will use the active editor's file
-            vscode.postMessage({ command: 'generateChanges' });
-        });
-
         // Auto-apply toggle handler
         autoApplyToggle.addEventListener('change', (e) => {
             autoApplyEnabled = e.target.checked;
@@ -2008,20 +2144,36 @@
                 roomIdDisplay.title = session.roomId;
             }
 
+            // Determine if current user can transfer lead (host or current lead)
+            const myIsHost = session.sessionRole === 'host';
+            const myIsLead = session.userId === session.leadId;
+            const canTransferLead = myIsHost || myIsLead;
+
             usersList.innerHTML = users.map(user => {
                 const colorClass = avatarColors[user.avatarColor] || 'bg-purple-600';
                 const isHost = user.role === 'host';
                 const isMe = user.userId === session.userId;
                 const isTyping = typingUsers.has(user.userId);
+                const isUserLead = user.userId === session.leadId;
 
                 // Role pill
                 const rolePill = isHost
                     ? '<span class="role-pill role-pill-host">host</span>'
                     : '<span class="role-pill role-pill-guest">member</span>';
 
+                // Lead pill
+                const leadPill = isUserLead
+                    ? '<span class="role-pill" style="background:rgba(168,85,247,0.15);color:#c084fc;">&#9733; lead</span>'
+                    : '';
+
                 // SSO pill
                 const ssoPill = user.identitySource === 'sso'
                     ? '<span class="role-pill role-pill-sso">SSO</span>'
+                    : '';
+
+                // Transfer Lead button (shown to host/lead, not on self, not on current lead)
+                const transferBtn = (canTransferLead && !isMe && !isUserLead)
+                    ? `<button class="transfer-lead-btn ml-auto text-xs text-purple-400 hover:text-purple-300 hover:bg-purple-500/10 px-1.5 py-0.5 rounded transition-colors" data-target-id="${escapeHtml(user.userId)}" title="Transfer lead to ${escapeHtml(user.displayName)}">Make Lead</button>`
                     : '';
 
                 // Status indicator
@@ -2034,7 +2186,7 @@
                     ? '<span class="text-xs text-blue-400 italic">typing...</span>'
                     : '';
 
-                const nameColor = isHost ? 'text-amber-300' : 'text-gray-200';
+                const nameColor = isHost ? 'text-amber-300' : (isUserLead ? 'text-purple-300' : 'text-gray-200');
 
                 return `
                     <div class="user-item flex items-center gap-2 p-2 rounded-lg transition-colors ${isMe ? 'ring-1 ring-gray-600/50' : 'hover:bg-gray-700/30'}" data-user-id="${escapeHtml(user.userId)}">
@@ -2048,9 +2200,11 @@
                             <div class="flex items-center">
                                 <span class="text-sm ${nameColor} truncate font-medium">${escapeHtml(user.displayName)}</span>
                                 ${isMe ? '<span class="ml-1 text-xs text-gray-500">you</span>' : ''}
+                                ${transferBtn}
                             </div>
                             <div class="flex items-center gap-1 mt-0.5">
                                 ${rolePill}
+                                ${leadPill}
                                 ${ssoPill}
                                 ${typingText}
                             </div>
@@ -2058,6 +2212,17 @@
                     </div>
                 `;
             }).join('');
+
+            // Attach click handlers for transfer lead buttons
+            usersList.querySelectorAll('.transfer-lead-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetId = btn.getAttribute('data-target-id');
+                    if (ws && ws.readyState === WebSocket.OPEN && targetId) {
+                        ws.send(JSON.stringify({ type: 'transfer_lead', targetUserId: targetId }));
+                    }
+                });
+            });
         }
 
         /**
@@ -2498,9 +2663,9 @@
                 </div>
             ` : '';
 
-            // Generate Code Prompt button - only shown to hosts when requires_code_change is true
-            const isHost = session.sessionRole === 'host';
-            const showCodePromptBtn = isHost && aiData.requires_code_change;
+            // Generate Code Prompt button - only shown to lead when requires_code_change is true
+            const isUserLead = session.userId === session.leadId;
+            const showCodePromptBtn = isUserLead && aiData.requires_code_change;
             const codePromptBtnId = `gen-code-btn-${msg.id || Date.now()}`;
             const codePromptBtnHtml = showCodePromptBtn ? `
                 <div class="mt-4 pt-3 border-t border-gray-600">
@@ -3153,14 +3318,20 @@
                         // Store backend-assigned userId and role
                         session.userId = data.userId;
                         session.sessionRole = data.role;
+                        session.leadId = data.leadId || null;
                         console.log('[WebView] Updated session with backend credentials:', {
                             userId: session.userId,
-                            sessionRole: session.sessionRole
+                            sessionRole: session.sessionRole,
+                            leadId: session.leadId
                         });
                         // Don't send join yet - wait for history message
                     } else if (data.type === 'history') {
                         // Clear status
                         if (connectionStatus) connectionStatus.style.display = 'none';
+
+                        // Store leadId from server
+                        if (data.leadId) session.leadId = data.leadId;
+                        updateLeadPermissions();
 
                         // Render existing users (always update on history)
                         if (data.users) {
@@ -3236,6 +3407,17 @@
                     } else if (data.type === 'read_receipt') {
                         // Update message status indicators
                         handleReadReceipt(data);
+                    } else if (data.type === 'lead_changed') {
+                        session.leadId = data.leadId;
+                        updateLeadPermissions();
+                        // Show who the new lead is
+                        const leadUser = usersMap.get(data.leadId);
+                        const leadName = leadUser ? leadUser.displayName : 'Unknown';
+                        renderSystemMessage(`Lead transferred to ${leadName}`);
+                        // Re-render user list to update lead indicator
+                        if (usersMap.size > 0) {
+                            renderUsersList(Array.from(usersMap.values()));
+                        }
                     } else if (data.type === 'error') {
                         // SECURITY: Handle backend error messages (e.g., permission denied)
                         console.error('[WebView] Backend error:', data.error);
@@ -3951,40 +4133,114 @@
             if (e.key === 'Escape' && !aiConfigModal.classList.contains('hidden')) {
                 closeAiConfigModal();
             }
+            if (e.key === 'Escape' && !roomSettingsModal.classList.contains('hidden')) {
+                closeRoomSettingsModal();
+            }
         });
+
+        // ============================================================
+        // ROOM SETTINGS MODAL FUNCTIONS
+        // ============================================================
+
+        /**
+         * Open the Room Settings modal and fetch settings.
+         */
+        function openRoomSettingsModal() {
+            roomSettingsModal.classList.remove('hidden');
+            fetchRoomSettings();
+        }
+
+        /**
+         * Close the Room Settings modal.
+         */
+        function closeRoomSettingsModal() {
+            roomSettingsModal.classList.add('hidden');
+        }
+
+        /**
+         * Fetch room settings from the backend via extension.
+         */
+        function fetchRoomSettings() {
+            console.log('[WebView] fetchRoomSettings called');
+            roomSettingsLoading.classList.remove('hidden');
+            roomSettingsError.classList.add('hidden');
+            roomSettingsContent.classList.add('hidden');
+            roomSettingsFooter.classList.add('hidden');
+
+            vscode.postMessage({ command: 'getRoomSettings', roomId: currentRoomId });
+        }
+
+        /**
+         * Handle room settings response from extension.
+         * @param {Object} data - Room settings data or error
+         */
+        function handleRoomSettingsResponse(data) {
+            console.log('[WebView] handleRoomSettingsResponse:', JSON.stringify(data));
+            roomSettingsLoading.classList.add('hidden');
+
+            if (data.error) {
+                roomSettingsError.classList.remove('hidden');
+                roomSettingsErrorText.textContent = data.error;
+                return;
+            }
+
+            roomSettingsContent.classList.remove('hidden');
+            roomSettingsFooter.classList.remove('hidden');
+            roomCodeStyleTextarea.value = data.code_style || '';
+        }
+
+        /**
+         * Save room settings via extension.
+         */
+        function saveRoomSettings() {
+            console.log('[WebView] saveRoomSettings called');
+            const codeStyle = roomCodeStyleTextarea.value;
+            vscode.postMessage({
+                command: 'saveRoomSettings',
+                roomId: currentRoomId,
+                codeStyle: codeStyle
+            });
+        }
+
+        /**
+         * Handle save room settings result from extension.
+         * @param {Object} data - Save result data or error
+         */
+        function handleSaveRoomSettingsResult(data) {
+            console.log('[WebView] handleSaveRoomSettingsResult:', JSON.stringify(data));
+            if (data.error) {
+                roomSettingsError.classList.remove('hidden');
+                roomSettingsErrorText.textContent = data.error;
+                return;
+            }
+            closeRoomSettingsModal();
+        }
+
+        // Room Settings modal event listeners
+        if (btnRoomSettings) {
+            btnRoomSettings.addEventListener('click', openRoomSettingsModal);
+        }
+        if (btnCloseRoomSettings) {
+            btnCloseRoomSettings.addEventListener('click', closeRoomSettingsModal);
+        }
+        if (btnCancelRoomSettings) {
+            btnCancelRoomSettings.addEventListener('click', closeRoomSettingsModal);
+        }
+        if (roomSettingsBackdrop) {
+            roomSettingsBackdrop.addEventListener('click', closeRoomSettingsModal);
+        }
+        if (btnSaveRoomSettings) {
+            btnSaveRoomSettings.addEventListener('click', saveRoomSettings);
+        }
 
         // ============================================================
         // AI SUMMARIZE FUNCTIONALITY
         // ============================================================
 
         /**
-         * Update the AI status indicator in the sidebar footer.
+         * Update AI status indicator (no-op, sidebar indicator removed).
          */
-        function updateAiStatusIndicator() {
-            if (!aiStatusText) return;
-
-            if (aiSummaryEnabledState && aiActiveModelState) {
-                // Find the display name for the active model
-                const activeModel = aiModelsState.find(m => m.id === aiActiveModelState);
-                aiStatusText.textContent = activeModel ? activeModel.display_name : aiActiveModelState;
-                aiStatusText.className = 'text-green-400';
-                if (btnSummarize) {
-                    btnSummarize.disabled = false;
-                }
-            } else if (aiSummaryEnabledState) {
-                aiStatusText.textContent = 'No model';
-                aiStatusText.className = 'text-yellow-400';
-                if (btnSummarize) {
-                    btnSummarize.disabled = true;
-                }
-            } else {
-                aiStatusText.textContent = 'Disabled';
-                aiStatusText.className = 'text-gray-500';
-                if (btnSummarize) {
-                    btnSummarize.disabled = true;
-                }
-            }
-        }
+        function updateAiStatusIndicator() {}
 
         /**
          * Open the summary modal in loading state.
@@ -4187,14 +4443,6 @@
             // Open modal and show loading state
             openSummaryModal();
 
-            // Update button state
-            if (btnSummarize) {
-                btnSummarize.disabled = true;
-            }
-            if (btnSummarizeText) {
-                btnSummarizeText.textContent = 'Summarizing...';
-            }
-
             console.log('[WebView] Requesting summary for', messages.length, 'messages');
 
             // Request summary from extension with properly formatted messages
@@ -4211,14 +4459,6 @@
          * @param {Object} data - The structured summary response or error
          */
         function handleSummarizeResponse(data) {
-            // Reset button state
-            if (btnSummarize) {
-                btnSummarize.disabled = false;
-            }
-            if (btnSummarizeText) {
-                btnSummarizeText.textContent = 'Summarize Chat';
-            }
-
             // Hide loading
             summaryLoading.classList.add('hidden');
 
@@ -4439,12 +4679,8 @@
             btnCopyCodePrompt.addEventListener('click', copyCodePromptToClipboard);
         }
 
-        // Summarize button event listener
-        if (btnSummarize) {
-            btnSummarize.addEventListener('click', requestSummarize);
-        }
+        // Fetch AI status on load
 
-        // Fetch AI status on load to update the indicator
         vscode.postMessage({ command: 'getAiStatus' });
 
         // Initialize UI from the current FSM state

@@ -23,6 +23,7 @@ from app.ai_provider.router import router as ai_router
 from app.audit.router import router as audit_router
 from app.auth.router import router as auth_router
 from app.chat.router import router as chat_router
+from app.chat.settings_router import router as room_settings_router
 from app.config import get_config
 from app.files.router import router as files_router
 from app.ngrok_service import get_public_url, start_ngrok, stop_ngrok
@@ -104,6 +105,7 @@ app.include_router(audit_router)
 app.include_router(files_router)
 app.include_router(ai_router)
 app.include_router(auth_router)
+app.include_router(room_settings_router)
 
 
 @app.get("/health")

@@ -300,9 +300,10 @@ async def websocket_chat_endpoint(
         await websocket.send_json({
             "type": "connected",
             "userId": assigned_user_id,
-            "role": assigned_role
+            "role": assigned_role,
+            "leadId": manager.get_lead_id(room_id)
         })
-        logger.info(f"[WS] Sent 'connected' with userId={assigned_user_id}, role={assigned_role}")
+        logger.info(f"[WS] Sent 'connected' with userId={assigned_user_id}, role={assigned_role}, leadId={manager.get_lead_id(room_id)}")
 
         # If reconnecting with `since`, only send messages newer than that timestamp
         if since is not None:
@@ -317,6 +318,7 @@ async def websocket_chat_endpoint(
             "type": "history",
             "messages": history_data,
             "users": users_data,
+            "leadId": manager.get_lead_id(room_id),
             "isRecovery": since is not None  # Tell client this is a reconnection
         })
 
@@ -382,6 +384,34 @@ async def websocket_chat_endpoint(
 
                 # Clear all room data
                 manager.clear_room(room_id)
+                continue
+
+            # --- Handle TRANSFER_LEAD message (host or current lead only) ---
+            # SECURITY: Only host or current lead can transfer lead
+            if message_type == "transfer_lead":
+                target_user_id = data.get("targetUserId")
+                if not manager.can_configure(room_id, assigned_user_id):
+                    logger.warning(
+                        f"[WS] Unauthorized transfer_lead attempt by userId={assigned_user_id}"
+                    )
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "Only the host or current lead can transfer lead"
+                    })
+                    continue
+
+                if not target_user_id or not manager.transfer_lead(room_id, target_user_id):
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "Invalid target user for lead transfer"
+                    })
+                    continue
+
+                logger.info(f"[WS] Lead transferred to {target_user_id} in room {room_id}")
+                await manager.broadcast({
+                    "type": "lead_changed",
+                    "leadId": target_user_id
+                }, room_id)
                 continue
 
             # --- Handle TYPING indicator message ---
@@ -521,7 +551,7 @@ async def websocket_chat_endpoint(
 
     except WebSocketDisconnect:
         # Clean up and notify others
-        disconnected_user = manager.disconnect(websocket, room_id)
+        disconnected_user, lead_reverted = manager.disconnect(websocket, room_id)
 
         if disconnected_user:
             users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
@@ -530,4 +560,13 @@ async def websocket_chat_endpoint(
                 "user": disconnected_user.model_dump(),
                 "users": users_data
             }, room_id)
+
+            # If lead reverted to host on disconnect, broadcast lead_changed
+            if lead_reverted:
+                new_lead_id = manager.get_lead_id(room_id)
+                logger.info(f"[WS] Lead reverted to host {new_lead_id} in room {room_id}")
+                await manager.broadcast({
+                    "type": "lead_changed",
+                    "leadId": new_lead_id
+                }, room_id)
 

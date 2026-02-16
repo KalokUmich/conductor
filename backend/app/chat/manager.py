@@ -236,6 +236,12 @@ class ConnectionManager:
         # SECURITY: room_id -> host_user_id (first user to join becomes host)
         self.room_hosts: Dict[str, str] = {}
 
+        # Lead tracking: room_id -> lead_user_id (initially the host)
+        self.room_leads: Dict[str, str] = {}
+
+        # Room settings: room_id -> settings dict (e.g., {"code_style": "..."})
+        self.room_settings: Dict[str, dict] = {}
+
     async def connect(
         self, websocket: WebSocket, room_id: str
     ) -> Tuple[str, str, List[ChatMessage]]:
@@ -271,11 +277,12 @@ class ConnectionManager:
         if room_id not in self.guest_counters:
             self.guest_counters[room_id] = 0
 
-        # SECURITY: First user to connect becomes host
+        # SECURITY: First user to connect becomes host and initial lead
         if room_id not in self.room_hosts:
             self.room_hosts[room_id] = user_id
+            self.room_leads[room_id] = user_id
             role = "host"
-            logger.info(f"[Manager] User {user_id} is HOST of room {room_id}")
+            logger.info(f"[Manager] User {user_id} is HOST and LEAD of room {room_id}")
         else:
             role = "guest"
             logger.info(f"[Manager] User {user_id} is GUEST in room {room_id}")
@@ -374,17 +381,23 @@ class ConnectionManager:
         """
         return list(self.room_users.get(room_id, {}).values())
 
-    def disconnect(self, websocket: WebSocket, room_id: str) -> Optional[RoomUser]:
+    def disconnect(self, websocket: WebSocket, room_id: str) -> Tuple[Optional[RoomUser], bool]:
         """Remove a WebSocket connection and its user from a room.
+
+        If the disconnecting user is the lead (but not the host), lead reverts
+        to the host automatically.
 
         Args:
             websocket: The disconnecting WebSocket.
             room_id: The room to disconnect from.
 
         Returns:
-            The disconnected RoomUser if registered, None otherwise.
+            Tuple of (disconnected_user, lead_reverted):
+            - disconnected_user: The disconnected RoomUser if registered, None otherwise.
+            - lead_reverted: True if lead was reverted to host due to this disconnect.
         """
         disconnected_user = None
+        lead_reverted = False
 
         # Remove from active connections
         if room_id in self.active_connections:
@@ -396,9 +409,18 @@ class ConnectionManager:
             ws_room_id, user_id = self.websocket_to_user[websocket]
             if ws_room_id == room_id and room_id in self.room_users:
                 disconnected_user = self.room_users[room_id].pop(user_id, None)
+
+            # If the disconnecting user was the lead, revert to host
+            if disconnected_user and self.room_leads.get(room_id) == user_id:
+                host_id = self.room_hosts.get(room_id)
+                if host_id and host_id != user_id and host_id in self.room_users.get(room_id, {}):
+                    self.room_leads[room_id] = host_id
+                    lead_reverted = True
+                    logger.info(f"[Manager] Lead reverted to host {host_id} in room {room_id}")
+
             del self.websocket_to_user[websocket]
 
-        return disconnected_user
+        return (disconnected_user, lead_reverted)
 
     def add_message(self, room_id: str, message: ChatMessage) -> ChatMessage:
         """Add a message to the room's history.
@@ -548,6 +570,8 @@ class ConnectionManager:
         self.seen_message_ids.pop(room_id, None)
         self.message_read_by.pop(room_id, None)
         self.room_hosts.pop(room_id, None)  # SECURITY: Clear host tracking
+        self.room_leads.pop(room_id, None)  # Clear lead tracking
+        self.room_settings.pop(room_id, None)
 
         # Clean up websocket-to-user mappings for this room
         to_remove = [
@@ -586,6 +610,77 @@ class ConnectionManager:
         """
         return self.room_hosts.get(room_id)
 
+    # =========================================================================
+    # Lead Management
+    # =========================================================================
+
+    def get_lead_id(self, room_id: str) -> Optional[str]:
+        """Get the current lead user ID for a room.
+
+        Args:
+            room_id: The room ID.
+
+        Returns:
+            The lead's user ID, or None if room doesn't exist.
+        """
+        return self.room_leads.get(room_id)
+
+    def is_lead(self, room_id: str, user_id: str) -> bool:
+        """Check if a user is the lead of a room.
+
+        Args:
+            room_id: The room ID.
+            user_id: The user ID to check.
+
+        Returns:
+            True if user is the lead, False otherwise.
+        """
+        return self.room_leads.get(room_id) == user_id
+
+    def transfer_lead(self, room_id: str, new_lead_id: str) -> bool:
+        """Transfer lead role to another user in the room.
+
+        Args:
+            room_id: The room ID.
+            new_lead_id: The user ID to become the new lead.
+
+        Returns:
+            True if transfer succeeded, False if target user is not in the room.
+        """
+        if new_lead_id not in self.room_users.get(room_id, {}):
+            return False
+        self.room_leads[room_id] = new_lead_id
+        logger.info(f"[Manager] Lead transferred to {new_lead_id} in room {room_id}")
+        return True
+
+    def can_use_ai(self, room_id: str, user_id: str) -> bool:
+        """Check if a user can use AI features (summary, code changes).
+
+        Only the lead can use AI features.
+
+        Args:
+            room_id: The room ID.
+            user_id: The user ID to check.
+
+        Returns:
+            True if user is the lead, False otherwise.
+        """
+        return self.is_lead(room_id, user_id)
+
+    def can_configure(self, room_id: str, user_id: str) -> bool:
+        """Check if a user can configure AI settings and room settings.
+
+        The host always retains configuration access. The lead also gets it.
+
+        Args:
+            room_id: The room ID.
+            user_id: The user ID to check.
+
+        Returns:
+            True if user is host or lead, False otherwise.
+        """
+        return self.is_host(room_id, user_id) or self.is_lead(room_id, user_id)
+
     def can_end_session(self, room_id: str, user_id: str) -> bool:
         """Check if a user has permission to end a session.
 
@@ -599,6 +694,36 @@ class ConnectionManager:
             True if user can end session, False otherwise.
         """
         return self.is_host(room_id, user_id)
+
+    # =========================================================================
+    # Room Settings
+    # =========================================================================
+
+    def get_room_settings(self, room_id: str) -> dict:
+        """Get settings for a room.
+
+        Args:
+            room_id: The room ID.
+
+        Returns:
+            Settings dict. Returns default settings if none stored.
+        """
+        return self.room_settings.get(room_id, {"code_style": ""})
+
+    def update_room_settings(self, room_id: str, settings: dict) -> dict:
+        """Update settings for a room.
+
+        Args:
+            room_id: The room ID.
+            settings: Dict of settings to merge into existing settings.
+
+        Returns:
+            Updated settings dict.
+        """
+        current = self.room_settings.get(room_id, {"code_style": ""})
+        current.update(settings)
+        self.room_settings[room_id] = current
+        return current
 
     # =========================================================================
     # Message Deduplication

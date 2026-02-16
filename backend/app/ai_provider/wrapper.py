@@ -20,7 +20,7 @@ from fastapi import HTTPException
 
 from .base import ChatMessage, DecisionSummary
 from .pipeline import PipelineSummary, run_summary_pipeline
-from .prompts import get_code_prompt, get_selective_code_prompt
+from .prompts import format_policy_constraints, get_code_prompt, get_selective_code_prompt
 from .resolver import get_resolver
 
 logger = logging.getLogger(__name__)
@@ -163,6 +163,7 @@ def call_code_prompt(
     affected_components: List[str],
     risk_level: str,
     context_snippet: Optional[str] = None,
+    room_code_style: Optional[str] = None,
 ) -> str:
     """Generate a code prompt from decision summary components.
 
@@ -175,11 +176,18 @@ def call_code_prompt(
         affected_components: List of components/files affected.
         risk_level: Risk assessment (low/medium/high).
         context_snippet: Optional code snippet for context.
+        room_code_style: Optional room-level code style guidelines.
 
     Returns:
         str: Formatted code prompt for code generation.
     """
     logger.info(f"Generating code prompt for {len(affected_components)} components")
+
+    # Load policy constraints from config
+    policy_str = _load_policy_constraints()
+
+    # Load style guidelines: room-level overrides file-level
+    style_str = _load_style_guidelines(room_code_style)
 
     code_prompt = get_code_prompt(
         problem_statement=problem_statement,
@@ -187,6 +195,8 @@ def call_code_prompt(
         affected_components=affected_components,
         risk_level=risk_level,
         context_snippet=context_snippet,
+        policy_constraints=policy_str,
+        style_guidelines=style_str,
     )
 
     logger.debug(f"Generated code prompt with {len(code_prompt)} characters")
@@ -366,6 +376,7 @@ def call_selective_code_prompt(
     summaries: List[dict],
     code_relevant_types: List[str],
     context_snippet: Optional[str] = None,
+    room_code_style: Optional[str] = None,
 ) -> tuple:
     """Generate a selective code prompt from multi-type summaries.
 
@@ -383,6 +394,7 @@ def call_selective_code_prompt(
         summaries: List of all summary dictionaries.
         code_relevant_types: List of types to include in code prompt.
         context_snippet: Optional code snippet for context.
+        room_code_style: Optional room-level code style guidelines.
 
     Returns:
         Tuple of (code_prompt_str, filtered_types_used)
@@ -408,12 +420,20 @@ def call_selective_code_prompt(
         for s in filtered_summaries
     ))
 
+    # Load policy constraints from config
+    policy_str = _load_policy_constraints()
+
+    # Load style guidelines: room-level overrides file-level
+    style_str = _load_style_guidelines(room_code_style)
+
     # Generate the selective code prompt
     code_prompt = get_selective_code_prompt(
         primary_focus=primary_focus,
         impact_scope=impact_scope,
         summaries=filtered_summaries,
         context_snippet=context_snippet,
+        policy_constraints=policy_str,
+        style_guidelines=style_str,
     )
 
     logger.info(
@@ -422,3 +442,53 @@ def call_selective_code_prompt(
     )
 
     return code_prompt, types_used
+
+
+def _load_policy_constraints() -> Optional[str]:
+    """Load policy constraints from config and auto-apply defaults.
+
+    Returns:
+        Formatted policy constraints string, or None if unavailable.
+    """
+    try:
+        from app.config import get_config
+        from app.policy.auto_apply import FORBIDDEN_PATHS
+
+        config = get_config()
+        limits = config.change_limits
+        return format_policy_constraints(
+            max_files=limits.max_files_per_request,
+            max_lines_changed=limits.max_total_lines,
+            forbidden_paths=FORBIDDEN_PATHS,
+        )
+    except Exception as e:
+        logger.debug(f"Could not load policy constraints: {e}")
+        return None
+
+
+def _load_style_guidelines(room_code_style: Optional[str] = None) -> Optional[str]:
+    """Load code style guidelines with room-level override.
+
+    Room-level code style takes precedence. If not provided,
+    falls back to CodeStyleLoader (file-based .ai/code-style.md).
+
+    Args:
+        room_code_style: Optional room-level code style string.
+
+    Returns:
+        Style guidelines string, or None if unavailable.
+    """
+    if room_code_style:
+        return room_code_style
+
+    try:
+        from app.agent.style_loader import CodeStyleLoader
+
+        loader = CodeStyleLoader()
+        style = loader.get_style()
+        if style:
+            return style
+    except Exception as e:
+        logger.debug(f"Could not load style guidelines: {e}")
+
+    return None

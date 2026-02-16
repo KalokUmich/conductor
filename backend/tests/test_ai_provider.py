@@ -217,21 +217,23 @@ class TestClaudeBedrockProvider:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.return_value = {"body": MagicMock()}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "ok"}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
             result = provider.health_check()
 
             assert result is True
-            mock_client.invoke_model.assert_called_once()
+            mock_client.converse.assert_called_once()
 
     def test_health_check_failure(self):
         """Test health_check returns False when Bedrock call fails."""
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.side_effect = Exception("Bedrock Error")
+        mock_client.converse.side_effect = Exception("Bedrock Error")
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -244,18 +246,16 @@ class TestClaudeBedrockProvider:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_body = MagicMock()
-        mock_body.read.return_value = json.dumps({
-            "content": [{"text": "Bedrock summary result."}]
-        })
-        mock_client.invoke_model.return_value = {"body": mock_body}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "Bedrock summary result."}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
             result = provider.summarize(["Message 1", "Message 2"])
 
             assert result == "Bedrock summary result."
-            mock_client.invoke_model.assert_called_once()
+            mock_client.converse.assert_called_once()
 
     def test_summarize_empty_messages(self):
         """Test summarize returns empty string for empty messages."""
@@ -298,7 +298,7 @@ class TestClaudeBedrockProvider:
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
 
-        # Mock a valid JSON response
+        # Mock a valid JSON response via Converse API
         json_response = json.dumps({
             "type": "decision_summary",
             "topic": "Database migration",
@@ -309,11 +309,9 @@ class TestClaudeBedrockProvider:
             "risk_level": "high",
             "next_steps": ["Backup data", "Test migration"]
         })
-        mock_body = MagicMock()
-        mock_body.read.return_value = json.dumps({
-            "content": [{"text": json_response}]
-        })
-        mock_client.invoke_model.return_value = {"body": mock_body}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": json_response}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -349,12 +347,10 @@ class TestClaudeBedrockProvider:
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
 
-        # Mock an invalid JSON response
-        mock_body = MagicMock()
-        mock_body.read.return_value = json.dumps({
-            "content": [{"text": "Not valid JSON at all"}]
-        })
-        mock_client.invoke_model.return_value = {"body": mock_body}
+        # Mock an invalid JSON response via Converse API
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "Not valid JSON at all"}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -400,80 +396,125 @@ class TestAllProvidersImplementSameInterface:
         assert isinstance(bedrock, AIProvider)
 
 
+def _make_conductor_config(
+    enabled=True,
+    bedrock_access_key="",
+    bedrock_secret_key="",
+    bedrock_session_token="",
+    anthropic_api_key="",
+    openai_api_key="",
+    default_model="claude-3-haiku-bedrock",
+):
+    """Helper to build a ConductorConfig for resolver tests."""
+    from app.config import (
+        ConductorConfig, SummaryConfig, AIProviderSettingsConfig,
+        AIProvidersSecretsConfig, AWSBedrockSecretsConfig,
+        AnthropicSecretsConfig, OpenAISecretsConfig, AIModelConfig,
+    )
+    return ConductorConfig(
+        summary=SummaryConfig(enabled=enabled, default_model=default_model),
+        ai_provider_settings=AIProviderSettingsConfig(
+            anthropic_enabled=bool(anthropic_api_key),
+            aws_bedrock_enabled=bool(bedrock_access_key),
+            openai_enabled=bool(openai_api_key),
+        ),
+        ai_providers=AIProvidersSecretsConfig(
+            anthropic=AnthropicSecretsConfig(api_key=anthropic_api_key),
+            aws_bedrock=AWSBedrockSecretsConfig(
+                access_key_id=bedrock_access_key,
+                secret_access_key=bedrock_secret_key,
+                session_token=bedrock_session_token,
+            ),
+            openai=OpenAISecretsConfig(api_key=openai_api_key),
+        ),
+        ai_models=[
+            AIModelConfig(
+                id="claude-3-haiku-bedrock",
+                provider="aws_bedrock",
+                model_name="anthropic.claude-3-haiku-20240307-v1:0",
+                display_name="Claude 3 Haiku (Bedrock)",
+            ),
+            AIModelConfig(
+                id="claude-sonnet-4-anthropic",
+                provider="anthropic",
+                model_name="claude-sonnet-4-20250514",
+                display_name="Claude Sonnet 4 (Anthropic)",
+            ),
+        ],
+    )
+
+
 class TestProviderResolver:
     """Tests for ProviderResolver service."""
 
     def test_resolve_disabled_returns_none(self):
         """When summary is disabled, resolve should return None."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(enabled=False)
+        config = _make_conductor_config(enabled=False)
         resolver = ProviderResolver(config)
         result = resolver.resolve()
 
         assert result is None
-        assert resolver.active_provider is None
-        assert resolver.active_provider_name is None
+        assert resolver.get_active_provider() is None
+        assert resolver.active_provider_type is None
 
     def test_resolve_skips_empty_api_keys(self):
         """Resolver should skip providers with empty API keys."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="",  # Empty - should be skipped
-            claude_direct_api_key=""    # Empty - should be skipped
+            bedrock_access_key="",
+            anthropic_api_key="",
         )
-
         resolver = ProviderResolver(config)
         result = resolver.resolve()
 
-        # No providers configured, should return None
         assert result is None
-        assert resolver.active_provider is None
+        assert resolver.get_active_provider() is None
 
     def test_resolve_first_healthy_provider_bedrock(self):
         """Resolver should select first healthy provider (bedrock has priority)."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
         )
 
-        # Mock bedrock to be healthy
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.return_value = {"body": MagicMock()}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "ok"}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
             result = resolver.resolve()
 
             assert result is not None
-            assert resolver.active_provider_name == "claude_bedrock"
+            assert resolver.active_provider_type == "aws_bedrock"
 
     def test_resolve_falls_back_to_direct_provider(self):
-        """Resolver should fall back to claude_direct if bedrock is unhealthy."""
-        from app.config import SummaryConfig
+        """Resolver should fall back to anthropic if bedrock is unhealthy."""
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
         )
 
-        # Mock bedrock to be unhealthy, direct to be healthy
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.side_effect = Exception("Bedrock error")
+        mock_client.converse.side_effect = Exception("Bedrock error")
 
         mock_anthropic = MagicMock()
         mock_anthropic_client = MagicMock()
@@ -485,48 +526,48 @@ class TestProviderResolver:
             result = resolver.resolve()
 
             assert result is not None
-            assert resolver.active_provider_name == "claude_direct"
-            assert resolver.provider_statuses.get("claude_bedrock") is False
-            assert resolver.provider_statuses.get("claude_direct") is True
+            assert resolver.active_provider_type == "anthropic"
+            assert resolver._provider_health.get("aws_bedrock") is False
+            assert resolver._provider_health.get("anthropic") is True
 
     def test_resolve_no_healthy_provider(self):
         """Resolver should return None when no providers are healthy."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key=""  # Not configured
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
         )
 
-        # Mock bedrock to be unhealthy
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.side_effect = Exception("Bedrock error")
+        mock_client.converse.side_effect = Exception("Bedrock error")
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
             result = resolver.resolve()
 
             assert result is None
-            assert resolver.active_provider is None
+            assert resolver.get_active_provider() is None
 
     def test_get_status_returns_correct_structure(self):
         """get_status should return AIStatus with correct data."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
         )
 
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.return_value = {"body": MagicMock()}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "ok"}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -534,25 +575,29 @@ class TestProviderResolver:
             status = resolver.get_status()
 
             assert status.summary_enabled is True
-            assert status.active_provider == "claude_bedrock"
-            assert len(status.providers) == 1
-            assert status.providers[0].name == "claude_bedrock"
-            assert status.providers[0].healthy is True
+            assert status.active_provider == "aws_bedrock"
+            # All 3 provider types are listed
+            assert len(status.providers) == 3
+            bedrock_status = [p for p in status.providers if p.name == "aws_bedrock"][0]
+            assert bedrock_status.healthy is True
 
     def test_bedrock_api_key_with_session_token(self):
-        """Resolver should parse session token from bedrock API key."""
-        from app.config import SummaryConfig
+        """Resolver should use session token from bedrock config."""
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123:session456"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            bedrock_session_token="session456",
         )
 
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.return_value = {"body": MagicMock()}
+        mock_client.converse.return_value = {
+            "output": {"message": {"content": [{"text": "ok"}]}}
+        }
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -565,22 +610,16 @@ class TestProviderResolver:
             assert call_kwargs["aws_secret_access_key"] == "secret123"
             assert call_kwargs["aws_session_token"] == "session456"
 
-    def test_invalid_bedrock_api_key_format(self):
-        """Resolver should handle invalid bedrock API key format."""
-        from app.config import SummaryConfig
+    def test_no_configured_provider(self):
+        """Resolver should return None when no provider is configured."""
         from app.ai_provider.resolver import ProviderResolver
 
-        config = SummaryConfig(
-            enabled=True,
-            claude_bedrock_api_key="invalid-format-no-colon"
-        )
-
+        config = _make_conductor_config(enabled=True)  # all keys empty
         resolver = ProviderResolver(config)
         result = resolver.resolve()
 
-        # Invalid format should result in no provider
         assert result is None
-        assert resolver.provider_statuses.get("claude_bedrock") is False
+        assert resolver._provider_health.get("aws_bedrock") is False
 
 
 class TestAIStatusEndpoint:
@@ -612,7 +651,6 @@ class TestAIStatusEndpoint:
     def test_status_with_active_provider(self):
         """Endpoint should return correct status with active provider."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -621,15 +659,16 @@ class TestAIStatusEndpoint:
         test_app.include_router(router)
 
         # Set up resolver with mocked healthy bedrock provider
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
         )
 
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.return_value = {"body": MagicMock()}
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -642,10 +681,10 @@ class TestAIStatusEndpoint:
             assert response.status_code == 200
             data = response.json()
             assert data["summary_enabled"] is True
-            assert data["active_provider"] == "claude_bedrock"
-            assert len(data["providers"]) == 1
-            assert data["providers"][0]["name"] == "claude_bedrock"
-            assert data["providers"][0]["healthy"] is True
+            assert data["active_provider"] == "aws_bedrock"
+            assert len(data["providers"]) == 3
+            bedrock_provider = [p for p in data["providers"] if p["name"] == "aws_bedrock"][0]
+            assert bedrock_provider["healthy"] is True
 
         # Clean up
         set_resolver(None)
@@ -653,7 +692,6 @@ class TestAIStatusEndpoint:
     def test_status_with_no_healthy_provider(self):
         """Endpoint should show null active_provider when none healthy."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -661,15 +699,16 @@ class TestAIStatusEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
         )
 
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.side_effect = Exception("Bedrock error")
+        mock_client.converse.side_effect = Exception("Bedrock error")
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -683,8 +722,9 @@ class TestAIStatusEndpoint:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] is None
-            assert len(data["providers"]) == 1
-            assert data["providers"][0]["healthy"] is False
+            assert len(data["providers"]) == 3
+            bedrock_provider = [p for p in data["providers"] if p["name"] == "aws_bedrock"][0]
+            assert bedrock_provider["healthy"] is False
 
         # Clean up
         set_resolver(None)
@@ -717,7 +757,6 @@ class TestSummarizeEndpoint:
     def test_summarize_returns_503_when_summary_disabled(self):
         """Endpoint should return 503 when summary is disabled."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -726,7 +765,7 @@ class TestSummarizeEndpoint:
         test_app.include_router(router)
 
         # Set up resolver with summary disabled
-        config = SummaryConfig(enabled=False)
+        config = _make_conductor_config(enabled=False)
         resolver = ProviderResolver(config)
         set_resolver(resolver)
 
@@ -744,7 +783,6 @@ class TestSummarizeEndpoint:
     def test_summarize_returns_503_when_no_active_provider(self):
         """Endpoint should return 503 when no active provider available."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -752,16 +790,17 @@ class TestSummarizeEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
         )
 
         # All providers fail health check
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.invoke_model.side_effect = Exception("Bedrock error")
+        mock_client.converse.side_effect = Exception("Bedrock error")
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -782,7 +821,6 @@ class TestSummarizeEndpoint:
     def test_summarize_success(self):
         """Endpoint should return structured summary when provider is available."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -790,9 +828,10 @@ class TestSummarizeEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="sk-ant-test"
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         # Mock anthropic module for health check
@@ -808,7 +847,7 @@ class TestSummarizeEndpoint:
 
             # Mock call_model for the pipeline (classification + summary)
             with patch.object(
-                resolver.active_provider,
+                resolver.get_active_provider(),
                 "call_model",
                 side_effect=[
                     # First call: classification
@@ -859,7 +898,6 @@ class TestSummarizeEndpoint:
     def test_summarize_returns_500_on_provider_error(self):
         """Endpoint should return 500 when provider raises an error."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -867,9 +905,10 @@ class TestSummarizeEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="sk-ant-test"
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         # Mock anthropic module for health check
@@ -885,7 +924,7 @@ class TestSummarizeEndpoint:
 
         # Mock summarize_structured to raise an error
         with patch.object(
-            resolver.active_provider,
+            resolver.get_active_provider(),
             "summarize_structured",
             side_effect=RuntimeError("Provider error")
         ):
@@ -908,7 +947,6 @@ class TestSummarizeEndpoint:
     def test_summarize_empty_messages(self):
         """Endpoint should handle empty messages list with default DecisionSummary."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -916,9 +954,10 @@ class TestSummarizeEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="sk-ant-test"
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         # Mock anthropic module for health check
@@ -948,7 +987,6 @@ class TestSummarizeEndpoint:
     def test_summarize_returns_500_on_json_parsing_error(self):
         """Endpoint should return 500 with retry suggestion when JSON parsing fails."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -956,9 +994,10 @@ class TestSummarizeEndpoint:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="sk-ant-test"
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         # Mock anthropic module for health check
@@ -974,7 +1013,7 @@ class TestSummarizeEndpoint:
 
         # Mock summarize_structured to raise ValueError (JSON parsing error)
         with patch.object(
-            resolver.active_provider,
+            resolver.get_active_provider(),
             "summarize_structured",
             side_effect=ValueError("Invalid JSON response from AI: Expecting value")
         ):
@@ -991,7 +1030,7 @@ class TestSummarizeEndpoint:
             # Should mention JSON parsing failure
             assert "JSON" in detail
             # The wrapper format includes provider name and error details
-            assert "claude_direct" in detail or "parse" in detail.lower()
+            assert "anthropic" in detail or "parse" in detail.lower()
 
         # Clean up
         set_resolver(None)
@@ -1164,7 +1203,7 @@ class TestGetCodePromptFunction:
         )
 
         assert "def login():" in prompt
-        assert "Context" in prompt
+        assert "<context>" in prompt
 
     def test_get_code_prompt_empty_components(self):
         """Function should handle empty components list."""
@@ -1215,11 +1254,10 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_when_disabled(self):
         """call_summary should raise ProviderNotAvailableError when summary is disabled."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary, ProviderNotAvailableError
 
-        config = SummaryConfig(enabled=False)
+        config = _make_conductor_config(enabled=False)
         resolver = ProviderResolver(config)
         set_resolver(resolver)
 
@@ -1234,15 +1272,10 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_when_no_provider_available(self):
         """call_summary should raise ProviderNotAvailableError when no provider is configured."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary, ProviderNotAvailableError
 
-        config = SummaryConfig(
-            enabled=True,
-            claude_bedrock_api_key="",
-            claude_direct_api_key=""
-        )
+        config = _make_conductor_config(enabled=True)
         resolver = ProviderResolver(config)
         resolver.resolve()  # Will find no providers
         set_resolver(resolver)
@@ -1258,14 +1291,14 @@ class TestAIProviderWrapper:
 
     def test_call_summary_success_with_mock_provider(self):
         """call_summary should return DecisionSummary on success."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary
         from app.ai_provider import ChatMessage, DecisionSummary
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="test-key"
+            anthropic_api_key="test-key",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         mock_anthropic = MagicMock()
@@ -1291,14 +1324,14 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_json_parse_error(self):
         """call_summary should raise JSONParseError when response is invalid JSON."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary, JSONParseError
         from app.ai_provider import ChatMessage
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="test-key"
+            anthropic_api_key="test-key",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         mock_anthropic = MagicMock()
@@ -1319,21 +1352,21 @@ class TestAIProviderWrapper:
                 call_summary(messages)
 
             assert exc_info.value.status_code == 500
-            assert "claude_direct" in exc_info.value.provider_name
+            assert "anthropic" in exc_info.value.provider_name
 
         # Cleanup
         set_resolver(None)
 
     def test_call_summary_raises_provider_call_error_on_exception(self):
         """call_summary should raise ProviderCallError on general exceptions."""
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary, ProviderCallError
         from app.ai_provider import ChatMessage
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_direct_api_key="test-key"
+            anthropic_api_key="test-key",
+            default_model="claude-sonnet-4-anthropic",
         )
 
         # Mock successful health check response
@@ -1449,7 +1482,6 @@ class TestSummarizeEndpointWithMockProvider:
     def test_summarize_with_multiple_message_roles(self):
         """Endpoint should handle messages from different roles (host, engineer, observer)."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1457,7 +1489,7 @@ class TestSummarizeEndpointWithMockProvider:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(enabled=True, claude_direct_api_key="sk-ant-test")
+        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1471,7 +1503,7 @@ class TestSummarizeEndpointWithMockProvider:
 
             # Mock call_model for the pipeline
             with patch.object(
-                resolver.active_provider,
+                resolver.get_active_provider(),
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "api_design", "confidence": 0.9}),
@@ -1508,7 +1540,6 @@ class TestSummarizeEndpointWithMockProvider:
     def test_summarize_with_long_messages(self):
         """Endpoint should handle long message content."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1516,7 +1547,7 @@ class TestSummarizeEndpointWithMockProvider:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(enabled=True, claude_direct_api_key="sk-ant-test")
+        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1530,7 +1561,7 @@ class TestSummarizeEndpointWithMockProvider:
 
             # Mock call_model for the pipeline
             with patch.object(
-                resolver.active_provider,
+                resolver.get_active_provider(),
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "general", "confidence": 0.7}),
@@ -1564,7 +1595,6 @@ class TestSummarizeEndpointWithMockProvider:
     def test_summarize_fallback_from_bedrock_to_direct(self):
         """Endpoint should work when bedrock fails and falls back to direct."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1573,15 +1603,16 @@ class TestSummarizeEndpointWithMockProvider:
         test_app.include_router(router)
 
         # Configure both providers, but bedrock will fail health check
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
         )
 
         # Mock boto3 to fail
         mock_boto3 = MagicMock()
-        mock_boto3.client.return_value.invoke_model.side_effect = Exception("Bedrock unavailable")
+        mock_boto3.client.return_value.converse.side_effect = Exception("Bedrock unavailable")
 
         # Mock anthropic to succeed
         mock_anthropic = MagicMock()
@@ -1594,12 +1625,12 @@ class TestSummarizeEndpointWithMockProvider:
             resolver.resolve()
             set_resolver(resolver)
 
-            # Should have fallen back to claude_direct
-            assert resolver.active_provider_name == "claude_direct"
+            # Should have fallen back to anthropic
+            assert resolver.active_provider_type == "anthropic"
 
             # Mock call_model for the pipeline
             with patch.object(
-                resolver.active_provider,
+                resolver.get_active_provider(),
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "general", "confidence": 0.6}),
@@ -1652,7 +1683,6 @@ class TestSummarizeEndpointWithMockProvider:
     def test_summarize_with_special_characters(self):
         """Endpoint should handle messages with special characters."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1660,7 +1690,7 @@ class TestSummarizeEndpointWithMockProvider:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(enabled=True, claude_direct_api_key="sk-ant-test")
+        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1674,7 +1704,7 @@ class TestSummarizeEndpointWithMockProvider:
 
             # Mock call_model for the pipeline
             with patch.object(
-                resolver.active_provider,
+                resolver.get_active_provider(),
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "debugging", "confidence": 0.85}),
@@ -1833,7 +1863,6 @@ class TestAIStatusEndpointHealthChecks:
     def test_status_with_mixed_provider_health(self):
         """Endpoint should show correct status when providers have mixed health."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1842,15 +1871,16 @@ class TestAIStatusEndpointHealthChecks:
         test_app.include_router(router)
 
         # Configure both providers
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
         )
 
         # Mock boto3 to fail (bedrock unhealthy)
         mock_boto3 = MagicMock()
-        mock_boto3.client.return_value.invoke_model.side_effect = Exception("Bedrock error")
+        mock_boto3.client.return_value.converse.side_effect = Exception("Bedrock error")
 
         # Mock anthropic to succeed (direct healthy)
         mock_anthropic = MagicMock()
@@ -1869,12 +1899,12 @@ class TestAIStatusEndpointHealthChecks:
             assert response.status_code == 200
             data = response.json()
             assert data["summary_enabled"] is True
-            assert data["active_provider"] == "claude_direct"
-            assert len(data["providers"]) == 2
+            assert data["active_provider"] == "anthropic"
+            assert len(data["providers"]) == 3
 
             # Find provider statuses
-            bedrock_status = next(p for p in data["providers"] if p["name"] == "claude_bedrock")
-            direct_status = next(p for p in data["providers"] if p["name"] == "claude_direct")
+            bedrock_status = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
+            direct_status = next(p for p in data["providers"] if p["name"] == "anthropic")
 
             assert bedrock_status["healthy"] is False
             assert direct_status["healthy"] is True
@@ -1884,7 +1914,6 @@ class TestAIStatusEndpointHealthChecks:
     def test_status_with_bedrock_healthy_first(self):
         """Endpoint should select bedrock when it's healthy (priority order)."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1892,15 +1921,16 @@ class TestAIStatusEndpointHealthChecks:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
         )
 
         # Mock bedrock to succeed
         mock_boto3 = MagicMock()
-        mock_boto3.client.return_value.invoke_model.return_value = {"body": MagicMock()}
+        mock_boto3.client.return_value.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         mock_anthropic = MagicMock()
         mock_anthropic_client = MagicMock()
@@ -1918,11 +1948,11 @@ class TestAIStatusEndpointHealthChecks:
             assert response.status_code == 200
             data = response.json()
             # Bedrock has priority and is healthy
-            assert data["active_provider"] == "claude_bedrock"
-            # Resolver stops after finding first healthy provider
-            assert len(data["providers"]) >= 1
+            assert data["active_provider"] == "aws_bedrock"
+            # All provider types are listed
+            assert len(data["providers"]) == 3
             # The active provider should be in the list and healthy
-            bedrock_status = next((p for p in data["providers"] if p["name"] == "claude_bedrock"), None)
+            bedrock_status = next((p for p in data["providers"] if p["name"] == "aws_bedrock"), None)
             assert bedrock_status is not None
             assert bedrock_status["healthy"] is True
 
@@ -1931,7 +1961,6 @@ class TestAIStatusEndpointHealthChecks:
     def test_status_with_both_providers_unhealthy(self):
         """Endpoint should show no active provider when all fail health checks."""
         from fastapi.testclient import TestClient
-        from app.config import SummaryConfig
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
         from fastapi import FastAPI
@@ -1939,15 +1968,16 @@ class TestAIStatusEndpointHealthChecks:
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = SummaryConfig(
+        config = _make_conductor_config(
             enabled=True,
-            claude_bedrock_api_key="AKIATEST:secret123",
-            claude_direct_api_key="sk-ant-test"
+            bedrock_access_key="AKIATEST",
+            bedrock_secret_key="secret123",
+            anthropic_api_key="sk-ant-test",
         )
 
         # Mock both to fail
         mock_boto3 = MagicMock()
-        mock_boto3.client.return_value.invoke_model.side_effect = Exception("Bedrock error")
+        mock_boto3.client.return_value.converse.side_effect = Exception("Bedrock error")
 
         mock_anthropic = MagicMock()
         mock_anthropic_client = MagicMock()
@@ -1966,8 +1996,12 @@ class TestAIStatusEndpointHealthChecks:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] is None
-            assert len(data["providers"]) == 2
-            assert all(p["healthy"] is False for p in data["providers"])
+            assert len(data["providers"]) == 3
+            # Both configured providers should be unhealthy
+            bedrock_status = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
+            anthropic_status = next(p for p in data["providers"] if p["name"] == "anthropic")
+            assert bedrock_status["healthy"] is False
+            assert anthropic_status["healthy"] is False
 
         set_resolver(None)
 
@@ -2253,3 +2287,216 @@ class TestAISummaryPipeline:
 
         assert result.discussion_type == "api_design"
         assert result.confidence == 0.9
+
+
+class TestFormatConversationXml:
+    """Tests for the XML-formatted conversation output."""
+
+    def test_format_conversation_xml_structure(self):
+        """format_conversation should produce XML message tags."""
+        from app.ai_provider.prompts import format_conversation
+        from app.ai_provider import ChatMessage
+
+        messages = [
+            ChatMessage(role="host", text="Hello team", timestamp=1234567890),
+            ChatMessage(role="engineer", text="Hi there", timestamp=1234567891),
+        ]
+
+        result = format_conversation(messages)
+
+        assert '<message role="host">Hello team</message>' in result
+        assert '<message role="engineer">Hi there</message>' in result
+        # Old format should NOT be present
+        assert "[Host]" not in result
+        assert "[Engineer]" not in result
+
+    def test_format_conversation_empty_messages(self):
+        """format_conversation should handle empty list."""
+        from app.ai_provider.prompts import format_conversation
+
+        result = format_conversation([])
+        assert result == "(No messages in conversation)"
+
+    def test_format_conversation_single_message(self):
+        """format_conversation should handle a single message."""
+        from app.ai_provider.prompts import format_conversation
+        from app.ai_provider import ChatMessage
+
+        messages = [ChatMessage(role="host", text="Just me", timestamp=1234567890)]
+        result = format_conversation(messages)
+
+        assert '<message role="host">Just me</message>' in result
+        assert result.count("<message") == 1
+
+
+class TestGetCodePromptWithPolicyAndStyle:
+    """Tests for get_code_prompt with policy and style injection."""
+
+    def test_get_code_prompt_with_policy(self):
+        """Code prompt should include policy_constraints XML block."""
+        from app.ai_provider.prompts import get_code_prompt
+
+        prompt = get_code_prompt(
+            problem_statement="Fix login",
+            proposed_solution="Add validation",
+            affected_components=["auth.py"],
+            risk_level="low",
+            policy_constraints="- Maximum files that may be changed: 2\n- Maximum total lines changed: 50",
+        )
+
+        assert "<policy_constraints>" in prompt
+        assert "Maximum files that may be changed: 2" in prompt
+        assert "</policy_constraints>" in prompt
+
+    def test_get_code_prompt_with_style(self):
+        """Code prompt should include code_style XML block."""
+        from app.ai_provider.prompts import get_code_prompt
+
+        prompt = get_code_prompt(
+            problem_statement="Fix login",
+            proposed_solution="Add validation",
+            affected_components=["auth.py"],
+            risk_level="low",
+            style_guidelines="Use 4-space indentation. Follow PEP 8.",
+        )
+
+        assert "<code_style>" in prompt
+        assert "Use 4-space indentation" in prompt
+        assert "</code_style>" in prompt
+
+    def test_get_code_prompt_with_both(self):
+        """Code prompt should include both policy and style blocks."""
+        from app.ai_provider.prompts import get_code_prompt
+
+        prompt = get_code_prompt(
+            problem_statement="Fix login",
+            proposed_solution="Add validation",
+            affected_components=["auth.py"],
+            risk_level="low",
+            policy_constraints="- Max files: 2",
+            style_guidelines="Use PEP 8",
+        )
+
+        assert "<policy_constraints>" in prompt
+        assert "<code_style>" in prompt
+        # Both should appear before the instructions block
+        policy_pos = prompt.index("<policy_constraints>")
+        style_pos = prompt.index("<code_style>")
+        instructions_pos = prompt.index("<instructions>")
+        assert policy_pos < instructions_pos
+        assert style_pos < instructions_pos
+
+    def test_get_code_prompt_without_policy_or_style(self):
+        """Code prompt should not include policy/style blocks when not provided."""
+        from app.ai_provider.prompts import get_code_prompt
+
+        prompt = get_code_prompt(
+            problem_statement="Fix login",
+            proposed_solution="Add validation",
+            affected_components=["auth.py"],
+            risk_level="low",
+        )
+
+        assert "<policy_constraints>" not in prompt
+        assert "<code_style>" not in prompt
+
+    def test_get_code_prompt_xml_structure(self):
+        """Code prompt should use XML tags for problem, solution, components."""
+        from app.ai_provider.prompts import get_code_prompt
+
+        prompt = get_code_prompt(
+            problem_statement="Users cannot log in",
+            proposed_solution="Add authentication",
+            affected_components=["auth.py"],
+            risk_level="medium",
+        )
+
+        assert "<problem>" in prompt
+        assert "</problem>" in prompt
+        assert "<solution>" in prompt
+        assert "</solution>" in prompt
+        assert "<target_components>" in prompt
+        assert "</target_components>" in prompt
+
+
+class TestFormatPolicyConstraints:
+    """Tests for the format_policy_constraints helper."""
+
+    def test_basic_constraints(self):
+        """Should format max_files and max_lines."""
+        from app.ai_provider.prompts import format_policy_constraints
+
+        result = format_policy_constraints(max_files=2, max_lines_changed=50)
+
+        assert "Maximum files that may be changed: 2" in result
+        assert "Maximum total lines changed: 50" in result
+
+    def test_with_forbidden_paths(self):
+        """Should include forbidden paths when provided."""
+        from app.ai_provider.prompts import format_policy_constraints
+
+        result = format_policy_constraints(
+            max_files=5,
+            max_lines_changed=100,
+            forbidden_paths=("infra/", "db/", "security/"),
+        )
+
+        assert "infra/" in result
+        assert "db/" in result
+        assert "security/" in result
+        assert "Do NOT modify" in result
+
+    def test_without_forbidden_paths(self):
+        """Should not include forbidden line when paths tuple is empty."""
+        from app.ai_provider.prompts import format_policy_constraints
+
+        result = format_policy_constraints(max_files=10, max_lines_changed=500)
+
+        assert "Do NOT modify" not in result
+
+
+class TestSelectiveCodePromptWithPolicyAndStyle:
+    """Tests for get_selective_code_prompt with policy and style injection."""
+
+    def test_selective_prompt_xml_summaries(self):
+        """Selective code prompt should format summaries with XML tags."""
+        from app.ai_provider.prompts import get_selective_code_prompt
+
+        summaries = [
+            {
+                "discussion_type": "code_change",
+                "topic": "Fix auth",
+                "core_problem": "Login broken",
+                "proposed_solution": "Add validation",
+                "affected_components": ["auth.py"],
+                "risk_level": "medium",
+                "next_steps": ["Write tests"],
+            }
+        ]
+
+        prompt = get_selective_code_prompt(
+            primary_focus="Fix authentication",
+            impact_scope="module",
+            summaries=summaries,
+        )
+
+        assert "<summaries>" in prompt
+        assert "</summaries>" in prompt
+        assert '<summary index="1" type="code_change">' in prompt
+        assert "<primary_focus>" in prompt
+        assert "<impact_scope>" in prompt
+
+    def test_selective_prompt_with_policy_and_style(self):
+        """Selective code prompt should accept policy/style params."""
+        from app.ai_provider.prompts import get_selective_code_prompt
+
+        prompt = get_selective_code_prompt(
+            primary_focus="Fix auth",
+            impact_scope="local",
+            summaries=[],
+            policy_constraints="- Max files: 2",
+            style_guidelines="Follow PEP 8",
+        )
+
+        # These params are accepted but only used in the system prompt
+        assert isinstance(prompt, str)

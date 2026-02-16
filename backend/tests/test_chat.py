@@ -480,3 +480,283 @@ def test_identity_source_in_users_list_broadcast():
         assert sso_user["identitySource"] == "sso"
         assert named_user["identitySource"] == "named"
 
+
+# =============================================================================
+# Lead Transfer Tests
+# =============================================================================
+
+
+class TestLeadTransfer:
+    """Tests for dynamic lead transfer functionality."""
+
+    def test_host_is_initial_lead(self):
+        """First user gets both host and lead roles."""
+        room_id = "test-lead-initial"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
+            creds = receive_credentials(ws1)
+            assert creds["role"] == "host"
+            assert creds["leadId"] == creds["userId"]
+
+    def test_connected_message_includes_lead_id(self):
+        """Verify leadId is present in the connected response."""
+        room_id = "test-lead-connected"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
+            creds = receive_credentials(ws1)
+            assert "leadId" in creds
+            assert creds["leadId"] == creds["userId"]
+
+            history = receive_history(ws1)
+
+            # Second client also sees the lead
+            with client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+                creds2 = receive_credentials(ws2)
+                assert creds2["leadId"] == creds["userId"]  # Lead is still first user
+
+    def test_history_message_includes_lead_id(self):
+        """Verify leadId is present in the history response."""
+        room_id = "test-lead-history"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
+            creds1 = receive_credentials(ws1)
+            history1 = receive_history(ws1)
+            assert "leadId" in history1
+            assert history1["leadId"] == creds1["userId"]
+
+    def test_transfer_lead_by_host(self):
+        """Host can transfer lead to a guest."""
+        room_id = "test-lead-transfer-host"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            receive_history(ws1)
+            receive_history(ws2)
+
+            # Register both users
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json()  # user_joined broadcast
+            ws2.receive_json()  # user_joined broadcast
+
+            ws2.send_json({"type": "join", "displayName": "Guest"})
+            ws1.receive_json()  # user_joined broadcast
+            ws2.receive_json()  # user_joined broadcast
+
+            # Host transfers lead to guest
+            ws1.send_json({"type": "transfer_lead", "targetUserId": creds2["userId"]})
+
+            # Both clients receive lead_changed
+            lead_msg1 = ws1.receive_json()
+            lead_msg2 = ws2.receive_json()
+            assert lead_msg1["type"] == "lead_changed"
+            assert lead_msg1["leadId"] == creds2["userId"]
+            assert lead_msg2["type"] == "lead_changed"
+            assert lead_msg2["leadId"] == creds2["userId"]
+
+    def test_transfer_lead_by_lead(self):
+        """Current lead (non-host) can transfer lead to another user."""
+        room_id = "test-lead-transfer-lead"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws3:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            creds3 = receive_credentials(ws3)
+            receive_history(ws1)
+            receive_history(ws2)
+            receive_history(ws3)
+
+            # Register all users
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws2.send_json({"type": "join", "displayName": "Guest1"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws3.send_json({"type": "join", "displayName": "Guest2"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+
+            # Host transfers lead to Guest1
+            ws1.send_json({"type": "transfer_lead", "targetUserId": creds2["userId"]})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()  # lead_changed
+
+            # Guest1 (now lead) transfers lead to Guest2
+            ws2.send_json({"type": "transfer_lead", "targetUserId": creds3["userId"]})
+            lead1 = ws1.receive_json()
+            lead2 = ws2.receive_json()
+            lead3 = ws3.receive_json()
+            assert lead1["type"] == "lead_changed"
+            assert lead1["leadId"] == creds3["userId"]
+            assert lead2["leadId"] == creds3["userId"]
+            assert lead3["leadId"] == creds3["userId"]
+
+    def test_transfer_lead_unauthorized(self):
+        """Regular guest cannot transfer lead."""
+        room_id = "test-lead-transfer-unauth"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            receive_history(ws1)
+            receive_history(ws2)
+
+            # Register both users
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json()
+            ws2.send_json({"type": "join", "displayName": "Guest"})
+            ws1.receive_json(); ws2.receive_json()
+
+            # Guest tries to transfer lead — should get error
+            ws2.send_json({"type": "transfer_lead", "targetUserId": creds1["userId"]})
+            error = ws2.receive_json()
+            assert error["type"] == "error"
+            assert "host or current lead" in error["error"]
+
+    def test_transfer_lead_invalid_target(self):
+        """Transfer to non-existent user fails."""
+        room_id = "test-lead-transfer-invalid"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
+            creds1 = receive_credentials(ws1)
+            receive_history(ws1)
+
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json()  # user_joined
+
+            ws1.send_json({"type": "transfer_lead", "targetUserId": "nonexistent-user-id"})
+            error = ws1.receive_json()
+            assert error["type"] == "error"
+            assert "Invalid target" in error["error"]
+
+    def test_lead_revert_on_disconnect(self):
+        """When lead (non-host) disconnects, lead reverts to host.
+
+        Uses manager-level disconnect to avoid flaky WebSocket context-manager
+        disconnect timing when running in the full test suite.
+        """
+        room_id = "test-lead-revert"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            receive_history(ws1)
+            receive_history(ws2)
+
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json()
+            ws2.send_json({"type": "join", "displayName": "Guest"})
+            ws1.receive_json(); ws2.receive_json()
+
+            # Transfer lead to guest
+            ws1.send_json({"type": "transfer_lead", "targetUserId": creds2["userId"]})
+            ws1.receive_json(); ws2.receive_json()  # lead_changed
+
+            # Verify lead is now guest
+            assert manager.get_lead_id(room_id) == creds2["userId"]
+
+            # Find the server-side WebSocket for guest (ws2) from manager mapping
+            guest_ws = None
+            for ws_obj, (rid, uid) in manager.websocket_to_user.items():
+                if rid == room_id and uid == creds2["userId"]:
+                    guest_ws = ws_obj
+                    break
+            assert guest_ws is not None, "Guest WebSocket not found in manager"
+
+            # Simulate disconnect at manager level (avoids flaky broadcast receive)
+            disconnected_user, lead_reverted = manager.disconnect(guest_ws, room_id)
+            assert disconnected_user is not None
+            assert disconnected_user.displayName == "Guest"
+            assert lead_reverted is True
+            assert manager.get_lead_id(room_id) == creds1["userId"]
+
+    def test_lead_disconnect_when_lead_is_host(self):
+        """Host-lead disconnect doesn't trigger lead revert (no one to revert to)."""
+        room_id = "test-lead-host-disconnect"
+        # Just verify the manager state directly
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
+            creds1 = receive_credentials(ws1)
+            receive_history(ws1)
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json()
+
+            assert manager.is_lead(room_id, creds1["userId"])
+            assert manager.is_host(room_id, creds1["userId"])
+
+        # After disconnect, room may be empty — lead tracking cleaned up
+        # No revert broadcast needed since no one is left
+
+    def test_lead_changed_broadcast(self):
+        """All clients receive lead_changed message on transfer."""
+        room_id = "test-lead-broadcast"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws3:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            creds3 = receive_credentials(ws3)
+            receive_history(ws1)
+            receive_history(ws2)
+            receive_history(ws3)
+
+            # Register all
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws2.send_json({"type": "join", "displayName": "G1"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws3.send_json({"type": "join", "displayName": "G2"})
+            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+
+            # Transfer lead
+            ws1.send_json({"type": "transfer_lead", "targetUserId": creds3["userId"]})
+            msg1 = ws1.receive_json()
+            msg2 = ws2.receive_json()
+            msg3 = ws3.receive_json()
+
+            # All three receive the same lead_changed
+            for msg in [msg1, msg2, msg3]:
+                assert msg["type"] == "lead_changed"
+                assert msg["leadId"] == creds3["userId"]
+
+    def test_can_use_ai_permission(self):
+        """can_use_ai returns True only for lead."""
+        room_id = "test-can-use-ai"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            receive_history(ws1)
+            receive_history(ws2)
+
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json()
+            ws2.send_json({"type": "join", "displayName": "Guest"})
+            ws1.receive_json(); ws2.receive_json()
+
+            # Host is initial lead — can use AI
+            assert manager.can_use_ai(room_id, creds1["userId"]) is True
+            assert manager.can_use_ai(room_id, creds2["userId"]) is False
+
+            # Transfer lead to guest
+            manager.transfer_lead(room_id, creds2["userId"])
+            assert manager.can_use_ai(room_id, creds1["userId"]) is False
+            assert manager.can_use_ai(room_id, creds2["userId"]) is True
+
+    def test_can_configure_permission(self):
+        """can_configure returns True for host OR lead."""
+        room_id = "test-can-configure"
+        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+            creds1 = receive_credentials(ws1)
+            creds2 = receive_credentials(ws2)
+            receive_history(ws1)
+            receive_history(ws2)
+
+            ws1.send_json({"type": "join", "displayName": "Host"})
+            ws1.receive_json(); ws2.receive_json()
+            ws2.send_json({"type": "join", "displayName": "Guest"})
+            ws1.receive_json(); ws2.receive_json()
+
+            # Initially host is lead — both host and lead can configure
+            assert manager.can_configure(room_id, creds1["userId"]) is True
+            assert manager.can_configure(room_id, creds2["userId"]) is False
+
+            # Transfer lead to guest — now BOTH host and lead can configure
+            manager.transfer_lead(room_id, creds2["userId"])
+            assert manager.can_configure(room_id, creds1["userId"]) is True  # host always
+            assert manager.can_configure(room_id, creds2["userId"]) is True  # lead
+

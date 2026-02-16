@@ -1,9 +1,15 @@
 """Prompt templates for AI providers.
 
 This module contains shared prompt templates used by AI providers
-for various tasks like summarization.
+for various tasks like summarization, classification, and code generation.
+
+All prompts follow Anthropic prompt engineering best practices:
+- XML tags for structured data separation
+- Specific role definitions
+- Output schema blocks
+- Guardrails for edge cases
 """
-from typing import Literal
+from typing import List, Literal, Optional
 
 # Discussion types for classification
 DiscussionType = Literal[
@@ -20,30 +26,43 @@ DiscussionType = Literal[
 # Stage 1: Classification Prompt
 # =============================================================================
 
-CLASSIFICATION_PROMPT = """You are an AI assistant that classifies software engineering discussions.
+CLASSIFICATION_PROMPT = """You are a software engineering discussion classifier. Your task is to categorize a team conversation into exactly one discussion type.
 
-## Conversation
+<conversation>
 {conversation}
+</conversation>
 
-## Task
-Analyze the conversation and classify it into ONE of the following categories:
+<instructions>
+Analyze the conversation above and classify it into ONE of the following categories:
 
-1. **api_design** - Discussions about API endpoints, request/response formats, REST/GraphQL design, versioning
-2. **product_flow** - Discussions about user flows, feature requirements, UX decisions, product behavior
-3. **code_change** - Discussions about specific code modifications, refactoring, bug fixes, implementation details
-4. **architecture** - Discussions about system design, component structure, scalability, infrastructure
-5. **innovation** - Discussions about new ideas, experiments, proof of concepts, research
-6. **debugging** - Discussions about investigating issues, error analysis, troubleshooting, root cause analysis
-7. **general** - Discussions that don't fit clearly into the above categories
+1. api_design - Discussions about API endpoints, request/response formats, REST/GraphQL design, versioning
+2. product_flow - Discussions about user flows, feature requirements, UX decisions, product behavior
+3. code_change - Discussions about specific code modifications, refactoring, bug fixes, implementation details
+4. architecture - Discussions about system design, component structure, scalability, infrastructure
+5. innovation - Discussions about new ideas, experiments, proof of concepts, research
+6. debugging - Discussions about investigating issues, error analysis, troubleshooting, root cause analysis
+7. general - Discussions that don't fit clearly into the above categories
 
-## Output Requirements
-Your output must be ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
+If the conversation is too short or unclear to classify confidently, use "general" with a low confidence score.
 
-## Required JSON Schema
+Output ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
+</instructions>
+
+<output_schema>
 {{
   "discussion_type": "one of: api_design, product_flow, code_change, architecture, innovation, debugging, general",
-  "confidence": 0.0 to 1.0 (how confident you are in this classification)
+  "confidence": 0.0 to 1.0
 }}
+</output_schema>
+
+<example>
+Input conversation:
+<message role="host">We need to add a GET /users endpoint that returns paginated results</message>
+<message role="engineer">I suggest using cursor-based pagination with a limit parameter</message>
+
+Output:
+{{"discussion_type": "api_design", "confidence": 0.92}}
+</example>
 
 Output only the JSON object:"""
 
@@ -53,20 +72,41 @@ Output only the JSON object:"""
 # =============================================================================
 
 # Base template structure for all specialized prompts
-_SUMMARY_BASE = """You are an AI assistant for software engineering decision summarization.
+_SUMMARY_BASE = """You are a software engineering decision summarizer. Your task is to extract structured information from a team conversation.
 
-## Conversation
+<conversation>
 {conversation}
+</conversation>
 
-## Discussion Type
-This conversation has been classified as: **{discussion_type}**
+<context>
+This conversation has been classified as: {discussion_type}
+</context>
 
+<instructions>
 {specialized_instructions}
 
-## Output Requirements
-Your output must be ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
+If the conversation lacks sufficient information for a field:
+- Use an empty string "" for text fields where no information is available
+- Use false for requires_code_change if unclear
+- Use an empty array [] for lists with no items
+- Use "low" for risk_level if assessment is not possible
+- For topic, provide "No clear topic identified" if truly unclear
 
-## Required JSON Schema
+Impact Scope Guidelines:
+- "local": Changes affect only a single function or class
+- "module": Changes affect multiple files within one module/package
+- "system": Changes affect multiple modules or the entire application
+- "cross-system": Changes affect multiple systems or external integrations
+
+Risk Level Guidelines:
+- "low": Minor changes, well-understood scope, minimal dependencies
+- "medium": Moderate changes, some complexity, affects multiple components
+- "high": Major changes, high complexity, critical systems, or unclear scope
+
+Output ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
+</instructions>
+
+<output_schema>
 {{
   "type": "decision_summary",
   "topic": "Brief topic of the discussion (1-2 sentences max)",
@@ -78,24 +118,13 @@ Your output must be ONLY valid JSON with no markdown formatting, no code blocks,
   "risk_level": "low" or "medium" or "high",
   "next_steps": ["actionable", "items", "or", "follow-up", "tasks"]
 }}
-
-## Impact Scope Guidelines
-- "local": Changes affect only a single function or class
-- "module": Changes affect multiple files within one module/package
-- "system": Changes affect multiple modules or the entire application
-- "cross-system": Changes affect multiple systems or external integrations
-
-## Risk Level Guidelines
-- "low": Minor changes, well-understood scope, minimal dependencies
-- "medium": Moderate changes, some complexity, affects multiple components
-- "high": Major changes, high complexity, critical systems, or unclear scope
+</output_schema>
 
 Output only the JSON object:"""
 
 # Specialized instructions for each discussion type
 SPECIALIZED_INSTRUCTIONS = {
-    "api_design": """## API Design Focus
-Pay special attention to:
+    "api_design": """Pay special attention to:
 1. Endpoint paths and HTTP methods discussed
 2. Request/response payload structures
 3. Authentication and authorization requirements
@@ -105,8 +134,7 @@ Pay special attention to:
 For requires_code_change: Set to TRUE if new endpoints need to be created or existing ones modified.
 For impact_scope: Consider how many services/clients will be affected by API changes.""",
 
-    "product_flow": """## Product Flow Focus
-Pay special attention to:
+    "product_flow": """Pay special attention to:
 1. User journey and interaction patterns
 2. Feature requirements and acceptance criteria
 3. Edge cases and error handling from user perspective
@@ -116,8 +144,7 @@ Pay special attention to:
 For requires_code_change: Set to TRUE if UI/UX changes or new features are needed.
 For impact_scope: Consider frontend, backend, and any data model changes.""",
 
-    "code_change": """## Code Change Focus
-Pay special attention to:
+    "code_change": """Pay special attention to:
 1. Specific files, functions, or classes mentioned
 2. Implementation approach and patterns
 3. Dependencies and imports affected
@@ -127,8 +154,7 @@ Pay special attention to:
 For requires_code_change: Almost always TRUE for this discussion type.
 For impact_scope: Assess based on the number of files and modules touched.""",
 
-    "architecture": """## Architecture Focus
-Pay special attention to:
+    "architecture": """Pay special attention to:
 1. System components and their interactions
 2. Data flow and storage decisions
 3. Scalability and performance considerations
@@ -138,8 +164,7 @@ Pay special attention to:
 For requires_code_change: Set to TRUE if architectural changes require implementation.
 For impact_scope: Usually "system" or "cross-system" for architecture discussions.""",
 
-    "innovation": """## Innovation Focus
-Pay special attention to:
+    "innovation": """Pay special attention to:
 1. Novel approaches or technologies being explored
 2. Proof of concept requirements
 3. Risks and unknowns
@@ -149,8 +174,7 @@ Pay special attention to:
 For requires_code_change: Set to TRUE if prototyping or experimentation code is needed.
 For impact_scope: Consider if this is isolated experimentation or broader integration.""",
 
-    "debugging": """## Debugging Focus
-Pay special attention to:
+    "debugging": """Pay special attention to:
 1. Error messages, stack traces, or symptoms described
 2. Steps to reproduce the issue
 3. Root cause analysis and findings
@@ -160,8 +184,7 @@ Pay special attention to:
 For requires_code_change: Set to TRUE if a fix needs to be implemented.
 For impact_scope: Assess based on whether the bug is localized or systemic.""",
 
-    "general": """## General Discussion Focus
-Extract the most relevant information:
+    "general": """Extract the most relevant information:
 1. Main topic and context
 2. Key decisions or conclusions
 3. Action items identified
@@ -213,14 +236,15 @@ def get_targeted_summary_prompt(messages: list, discussion_type: DiscussionType)
 # =============================================================================
 
 # Prompt template for structured decision summarization
-STRUCTURED_SUMMARY_PROMPT = """You are an AI assistant for software engineering decision summarization.
+STRUCTURED_SUMMARY_PROMPT = """You are a software engineering decision summarizer.
 
 Your task is to analyze the following conversation between a host and an engineer, then extract key information about problems discussed, decisions made, and whether code changes are required.
 
-## Conversation
+<conversation>
 {conversation}
+</conversation>
 
-## Instructions
+<instructions>
 1. Identify the main topic or subject being discussed
 2. Extract the core problem or challenge being addressed
 3. Summarize the proposed solution or approach (if any)
@@ -229,9 +253,6 @@ Your task is to analyze the following conversation between a host and an enginee
 6. Assess the risk level based on scope and complexity
 7. Extract clear action items or next steps
 
-## Output Requirements
-Your output must be ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
-
 If the conversation lacks sufficient information for a field:
 - Use an empty string "" for text fields where no information is available
 - Use false for requires_code_change if unclear
@@ -239,7 +260,10 @@ If the conversation lacks sufficient information for a field:
 - Use "low" for risk_level if assessment is not possible
 - For topic, provide "No clear topic identified" if truly unclear
 
-## Required JSON Schema
+Output ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
+</instructions>
+
+<output_schema>
 {{
   "type": "decision_summary",
   "topic": "Brief topic of the discussion (1-2 sentences max)",
@@ -250,31 +274,33 @@ If the conversation lacks sufficient information for a field:
   "risk_level": "low" or "medium" or "high",
   "next_steps": ["actionable", "items", "or", "follow-up", "tasks"]
 }}
+</output_schema>
 
-## Risk Level Guidelines
+<risk_guidelines>
 - "low": Minor changes, well-understood scope, minimal dependencies
 - "medium": Moderate changes, some complexity, affects multiple components
 - "high": Major changes, high complexity, critical systems, or unclear scope
+</risk_guidelines>
 
 Output only the JSON object:"""
 
 
 def format_conversation(messages: list) -> str:
-    """Format a list of chat messages into a conversation string.
+    """Format a list of chat messages into XML-tagged conversation string.
 
     Args:
         messages: List of message objects with role, text, and timestamp attributes.
 
     Returns:
-        Formatted conversation string with role labels and timestamps.
+        Formatted conversation string with XML message tags.
     """
     if not messages:
         return "(No messages in conversation)"
 
     lines = []
     for msg in messages:
-        role_label = "[Host]" if msg.role == "host" else "[Engineer]"
-        lines.append(f"{role_label}: {msg.text}")
+        role = "host" if msg.role == "host" else "engineer"
+        lines.append(f'<message role="{role}">{msg.text}</message>')
 
     return "\n".join(lines)
 
@@ -292,34 +318,39 @@ def get_summary_prompt(messages: list) -> str:
     return STRUCTURED_SUMMARY_PROMPT.format(conversation=conversation)
 
 
-# Template for generating code prompts from decision summaries
+# =============================================================================
+# Code Prompt Template
+# =============================================================================
+
 CODE_PROMPT_TEMPLATE = """You are a senior software engineer tasked with implementing code changes.
 
-## Problem Statement
+<problem>
 {problem_statement}
+</problem>
 
-## Proposed Solution
+<solution>
 {proposed_solution}
+</solution>
 
-## Target Components
+<target_components>
 {affected_components}
+</target_components>
 
-## Risk Level
-{risk_level}
+<risk_level>{risk_level}</risk_level>
 
-{context_section}
-## Task
+{context_section}{policy_section}{style_section}<instructions>
 Based on the above information, implement the necessary code changes. Your output should be a unified diff format that can be applied to the codebase.
 
-### Requirements:
+Requirements:
 1. Follow existing code patterns and conventions in the target components
 2. Include appropriate error handling
 3. Add or update tests if applicable
 4. Ensure backward compatibility where possible
 5. Document any breaking changes
 
-### Output Format:
+Output Format:
 Provide your changes as unified diff patches that can be applied with `git apply` or similar tools. Each file change should be clearly marked with the file path.
+</instructions>
 
 Begin implementation:"""
 
@@ -330,6 +361,8 @@ def get_code_prompt(
     affected_components: list,
     risk_level: str,
     context_snippet: str = None,
+    policy_constraints: str = None,
+    style_guidelines: str = None,
 ) -> str:
     """Generate a code prompt from a decision summary.
 
@@ -342,6 +375,8 @@ def get_code_prompt(
         affected_components: List of components/files that may be affected.
         risk_level: Risk assessment (low, medium, high).
         context_snippet: Optional code snippet for additional context.
+        policy_constraints: Optional policy constraints string.
+        style_guidelines: Optional code style guidelines string.
 
     Returns:
         Complete code prompt string ready for code generation model input.
@@ -354,16 +389,37 @@ def get_code_prompt(
 
     # Format context section if provided
     if context_snippet:
-        context_section = f"""## Context
+        context_section = f"""<context>
 The following code snippet provides relevant context:
 
 ```
 {context_snippet}
 ```
+</context>
 
 """
     else:
         context_section = ""
+
+    # Format policy section if provided
+    if policy_constraints:
+        policy_section = f"""<policy_constraints>
+{policy_constraints}
+</policy_constraints>
+
+"""
+    else:
+        policy_section = ""
+
+    # Format style section if provided
+    if style_guidelines:
+        style_section = f"""<code_style>
+{style_guidelines}
+</code_style>
+
+"""
+    else:
+        style_section = ""
 
     return CODE_PROMPT_TEMPLATE.format(
         problem_statement=problem_statement or "No problem statement provided.",
@@ -371,6 +427,8 @@ The following code snippet provides relevant context:
         affected_components=components_str,
         risk_level=risk_level or "unknown",
         context_section=context_section,
+        policy_section=policy_section,
+        style_section=style_section,
     )
 
 
@@ -385,6 +443,7 @@ You will receive:
 - Primary focus
 - Impact scope
 
+{policy_section}{style_section}<instructions>
 Your task:
 - Convert decisions into actionable coding tasks
 - Identify affected modules
@@ -393,37 +452,39 @@ Your task:
 - Output a structured implementation plan
 - If possible, include unified diff format suggestion
 
-Output strictly JSON:
-{
-  "implementation_plan": {
+Output strictly JSON matching the schema below.
+</instructions>
+
+<output_schema>
+{{
+  "implementation_plan": {{
     "affected_components": [...],
     "file_level_changes": [
-      {
+      {{
         "file": "...",
         "change_type": "modify|create|delete",
         "description": "..."
-      }
+      }}
     ],
     "tests_required": true|false,
     "migration_required": true|false,
     "risk_level": "low|medium|high"
-  }
-}"""
+  }}
+}}
+</output_schema>"""
 
-SELECTIVE_CODE_PROMPT_TEMPLATE = """## Primary Focus
-{primary_focus}
+SELECTIVE_CODE_PROMPT_TEMPLATE = """<primary_focus>{primary_focus}</primary_focus>
 
-## Impact Scope
-{impact_scope}
+<impact_scope>{impact_scope}</impact_scope>
 
-## Code-Relevant Discussion Summaries
-
+<summaries>
 {summaries_section}
+</summaries>
 
-{context_section}## Task
+{context_section}<instructions>
 Based on the above engineering decisions, provide a structured implementation plan.
 
-### Requirements:
+Requirements:
 1. Analyze all code-relevant summaries and identify overlapping concerns
 2. Consolidate affected components across all summaries
 3. Specify file-level changes with clear descriptions
@@ -431,7 +492,7 @@ Based on the above engineering decisions, provide a structured implementation pl
 5. Assess if any migrations (database, config, etc.) are needed
 6. Provide an overall risk assessment
 
-### Output Format:
+Output Format:
 Provide your response as valid JSON matching this schema:
 
 {{
@@ -450,7 +511,8 @@ Provide your response as valid JSON matching this schema:
   }}
 }}
 
-Output only the JSON object:"""
+Output only the JSON object.
+</instructions>"""
 
 
 def format_summaries_for_code_prompt(summaries: list) -> str:
@@ -489,23 +551,18 @@ def format_summaries_for_code_prompt(summaries: list) -> str:
         components_str = ", ".join(affected) if affected else "None specified"
         steps_str = "\n".join(f"  - {step}" for step in next_steps) if next_steps else "  - None specified"
 
-        section = f"""### Summary {i}: {disc_type.upper()}
-**Topic:** {topic}
-
-**Problem:** {core_problem}
-
-**Proposed Solution:** {proposed_solution}
-
-**Affected Components:** {components_str}
-
-**Risk Level:** {risk}
-
-**Next Steps:**
+        section = f"""<summary index="{i}" type="{disc_type}">
+Topic: {topic}
+Problem: {core_problem}
+Proposed Solution: {proposed_solution}
+Affected Components: {components_str}
+Risk Level: {risk}
+Next Steps:
 {steps_str}
-"""
+</summary>"""
         sections.append(section)
 
-    return "\n---\n".join(sections)
+    return "\n".join(sections)
 
 
 def get_selective_code_prompt(
@@ -513,6 +570,8 @@ def get_selective_code_prompt(
     impact_scope: str,
     summaries: list,
     context_snippet: str = None,
+    policy_constraints: str = None,
+    style_guidelines: str = None,
 ) -> str:
     """Generate a selective code prompt from multi-type summaries.
 
@@ -524,6 +583,8 @@ def get_selective_code_prompt(
         impact_scope: The scope of impact (local, module, system, cross-system).
         summaries: List of code-relevant summary objects.
         context_snippet: Optional code snippet for additional context.
+        policy_constraints: Optional policy constraints string.
+        style_guidelines: Optional code style guidelines string.
 
     Returns:
         Complete code prompt string ready for code generation model input.
@@ -533,12 +594,13 @@ def get_selective_code_prompt(
 
     # Format context section if provided
     if context_snippet:
-        context_section = f"""## Context
+        context_section = f"""<context>
 The following code snippet provides relevant context:
 
 ```
 {context_snippet}
 ```
+</context>
 
 """
     else:
@@ -551,3 +613,27 @@ The following code snippet provides relevant context:
         context_section=context_section,
     )
 
+
+def format_policy_constraints(
+    max_files: int,
+    max_lines_changed: int,
+    forbidden_paths: tuple = (),
+) -> str:
+    """Format policy constraints into a human-readable string.
+
+    Args:
+        max_files: Maximum number of files allowed.
+        max_lines_changed: Maximum total lines changed allowed.
+        forbidden_paths: Tuple of forbidden path prefixes.
+
+    Returns:
+        Formatted policy constraints string.
+    """
+    lines = [
+        f"- Maximum files that may be changed: {max_files}",
+        f"- Maximum total lines changed: {max_lines_changed}",
+    ]
+    if forbidden_paths:
+        paths_str = ", ".join(forbidden_paths)
+        lines.append(f"- Do NOT modify files under these paths: {paths_str}")
+    return "\n".join(lines)

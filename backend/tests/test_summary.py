@@ -1,13 +1,20 @@
-"""Tests for the summary endpoint."""
+"""Tests for the summary endpoint.
+
+Note: The legacy summary router is no longer registered in app.main.
+These tests use a local test app with the summary router included.
+"""
 import time
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from app.main import app
+from app.summary.router import router as summary_router
 from app.summary.schemas import SummaryRequest, SummaryResponse, ChatMessage
 
 
-client = TestClient(app)
+_test_app = FastAPI()
+_test_app.include_router(summary_router)
+client = TestClient(_test_app)
 
 
 class TestPydanticSchemas:

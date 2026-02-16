@@ -106,6 +106,7 @@ class CodePromptRequest(BaseModel):
     """Request model for POST /ai/code-prompt endpoint (legacy single summary)."""
     decision_summary: DecisionSummaryInput
     context_snippet: Optional[str] = None
+    room_id: Optional[str] = None
 
 
 class CodePromptResponse(BaseModel):
@@ -151,6 +152,7 @@ class SelectiveCodePromptRequest(BaseModel):
     """Request model for POST /ai/code-prompt with multi-type summary support."""
     multi_type_summary: MultiTypeSummaryInput
     context_snippet: Optional[str] = None
+    room_id: Optional[str] = None
 
 
 class FileLevelChange(BaseModel):
@@ -392,6 +394,9 @@ async def generate_code_prompt(request: CodePromptRequest) -> CodePromptResponse
 
     logger.info(f"Generating code prompt for topic: {summary.topic}")
 
+    # Look up room code style if room_id provided
+    room_code_style = _get_room_code_style(request.room_id)
+
     # Use the wrapper for consistent logging and potential future enhancements
     code_prompt_str = call_code_prompt(
         problem_statement=summary.problem_statement,
@@ -399,6 +404,7 @@ async def generate_code_prompt(request: CodePromptRequest) -> CodePromptResponse
         affected_components=summary.affected_components,
         risk_level=summary.risk_level,
         context_snippet=request.context_snippet,
+        room_code_style=room_code_style,
     )
 
     return CodePromptResponse(code_prompt=code_prompt_str)
@@ -508,6 +514,9 @@ async def generate_selective_code_prompt(
         for s in multi_summary.summaries
     ]
 
+    # Look up room code style if room_id provided
+    room_code_style = _get_room_code_style(request.room_id)
+
     # Use the selective code prompt wrapper
     code_prompt_str, types_used = call_selective_code_prompt(
         primary_focus=multi_summary.primary_focus,
@@ -515,6 +524,7 @@ async def generate_selective_code_prompt(
         summaries=summaries_dicts,
         code_relevant_types=multi_summary.code_relevant_types,
         context_snippet=request.context_snippet,
+        room_code_style=room_code_style,
     )
 
     return SelectiveCodePromptResponse(
@@ -522,3 +532,26 @@ async def generate_selective_code_prompt(
         implementation_plan=None,  # AI would populate this after processing the prompt
         code_relevant_types_used=types_used,
     )
+
+
+def _get_room_code_style(room_id: Optional[str]) -> Optional[str]:
+    """Look up code style for a room from the chat manager.
+
+    Args:
+        room_id: Optional room ID to look up.
+
+    Returns:
+        Code style string if found, None otherwise.
+    """
+    if not room_id:
+        return None
+
+    try:
+        from app.chat.manager import manager
+
+        settings = manager.get_room_settings(room_id)
+        code_style = settings.get("code_style", "")
+        return code_style if code_style else None
+    except Exception as e:
+        logger.debug(f"Could not load room code style for {room_id}: {e}")
+        return None
