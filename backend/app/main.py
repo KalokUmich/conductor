@@ -6,11 +6,11 @@ and AI-powered code generation for collaborative development.
 
 Modules:
     - chat: WebSocket-based real-time chat rooms
-    - summary: Chat message summarization (keyword-based extraction)
+    - ai_provider: AI provider resolution and management
     - agent: AI code generation (currently MockAgent for testing)
     - policy: Auto-apply policy evaluation
     - audit: DuckDB-based audit logging
-    - ai_provider: AI provider resolution and management
+    - auth: AWS SSO (IAM Identity Center) authentication
 """
 import logging
 from contextlib import asynccontextmanager
@@ -21,12 +21,12 @@ from app.agent.router import router as agent_router
 from app.ai_provider.resolver import ProviderResolver, set_resolver
 from app.ai_provider.router import router as ai_router
 from app.audit.router import router as audit_router
+from app.auth.router import router as auth_router
 from app.chat.router import router as chat_router
 from app.config import get_config
 from app.files.router import router as files_router
 from app.ngrok_service import get_public_url, start_ngrok, stop_ngrok
 from app.policy.router import router as policy_router
-from app.summary.router import router as summary_router
 
 # Configure logging
 logging.basicConfig(
@@ -98,12 +98,12 @@ app = FastAPI(
 
 # Register all routers
 app.include_router(chat_router)
-app.include_router(summary_router)
 app.include_router(agent_router)
 app.include_router(policy_router)
 app.include_router(audit_router)
 app.include_router(files_router)
 app.include_router(ai_router)
+app.include_router(auth_router)
 
 
 @app.get("/health")

@@ -49,10 +49,10 @@ backend/app/
     ├─ chat.router
     ├─ ai_provider.router
     ├─ agent.router
+    ├─ auth.router
     ├─ policy.router
     ├─ audit.router
-    ├─ files.router
-    └─ summary.router (legacy keyword path)
+    └─ files.router
 ```
 
 ### 3. Backend Architecture
@@ -86,12 +86,13 @@ backend/app/
 - `audit`:
   - `POST /audit/log-apply`
   - `GET /audit/logs`
+- `auth`:
+  - `POST /auth/sso/start`
+  - `POST /auth/sso/poll`
 - `files`:
   - `POST /files/upload/{room_id}`
   - `GET /files/download/{file_id}`
   - `DELETE /files/room/{room_id}`
-- `summary`:
-  - `POST /summary` (legacy keyword extraction)
 
 #### AI Summary Pipeline
 
@@ -109,7 +110,7 @@ Implemented in `backend/app/ai_provider/pipeline.py`:
 - compute `code_relevant_types` for selective code prompt generation
 
 Provider resolution:
-- configured in `summary` section of `conductor.yaml`
+- configured in `summary` section of `conductor.settings.yaml` and provider keys in `conductor.secrets.yaml`
 - priority order: `claude_bedrock` -> `claude_direct`
 - first healthy provider becomes active
 
@@ -220,7 +221,6 @@ Implemented:
 
 Limited:
 - `/generate-changes` is still MockAgent-based
-- `/summary` remains legacy keyword extractor
 - extension currently uses `/ai/code-prompt` (not selective endpoint)
 
 ---
@@ -254,8 +254,8 @@ Conductor 由两部分运行时组成：
 - `agent`：`/generate-changes`（MockAgent）
 - `policy`：`/policy/evaluate-auto-apply`
 - `audit`：`/audit/log-apply`、`/audit/logs`
+- `auth`：`/auth/sso/start`、`/auth/sso/poll`
 - `files`：上传/下载/房间清理
-- `summary`：`/summary`（旧关键词提取路径）
 
 ### 3. AI 摘要流水线
 
@@ -265,7 +265,7 @@ Conductor 由两部分运行时组成：
 2. 按分类生成定向结构化摘要
 3. 计算 `code_relevant_types`（用于 selective code prompt）
 
-Provider 选择由 `conductor.yaml` 的 `summary` 配置驱动，优先级 `claude_bedrock -> claude_direct`。
+Provider 选择由 `conductor.settings.yaml` 的 `summary` 配置和 `conductor.secrets.yaml` 的 provider 密钥驱动，优先级 `claude_bedrock -> claude_direct`。
 
 ### 4. 扩展侧关键模块
 
@@ -318,5 +318,4 @@ AI 摘要与代码提示词：
 
 限制：
 - `/generate-changes` 仍为 MockAgent
-- `/summary` 仍是旧关键词提取
 - 扩展目前调用 `/ai/code-prompt`，未走 selective 接口

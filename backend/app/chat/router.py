@@ -40,6 +40,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from .manager import (
     ChatMessage,
     ChatMessageInput,
+    IdentitySource,
     MessageType,
     UserRole,
     manager,
@@ -336,7 +337,8 @@ async def websocket_chat_endpoint(
                     room_id=room_id,
                     user_id=assigned_user_id,  # SECURITY: Use backend-assigned ID
                     display_name=data.get("displayName", ""),
-                    role=assigned_role  # SECURITY: Use backend-assigned role
+                    role=assigned_role,  # SECURITY: Use backend-assigned role
+                    identity_source=data.get("identitySource", "anonymous")
                 )
 
                 # Broadcast updated user list to all clients

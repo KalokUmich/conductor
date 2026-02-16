@@ -26,6 +26,7 @@ import {
 import { ChangeSet, FileChange, getDiffPreviewService } from './services/diffPreview';
 import { getPermissionsService } from './services/permissions';
 import { getSessionService } from './services/session';
+import { wrapIdentity, getValidIdentity, isStale } from './services/ssoIdentityCache';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
@@ -191,6 +192,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     /** Whether auto-apply is enabled for this session. */
     private _autoApplyEnabled: boolean = false;
 
+    // SSO state
+    /** Whether SSO polling is active. */
+    private _ssoPolling: boolean = false;
+    /** Timer ID for SSO polling interval. */
+    private _ssoTimerId?: ReturnType<typeof setInterval>;
+
     // Sequential change review queue
     /** Changes waiting to be reviewed/applied. */
     private _pendingChanges: FileChange[] = [];
@@ -333,6 +340,21 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'generateCodePromptAndPost':
                     this._handleGenerateCodePromptAndPost(message.decisionSummary, message.roomId);
+                    return;
+                case 'ssoLogin':
+                    this._handleSSOLogin();
+                    return;
+                case 'ssoCancel':
+                    this._handleSSOCancel();
+                    this._view?.webview.postMessage({
+                        command: 'ssoLoginResult',
+                        error: 'Cancelled by user',
+                    });
+                    return;
+                case 'ssoClearCache':
+                    this._context.globalState.update('conductor.ssoIdentity', undefined);
+                    this._view?.webview.postMessage({ command: 'ssoCacheCleared' });
+                    console.log('[Conductor] SSO identity cache cleared');
                     return;
             }
         });
@@ -588,6 +610,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
     /**
      * Send the current Conductor FSM state to the WebView.
+     * Includes SSO identity so the WebView can restore it after re-creation.
      */
     private _sendConductorState(state: ConductorState): void {
         if (this._view) {
@@ -595,8 +618,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 command: 'conductorStateChanged',
                 state,
                 session: getSessionService().getSessionStateForWebView(),
+                ssoIdentity: this._getValidSSOIdentity(),
             });
         }
+    }
+
+    /**
+     * Extract valid (non-expired) SSO identity from globalState, or null.
+     */
+    private _getValidSSOIdentity(): Record<string, unknown> | null {
+        const stored = this._context.globalState.get('conductor.ssoIdentity');
+        return getValidIdentity(stored);
     }
 
     /**
@@ -1320,6 +1352,146 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    // ----- SSO handlers ---------------------------------------------------
+
+    /**
+     * Handle SSO login request from WebView.
+     * Calls POST /auth/sso/start, opens browser, and starts polling.
+     */
+    private async _handleSSOLogin(): Promise<void> {
+        try {
+            const backendUrl = getBackendUrl();
+            const response = await fetch(`${backendUrl}/auth/sso/start`, {
+                method: 'POST',
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({})) as { detail?: string };
+                const detail = errorData.detail || `HTTP ${response.status}`;
+                this._view?.webview.postMessage({
+                    command: 'ssoLoginResult',
+                    error: detail,
+                });
+                return;
+            }
+
+            const data = await response.json() as {
+                verification_uri_complete: string;
+                user_code: string;
+                device_code: string;
+                client_id: string;
+                client_secret: string;
+                expires_in: number;
+                interval: number;
+            };
+
+            // Open browser to the verification URL
+            if (data.verification_uri_complete) {
+                await vscode.env.openExternal(
+                    vscode.Uri.parse(data.verification_uri_complete)
+                );
+            }
+
+            // Send pending state to WebView with user code
+            this._view?.webview.postMessage({
+                command: 'ssoLoginPending',
+                userCode: data.user_code,
+            });
+
+            // Start polling
+            this._ssoPolling = true;
+            const pollInterval = Math.max(data.interval || 5, 5) * 1000;
+            const expiresAt = Date.now() + (data.expires_in || 600) * 1000;
+
+            this._ssoTimerId = setInterval(async () => {
+                if (!this._ssoPolling || Date.now() > expiresAt) {
+                    this._handleSSOCancel();
+                    if (Date.now() > expiresAt) {
+                        this._view?.webview.postMessage({
+                            command: 'ssoLoginResult',
+                            error: 'SSO login expired. Please try again.',
+                        });
+                    }
+                    return;
+                }
+
+                try {
+                    const pollResp = await fetch(`${backendUrl}/auth/sso/poll`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            device_code: data.device_code,
+                            client_id: data.client_id,
+                            client_secret: data.client_secret,
+                        }),
+                    });
+
+                    // Guard: another overlapping callback may have already
+                    // processed a terminal result while this fetch was in-flight.
+                    if (!this._ssoPolling) {
+                        return;
+                    }
+
+                    if (!pollResp.ok) {
+                        return; // Retry on next interval
+                    }
+
+                    const pollData = await pollResp.json() as {
+                        status: 'pending' | 'complete' | 'expired' | 'error';
+                        identity?: Record<string, unknown>;
+                        error?: string;
+                    };
+
+                    if (pollData.status === 'pending') {
+                        return; // Keep polling
+                    }
+
+                    // Stop polling for any terminal status
+                    this._handleSSOCancel();
+
+                    if (pollData.status === 'complete' && pollData.identity) {
+                        // Store identity in globalState with timestamp for 24h expiry
+                        this._context.globalState.update(
+                            'conductor.ssoIdentity',
+                            wrapIdentity(pollData.identity)
+                        );
+                        this._view?.webview.postMessage({
+                            command: 'ssoLoginResult',
+                            identity: pollData.identity,
+                        });
+                        console.log('[Conductor] SSO login complete:', pollData.identity);
+                    } else {
+                        this._view?.webview.postMessage({
+                            command: 'ssoLoginResult',
+                            error: pollData.error || `SSO login ${pollData.status}`,
+                        });
+                    }
+                } catch (pollError) {
+                    console.warn('[Conductor] SSO poll error:', pollError);
+                    // Don't stop polling on network errors — retry
+                }
+            }, pollInterval);
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] SSO login failed:', msg);
+            this._view?.webview.postMessage({
+                command: 'ssoLoginResult',
+                error: `SSO login failed: ${msg}`,
+            });
+        }
+    }
+
+    /**
+     * Cancel active SSO polling.
+     */
+    private _handleSSOCancel(): void {
+        this._ssoPolling = false;
+        if (this._ssoTimerId !== undefined) {
+            clearInterval(this._ssoTimerId);
+            this._ssoTimerId = undefined;
+        }
+    }
+
     /**
      * Evaluate policy for a ChangeSet.
      * Policy evaluation failures are non-fatal - we just skip auto-apply.
@@ -1892,7 +2064,16 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         const conductorState = this._controller.getState();
         const conductorScript = `<script>window.initialConductorState = ${JSON.stringify(conductorState)};</script>`;
 
-        html = html.replace('</head>', `${cspMeta}${permissionsScript}${sessionScript}${conductorScript}</head>`);
+        // Inject SSO identity from globalState (if previously signed in, within 24h)
+        const ssoIdentity = this._getValidSSOIdentity();
+        // Clear expired/old-format entries from globalState
+        const rawSso = this._context.globalState.get('conductor.ssoIdentity');
+        if (isStale(rawSso)) {
+            this._context.globalState.update('conductor.ssoIdentity', undefined);
+        }
+        const ssoScript = `<script>window.initialSSOIdentity = ${JSON.stringify(ssoIdentity)};</script>`;
+
+        html = html.replace('</head>', `${cspMeta}${permissionsScript}${sessionScript}${conductorScript}${ssoScript}</head>`);
 
         return html;
     }

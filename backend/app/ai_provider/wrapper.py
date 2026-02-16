@@ -100,7 +100,7 @@ def _get_active_provider():
         )
 
     provider = resolver.get_active_provider()
-    provider_name = resolver.active_provider_name
+    provider_name = resolver.active_provider_type
 
     if provider is None:
         # Log provider status for debugging

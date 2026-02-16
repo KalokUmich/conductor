@@ -707,6 +707,7 @@
                             <div class="flex items-center gap-1">
                                 <span class="text-sm text-gray-200 truncate">${escapeHtml(user.displayName)}</span>
                                 ${isHost ? '<span class="text-xs">👑</span>' : ''}
+                                ${user.identitySource === 'sso' ? '<span class="text-xs text-green-400 font-medium">SSO</span>' : ''}
                                 ${isMe ? '<span class="text-xs text-gray-500">(you)</span>' : ''}
                             </div>
                             <span class="text-xs text-gray-500">${user.role}</span>
@@ -757,13 +758,17 @@
             // Status indicator for own messages (✓ = sent, ✓✓ = read)
             const statusHtml = isOwnMessage ? '<span class="message-status text-purple-300 ml-1">✓</span>' : '';
 
+            // SSO indicator
+            const msgIdentitySource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
+            const ssoLabel = msgIdentitySource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
+
             // Show name only for first message in group
             const showName = !isOwnMessage && !isGrouped;
 
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${showName ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
+                    ${showName ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${ssoLabel}</div>` : ''}
                     <div class="${bubbleColor} px-4 py-2 shadow-lg overflow-hidden">
                         <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
@@ -1023,6 +1028,8 @@
             const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
             const userInfo = usersMap.get(msg.userId);
             const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
+            const prependIdSource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
+            const prependSsoLabel = prependIdSource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
 
             const avatarHtml = !isOwnMessage ? `
                 <div class="w-8 h-8 ${colorClass} rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
@@ -1036,7 +1043,7 @@
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
+                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${prependSsoLabel}</div>` : ''}
                     <div class="${bubbleColor} px-4 py-2 shadow-lg overflow-hidden">
                         <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
@@ -1063,6 +1070,8 @@
             const timeAlign = isOwnMessage ? 'text-right' : '';
             const roleLabel = msg.role === 'host' ? '👑 ' : '';
             const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
+            const fileIdSource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
+            const fileSsoLabel = fileIdSource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
 
             const userInfo = usersMap.get(msg.userId);
             const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
@@ -1115,7 +1124,7 @@
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}</div>` : ''}
+                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${fileSsoLabel}</div>` : ''}
                     <div class="bg-gray-800 border border-gray-700 rounded-2xl ${isOwnMessage ? 'rounded-tr-sm' : 'rounded-tl-sm'} px-4 py-3 shadow-lg">
                         ${fileContentHtml}
                         ${captionHtml}
@@ -1253,7 +1262,8 @@
                         if (!data.isRecovery) {
                             ws.send(JSON.stringify({
                                 type: 'join',
-                                displayName: config.displayName || 'Guest'
+                                displayName: config.displayName || 'Guest',
+                                identitySource: 'anonymous'
                                 // Note: userId and role are now assigned by backend
                             }));
                         }

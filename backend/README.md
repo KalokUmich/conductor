@@ -80,15 +80,16 @@ Docs:
 | GET | `/files/download/{file_id}` | Download file |
 | DELETE | `/files/room/{room_id}` | Delete all files for a room |
 
-#### Legacy Summary
+#### Auth (SSO)
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/summary` | Keyword-based structured summary extraction (legacy path) |
+| POST | `/auth/sso/start` | Start SSO device authorization flow |
+| POST | `/auth/sso/poll` | Poll for token and resolve identity |
 
 ### AI Provider Notes
 
-- Provider selection is configured in `config/conductor.yaml` under `summary`.
+- Provider selection is configured in `config/conductor.settings.yaml` under `summary`, with provider keys in `config/conductor.secrets.yaml`.
 - Resolver priority: `claude_bedrock` -> `claude_direct`.
 - Only providers with non-empty keys are health-checked.
 - `claude_bedrock` requires `boto3` (already in `requirements.txt`).
@@ -211,7 +212,7 @@ curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
 
 ### Tests
 
-Current backend collection count is `199`.
+Current backend collection count is `224`.
 
 ```bash
 cd backend
@@ -221,6 +222,7 @@ cd backend
 
 Breakdown:
 - `tests/test_ai_provider.py`: 95
+- `tests/test_auth.py`: 19
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 8
@@ -232,7 +234,6 @@ Breakdown:
 ### Known Limits
 
 - `POST /generate-changes` is still MockAgent-based.
-- `POST /summary` is keyword-based (non-LLM, legacy endpoint).
 - Audit/files use local DuckDB + disk (single-node local design).
 
 ---
@@ -313,15 +314,16 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | GET | `/files/download/{file_id}` | 下载文件 |
 | DELETE | `/files/room/{room_id}` | 删除房间全部文件 |
 
-#### 旧摘要接口
+#### Auth（SSO）
 
 | Method | Path | 说明 |
 |---|---|---|
-| POST | `/summary` | 关键词提取式摘要（旧路径） |
+| POST | `/auth/sso/start` | 启动 SSO 设备授权流程 |
+| POST | `/auth/sso/poll` | 轮询 token 并解析身份 |
 
 ### AI Provider 说明
 
-- Provider 在 `config/conductor.yaml` 的 `summary` 节配置。
+- Provider 在 `config/conductor.settings.yaml` 的 `summary` 节配置，provider 密钥在 `config/conductor.secrets.yaml`。
 - 解析优先级：`claude_bedrock` -> `claude_direct`。
 - 只有配置了 key 的 provider 才会做健康检查。
 - `claude_bedrock` 依赖 `boto3`（已在 `requirements.txt`）。
@@ -329,7 +331,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 测试
 
-当前后端测试收集数为 `199`。
+当前后端测试收集数为 `224`。
 
 ```bash
 cd backend
@@ -339,6 +341,7 @@ cd backend
 
 分布：
 - `tests/test_ai_provider.py`: 95
+- `tests/test_auth.py`: 19
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 8
@@ -350,5 +353,4 @@ cd backend
 ### 已知限制
 
 - `POST /generate-changes` 仍是 MockAgent。
-- `POST /summary` 仍是关键词规则，不是 LLM 摘要主链路。
 - 审计/文件目前是本地 DuckDB + 本地磁盘实现。

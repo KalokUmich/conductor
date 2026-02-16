@@ -49,7 +49,6 @@ Implemented end-to-end:
 Still limited:
 - `POST /generate-changes` is deterministic MockAgent output (not LLM edits)
 - Backend supports `POST /ai/code-prompt/selective`, extension currently calls legacy `POST /ai/code-prompt`
-- Legacy `POST /summary` (keyword extraction) still exists but is not extension's main summarize path
 
 ### Architecture (High Level)
 
@@ -65,11 +64,11 @@ VS Code Extension (TypeScript)
 Backend (FastAPI)
   ├─ /ws/chat/{room_id} + /chat/*
   ├─ /ai/* (status, summarize, code prompt)
+  ├─ /auth/* (SSO login)
   ├─ /generate-changes
   ├─ /policy/*
   ├─ /audit/*
-  ├─ /files/*
-  └─ /summary (legacy keyword extractor)
+  └─ /files/*
 ```
 
 ### Role Models (Important)
@@ -89,6 +88,7 @@ Backend (FastAPI)
 │  │  ├─ chat/
 │  │  ├─ ai_provider/
 │  │  ├─ agent/
+│  │  ├─ auth/
 │  │  ├─ policy/
 │  │  ├─ audit/
 │  │  ├─ files/
@@ -100,7 +100,8 @@ Backend (FastAPI)
 ├─ docs/
 │  └─ ARCHITECTURE.md
 ├─ config/
-│  └─ conductor.yaml.example
+│  ├─ conductor.secrets.yaml.example
+│  └─ conductor.settings.yaml.example
 ├─ shared/
 │  └─ changeset.schema.json
 └─ TESTING.md
@@ -197,7 +198,6 @@ Conductor 是一个 VS Code 协作扩展 + FastAPI 后端，提供团队聊天�
 仍有限制：
 - `POST /generate-changes` 仍是确定性 MockAgent，不是 LLM 实时改码
 - 后端已支持 `POST /ai/code-prompt/selective`，扩展目前仍调用旧的 `POST /ai/code-prompt`
-- 旧的 `POST /summary`（关键词提取）仍保留，但不是扩展当前主摘要路径
 
 ### 架构概览
 
@@ -213,11 +213,11 @@ VS Code Extension (TypeScript)
 Backend (FastAPI)
   ├─ /ws/chat/{room_id} + /chat/*
   ├─ /ai/*（status/summarize/code-prompt）
+  ├─ /auth/*（SSO 登录）
   ├─ /generate-changes
   ├─ /policy/*
   ├─ /audit/*
-  ├─ /files/*
-  └─ /summary（旧关键词提取）
+  └─ /files/*
 ```
 
 ### 角色模型（重要）

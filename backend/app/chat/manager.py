@@ -73,6 +73,19 @@ class UserRole(str, Enum):
     AI = "ai"  # AI assistant
 
 
+class IdentitySource(str, Enum):
+    """How a user's identity was established.
+
+    Attributes:
+        SSO: Verified via SSO (e.g., Azure AD, Okta).
+        NAMED: User provided a custom display name.
+        ANONYMOUS: Backend auto-generated name (Guest N).
+    """
+    SSO = "sso"
+    NAMED = "named"
+    ANONYMOUS = "anonymous"
+
+
 class MessageType(str, Enum):
     """Type of chat message.
 
@@ -103,6 +116,10 @@ class RoomUser(BaseModel):
     displayName: str = Field(..., description="Display name shown in UI")
     role: UserRole = Field(..., description="User role (host or engineer)")
     avatarColor: str = Field(default="purple", description="Avatar background color")
+    identitySource: IdentitySource = Field(
+        default=IdentitySource.ANONYMOUS,
+        description="How identity was established (sso, named, anonymous)"
+    )
 
 
 class ChatMessage(BaseModel):
@@ -273,7 +290,8 @@ class ConnectionManager:
         room_id: str,
         user_id: str,
         display_name: str,
-        role: UserRole
+        role: UserRole,
+        identity_source: str = "anonymous"
     ) -> RoomUser:
         """Register a user in the room after connection.
 
@@ -286,17 +304,32 @@ class ConnectionManager:
             user_id: Unique user identifier.
             display_name: Preferred display name (may be auto-generated).
             role: User role (host or engineer).
+            identity_source: How identity was established (sso, named, anonymous).
 
         Returns:
             RoomUser object with assigned display name and avatar color.
         """
+        # Track whether backend will auto-generate the display name
+        auto_named = False
+
         # Auto-generate display name for guests without a proper name
         if not display_name or display_name.startswith("guest-"):
+            auto_named = True
             if role == UserRole.HOST:
                 display_name = "Host"
             else:
                 self.guest_counters[room_id] += 1
                 display_name = f"Guest {self.guest_counters[room_id]}"
+
+        # Resolve identity source enum from string (fallback to ANONYMOUS)
+        try:
+            resolved_source = IdentitySource(identity_source)
+        except ValueError:
+            resolved_source = IdentitySource.ANONYMOUS
+
+        # Force ANONYMOUS if backend auto-named the user
+        if auto_named:
+            resolved_source = IdentitySource.ANONYMOUS
 
         # Assign avatar color (Host gets amber, guests get rotating colors)
         color_index = len(self.room_users.get(room_id, {})) % len(AVATAR_COLORS)
@@ -306,7 +339,8 @@ class ConnectionManager:
             userId=user_id,
             displayName=display_name,
             role=role,
-            avatarColor=avatar_color
+            avatarColor=avatar_color,
+            identitySource=resolved_source
         )
 
         # Store user in room and create websocket mapping

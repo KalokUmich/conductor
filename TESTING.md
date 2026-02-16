@@ -38,10 +38,11 @@ cd backend
 ```
 
 Current collected count:
-- `199`
+- `224`
 
 Current breakdown:
 - `tests/test_ai_provider.py`: 95
+- `tests/test_auth.py`: 19
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 8
@@ -55,6 +56,7 @@ Run specific modules:
 ```bash
 cd backend
 ../.venv/bin/pytest tests/test_ai_provider.py -v
+../.venv/bin/pytest tests/test_auth.py -v
 ../.venv/bin/pytest tests/test_chat.py -v
 ../.venv/bin/pytest tests/test_mock_agent.py -v
 ../.venv/bin/pytest tests/test_auto_apply_policy.py -v
@@ -80,6 +82,7 @@ node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
 node --test out/tests/aiMessageHandlers.test.js
+node --test out/tests/ssoIdentityCache.test.js
 ```
 
 Notes:
@@ -174,7 +177,7 @@ curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
   - verify `make run-backend` is active
   - verify extension setting `aiCollab.backendUrl`
 - AI summarize disabled:
-  - check `summary.enabled` and provider keys in `config/conductor.yaml`
+  - check `summary.enabled` in `config/conductor.settings.yaml` and provider keys in `config/conductor.secrets.yaml`
   - check `/ai/status` response
 - Extension UI seems stale:
   - run `npm run compile` again and restart debug host
@@ -218,10 +221,11 @@ cd backend
 ```
 
 当前收集数量：
-- `199`
+- `224`
 
 当前分布：
 - `tests/test_ai_provider.py`: 95
+- `tests/test_auth.py`: 19
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 8
@@ -248,6 +252,7 @@ node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
 node --test out/tests/aiMessageHandlers.test.js
+node --test out/tests/ssoIdentityCache.test.js
 ```
 
 说明：

@@ -19,14 +19,18 @@ Security Rationale:
     while still allowing quick iteration on routine changes.
 
 Future Enhancements:
-    - Load limits from config/conductor.yaml
     - Per-project policy overrides
     - ML-based risk assessment
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 from app.agent.schemas import ChangeSet, ChangeType
+
+if TYPE_CHECKING:
+    from app.config import ConductorConfig
 
 
 # =============================================================================
@@ -169,16 +173,28 @@ class AutoApplyPolicy:
 _default_policy = AutoApplyPolicy()
 
 
-def evaluate_auto_apply(change_set: ChangeSet) -> PolicyResult:
-    """Evaluate a ChangeSet against the default auto-apply policy.
-    
-    This is a convenience function that uses the default policy instance.
-    
+def evaluate_auto_apply(
+    change_set: ChangeSet,
+    config: ConductorConfig | None = None,
+) -> PolicyResult:
+    """Evaluate a ChangeSet against the auto-apply policy.
+
+    When *config* is provided the limits are read from
+    ``config.change_limits``; otherwise the module-level defaults are used.
+
     Args:
         change_set: The ChangeSet to evaluate
-        
+        config: Optional ConductorConfig for reading limits from settings
+
     Returns:
         PolicyResult indicating whether auto-apply is allowed
     """
+    if config is not None:
+        limits = config.change_limits
+        policy = AutoApplyPolicy(
+            max_files=limits.max_files_per_request,
+            max_lines_changed=limits.auto_apply.max_lines,
+        )
+        return policy.evaluate(change_set)
     return _default_policy.evaluate(change_set)
 

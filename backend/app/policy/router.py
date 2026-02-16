@@ -20,7 +20,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.agent.schemas import ChangeSet
-from .auto_apply import evaluate_auto_apply
+from app.config import get_config
+from .auto_apply import AutoApplyPolicy, evaluate_auto_apply
 
 router = APIRouter(prefix="/policy", tags=["policy"])
 
@@ -91,11 +92,13 @@ async def evaluate_auto_apply_endpoint(
         Response (denied):
         {"allowed": false, "reasons": ["Too many files: 5 > 2"], ...}
     """
-    result = evaluate_auto_apply(request.change_set)
+    config = get_config()
+    result = evaluate_auto_apply(request.change_set, config=config)
 
     # Calculate statistics for the response
+    policy = AutoApplyPolicy()
     files_count = len(request.change_set.changes)
-    lines_changed = _count_lines_changed(request.change_set)
+    lines_changed = policy._count_lines_changed(request.change_set)
 
     return PolicyEvaluationResponse(
         allowed=result.allowed,
@@ -103,22 +106,4 @@ async def evaluate_auto_apply_endpoint(
         files_count=files_count,
         lines_changed=lines_changed
     )
-
-
-def _count_lines_changed(change_set: ChangeSet) -> int:
-    """Count total lines changed in a ChangeSet.
-
-    Args:
-        change_set: The ChangeSet to analyze.
-
-    Returns:
-        Total number of lines affected.
-    """
-    total = 0
-    for change in change_set.changes:
-        if change.type.value == 'replace_range' and change.range:
-            total += change.range.end - change.range.start + 1
-        elif change.type.value == 'create_file' and change.content:
-            total += change.content.count('\n') + 1
-    return total
 

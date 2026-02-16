@@ -352,3 +352,131 @@ def test_websocket_chat_message_schema():
         assert "ts" in received  # Timestamp
         assert isinstance(received["ts"], float)
 
+
+# =============================================================================
+# Identity Source Tests
+# =============================================================================
+
+
+def test_identity_source_default_anonymous():
+    """Test that identitySource defaults to 'anonymous' when not provided in join."""
+    room_id = "test-room-identity-default"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
+        creds = receive_credentials(ws)
+        receive_history(ws)
+
+        # Join without identitySource
+        ws.send_json({"type": "join", "displayName": "Alice"})
+        joined = ws.receive_json()
+
+        assert joined["type"] == "user_joined"
+        assert joined["user"]["identitySource"] == "anonymous"
+
+
+def test_identity_source_sso():
+    """Test that SSO identitySource is stored and broadcast correctly."""
+    room_id = "test-room-identity-sso"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
+        creds = receive_credentials(ws)
+        receive_history(ws)
+
+        ws.send_json({"type": "join", "displayName": "alice.smith", "identitySource": "sso"})
+        joined = ws.receive_json()
+
+        assert joined["type"] == "user_joined"
+        assert joined["user"]["identitySource"] == "sso"
+        assert joined["user"]["displayName"] == "alice.smith"
+
+
+def test_identity_source_named():
+    """Test that 'named' identitySource works for custom nicknames."""
+    room_id = "test-room-identity-named"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
+        creds = receive_credentials(ws)
+        receive_history(ws)
+
+        ws.send_json({"type": "join", "displayName": "Bob", "identitySource": "named"})
+        joined = ws.receive_json()
+
+        assert joined["type"] == "user_joined"
+        assert joined["user"]["identitySource"] == "named"
+        assert joined["user"]["displayName"] == "Bob"
+
+
+def test_identity_source_forced_anonymous_on_auto_name():
+    """Test that identitySource is forced to 'anonymous' when backend auto-names the user."""
+    room_id = "test-room-identity-autoname"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+
+        creds1 = receive_credentials(ws1)
+        creds2 = receive_credentials(ws2)
+        receive_history(ws1)
+        receive_history(ws2)
+
+        # Host joins first
+        ws1.send_json({"type": "join", "displayName": "Host"})
+        ws1.receive_json()  # user_joined for ws1
+        ws2.receive_json()  # user_joined broadcast to ws2
+
+        # Guest joins with empty displayName but claims SSO — should be forced to anonymous
+        ws2.send_json({"type": "join", "displayName": "", "identitySource": "sso"})
+        joined1 = ws1.receive_json()  # user_joined broadcast
+        joined2 = ws2.receive_json()  # user_joined broadcast
+
+        assert joined1["type"] == "user_joined"
+        assert joined1["user"]["identitySource"] == "anonymous"
+        assert joined1["user"]["displayName"].startswith("Guest ")
+
+
+def test_identity_source_invalid_fallback():
+    """Test that invalid identitySource values fallback to 'anonymous'."""
+    room_id = "test-room-identity-invalid"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
+        creds = receive_credentials(ws)
+        receive_history(ws)
+
+        ws.send_json({"type": "join", "displayName": "Charlie", "identitySource": "bogus_value"})
+        joined = ws.receive_json()
+
+        assert joined["type"] == "user_joined"
+        assert joined["user"]["identitySource"] == "anonymous"
+
+
+def test_identity_source_in_users_list_broadcast():
+    """Test that identitySource appears in the users list broadcast for all clients."""
+    room_id = "test-room-identity-broadcast"
+
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
+         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+
+        creds1 = receive_credentials(ws1)
+        creds2 = receive_credentials(ws2)
+        receive_history(ws1)
+        receive_history(ws2)
+
+        # Host joins with SSO
+        ws1.send_json({"type": "join", "displayName": "alice.smith", "identitySource": "sso"})
+        joined_ws1 = ws1.receive_json()
+        joined_ws2 = ws2.receive_json()
+
+        # Guest joins with named
+        ws2.send_json({"type": "join", "displayName": "Bob", "identitySource": "named"})
+        joined2_ws1 = ws1.receive_json()
+        joined2_ws2 = ws2.receive_json()
+
+        # Check users list in the last broadcast has both users with their identity sources
+        users = joined2_ws1["users"]
+        assert len(users) == 2
+
+        sso_user = next(u for u in users if u["displayName"] == "alice.smith")
+        named_user = next(u for u in users if u["displayName"] == "Bob")
+
+        assert sso_user["identitySource"] == "sso"
+        assert named_user["identitySource"] == "named"
+

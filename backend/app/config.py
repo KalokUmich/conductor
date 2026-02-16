@@ -64,25 +64,6 @@ class NgrokSecretsConfig(BaseModel):
     authtoken: str = ""
 
 
-class LLMConfig(BaseModel):
-    """LLM (Large Language Model) configuration for AI code generation.
-
-    Note: Currently using MockAgent. This config is for future LLM integration.
-
-    Attributes:
-        provider: LLM provider (openai, anthropic, azure, local).
-        model: Model name (e.g., gpt-4, claude-3).
-        api_key: API key (can also use environment variable).
-        temperature: Generation temperature (0.0-1.0).
-        max_tokens: Maximum tokens per request.
-    """
-    provider: str = "openai"
-    model: str = "gpt-4"
-    api_key: str = ""
-    temperature: float = 0.7
-    max_tokens: int = 4096
-
-
 class AutoApplyConfig(BaseModel):
     """Auto-apply settings for automatic code change application.
 
@@ -107,6 +88,19 @@ class ChangeLimitsConfig(BaseModel):
     max_lines_per_file: int = 500
     max_total_lines: int = 2000
     auto_apply: AutoApplyConfig = AutoApplyConfig()
+
+
+class SSOConfig(BaseModel):
+    """AWS SSO (IAM Identity Center) configuration.
+
+    Attributes:
+        enabled: Whether SSO login is enabled.
+        start_url: AWS SSO portal start URL (e.g. https://d-xxxxxxxxxx.awsapps.com/start).
+        region: AWS region for SSO OIDC service.
+    """
+    enabled: bool = False
+    start_url: str = ""
+    region: str = "us-east-1"
 
 
 class SessionConfig(BaseModel):
@@ -299,7 +293,6 @@ class SettingsConfig(BaseModel):
     Attributes:
         server: Backend server settings.
         ngrok: Ngrok settings (region, enabled - NOT authtoken).
-        llm: LLM/AI settings (legacy, for future use).
         change_limits: Code change limits.
         session: Chat session settings.
         logging: Logging and audit settings.
@@ -309,10 +302,10 @@ class SettingsConfig(BaseModel):
     """
     server: ServerConfig = ServerConfig()
     ngrok: NgrokSettingsConfig = NgrokSettingsConfig()
-    llm: LLMConfig = LLMConfig()
     change_limits: ChangeLimitsConfig = ChangeLimitsConfig()
     session: SessionConfig = SessionConfig()
     logging: LoggingConfig = LoggingConfig()
+    sso: SSOConfig = SSOConfig()
     summary: SummaryConfig = SummaryConfig()
     ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
     ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
@@ -332,7 +325,6 @@ class ConductorConfig(BaseModel):
         server: Backend server settings.
         ngrok_settings: Ngrok settings (region, enabled).
         ngrok_secrets: Ngrok secrets (authtoken).
-        llm: LLM/AI settings (legacy, for future use).
         change_limits: Code change limits.
         session: Chat session settings.
         logging: Logging and audit settings.
@@ -344,10 +336,10 @@ class ConductorConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     ngrok_settings: NgrokSettingsConfig = NgrokSettingsConfig()
     ngrok_secrets: NgrokSecretsConfig = NgrokSecretsConfig()
-    llm: LLMConfig = LLMConfig()
     change_limits: ChangeLimitsConfig = ChangeLimitsConfig()
     session: SessionConfig = SessionConfig()
     logging: LoggingConfig = LoggingConfig()
+    sso: SSOConfig = SSOConfig()
     summary: SummaryConfig = SummaryConfig()
     ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
     ai_providers: AIProvidersSecretsConfig = AIProvidersSecretsConfig()
@@ -459,31 +451,30 @@ def load_config(
     # Secrets file structure matches SecretsConfig
     config_data = {}
 
-    # From settings file
-    if "server" in settings_data:
-        config_data["server"] = settings_data["server"]
-    if "ngrok" in settings_data:
-        config_data["ngrok_settings"] = settings_data["ngrok"]
-    if "llm" in settings_data:
-        config_data["llm"] = settings_data["llm"]
-    if "change_limits" in settings_data:
-        config_data["change_limits"] = settings_data["change_limits"]
-    if "session" in settings_data:
-        config_data["session"] = settings_data["session"]
-    if "logging" in settings_data:
-        config_data["logging"] = settings_data["logging"]
-    if "summary" in settings_data:
-        config_data["summary"] = settings_data["summary"]
-    if "ai_provider_settings" in settings_data:
-        config_data["ai_provider_settings"] = settings_data["ai_provider_settings"]
-    if "ai_models" in settings_data:
-        config_data["ai_models"] = settings_data["ai_models"]
+    # Map settings YAML keys to ConductorConfig field names
+    settings_key_map = {
+        "server": "server",
+        "ngrok": "ngrok_settings",
+        "change_limits": "change_limits",
+        "session": "session",
+        "logging": "logging",
+        "summary": "summary",
+        "ai_provider_settings": "ai_provider_settings",
+        "ai_models": "ai_models",
+        "sso": "sso",
+    }
+    for yaml_key, config_key in settings_key_map.items():
+        if yaml_key in settings_data:
+            config_data[config_key] = settings_data[yaml_key]
 
-    # From secrets file
-    if "ai_providers" in secrets_data:
-        config_data["ai_providers"] = secrets_data["ai_providers"]
-    if "ngrok" in secrets_data:
-        config_data["ngrok_secrets"] = secrets_data["ngrok"]
+    # Map secrets YAML keys to ConductorConfig field names
+    secrets_key_map = {
+        "ai_providers": "ai_providers",
+        "ngrok": "ngrok_secrets",
+    }
+    for yaml_key, config_key in secrets_key_map.items():
+        if yaml_key in secrets_data:
+            config_data[config_key] = secrets_data[yaml_key]
 
     return ConductorConfig(**config_data)
 
