@@ -57,6 +57,15 @@ Docs:
 | POST | `/ai/summarize` | Two-stage AI summary pipeline (classification + targeted summary) |
 | POST | `/ai/code-prompt` | Generate coding prompt from decision summary |
 | POST | `/ai/code-prompt/selective` | Generate selective coding prompt from multi-type summary |
+| POST | `/ai/model` | Set active AI model |
+| GET | `/ai/style-templates` | List available style templates |
+
+#### Room Settings
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/rooms/{room_id}/settings` | Get room settings |
+| PUT | `/rooms/{room_id}/settings` | Update room settings |
 
 #### AI Changes and Policy
 
@@ -93,10 +102,11 @@ Docs:
 ### AI Provider Notes
 
 - Provider selection is configured in `config/conductor.settings.yaml` under `summary`, with provider keys in `config/conductor.secrets.yaml`.
-- Resolver priority: `claude_bedrock` -> `claude_direct`.
+- Resolver priority: `anthropic` -> `aws_bedrock` -> `openai`.
 - Only providers with non-empty keys are health-checked.
-- `claude_bedrock` requires `boto3` (already in `requirements.txt`).
-- `claude_direct` requires `anthropic` package (optional dependency; install manually if using direct Claude API).
+- `aws_bedrock` requires `boto3` (already in `requirements.txt`).
+- `anthropic` requires `anthropic` package (optional dependency; install manually if using direct Claude API).
+- `openai` requires `openai` package (optional dependency; install manually if using OpenAI API).
 
 ### WebSocket Protocol (Core)
 
@@ -215,7 +225,7 @@ curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
 
 ### Tests
 
-Current backend collection count is `243`.
+Current backend collection count is `287`.
 
 ```bash
 cd backend
@@ -224,15 +234,15 @@ cd backend
 ```
 
 Breakdown:
-- `tests/test_ai_provider.py`: 95
+- `tests/test_ai_provider.py`: 121
 - `tests/test_auth.py`: 38
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
-- `tests/test_chat.py`: 8
+- `tests/test_chat.py`: 26
 - `tests/test_main.py`: 1
 - `tests/test_mock_agent.py`: 26
-- `tests/test_style_loader.py`: 14
-- `tests/test_summary.py`: 13
+- `tests/test_room_settings.py`: 11
+- `tests/test_style_loader.py`: 22
 
 ### Known Limits
 
@@ -294,6 +304,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | POST | `/ai/summarize` | 两阶段摘要流水线（分类 + 定向摘要） |
 | POST | `/ai/code-prompt` | 基于决策摘要生成代码提示词 |
 | POST | `/ai/code-prompt/selective` | 基于多类型摘要生成 selective 提示词 |
+| POST | `/ai/model` | 设置活动 AI 模型 |
+| GET | `/ai/style-templates` | 列出可用的样式模板 |
+
+#### 房间设置
+
+| Method | Path | 说明 |
+|---|---|---|
+| GET | `/rooms/{room_id}/settings` | 获取房间设置 |
+| PUT | `/rooms/{room_id}/settings` | 更新房间设置 |
 
 #### AI 变更与策略
 
@@ -330,14 +349,15 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ### AI Provider 说明
 
 - Provider 在 `config/conductor.settings.yaml` 的 `summary` 节配置，provider 密钥在 `config/conductor.secrets.yaml`。
-- 解析优先级：`claude_bedrock` -> `claude_direct`。
+- 解析优先级：`anthropic` -> `aws_bedrock` -> `openai`。
 - 只有配置了 key 的 provider 才会做健康检查。
-- `claude_bedrock` 依赖 `boto3`（已在 `requirements.txt`）。
-- `claude_direct` 依赖 `anthropic`（可选依赖，使用直连 Claude 时需手动安装）。
+- `aws_bedrock` 依赖 `boto3`（已在 `requirements.txt`）。
+- `anthropic` 依赖 `anthropic`（可选依赖，使用直连 Claude 时需手动安装）。
+- `openai` 依赖 `openai`（可选依赖，使用 OpenAI 时需手动安装）。
 
 ### 测试
 
-当前后端测试收集数为 `224`。
+当前后端测试收集数为 `287`。
 
 ```bash
 cd backend
@@ -346,15 +366,15 @@ cd backend
 ```
 
 分布：
-- `tests/test_ai_provider.py`: 95
+- `tests/test_ai_provider.py`: 121
 - `tests/test_auth.py`: 38
 - `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
-- `tests/test_chat.py`: 8
+- `tests/test_chat.py`: 26
 - `tests/test_main.py`: 1
 - `tests/test_mock_agent.py`: 26
-- `tests/test_style_loader.py`: 14
-- `tests/test_summary.py`: 13
+- `tests/test_room_settings.py`: 11
+- `tests/test_style_loader.py`: 22
 
 ### 已知限制
 

@@ -60,7 +60,6 @@ Conductor extension provides a collaboration panel in VS Code, integrating sessi
 - `/generate-changes` currently depends on backend MockAgent output.
 - Backend supports selective prompt API (`/ai/code-prompt/selective`), extension currently calls `/ai/code-prompt`.
 - AI message posting currently sends `model_name=claude_bedrock` as a fixed label (TODO in code).
-- No default `npm test` script in `package.json`.
 
 ### Development Setup
 
@@ -99,7 +98,9 @@ extension/
 │  │  ├─ backendHealthCheck.ts
 │  │  ├─ session.ts
 │  │  ├─ permissions.ts
-│  │  └─ diffPreview.ts
+│  │  ├─ diffPreview.ts
+│  │  ├─ languageDetector.ts
+│  │  └─ ssoIdentityCache.ts
 │  └─ tests/
 ├─ media/
 │  ├─ chat.html
@@ -127,6 +128,7 @@ node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
 node --test out/tests/aiMessageHandlers.test.js
+node --test out/tests/ssoIdentityCache.test.js
 ```
 
 Note: some tests spin up local HTTP servers. In restricted sandbox environments they may fail with socket permission errors (`EPERM`).
@@ -198,7 +200,6 @@ Conductor 扩展在 VS Code 中提供协作面板，整合会话状态机、聊�
 - `/generate-changes` 仍依赖后端 MockAgent。
 - 后端已有 selective 提示词接口（`/ai/code-prompt/selective`），扩展目前仍调用 `/ai/code-prompt`。
 - AI 消息写回聊天时 `model_name` 目前固定为 `claude_bedrock`（代码中有 TODO）。
-- `package.json` 默认没有 `npm test` 脚本。
 
 ### 开发启动
 
@@ -234,6 +235,7 @@ node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
 node --test out/tests/aiMessageHandlers.test.js
+node --test out/tests/ssoIdentityCache.test.js
 ```
 
 说明：部分测试会启动本地 HTTP 服务，在受限沙箱环境中可能因为端口权限（`EPERM`）失败。

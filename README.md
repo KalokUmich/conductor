@@ -91,14 +91,14 @@ Backend (FastAPI)
 │  │  ├─ auth/
 │  │  ├─ policy/
 │  │  ├─ audit/
-│  │  ├─ files/
-│  │  └─ summary/
+│  │  └─ files/
 │  └─ tests/
 ├─ extension/
 │  ├─ src/
 │  └─ media/
 ├─ docs/
-│  └─ ARCHITECTURE.md
+│  ├─ ARCHITECTURE.md
+│  └─ GUIDE.md
 ├─ config/
 │  ├─ conductor.secrets.yaml.example
 │  └─ conductor.settings.yaml.example
