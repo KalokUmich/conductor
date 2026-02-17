@@ -6,201 +6,321 @@
     <title>AI Chat</title>
     <link rel="stylesheet" href="tailwind.css">
     <style>
-        /* Custom scrollbar for WebKit browsers (Chrome, Safari, VS Code) */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
+        /* ============================================================
+           CONDUCTOR — Premium AI Interface
+           ============================================================ */
+
+        /* === Scrollbar === */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb {
-            background: rgba(99,102,241,0.35);
+            background: rgba(139,92,246,0.25);
             border-radius: 9999px;
+            transition: background 0.2s;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: rgba(99,102,241,0.55);
+        ::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.45); }
+
+        /* === Layout === */
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+
+        .message-bubble { word-wrap: break-word; overflow-wrap: break-word; }
+
+        /* === Scroll-to-bottom === */
+        #scroll-to-bottom { transition: opacity 0.2s, transform 0.2s; }
+        #scroll-to-bottom:hover { transform: scale(1.1); }
+
+        /* === Unread badge pulse === */
+        .unread-badge { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+        /* === Code snippets — no syntax colors === */
+        .code-snippet-plain, .code-snippet-plain code, .code-snippet-plain * {
+            color: #d1d5db !important; background: transparent !important;
         }
 
-        /* Ensure proper flex layout for chat */
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }
-
-        /* WhatsApp-style message bubbles */
-        .message-bubble {
-            word-wrap: break-word;
-            overflow-wrap: break-word;
-        }
-
-        /* Scroll to bottom button */
-        #scroll-to-bottom {
-            transition: opacity 0.2s, transform 0.2s;
-        }
-        #scroll-to-bottom:hover {
-            transform: scale(1.1);
-        }
-
-        /* Unread badge animation */
-        .unread-badge {
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
-        }
-
-        /* Disable syntax highlighting in code snippets */
-        .code-snippet-plain,
-        .code-snippet-plain code,
-        .code-snippet-plain * {
-            color: #d1d5db !important; /* text-gray-300 */
-            background: transparent !important;
-        }
-
-        /* Role-based accent colors — dot indicator instead of left border */
+        /* === Role-based accent colors === */
         .bubble-host { position: relative; }
         .bubble-host::before { content: ''; position: absolute; top: 8px; left: -8px; width: 5px; height: 5px; border-radius: 50%; background: #f59e0b; }
         .bubble-guest { position: relative; }
         .bubble-guest::before { content: ''; position: absolute; top: 8px; left: -8px; width: 5px; height: 5px; border-radius: 50%; background: #3b82f6; }
         .name-host { color: #fbbf24; }
         .name-guest { color: #60a5fa; }
+
         .role-pill {
-            font-size: 0.625rem;
-            line-height: 1rem;
-            padding: 0 0.375rem;
-            border-radius: 9999px;
-            font-weight: 500;
-            letter-spacing: 0.025em;
-            text-transform: uppercase;
+            font-size: 0.6rem; line-height: 1rem; padding: 0 0.375rem;
+            border-radius: 9999px; font-weight: 600;
+            letter-spacing: 0.05em; text-transform: uppercase;
         }
-        .role-pill-host { background: rgba(245,158,11,0.15); color: #fbbf24; }
-        .role-pill-guest { background: rgba(59,130,246,0.15); color: #60a5fa; }
-        .role-pill-sso { background: rgba(34,197,94,0.15); color: #4ade80; }
-        .role-pill-aws { background: rgba(251,191,36,0.15); color: #fbbf24; }
-        .role-pill-google { background: rgba(96,165,250,0.15); color: #60a5fa; }
+        .role-pill-host   { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .role-pill-guest   { background: rgba(59,130,246,0.12); color: #60a5fa; }
+        .role-pill-sso     { background: rgba(34,197,94,0.12); color: #4ade80; }
+        .role-pill-aws     { background: rgba(251,191,36,0.12); color: #fbbf24; }
+        .role-pill-google  { background: rgba(96,165,250,0.12); color: #60a5fa; }
 
-        /* === Modern Visual Foundation === */
+        /* ============================================================
+           PREMIUM VISUAL SYSTEM
+           ============================================================ */
 
-        /* Glassmorphism base */
+        /* --- Glassmorphism --- */
         .glass {
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            background: rgba(17,24,39,0.7);
+            backdrop-filter: blur(16px) saturate(1.4);
+            -webkit-backdrop-filter: blur(16px) saturate(1.4);
+            background: rgba(15,18,30,0.75);
             border: 1px solid rgba(255,255,255,0.06);
         }
 
-        /* Glow effect for primary actions */
-        .glow-primary {
-            box-shadow: 0 0 20px rgba(124,58,237,0.3);
+        /* --- Glow effects --- */
+        .glow-primary { box-shadow: 0 0 24px rgba(139,92,246,0.3), 0 0 6px rgba(139,92,246,0.15); }
+
+        /* --- Animated background for body --- */
+        body.bg-conductor {
+            background-color: #0a0d14;
+            background-image:
+                radial-gradient(ellipse 60% 50% at 20% 0%, rgba(124,58,237,0.12) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 80% 10%, rgba(59,130,246,0.08) 0%, transparent 55%),
+                radial-gradient(ellipse 40% 50% at 50% 100%, rgba(88,28,135,0.06) 0%, transparent 60%);
         }
 
-        /* Shimmer animation for loading states */
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
+        /* --- Animated aurora mesh for landing pages --- */
+        @keyframes auroraShift {
+            0%, 100% { transform: translate(0, 0) scale(1); opacity: 0.5; }
+            33% { transform: translate(10px, -15px) scale(1.05); opacity: 0.7; }
+            66% { transform: translate(-8px, 10px) scale(0.97); opacity: 0.4; }
         }
-        .shimmer {
-            background: linear-gradient(90deg, transparent 0%, rgba(139,92,246,0.1) 50%, transparent 100%);
-            background-size: 200% 100%;
-            animation: shimmer 2s infinite;
-        }
-
-        /* Message appear animation */
-        @keyframes messageSlideIn {
-            from { opacity: 0; transform: translateY(8px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .message-enter {
-            animation: messageSlideIn 0.25s ease-out;
-        }
-
-        /* Modal appear animation */
-        @keyframes modalIn {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-        }
-        .modal-enter {
-            animation: modalIn 0.2s ease-out;
-        }
-
-        /* AI thinking dots animation */
-        @keyframes aiThinking {
-            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
-            40% { opacity: 1; transform: scale(1); }
-        }
-        .ai-thinking-dots {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .ai-thinking-dots span {
-            width: 6px;
-            height: 6px;
+        .aurora-orb {
+            position: absolute;
             border-radius: 50%;
-            background: #a78bfa;
-            animation: aiThinking 1.4s infinite;
+            filter: blur(80px);
+            pointer-events: none;
+            animation: auroraShift 12s ease-in-out infinite;
+            will-change: transform, opacity;
         }
-        .ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-        .ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+        .aurora-orb-1 {
+            width: 300px; height: 300px;
+            background: rgba(124,58,237,0.25);
+            top: -60px; left: -40px;
+        }
+        .aurora-orb-2 {
+            width: 250px; height: 250px;
+            background: rgba(59,130,246,0.18);
+            bottom: -50px; right: -30px;
+            animation-delay: -4s;
+        }
+        .aurora-orb-3 {
+            width: 200px; height: 200px;
+            background: rgba(6,182,212,0.1);
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            animation-delay: -8s;
+        }
 
-        /* Gradient text utility */
+        /* --- Brand wordmark --- */
+        .brand-wordmark {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            background: linear-gradient(135deg, #e0c3fc 0%, #a78bfa 30%, #818cf8 55%, #60a5fa 80%, #38bdf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 20px rgba(139,92,246,0.3));
+        }
+
+        /* --- Gradient text utility --- */
         .text-gradient {
-            background: linear-gradient(135deg, #c084fc, #818cf8, #60a5fa);
+            background: linear-gradient(135deg, #e0c3fc 0%, #a78bfa 25%, #818cf8 50%, #60a5fa 75%, #38bdf8 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
 
-        /* Gradient border utility */
+        /* --- Border gradient utility --- */
         .border-gradient {
             border-image: linear-gradient(135deg, rgba(139,92,246,0.5), rgba(99,102,241,0.5)) 1;
         }
 
-        /* Subtle gradient background for body */
-        body.bg-conductor {
-            background: radial-gradient(ellipse at 50% 0%, rgba(88,28,135,0.15) 0%, rgba(17,24,39,1) 70%);
+        /* --- Shimmer animation --- */
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .shimmer {
+            background: linear-gradient(90deg, transparent 0%, rgba(139,92,246,0.08) 50%, transparent 100%);
+            background-size: 200% 100%;
+            animation: shimmer 2.5s infinite;
         }
 
-        /* Animated gradient border for AI cards */
-        @keyframes borderGlow {
-            0%, 100% { border-color: rgba(139,92,246,0.4); }
-            50% { border-color: rgba(99,102,241,0.6); }
+        /* --- Message appear animation --- */
+        @keyframes messageSlideIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-        .ai-card-border {
-            animation: borderGlow 3s ease-in-out infinite;
-        }
+        .message-enter { animation: messageSlideIn 0.2s ease-out; }
 
-        /* Modal close button hover rotation */
-        .modal-close-btn {
-            transition: transform 0.2s ease, color 0.2s ease;
+        /* --- Modal appear animation --- */
+        @keyframes modalIn {
+            from { opacity: 0; transform: scale(0.96) translateY(8px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
         }
-        .modal-close-btn:hover {
-            transform: rotate(90deg);
-        }
+        .modal-enter { animation: modalIn 0.25s ease-out; }
 
-        /* Typing indicator animated dots */
-        .typing-dots {
-            display: inline-flex;
-            gap: 3px;
-            align-items: center;
+        /* --- AI thinking dots --- */
+        @keyframes aiThinking {
+            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+            40% { opacity: 1; transform: scale(1); }
         }
-        .typing-dots span {
-            width: 5px;
-            height: 5px;
-            border-radius: 50%;
-            background: #9ca3af;
+        .ai-thinking-dots { display: inline-flex; align-items: center; gap: 5px; }
+        .ai-thinking-dots span {
+            width: 7px; height: 7px; border-radius: 50%;
+            background: linear-gradient(135deg, #a78bfa, #818cf8);
             animation: aiThinking 1.4s infinite;
+        }
+        .ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+        /* --- Animated gradient border for AI cards --- */
+        @keyframes borderGlow {
+            0%, 100% { border-color: rgba(139,92,246,0.3); }
+            50% { border-color: rgba(99,102,241,0.5); }
+        }
+        .ai-card-border { animation: borderGlow 3s ease-in-out infinite; }
+
+        /* --- Modal close button --- */
+        .modal-close-btn { transition: transform 0.2s ease, color 0.2s ease; }
+        .modal-close-btn:hover { transform: rotate(90deg); }
+
+        /* --- Typing indicator --- */
+        .typing-dots { display: inline-flex; gap: 3px; align-items: center; }
+        .typing-dots span {
+            width: 5px; height: 5px; border-radius: 50%;
+            background: #9ca3af; animation: aiThinking 1.4s infinite;
         }
         .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
         .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 
-        /* Online indicator glow */
-        .online-glow {
-            box-shadow: 0 0 6px rgba(74,222,128,0.5);
+        /* --- Online indicator glow --- */
+        .online-glow { box-shadow: 0 0 6px rgba(74,222,128,0.5); }
+
+        /* ============================================================
+           PREMIUM BUTTON SYSTEM
+           ============================================================ */
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed 0%, #6366f1 50%, #4f46e5 100%);
+            color: #fff;
+            font-weight: 500;
+            border-radius: 0.625rem;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-primary::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 50%);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .btn-primary:hover::before { opacity: 1; }
+        .btn-primary:hover {
+            box-shadow: 0 0 28px rgba(124,58,237,0.35), 0 4px 16px rgba(99,102,241,0.2);
+            transform: translateY(-1px);
+        }
+        .btn-primary:active { transform: translateY(0); }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: #e5e7eb;
+            font-weight: 500;
+            border-radius: 0.625rem;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.14);
+            box-shadow: 0 0 16px rgba(139,92,246,0.1);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, rgba(239,68,68,0.8) 0%, rgba(185,28,28,0.8) 100%);
+            border: 1px solid rgba(239,68,68,0.2);
+            color: #fff;
+            font-weight: 500;
+            border-radius: 0.625rem;
+            transition: all 0.2s ease;
+        }
+        .btn-danger:hover {
+            box-shadow: 0 0 20px rgba(239,68,68,0.25);
+            transform: translateY(-1px);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: #fff;
+            font-weight: 500;
+            border-radius: 0.625rem;
+            transition: all 0.2s ease;
+        }
+        .btn-success:hover {
+            box-shadow: 0 0 20px rgba(16,185,129,0.25);
+            transform: translateY(-1px);
+        }
+
+        /* ============================================================
+           PREMIUM INPUT
+           ============================================================ */
+        .input-premium {
+            background: rgba(15,18,30,0.6);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 0.75rem;
+            transition: all 0.25s ease;
+            color: #f3f4f6;
+        }
+        .input-premium:focus {
+            outline: none;
+            border-color: rgba(139,92,246,0.4);
+            box-shadow: 0 0 0 3px rgba(139,92,246,0.1), 0 0 20px rgba(139,92,246,0.08);
+        }
+        .input-premium::placeholder { color: rgba(156,163,175,0.5); }
+
+        /* ============================================================
+           LANDING PAGE EXTRAS
+           ============================================================ */
+        .landing-subtitle {
+            color: #9ca3af;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            max-width: 280px;
+            text-align: center;
+        }
+
+        /* Subtle horizontal rule with gradient */
+        .divider-gradient {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent);
+            border: none;
+            width: 100%;
+            max-width: 200px;
+        }
+
+        /* Status badge for header */
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: statusPulse 2s ease-in-out infinite;
+        }
+        @keyframes statusPulse {
+            0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+            50% { box-shadow: 0 0 0 4px transparent; }
+        }
+
+        /* Premium sidebar */
+        .sidebar-premium {
+            background: rgba(10,13,20,0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
         }
     </style>
 </head>
@@ -212,52 +332,67 @@
             <!-- ============================================================ -->
             <!-- STATE PANEL: Idle — Start / Join buttons                     -->
             <!-- ============================================================ -->
-            <div id="panel-idle" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6" style="background: radial-gradient(circle at 50% 40%, rgba(88,28,135,0.1) 0%, transparent 60%);">
-                <h2 class="text-xl font-semibold text-gradient">Conductor</h2>
-                <p class="text-sm text-gray-400 text-center">Start a new session or join an existing one.</p>
+            <div id="panel-idle" class="hidden flex-1 flex flex-col items-center justify-center gap-5 px-6 relative overflow-hidden">
+                <!-- Aurora orbs -->
+                <div class="aurora-orb aurora-orb-1"></div>
+                <div class="aurora-orb aurora-orb-2"></div>
+                <div class="aurora-orb aurora-orb-3"></div>
+
+                <!-- Brand -->
+                <div class="relative z-10 flex flex-col items-center gap-1">
+                    <h2 class="brand-wordmark">Conductor</h2>
+                    <p class="landing-subtitle">AI-powered collaboration for engineering teams</p>
+                </div>
+
+                <hr class="divider-gradient relative z-10" />
+
+                <!-- Start button -->
                 <button
                     id="btn-idle-start"
-                    class="bg-gradient-to-r from-violet-600 to-indigo-600 hover:brightness-110 text-white text-sm font-medium px-6 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-[0_0_20px_rgba(124,58,237,0.3)] hover:scale-[1.02]"
+                    class="btn-primary text-sm px-8 py-2.5 flex items-center gap-2.5 relative z-10"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
                     </svg>
-                    Start
+                    Start Session
                 </button>
-                <div class="flex items-center gap-2 w-full max-w-xs">
+
+                <!-- Join row -->
+                <div class="flex items-center gap-2 w-full max-w-xs relative z-10">
                     <input
                         id="invite-url-input"
                         type="text"
                         placeholder="Paste invite link…"
-                        class="flex-1 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
+                        class="input-premium flex-1 text-xs px-3 py-2"
                     />
                     <button
                         id="btn-idle-join"
-                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                        class="btn-success text-xs px-4 py-2 flex items-center gap-1"
                     >
                         Join
                     </button>
                 </div>
+
                 <!-- SSO Identity Section -->
-                <div id="sso-idle" class="w-full max-w-xs mt-2">
+                <div id="sso-idle" class="w-full max-w-xs mt-1 relative z-10">
                     <div id="sso-idle-signin" class="sso-signin flex gap-2">
-                        <button class="sso-login-btn sso-login-aws flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="aws">
+                        <button class="sso-login-btn sso-login-aws btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="aws">
                             &#9729; AWS SSO
                         </button>
-                        <button class="sso-login-btn sso-login-google flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="google">
+                        <button class="sso-login-btn sso-login-google btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="google">
                             G Google
                         </button>
                     </div>
                     <div id="sso-idle-pending" class="sso-pending hidden">
-                        <div class="flex items-center justify-center gap-2 py-1.5 px-3 border border-gray-700 rounded-lg">
-                            <div class="h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                        <div class="flex items-center justify-center gap-2 py-2 px-3 border border-gray-700/50 rounded-xl bg-gray-800/30">
+                            <div class="h-3 w-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin"></div>
                             <span class="text-xs text-gray-400">Waiting for SSO...</span>
-                            <code class="sso-user-code text-xs text-blue-400 font-mono"></code>
+                            <code class="sso-user-code text-xs text-violet-400 font-mono"></code>
                             <button class="sso-cancel-btn text-gray-500 hover:text-gray-300 text-xs ml-1">Cancel</button>
                         </div>
                     </div>
                     <div id="sso-idle-done" class="sso-done hidden">
-                        <div class="flex items-center gap-2 py-1.5 px-3 bg-gray-800 border border-gray-700 rounded-lg">
+                        <div class="flex items-center gap-2 py-2 px-3 bg-gray-800/40 border border-gray-700/50 rounded-xl">
                             <span class="sso-provider-badge text-xs"></span>
                             <span class="sso-email text-xs text-gray-300 truncate"></span>
                             <button class="sso-clear-btn ml-auto text-gray-500 hover:text-gray-300 text-xs flex-shrink-0" title="Clear identity">&#10005;</button>
@@ -269,25 +404,32 @@
             <!-- ============================================================ -->
             <!-- STATE PANEL: BackendDisconnected — join only mode            -->
             <!-- ============================================================ -->
-            <div id="panel-disconnected" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6" style="background: radial-gradient(circle at 50% 40%, rgba(88,28,135,0.08) 0%, transparent 60%);">
+            <div id="panel-disconnected" class="hidden flex-1 flex flex-col items-center justify-center gap-5 px-6 relative overflow-hidden">
+                <!-- Aurora orbs (muted) -->
+                <div class="aurora-orb aurora-orb-1" style="opacity:0.3;"></div>
+                <div class="aurora-orb aurora-orb-2" style="opacity:0.2;"></div>
 
                 <!-- Backend status warning -->
-                <div class="flex items-center gap-2 text-amber-400 mb-2">
-                    <span class="text-xl">⚠</span>
-                    <span class="text-sm font-medium">Local backend not running</span>
+                <div class="relative z-10 flex items-center gap-2 text-amber-400 px-4 py-2 rounded-xl border border-amber-500/15 bg-amber-500/5">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
+                    </svg>
+                    <span class="text-xs font-medium">Local backend not running</span>
                 </div>
 
-                <h2 class="text-lg font-semibold text-white">Join Only Mode</h2>
-                <p class="text-sm text-gray-400 text-center max-w-xs">
-                    You can join other people's sessions. To start your own session, please start the backend first.
-                </p>
+                <div class="relative z-10 flex flex-col items-center gap-1">
+                    <h2 class="text-lg font-semibold text-white">Join Only Mode</h2>
+                    <p class="landing-subtitle">
+                        Join other sessions directly. Start the backend to host your own.
+                    </p>
+                </div>
 
                 <!-- Start Session button (disabled) -->
-                <div class="relative group w-full max-w-xs">
+                <div class="relative group w-full max-w-xs z-10">
                     <button
                         id="btn-start-session-disabled"
                         disabled
-                        class="w-full bg-gray-600 text-gray-400 text-sm font-medium px-6 py-2 rounded-lg flex items-center justify-center gap-2 cursor-not-allowed opacity-60"
+                        class="w-full text-sm px-6 py-2.5 rounded-xl flex items-center justify-center gap-2 cursor-not-allowed opacity-40 bg-gray-700 text-gray-400 border border-gray-600/30"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
@@ -295,23 +437,23 @@
                         Start Session
                     </button>
                     <!-- Tooltip -->
-                    <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none">
+                    <div class="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-1.5 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none border border-gray-700/50">
                         Backend required to host a session
                         <div class="absolute top-full left-1/2 transform -translate-x-1/2 border-4 border-transparent border-t-gray-900"></div>
                     </div>
                 </div>
 
                 <!-- Join Session input + button -->
-                <div class="flex items-center gap-2 w-full max-w-xs">
+                <div class="flex items-center gap-2 w-full max-w-xs relative z-10">
                     <input
                         id="disconnected-invite-url-input"
                         type="text"
                         placeholder="Paste invite link…"
-                        class="flex-1 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-green-500"
+                        class="input-premium flex-1 text-xs px-3 py-2"
                     />
                     <button
                         id="btn-disconnected-join"
-                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                        class="btn-success text-xs px-4 py-2 flex items-center gap-1"
                     >
                         Join
                     </button>
@@ -320,30 +462,33 @@
                 <!-- Retry connection link -->
                 <button
                     id="btn-retry"
-                    class="text-blue-400 hover:text-blue-300 text-xs underline mt-2"
+                    class="text-violet-400 hover:text-violet-300 text-xs mt-1 transition-colors relative z-10 flex items-center gap-1"
                 >
-                    Retry backend connection
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                    </svg>
+                    Retry connection
                 </button>
                 <!-- SSO Identity Section -->
-                <div id="sso-disconnected" class="w-full max-w-xs mt-2">
+                <div id="sso-disconnected" class="w-full max-w-xs mt-1 relative z-10">
                     <div id="sso-disconnected-signin" class="sso-signin flex gap-2">
-                        <button class="sso-login-btn sso-login-aws flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="aws">
+                        <button class="sso-login-btn sso-login-aws btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="aws">
                             &#9729; AWS SSO
                         </button>
-                        <button class="sso-login-btn sso-login-google flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="google">
+                        <button class="sso-login-btn sso-login-google btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="google">
                             G Google
                         </button>
                     </div>
                     <div id="sso-disconnected-pending" class="sso-pending hidden">
-                        <div class="flex items-center justify-center gap-2 py-1.5 px-3 border border-gray-700 rounded-lg">
-                            <div class="h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                        <div class="flex items-center justify-center gap-2 py-2 px-3 border border-gray-700/50 rounded-xl bg-gray-800/30">
+                            <div class="h-3 w-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin"></div>
                             <span class="text-xs text-gray-400">Waiting for SSO...</span>
-                            <code class="sso-user-code text-xs text-blue-400 font-mono"></code>
+                            <code class="sso-user-code text-xs text-violet-400 font-mono"></code>
                             <button class="sso-cancel-btn text-gray-500 hover:text-gray-300 text-xs ml-1">Cancel</button>
                         </div>
                     </div>
                     <div id="sso-disconnected-done" class="sso-done hidden">
-                        <div class="flex items-center gap-2 py-1.5 px-3 bg-gray-800 border border-gray-700 rounded-lg">
+                        <div class="flex items-center gap-2 py-2 px-3 bg-gray-800/40 border border-gray-700/50 rounded-xl">
                             <span class="sso-provider-badge text-xs"></span>
                             <span class="sso-email text-xs text-gray-300 truncate"></span>
                             <button class="sso-clear-btn ml-auto text-gray-500 hover:text-gray-300 text-xs flex-shrink-0" title="Clear identity">&#10005;</button>
@@ -355,52 +500,68 @@
             <!-- ============================================================ -->
             <!-- STATE PANEL: ReadyToHost — start session                     -->
             <!-- ============================================================ -->
-            <div id="panel-ready" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6" style="background: radial-gradient(circle at 50% 40%, rgba(88,28,135,0.1) 0%, transparent 60%);">
-                <h2 class="text-lg font-semibold text-gradient">Ready</h2>
-                <p class="text-sm text-gray-400 text-center">Backend connected. Start a session or join an existing one.</p>
+            <div id="panel-ready" class="hidden flex-1 flex flex-col items-center justify-center gap-5 px-6 relative overflow-hidden">
+                <!-- Aurora orbs -->
+                <div class="aurora-orb aurora-orb-1"></div>
+                <div class="aurora-orb aurora-orb-2"></div>
+                <div class="aurora-orb aurora-orb-3"></div>
+
+                <!-- Ready status -->
+                <div class="relative z-10 flex items-center gap-2 text-emerald-400 px-4 py-2 rounded-xl border border-emerald-500/15 bg-emerald-500/5">
+                    <span class="status-dot bg-emerald-400" style="color:rgba(52,211,153,0.4);"></span>
+                    <span class="text-xs font-medium">Backend connected</span>
+                </div>
+
+                <div class="relative z-10 flex flex-col items-center gap-1">
+                    <h2 class="brand-wordmark" style="font-size:1.5rem;">Conductor</h2>
+                    <p class="landing-subtitle">Ready to start. Create a session or join an existing one.</p>
+                </div>
+
+                <hr class="divider-gradient relative z-10" />
+
                 <button
                     id="btn-start-session"
-                    class="bg-gradient-to-r from-violet-600 to-indigo-600 hover:brightness-110 text-white text-sm font-medium px-6 py-2 rounded-lg flex items-center gap-2 transition-all duration-200 hover:shadow-[0_0_20px_rgba(124,58,237,0.3)] hover:scale-[1.02]"
+                    class="btn-primary text-sm px-8 py-2.5 flex items-center gap-2.5 relative z-10"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" clip-rule="evenodd" />
                     </svg>
                     Start Session
                 </button>
-                <div class="flex items-center gap-2 w-full max-w-xs">
+                <div class="flex items-center gap-2 w-full max-w-xs relative z-10">
                     <input
                         id="ready-invite-url-input"
                         type="text"
                         placeholder="Paste invite link…"
-                        class="flex-1 bg-gray-700 text-white text-xs px-3 py-1.5 rounded-lg border border-gray-600 focus:outline-none focus:border-blue-500"
+                        class="input-premium flex-1 text-xs px-3 py-2"
                     />
                     <button
                         id="btn-ready-join"
-                        class="bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                        class="btn-success text-xs px-4 py-2 flex items-center gap-1"
                     >
                         Join
                     </button>
                 </div>
                 <!-- SSO Identity Section -->
-                <div id="sso-ready" class="w-full max-w-xs mt-2">
+                <div id="sso-ready" class="w-full max-w-xs mt-1 relative z-10">
                     <div id="sso-ready-signin" class="sso-signin flex gap-2">
-                        <button class="sso-login-btn sso-login-aws flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="aws">
+                        <button class="sso-login-btn sso-login-aws btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="aws">
                             &#9729; AWS SSO
                         </button>
-                        <button class="sso-login-btn sso-login-google flex-1 text-gray-400 hover:text-gray-200 text-xs py-1.5 px-3 border border-gray-700 rounded-lg hover:border-gray-500 transition-colors" data-provider="google">
+                        <button class="sso-login-btn sso-login-google btn-secondary flex-1 text-xs py-2 px-3 flex items-center justify-center gap-1" data-provider="google">
                             G Google
                         </button>
                     </div>
                     <div id="sso-ready-pending" class="sso-pending hidden">
-                        <div class="flex items-center justify-center gap-2 py-1.5 px-3 border border-gray-700 rounded-lg">
-                            <div class="h-3 w-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                        <div class="flex items-center justify-center gap-2 py-2 px-3 border border-gray-700/50 rounded-xl bg-gray-800/30">
+                            <div class="h-3 w-3 border-2 border-violet-400 border-t-transparent rounded-full animate-spin"></div>
                             <span class="text-xs text-gray-400">Waiting for SSO...</span>
-                            <code class="sso-user-code text-xs text-blue-400 font-mono"></code>
+                            <code class="sso-user-code text-xs text-violet-400 font-mono"></code>
                             <button class="sso-cancel-btn text-gray-500 hover:text-gray-300 text-xs ml-1">Cancel</button>
                         </div>
                     </div>
                     <div id="sso-ready-done" class="sso-done hidden">
-                        <div class="flex items-center gap-2 py-1.5 px-3 bg-gray-800 border border-gray-700 rounded-lg">
+                        <div class="flex items-center gap-2 py-2 px-3 bg-gray-800/40 border border-gray-700/50 rounded-xl">
                             <span class="sso-provider-badge text-xs"></span>
                             <span class="sso-email text-xs text-gray-300 truncate"></span>
                             <button class="sso-clear-btn ml-auto text-gray-500 hover:text-gray-300 text-xs flex-shrink-0" title="Clear identity">&#10005;</button>
@@ -412,9 +573,11 @@
             <!-- ============================================================ -->
             <!-- STATE PANEL: Joining — loading indicator                     -->
             <!-- ============================================================ -->
-            <div id="panel-joining" class="hidden flex-1 flex flex-col items-center justify-center gap-3 px-6" style="background: radial-gradient(circle at 50% 40%, rgba(88,28,135,0.1) 0%, transparent 60%);">
-                <div class="ai-thinking-dots" style="transform: scale(1.5);"><span></span><span></span><span></span></div>
-                <p class="text-sm text-gray-400">Joining session…</p>
+            <div id="panel-joining" class="hidden flex-1 flex flex-col items-center justify-center gap-4 px-6 relative overflow-hidden">
+                <div class="aurora-orb aurora-orb-1" style="opacity:0.4;"></div>
+                <div class="aurora-orb aurora-orb-2" style="opacity:0.3;"></div>
+                <div class="ai-thinking-dots relative z-10" style="transform: scale(1.8);"><span></span><span></span><span></span></div>
+                <p class="text-sm text-gray-400 relative z-10">Joining session…</p>
             </div>
 
             <!-- ============================================================ -->
@@ -425,47 +588,47 @@
             <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
 
             <!-- Header (only visible in Hosting / Joined) -->
-            <header class="glass border-b border-gray-700/50 px-6 py-4 flex-shrink-0" style="border-bottom: 1px solid; border-image: linear-gradient(90deg, rgba(139,92,246,0.3), rgba(99,102,241,0.1), transparent) 1;">
+            <header class="glass px-5 py-3 flex-shrink-0" style="border-bottom: 1px solid; border-image: linear-gradient(90deg, rgba(139,92,246,0.25), rgba(99,102,241,0.08), transparent) 1;">
                 <div class="flex items-center justify-between">
                     <div>
-                        <h1 class="text-lg font-semibold tracking-tight text-gradient">Conductor</h1>
-                        <p class="text-sm text-gray-400 mt-1 flex items-center gap-1">
-                            Room: <span id="room-id-display" class="font-mono text-xs text-purple-400 hover:text-purple-300 transition-colors" style="text-shadow: 0 0 8px rgba(192,132,252,0.2);">loading...</span>
+                        <h1 class="text-base font-semibold tracking-tight text-gradient">Conductor</h1>
+                        <p class="text-xs text-gray-500 mt-0.5 flex items-center gap-1">
+                            <span id="room-id-display" class="font-mono text-violet-400/80 hover:text-violet-300 transition-colors cursor-default">loading...</span>
                             <button id="btn-copy-room-id" class="text-gray-500 hover:text-gray-300 transition-colors p-0.5" title="Copy Room ID">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                     <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
                                     <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
                                 </svg>
                             </button>
                         </p>
                     </div>
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2">
                         <!-- AI Config Button -->
                         <button
                             id="btn-ai-config"
-                            class="text-gray-400 hover:text-purple-400 p-1.5 rounded-lg glass hover:glow-primary transition-all duration-200"
+                            class="text-gray-500 hover:text-violet-400 p-1.5 rounded-lg hover:bg-violet-500/10 transition-all duration-200"
                             title="AI Configuration"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
                             </svg>
                         </button>
                         <!-- Room Settings Button (Lead only) -->
                         <button
                             id="btn-room-settings"
-                            class="hidden text-gray-400 hover:text-blue-400 p-1.5 rounded-lg glass hover:glow-primary transition-all duration-200"
+                            class="hidden text-gray-500 hover:text-blue-400 p-1.5 rounded-lg hover:bg-blue-500/10 transition-all duration-200"
                             title="Room Settings"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
                             </svg>
                         </button>
                         <!-- Auto Apply Toggle (Lead only) -->
                         <div id="auto-apply-toggle-container" class="hidden flex items-center gap-2">
-                            <span class="text-xs text-gray-400">Auto</span>
+                            <span class="text-xs text-gray-500">Auto</span>
                             <label class="relative inline-flex items-center cursor-pointer">
                                 <input type="checkbox" id="auto-apply-toggle" class="sr-only peer">
-                                <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-amber-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
+                                <div class="w-8 h-[18px] bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-violet-500/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-violet-600"></div>
                             </label>
                         </div>
                         <div id="sso-header-badge" class="hidden px-2 py-1 rounded-full text-xs bg-gray-700 text-gray-400 truncate max-w-[120px]" title="">
@@ -477,44 +640,44 @@
                 </div>
 
             <!-- Hosting-only controls: invite + stop -->
-            <div id="hosting-controls" class="hidden mt-4 flex items-center gap-2">
-                <span class="text-xs text-green-400 flex items-center gap-1">
-                    <span class="inline-block h-2 w-2 rounded-full bg-green-400"></span>
+            <div id="hosting-controls" class="hidden mt-3 flex items-center gap-2">
+                <span class="text-xs text-emerald-400 flex items-center gap-1.5">
+                    <span class="status-dot bg-emerald-400" style="width:6px;height:6px;color:rgba(52,211,153,0.4);"></span>
                     Hosting
                 </span>
                 <button
                     id="btn-copy-invite"
-                    class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg flex items-center gap-1"
+                    class="btn-primary text-xs px-3 py-1.5 flex items-center gap-1"
                 >
                     Copy Invite Link
                 </button>
                 <button
                     id="btn-stop-session"
-                    class="bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+                    class="btn-secondary text-xs px-3 py-1.5"
                 >
                     Stop
                 </button>
             </div>
 
             <!-- Joined-only controls: leave -->
-            <div id="joined-controls" class="hidden mt-4 flex items-center gap-2">
-                <span class="text-xs text-blue-400 flex items-center gap-1">
-                    <span class="inline-block h-2 w-2 rounded-full bg-blue-400"></span>
+            <div id="joined-controls" class="hidden mt-3 flex items-center gap-2">
+                <span class="text-xs text-blue-400 flex items-center gap-1.5">
+                    <span class="status-dot bg-blue-400" style="width:6px;height:6px;color:rgba(96,165,250,0.4);"></span>
                     Joined
                 </span>
                 <button
                     id="btn-leave-session"
-                    class="bg-gray-600 hover:bg-gray-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg"
+                    class="btn-secondary text-xs px-3 py-1.5"
                 >
                     Leave
                 </button>
             </div>
 
             <!-- Lead-only Action Buttons -->
-            <div id="lead-actions" class="hidden mt-4 flex gap-2">
+            <div id="lead-actions" class="hidden mt-3 flex gap-2">
                 <button
                     id="btn-create-summary"
-                    class="bg-gradient-to-r from-violet-600 to-indigo-600 hover:brightness-110 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-200 flex items-center gap-2 tracking-wide hover:shadow-[0_0_20px_rgba(124,58,237,0.3)] hover:scale-[1.02]"
+                    class="btn-primary text-sm px-4 py-2 flex items-center gap-2"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/>
@@ -523,7 +686,7 @@
                 </button>
                 <button
                     id="btn-end-chat"
-                    class="bg-red-600/80 hover:bg-red-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-all duration-200 flex items-center gap-2 border border-red-500/20 hover:shadow-[0_0_15px_rgba(239,68,68,0.2)]"
+                    class="btn-danger text-sm px-4 py-2 flex items-center gap-2"
                     title="End chat session for all participants"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -534,7 +697,7 @@
             </div>
 
             <!-- Pending Changes Card (hidden by default) -->
-            <div id="pending-changes-card" class="hidden mt-4 glass border border-purple-500/20 rounded-lg p-4">
+            <div id="pending-changes-card" class="hidden mt-3 glass border border-violet-500/15 rounded-xl p-4">
                 <div class="flex items-center justify-between mb-3">
                     <h3 class="text-sm font-medium text-white flex items-center gap-2">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
@@ -583,7 +746,7 @@
                 <div class="flex gap-2">
                     <button
                         id="btn-view-diff"
-                        class="flex-1 glass hover:bg-gray-600/80 text-white text-xs font-medium px-3 py-2 rounded-lg transition-all duration-200 flex items-center justify-center gap-1"
+                        class="flex-1 btn-secondary text-xs px-3 py-2 flex items-center justify-center gap-1"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
@@ -593,7 +756,7 @@
                     </button>
                     <button
                         id="btn-apply-changes"
-                        class="flex-1 bg-gradient-to-r from-emerald-600 to-green-600 hover:brightness-110 text-white text-xs font-medium px-3 py-2 rounded-lg transition-all duration-200 flex items-center justify-center gap-1 hover:shadow-[0_0_15px_rgba(16,185,129,0.25)]"
+                        class="flex-1 btn-success text-xs px-3 py-2 flex items-center justify-center gap-1"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
@@ -606,21 +769,21 @@
 
         <!-- Messages Area - WhatsApp-style scrollable container -->
         <div class="relative flex-1 min-h-0">
-            <div id="messages-container" class="absolute inset-0 overflow-y-auto px-4 py-4 space-y-3" style="scrollbar-width: thin; scrollbar-color: rgba(99,102,241,0.35) transparent;">
+            <div id="messages-container" class="absolute inset-0 overflow-y-auto px-4 py-3 space-y-2" style="scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.2) transparent;">
                 <!-- Messages will be rendered here by JavaScript -->
                 <div id="connection-status" class="flex justify-center">
-                    <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700 shimmer">
+                    <div class="bg-gray-800/30 text-gray-500 text-xs px-3 py-1.5 rounded-full border border-gray-700/40 shimmer">
                         <span>Connecting to chat...</span>
                     </div>
                 </div>
             </div>
 
             <!-- Scroll to bottom button -->
-            <button id="scroll-to-bottom" class="hidden absolute bottom-4 right-4 glass hover:bg-gray-600/80 text-white p-2 rounded-full shadow-lg z-10 hover:shadow-[0_0_10px_rgba(139,92,246,0.2)]" title="Scroll to bottom">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+            <button id="scroll-to-bottom" class="hidden absolute bottom-3 right-3 glass text-gray-300 hover:text-white p-2 rounded-full z-10 hover:shadow-[0_0_12px_rgba(139,92,246,0.2)] transition-all" title="Scroll to bottom">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                     <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                 </svg>
-                <span id="unread-count" class="hidden absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center unread-badge">0</span>
+                <span id="unread-count" class="hidden absolute -top-1 -right-1 bg-violet-500 text-white text-[0.6rem] rounded-full h-4 w-4 flex items-center justify-center unread-badge">0</span>
             </button>
         </div>
 
@@ -630,13 +793,13 @@
         </div>
 
         <!-- Input Area -->
-        <div class="flex-shrink-0 border-t border-gray-700/50 glass px-6 py-4">
+        <div class="flex-shrink-0 glass px-5 py-3" style="border-top: 1px solid; border-image: linear-gradient(90deg, transparent, rgba(139,92,246,0.12), transparent) 1;">
             <!-- Hidden file input -->
             <input type="file" id="file-input" class="hidden"
                    accept="image/*,.pdf,audio/*,.mp3,.wav,.ogg,.m4a,.flac" />
 
             <!-- File preview area (shown when file is selected) -->
-            <div id="file-preview" class="hidden mb-3 p-3 bg-gray-900 rounded-lg border border-gray-700">
+            <div id="file-preview" class="hidden mb-3 p-3 bg-gray-900/60 rounded-xl border border-gray-700/40">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-3">
                         <span id="file-preview-icon" class="text-2xl">📎</span>
@@ -646,38 +809,34 @@
                         </div>
                     </div>
                     <div class="flex items-center gap-2">
-                        <!-- Upload button -->
-                        <button id="btn-upload-file" class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
-                            ⬆️ Upload
+                        <button id="btn-upload-file" class="btn-success text-sm px-3 py-1.5">
+                            Upload
                         </button>
-                        <!-- Cancel button -->
-                        <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1" title="Cancel">
+                        <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1 transition-colors" title="Cancel">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                             </svg>
                         </button>
                     </div>
                 </div>
-                <!-- Image preview thumbnail -->
                 <img id="file-preview-img" class="hidden mt-3 max-h-32 rounded-lg" />
-                <!-- Optional caption input -->
                 <div class="mt-2">
                     <input type="text" id="file-caption" placeholder="Add a caption (optional)..."
-                           class="w-full bg-gray-800 text-gray-100 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                           class="input-premium w-full text-sm px-3 py-1.5" />
                 </div>
             </div>
 
             <!-- Code Snippet Preview (shown when code is attached) -->
-            <div id="code-snippet-preview" class="hidden mb-3 bg-gray-800 border border-gray-600 rounded-lg overflow-hidden">
-                <div class="flex items-center justify-between px-3 py-2 bg-gray-700 border-b border-gray-600">
+            <div id="code-snippet-preview" class="hidden mb-3 bg-gray-900/60 border border-gray-700/40 rounded-xl overflow-hidden">
+                <div class="flex items-center justify-between px-3 py-2 bg-gray-800/50 border-b border-gray-700/30">
                     <div class="flex items-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                         </svg>
                         <span id="code-snippet-filename" class="text-xs text-gray-300 font-mono truncate max-w-[200px]"></span>
                         <span id="code-snippet-lines" class="text-xs text-gray-500"></span>
                     </div>
-                    <button id="btn-clear-snippet" class="text-gray-400 hover:text-white p-1" title="Remove code snippet">
+                    <button id="btn-clear-snippet" class="text-gray-400 hover:text-white p-1 transition-colors" title="Remove code snippet">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                         </svg>
@@ -686,11 +845,11 @@
                 <pre id="code-snippet-content" class="code-snippet-plain p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-32 overflow-y-auto"></pre>
             </div>
 
-            <div class="flex items-end gap-3">
+            <div class="flex items-end gap-2">
                 <!-- Attachment Button -->
                 <button
                     id="btn-attach"
-                    class="bg-gray-700/80 hover:bg-gray-600/80 text-gray-300 hover:text-violet-300 p-3 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+                    class="text-gray-500 hover:text-violet-400 p-2.5 rounded-lg hover:bg-violet-500/10 transition-all duration-200 focus:outline-none"
                     title="Attach file (images, PDF, audio, max 20MB)"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -701,7 +860,7 @@
                 <!-- Code Snippet Button -->
                 <button
                     id="btn-code-snippet"
-                    class="bg-gray-700/80 hover:bg-gray-600/80 text-gray-300 hover:text-violet-300 p-3 rounded-lg transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-violet-500/30"
+                    class="text-gray-500 hover:text-violet-400 p-2.5 rounded-lg hover:bg-violet-500/10 transition-all duration-200 focus:outline-none"
                     title="Share code from editor (select code first)"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -714,17 +873,17 @@
                     <textarea
                         id="chat-input"
                         rows="1"
-                        placeholder="Type your message or paste an image..."
-                        class="w-full bg-gray-900/80 text-gray-100 border border-gray-700/50 rounded-lg px-4 py-3 resize-none focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 placeholder-gray-500 text-sm transition-all duration-200"
+                        placeholder="Type a message..."
+                        class="input-premium w-full px-4 py-2.5 resize-none text-sm"
                     ></textarea>
                 </div>
 
                 <!-- Send Button -->
                 <button
                     id="btn-send"
-                    class="bg-gradient-to-r from-violet-600 to-blue-600 hover:brightness-110 text-white font-medium px-6 py-3 rounded-lg transition-all duration-200 flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:ring-offset-2 focus:ring-offset-gray-800 hover:shadow-[0_0_15px_rgba(124,58,237,0.25)]"
+                    class="btn-primary px-5 py-2.5 flex items-center gap-2 focus:outline-none"
                 >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
                     </svg>
                     <span class="text-sm">Send</span>
@@ -732,21 +891,22 @@
             </div>
 
             <!-- Helper Text -->
-            <div class="mt-2 text-xs text-gray-500">
-                Press Enter to send, Shift+Enter for new line. Click <span class="text-blue-400">&lt;/&gt;</span> to share code from editor.
+            <div class="mt-1.5 text-[0.65rem] text-gray-600">
+                Enter to send &middot; Shift+Enter for new line &middot; <span class="text-violet-400/60">&lt;/&gt;</span> share code
             </div>
         </div>
         </div> <!-- close chat content column -->
 
         <!-- Users Sidebar (inside panel-chat) -->
-        <aside id="sidebar" class="w-56 glass flex-shrink-0 hidden md:flex flex-col" style="border-left: 1px solid; border-image: linear-gradient(180deg, rgba(139,92,246,0.2), rgba(99,102,241,0.05), transparent) 1;">
-            <div class="px-4 py-4 border-b border-gray-700/50">
+        <aside id="sidebar" class="w-52 sidebar-premium flex-shrink-0 hidden md:flex flex-col" style="border-left: 1px solid; border-image: linear-gradient(180deg, rgba(139,92,246,0.15), rgba(99,102,241,0.04), transparent) 1;">
+            <div class="px-4 py-3">
                 <div class="flex items-center justify-between">
-                    <h2 class="text-[0.65rem] font-medium text-gray-400 uppercase tracking-widerr">Participants</h2>
-                    <span id="user-count" class="text-xs text-gray-400 bg-gray-700 px-2 py-0.5 rounded-full">0</span>
+                    <h2 class="text-[0.6rem] font-semibold text-gray-500 uppercase tracking-widest">Participants</h2>
+                    <span id="user-count" class="text-[0.6rem] text-gray-500 bg-gray-800/60 px-1.5 py-0.5 rounded-full font-medium">0</span>
                 </div>
             </div>
-            <div id="users-list" class="flex-1 overflow-y-auto p-2 space-y-1">
+            <div class="mx-4 mb-2" style="height:1px;background:linear-gradient(90deg,transparent,rgba(139,92,246,0.12),transparent);"></div>
+            <div id="users-list" class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
                 <!-- Users will be rendered here -->
             </div>
         </aside>
@@ -838,7 +998,7 @@
             <div class="px-5 py-4 border-t border-gray-700 flex justify-end gap-2">
                 <button
                     id="btn-refresh-ai-status"
-                    class="bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+                    class="btn-primary text-sm px-4 py-2 flex items-center gap-2"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
@@ -891,7 +1051,7 @@
                             <select id="style-template-select" class="flex-1 bg-gray-900 border border-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
                                 <option value="">-- Select a template --</option>
                             </select>
-                            <button id="btn-load-template" class="bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium px-3 py-2 rounded-lg transition-colors whitespace-nowrap">
+                            <button id="btn-load-template" class="btn-primary text-sm px-3 py-2 whitespace-nowrap">
                                 Load
                             </button>
                         </div>
@@ -921,7 +1081,7 @@
                 <button id="btn-cancel-room-settings" class="text-gray-400 hover:text-white text-sm px-4 py-2 rounded-lg transition-colors">
                     Cancel
                 </button>
-                <button id="btn-save-room-settings" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                <button id="btn-save-room-settings" class="btn-primary text-sm px-4 py-2">
                     Save
                 </button>
             </div>
@@ -955,7 +1115,7 @@
                 <p class="text-gray-300 text-sm">How would you like to distill the conversation?</p>
 
                 <!-- Option: Summarize All -->
-                <button id="btn-summarize-all" class="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-3 rounded-lg transition-colors flex items-center gap-3">
+                <button id="btn-summarize-all" class="w-full btn-primary text-sm px-4 py-3 flex items-center gap-3">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                         <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z" />
                         <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd" />
@@ -967,7 +1127,7 @@
                 </button>
 
                 <!-- Option: Select Messages -->
-                <button id="btn-summarize-select" class="w-full bg-gray-700 hover:bg-gray-600 text-white text-sm font-medium px-4 py-3 rounded-lg transition-colors flex items-center gap-3 border border-gray-600">
+                <button id="btn-summarize-select" class="w-full btn-secondary text-sm px-4 py-3 flex items-center gap-3">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd" />
                     </svg>
@@ -1020,7 +1180,7 @@
                 <button id="btn-cancel-message-selection" class="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors">
                     Cancel
                 </button>
-                <button id="btn-confirm-message-selection" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors">
+                <button id="btn-confirm-message-selection" class="px-4 py-2 btn-primary disabled:opacity-40 disabled:cursor-not-allowed text-sm">
                     Distill Selected
                 </button>
             </div>
@@ -1110,7 +1270,7 @@
                         <!-- Initial state: Generate button -->
                         <div id="code-prompt-initial" class="">
                             <p class="text-gray-300 text-xs mb-3">Generate a coding prompt?</p>
-                            <button id="btn-generate-code-prompt" class="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <button id="btn-generate-code-prompt" class="w-full btn-primary text-sm px-4 py-2 flex items-center justify-center gap-2">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
@@ -1148,7 +1308,7 @@
             </div>
             <!-- Footer -->
             <div class="px-5 py-4 border-t border-gray-700 flex justify-end flex-shrink-0">
-                <button id="btn-dismiss-summary" class="bg-gray-600 hover:bg-gray-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors">
+                <button id="btn-dismiss-summary" class="btn-secondary text-sm px-4 py-2">
                     Close
                 </button>
             </div>
@@ -1841,7 +2001,7 @@
                     policyStatusText.textContent = 'Safe to apply';
                     policyStatusText.className = 'text-gray-300';
                     btnApplyChanges.disabled = false;
-                    btnApplyChanges.className = 'flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors duration-200 flex items-center justify-center gap-1';
+                    btnApplyChanges.className = 'flex-1 btn-success text-xs px-3 py-2 flex items-center justify-center gap-1';
                 } else {
                     policyStatusIcon.textContent = '⚠';
                     policyStatusIcon.className = 'text-amber-400';
@@ -1849,7 +2009,7 @@
                     policyStatusText.className = 'text-amber-300';
                     // Still allow manual apply, but show warning
                     btnApplyChanges.disabled = false;
-                    btnApplyChanges.className = 'flex-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors duration-200 flex items-center justify-center gap-1';
+                    btnApplyChanges.className = 'flex-1 text-xs px-3 py-2 flex items-center justify-center gap-1 rounded-xl font-medium text-white transition-all' + ' bg-gradient-to-r from-amber-600 to-amber-700 hover:shadow-[0_0_16px_rgba(217,119,6,0.2)]';
                 }
             }
         }
@@ -1913,13 +2073,13 @@
                     policyStatusIcon.className = 'text-green-400';
                     policyStatusText.textContent = 'Safe to apply';
                     policyStatusText.className = 'text-gray-300';
-                    btnApplyChanges.className = 'flex-1 bg-green-600 hover:bg-green-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors duration-200 flex items-center justify-center gap-1';
+                    btnApplyChanges.className = 'flex-1 btn-success text-xs px-3 py-2 flex items-center justify-center gap-1';
                 } else {
                     policyStatusIcon.textContent = '⚠';
                     policyStatusIcon.className = 'text-amber-400';
                     policyStatusText.textContent = policy.reasons ? policy.reasons.join('; ') : 'Manual review required';
                     policyStatusText.className = 'text-amber-300';
-                    btnApplyChanges.className = 'flex-1 bg-amber-600 hover:bg-amber-700 text-white text-xs font-medium px-3 py-2 rounded-lg transition-colors duration-200 flex items-center justify-center gap-1';
+                    btnApplyChanges.className = 'flex-1 text-xs px-3 py-2 flex items-center justify-center gap-1 rounded-xl font-medium text-white transition-all' + ' bg-gradient-to-r from-amber-600 to-amber-700 hover:shadow-[0_0_16px_rgba(217,119,6,0.2)]';
                 }
             }
 
@@ -2425,11 +2585,13 @@
          */
         function renderDateSeparator(date) {
             const div = document.createElement('div');
-            div.className = 'flex justify-center my-4';
+            div.className = 'flex items-center justify-center my-3 gap-3';
             div.innerHTML = `
-                <span class="text-xs text-gray-500 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
+                <div class="flex-1 h-px" style="background:linear-gradient(90deg,transparent,rgba(139,92,246,0.1),transparent);"></div>
+                <span class="text-[0.6rem] text-gray-500 font-medium tracking-wide uppercase">
                     ${formatDateSeparator(date)}
                 </span>
+                <div class="flex-1 h-px" style="background:linear-gradient(90deg,transparent,rgba(139,92,246,0.1),transparent);"></div>
             `;
             messagesContainer.appendChild(div);
         }
@@ -2703,7 +2865,7 @@
             const showName = !isOwnMessage && !isGrouped;
 
             // Status indicator for own messages
-            const statusHtml = isOwnMessage ? '<span class="message-status text-blue-300 ml-1">✓</span>' : '';
+            const statusHtml = isOwnMessage ? '<span class="message-status text-violet-300/70 ml-1">✓</span>' : '';
 
             // Comment text if any
             const commentHtml = msg.content ? `
@@ -2951,7 +3113,7 @@
                                 </svg>
                                 <span class="text-sm font-medium text-blue-200">Code Generation Prompt</span>
                             </div>
-                            <button id="${copyBtnId}" class="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium rounded transition-colors flex items-center gap-1">
+                            <button id="${copyBtnId}" class="px-3 py-1 btn-primary text-xs flex items-center gap-1">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
                                     <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
                                     <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
@@ -3087,7 +3249,7 @@
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
                     ${!isOwnMessage ? nameHtml : ''}
-                    <div class="bg-gray-800 text-gray-100 rounded-2xl ${isOwnMessage ? 'rounded-tr-sm' : 'rounded-tl-sm'} px-4 py-3 shadow-lg overflow-hidden border border-gray-700 ${!isOwnMessage ? bubbleAccent : ''}">
+                    <div class="bg-gray-800/50 text-gray-100 rounded-2xl ${isOwnMessage ? 'rounded-tr-sm' : 'rounded-tl-sm'} px-4 py-3 shadow-lg overflow-hidden border border-white/[0.04] ${!isOwnMessage ? bubbleAccent : ''}">
                         ${fileContentHtml}
                         ${captionHtml}
                     </div>
@@ -3159,8 +3321,8 @@
             const { nameHtml, bubbleAccent } = buildNameAndRole(displayName, msg.role, idSource);
 
             const bubbleColor = isOwnMessage
-                ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl rounded-tr-sm'
-                : `bg-gray-800/60 backdrop-blur text-gray-100 rounded-2xl rounded-tl-sm border border-gray-700/50 ${bubbleAccent}`;
+                ? 'bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-white rounded-2xl rounded-tr-sm shadow-[0_2px_12px_rgba(124,58,237,0.15)]'
+                : `bg-gray-800/40 backdrop-blur-sm text-gray-100 rounded-2xl rounded-tl-sm border border-white/[0.04] ${bubbleAccent}`;
 
             const timeAlign = isOwnMessage ? 'text-right' : '';
 
@@ -3176,7 +3338,7 @@
             ` : (!isOwnMessage && isGrouped) ? '<div class="w-7 flex-shrink-0"></div>' : '';
 
             // Status indicator for own messages (✓ = sent, ✓✓ = read)
-            const statusHtml = isOwnMessage ? '<span class="message-status text-blue-300 ml-1">✓</span>' : '';
+            const statusHtml = isOwnMessage ? '<span class="message-status text-violet-300/70 ml-1">✓</span>' : '';
 
             // Show name only for first message in group
             const showName = !isOwnMessage && !isGrouped;
@@ -3208,9 +3370,9 @@
          */
         function renderSystemMessage(text) {
             const div = document.createElement('div');
-            div.className = 'flex justify-center';
+            div.className = 'flex justify-center message-enter';
             div.innerHTML = `
-                <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700">
+                <div class="bg-gray-800/30 text-gray-500 text-[0.65rem] px-3 py-1 rounded-full border border-white/[0.04]">
                     ${escapeHtml(text)}
                 </div>
             `;
@@ -3321,8 +3483,8 @@
             const { nameHtml, bubbleAccent } = buildNameAndRole(displayName, msg.role, idSource);
 
             const bubbleColor = isOwnMessage
-                ? 'bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl rounded-tr-sm'
-                : `bg-gray-800/60 backdrop-blur text-gray-100 rounded-2xl rounded-tl-sm border border-gray-700/50 ${bubbleAccent}`;
+                ? 'bg-gradient-to-br from-violet-600/90 to-indigo-600/90 text-white rounded-2xl rounded-tr-sm shadow-[0_2px_12px_rgba(124,58,237,0.15)]'
+                : `bg-gray-800/40 backdrop-blur-sm text-gray-100 rounded-2xl rounded-tl-sm border border-white/[0.04] ${bubbleAccent}`;
 
             const userInfo = usersMap.get(msg.userId);
             const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
@@ -3333,7 +3495,7 @@
                 </div>
             ` : '';
 
-            const statusHtml = isOwnMessage ? '<span class="message-status text-blue-300 ml-1">✓</span>' : '';
+            const statusHtml = isOwnMessage ? '<span class="message-status text-violet-300/70 ml-1">✓</span>' : '';
             const timeAlign = isOwnMessage ? 'text-right' : '';
 
             div.innerHTML = `
