@@ -708,7 +708,7 @@ class ConnectionManager:
         Returns:
             Settings dict. Returns default settings if none stored.
         """
-        return self.room_settings.get(room_id, {"code_style": ""})
+        return self.room_settings.get(room_id, {"code_style": "", "output_mode": ""})
 
     def update_room_settings(self, room_id: str, settings: dict) -> dict:
         """Update settings for a room.
@@ -720,7 +720,7 @@ class ConnectionManager:
         Returns:
             Updated settings dict.
         """
-        current = self.room_settings.get(room_id, {"code_style": ""})
+        current = self.room_settings.get(room_id, {"code_style": "", "output_mode": ""})
         current.update(settings)
         self.room_settings[room_id] = current
         return current

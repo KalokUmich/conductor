@@ -54,7 +54,7 @@ Docs:
 | Method | Path | Description |
 |---|---|---|
 | GET | `/ai/status` | Summary enabled flag + active provider health status |
-| POST | `/ai/summarize` | Two-stage AI summary pipeline (classification + targeted summary) |
+| POST | `/ai/summarize` | Four-stage AI summary pipeline (classification + targeted summary + code relevance + item extraction) |
 | POST | `/ai/code-prompt` | Generate coding prompt from decision summary |
 | POST | `/ai/code-prompt/selective` | Generate selective coding prompt from multi-type summary |
 | POST | `/ai/model` | Set active AI model |
@@ -87,6 +87,7 @@ Docs:
 |---|---|---|
 | POST | `/files/upload/{room_id}` | Upload file to a room |
 | GET | `/files/download/{file_id}` | Download file |
+| GET | `/files/check-duplicate/{room_id}` | Check duplicate filename (case-insensitive) |
 | DELETE | `/files/room/{room_id}` | Delete all files for a room |
 
 #### Auth (SSO)
@@ -225,7 +226,7 @@ curl -X POST http://localhost:8000/policy/evaluate-auto-apply \
 
 ### Tests
 
-Current backend collection count is `287`.
+Current backend collection count is `368`.
 
 ```bash
 cd backend
@@ -234,15 +235,16 @@ cd backend
 ```
 
 Breakdown:
-- `tests/test_ai_provider.py`: 121
+- `tests/test_ai_provider.py`: 131
+- `tests/test_prompt_builder.py`: 64
 - `tests/test_auth.py`: 38
-- `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 26
-- `tests/test_main.py`: 1
 - `tests/test_mock_agent.py`: 26
-- `tests/test_room_settings.py`: 11
 - `tests/test_style_loader.py`: 22
+- `tests/test_room_settings.py`: 18
+- `tests/test_audit.py`: 14
+- `tests/test_main.py`: 1
 
 ### Known Limits
 
@@ -301,7 +303,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/ai/status` | 摘要开关、活动 provider 与健康状态 |
-| POST | `/ai/summarize` | 两阶段摘要流水线（分类 + 定向摘要） |
+| POST | `/ai/summarize` | 四阶段摘要流水线（分类 + 定向摘要 + 代码相关性 + 条目提取） |
 | POST | `/ai/code-prompt` | 基于决策摘要生成代码提示词 |
 | POST | `/ai/code-prompt/selective` | 基于多类型摘要生成 selective 提示词 |
 | POST | `/ai/model` | 设置活动 AI 模型 |
@@ -334,6 +336,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 |---|---|---|
 | POST | `/files/upload/{room_id}` | 向房间上传文件 |
 | GET | `/files/download/{file_id}` | 下载文件 |
+| GET | `/files/check-duplicate/{room_id}` | 检查文件名是否重复（大小写不敏感） |
 | DELETE | `/files/room/{room_id}` | 删除房间全部文件 |
 
 #### Auth（SSO）
@@ -357,7 +360,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ### 测试
 
-当前后端测试收集数为 `287`。
+当前后端测试收集数为 `368`。
 
 ```bash
 cd backend
@@ -366,15 +369,16 @@ cd backend
 ```
 
 分布：
-- `tests/test_ai_provider.py`: 121
+- `tests/test_ai_provider.py`: 131
+- `tests/test_prompt_builder.py`: 64
 - `tests/test_auth.py`: 38
-- `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
 - `tests/test_chat.py`: 26
-- `tests/test_main.py`: 1
 - `tests/test_mock_agent.py`: 26
-- `tests/test_room_settings.py`: 11
 - `tests/test_style_loader.py`: 22
+- `tests/test_room_settings.py`: 18
+- `tests/test_audit.py`: 14
+- `tests/test_main.py`: 1
 
 ### 已知限制
 

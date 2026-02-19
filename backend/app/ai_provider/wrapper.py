@@ -20,6 +20,7 @@ from fastapi import HTTPException
 
 from .base import ChatMessage, DecisionSummary
 from .pipeline import PipelineSummary, run_summary_pipeline
+from .prompt_builder import PromptBuilder, build_selective_prompt
 from .prompts import format_policy_constraints, get_code_prompt, get_selective_code_prompt
 from .resolver import get_resolver
 
@@ -165,11 +166,12 @@ def call_code_prompt(
     context_snippet: Optional[str] = None,
     room_code_style: Optional[str] = None,
     detected_languages: Optional[List[str]] = None,
+    room_output_mode: Optional[str] = None,
 ) -> str:
     """Generate a code prompt from decision summary components.
 
     This function does not call an AI provider - it constructs a prompt
-    using the template that can be used with code generation tools.
+    using PromptBuilder that can be used with code generation tools.
 
     Args:
         problem_statement: Description of the problem to solve.
@@ -178,29 +180,116 @@ def call_code_prompt(
         risk_level: Risk assessment (low/medium/high).
         context_snippet: Optional code snippet for context.
         room_code_style: Optional room-level code style guidelines.
+        detected_languages: Optional list of workspace-detected languages.
+        room_output_mode: Optional room-level output mode override.
 
     Returns:
         str: Formatted code prompt for code generation.
     """
     logger.info(f"Generating code prompt for {len(affected_components)} components")
 
-    # Load policy constraints from config
     policy_str = _load_policy_constraints()
+    output_mode = room_output_mode or _get_output_mode()
 
-    # Load style guidelines: room-level overrides file-level
-    style_str = _load_style_guidelines(room_code_style, detected_languages)
-
-    code_prompt = get_code_prompt(
-        problem_statement=problem_statement,
-        proposed_solution=proposed_solution,
-        affected_components=affected_components,
-        risk_level=risk_level,
-        context_snippet=context_snippet,
-        policy_constraints=policy_str,
-        style_guidelines=style_str,
+    code_prompt = (
+        PromptBuilder(problem_statement, proposed_solution, affected_components, risk_level)
+        .with_context_snippet(context_snippet)
+        .with_policy_constraints(policy_str)
+        .with_room_code_style(room_code_style)
+        .with_detected_languages(detected_languages)
+        .with_output_mode(output_mode)
+        .build()
     )
 
     logger.debug(f"Generated code prompt with {len(code_prompt)} characters")
+    return code_prompt
+
+
+def call_code_prompt_from_items(
+    items: List[dict],
+    topic: str = "",
+    context_snippet: Optional[str] = None,
+    context_snippets: Optional[List[dict]] = None,
+    room_code_style: Optional[str] = None,
+    detected_languages: Optional[List[str]] = None,
+    room_output_mode: Optional[str] = None,
+) -> str:
+    """Generate a code prompt from selected code-relevant items.
+
+    Merges multiple items into a single prompt by combining their fields:
+    - problem_statement: joined title+problem lines
+    - proposed_solution: joined title+proposed_change lines
+    - affected_components: deduplicated union of all targets
+    - risk_level: highest among items
+
+    Args:
+        items: List of item dicts with type, title, problem, proposed_change,
+               targets, and risk_level.
+        topic: Optional topic string for context.
+        context_snippet: Optional single code snippet for context (legacy).
+        context_snippets: Optional list of file-targeted snippets, each with
+            "file_path" and "snippet" keys.
+        room_code_style: Optional room-level code style guidelines.
+        detected_languages: Optional list of workspace-detected languages.
+        room_output_mode: Optional room-level output mode override.
+
+    Returns:
+        str: Formatted code prompt for code generation.
+    """
+    logger.info(f"Generating code prompt from {len(items)} selected items")
+
+    risk_order = {"low": 0, "medium": 1, "high": 2}
+    risk_reverse = {0: "low", 1: "medium", 2: "high"}
+
+    # Merge items
+    problem_parts = []
+    solution_parts = []
+    all_targets = []
+    max_risk = 0
+
+    for item in items:
+        title = item.get("title", "")
+        problem = item.get("problem", "")
+        proposed_change = item.get("proposed_change", "")
+        targets = item.get("targets", [])
+        risk = item.get("risk_level", "low")
+
+        problem_parts.append(f"- {title}: {problem}" if problem else f"- {title}")
+        solution_parts.append(f"- {title}: {proposed_change}" if proposed_change else f"- {title}")
+        all_targets.extend(targets)
+        max_risk = max(max_risk, risk_order.get(risk, 0))
+
+    # Deduplicate targets preserving order
+    seen = set()
+    unique_targets = []
+    for t in all_targets:
+        if t not in seen:
+            seen.add(t)
+            unique_targets.append(t)
+
+    problem_statement = "\n".join(problem_parts)
+    if topic:
+        problem_statement = f"{topic}\n\n{problem_statement}"
+
+    proposed_solution = "\n".join(solution_parts)
+    highest_risk = risk_reverse.get(max_risk, "low")
+
+    policy_str = _load_policy_constraints()
+    output_mode = room_output_mode or _get_output_mode()
+
+    builder = (
+        PromptBuilder(problem_statement, proposed_solution, unique_targets, highest_risk)
+        .with_context_snippet(context_snippet)
+        .with_context_snippets(context_snippets)
+        .with_policy_constraints(policy_str)
+        .with_room_code_style(room_code_style)
+        .with_detected_languages(detected_languages)
+        .with_output_mode(output_mode)
+    )
+
+    code_prompt = builder.build()
+
+    logger.debug(f"Generated item-based code prompt with {len(code_prompt)} characters")
     return code_prompt
 
 
@@ -422,20 +511,17 @@ def call_selective_code_prompt(
         for s in filtered_summaries
     ))
 
-    # Load policy constraints from config
-    policy_str = _load_policy_constraints()
+    output_mode = _get_output_mode()
 
-    # Load style guidelines: room-level overrides file-level
-    style_str = _load_style_guidelines(room_code_style, detected_languages)
-
-    # Generate the selective code prompt
-    code_prompt = get_selective_code_prompt(
+    # Generate the selective code prompt via PromptBuilder
+    code_prompt = build_selective_prompt(
         primary_focus=primary_focus,
         impact_scope=impact_scope,
         summaries=filtered_summaries,
         context_snippet=context_snippet,
-        policy_constraints=policy_str,
-        style_guidelines=style_str,
+        room_code_style=room_code_style,
+        detected_languages=detected_languages,
+        output_mode=output_mode,
     )
 
     logger.info(
@@ -444,6 +530,19 @@ def call_selective_code_prompt(
     )
 
     return code_prompt, types_used
+
+
+def _get_output_mode() -> str:
+    """Read the configured output mode for code prompts.
+
+    Returns:
+        Output mode string, defaults to "unified_diff".
+    """
+    try:
+        from app.config import get_config
+        return get_config().prompt.output_mode
+    except Exception:
+        return "unified_diff"
 
 
 def _load_policy_constraints() -> Optional[str]:

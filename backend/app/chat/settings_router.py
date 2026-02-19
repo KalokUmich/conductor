@@ -20,11 +20,13 @@ router = APIRouter(tags=["rooms"])
 class RoomSettingsResponse(BaseModel):
     """Response model for room settings."""
     code_style: str = ""
+    output_mode: str = ""
 
 
 class RoomSettingsUpdate(BaseModel):
     """Request model for updating room settings."""
     code_style: Optional[str] = None
+    output_mode: Optional[str] = None
 
 
 @router.get("/rooms/{room_id}/settings", response_model=RoomSettingsResponse)
@@ -38,7 +40,10 @@ async def get_room_settings(room_id: str) -> RoomSettingsResponse:
         RoomSettingsResponse with current room settings.
     """
     settings = manager.get_room_settings(room_id)
-    return RoomSettingsResponse(code_style=settings.get("code_style", ""))
+    return RoomSettingsResponse(
+        code_style=settings.get("code_style", ""),
+        output_mode=settings.get("output_mode", ""),
+    )
 
 
 @router.put("/rooms/{room_id}/settings", response_model=RoomSettingsResponse)
@@ -58,8 +63,13 @@ async def update_room_settings(
     updates = {}
     if request.code_style is not None:
         updates["code_style"] = request.code_style
+    if request.output_mode is not None:
+        updates["output_mode"] = request.output_mode
 
     settings = manager.update_room_settings(room_id, updates)
     logger.info(f"Updated room settings for {room_id}")
 
-    return RoomSettingsResponse(code_style=settings.get("code_style", ""))
+    return RoomSettingsResponse(
+        code_style=settings.get("code_style", ""),
+        output_mode=settings.get("output_mode", ""),
+    )

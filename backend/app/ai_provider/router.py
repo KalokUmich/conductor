@@ -18,7 +18,7 @@ from .resolver import get_resolver
 from .wrapper import (
     AIProviderError,
     call_code_prompt,
-    call_selective_code_prompt,
+    call_code_prompt_from_items,
     call_summary_pipeline,
     handle_provider_error,
     pipeline_summary_to_decision_summary,
@@ -67,6 +67,17 @@ class SummarizeRequest(BaseModel):
     messages: List[MessageInput]
 
 
+class CodeRelevantItemResponse(BaseModel):
+    """Response model for a single code-relevant implementation item."""
+    id: str
+    type: Literal["api_design", "code_change", "product_flow", "architecture", "debugging"]
+    title: str
+    problem: str
+    proposed_change: str
+    targets: List[str]
+    risk_level: Literal["low", "medium", "high"]
+
+
 class DecisionSummaryResponse(BaseModel):
     """Response model for POST /ai/summarize endpoint - structured decision summary."""
     type: Literal["decision_summary"] = "decision_summary"
@@ -84,6 +95,11 @@ class DecisionSummaryResponse(BaseModel):
     code_relevant_types: List[str] = Field(
         default_factory=list,
         description="Discussion types that are code-relevant for this summary"
+    )
+    # Structured implementation items extracted from the summary
+    code_relevant_items: List[CodeRelevantItemResponse] = Field(
+        default_factory=list,
+        description="Discrete implementation tasks extracted by AI"
     )
 
 
@@ -116,71 +132,45 @@ class CodePromptResponse(BaseModel):
 
 
 # =============================================================================
-# Multi-Type Summary Models for Selective Code Prompt Generation
+# Selective Item-Based Code Prompt Generation
 # =============================================================================
 
 
-class TypedSummaryInput(BaseModel):
-    """Input model for a single typed summary within multi-type summary.
+class SummaryWithItemsInput(BaseModel):
+    """Input model for a summary that includes code_relevant_items.
 
-    Represents a summary for a specific discussion type with all relevant
-    fields for code prompt generation.
+    Matches the structure of DecisionSummaryResponse from /ai/summarize,
+    carrying the code_relevant_items needed for server-side filtering.
     """
-    discussion_type: str
-    topic: str
-    core_problem: str
-    proposed_solution: str
-    requires_code_change: bool
-    impact_scope: str = "local"
+    topic: str = ""
+    problem_statement: str = ""
+    proposed_solution: str = ""
+    requires_code_change: bool = False
     affected_components: List[str] = []
     risk_level: Literal["low", "medium", "high"] = "low"
     next_steps: List[str] = []
+    code_relevant_items: List[CodeRelevantItemResponse] = []
 
 
-class MultiTypeSummaryInput(BaseModel):
-    """Input model for multi-type summary in selective code-prompt request.
+class ContextSnippetInput(BaseModel):
+    """A code snippet from a specific file, used for context injection."""
+    file_path: str
+    snippet: str
 
-    Contains summaries from potentially multiple discussion types along with
-    code_relevant_types to determine which summaries to include in code prompt.
+
+class SelectiveItemsCodePromptRequest(BaseModel):
+    """Request model for POST /ai/code-prompt/selective.
+
+    Accepts a full summary (with code_relevant_items) and a list of
+    selected_item_ids. The server filters items by the selected IDs
+    before generating a focused prompt.
     """
-    primary_focus: str
-    summaries: List[TypedSummaryInput]
-    code_relevant_types: List[str]
-    impact_scope: str = "local"
-
-
-class SelectiveCodePromptRequest(BaseModel):
-    """Request model for POST /ai/code-prompt with multi-type summary support."""
-    multi_type_summary: MultiTypeSummaryInput
+    summary: SummaryWithItemsInput
+    selected_item_ids: List[str]
     context_snippet: Optional[str] = None
+    context_snippets: Optional[List[ContextSnippetInput]] = None
     room_id: Optional[str] = None
     detected_languages: Optional[List[str]] = None
-
-
-class FileLevelChange(BaseModel):
-    """A single file-level change in the implementation plan."""
-    file: str
-    change_type: Literal["modify", "create", "delete"]
-    description: str
-
-
-class ImplementationPlan(BaseModel):
-    """Structured implementation plan output."""
-    affected_components: List[str]
-    file_level_changes: List[FileLevelChange]
-    tests_required: bool
-    migration_required: bool
-    risk_level: Literal["low", "medium", "high"]
-
-
-class SelectiveCodePromptResponse(BaseModel):
-    """Response model for selective code-prompt generation.
-
-    Returns the generated prompt along with the implementation plan structure.
-    """
-    code_prompt: str
-    implementation_plan: Optional[ImplementationPlan] = None
-    code_relevant_types_used: List[str]
 
 
 @router.get("/status", response_model=AIStatusResponse)
@@ -330,6 +320,20 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
         # Convert to DecisionSummary for backward compatibility
         summary = pipeline_summary_to_decision_summary(pipeline_summary)
 
+        # Convert code_relevant_items from dataclasses to response models
+        items_response = [
+            CodeRelevantItemResponse(
+                id=item.id,
+                type=item.type,
+                title=item.title,
+                problem=item.problem,
+                proposed_change=item.proposed_change,
+                targets=item.targets,
+                risk_level=item.risk_level,
+            )
+            for item in (pipeline_summary.code_relevant_items or [])
+        ]
+
         return DecisionSummaryResponse(
             type=summary.type,
             topic=summary.topic,
@@ -344,6 +348,8 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
             classification_confidence=pipeline_summary.classification_confidence,
             # Include code-relevant types for selective code prompt generation
             code_relevant_types=pipeline_summary.code_relevant_types,
+            # Include structured implementation items
+            code_relevant_items=items_response,
         )
 
     except AIProviderError as e:
@@ -396,8 +402,9 @@ async def generate_code_prompt(request: CodePromptRequest) -> CodePromptResponse
 
     logger.info(f"Generating code prompt for topic: {summary.topic}")
 
-    # Look up room code style if room_id provided
+    # Look up room code style and output mode if room_id provided
     room_code_style = _get_room_code_style(request.room_id)
+    room_output_mode = _get_room_output_mode(request.room_id)
 
     # Use the wrapper for consistent logging and potential future enhancements
     code_prompt_str = call_code_prompt(
@@ -408,134 +415,183 @@ async def generate_code_prompt(request: CodePromptRequest) -> CodePromptResponse
         context_snippet=request.context_snippet,
         room_code_style=room_code_style,
         detected_languages=request.detected_languages,
+        room_output_mode=room_output_mode,
     )
 
     return CodePromptResponse(code_prompt=code_prompt_str)
 
 
-@router.post("/code-prompt/selective", response_model=SelectiveCodePromptResponse)
+@router.post("/code-prompt/selective", response_model=CodePromptResponse)
 async def generate_selective_code_prompt(
-    request: SelectiveCodePromptRequest
-) -> SelectiveCodePromptResponse:
-    """Generate a selective code prompt from multi-type summary.
+    request: SelectiveItemsCodePromptRequest,
+) -> CodePromptResponse:
+    """Generate a code prompt from selected code_relevant_items within a summary.
 
-    Takes a multi-type summary with code_relevant_types and generates a focused
-    coding prompt that only includes code-relevant discussion summaries.
-
-    This endpoint filters out non-code-relevant types (like innovation-only
-    or product brainstorming sections) and builds a focused implementation prompt.
+    Takes a full summary (with code_relevant_items) and a list of
+    selected_item_ids. Filters items to only the selected ones, then
+    generates a focused coding prompt containing only those items'
+    problem/solution/targets/risk.
 
     Key behaviors:
-    - If only one code-relevant type exists, generates a focused prompt for that type
-    - If multiple code-relevant types exist, merges them logically
-    - Non-code types (innovation without code, pure brainstorming) are excluded
-    - Output is strictly JSON with structured implementation plan
+    - Only selected items appear in the prompt — unrelated items are excluded
+    - Language-specific style guidelines are inferred from selected items'
+      targets only (e.g., Python targets won't include JS guidelines)
+    - Room code style and policy constraints are included when available
+    - Output mode is configurable via server settings
 
     Args:
-        request: SelectiveCodePromptRequest with:
-            - multi_type_summary: Contains summaries and code_relevant_types
-            - context_snippet: Optional code snippet for additional context
+        request: SelectiveItemsCodePromptRequest with:
+            - summary: Full summary including code_relevant_items
+            - selected_item_ids: IDs of items to include in the prompt
+            - context_snippet: Optional code snippet for context
+            - room_id: Optional room ID for code style lookup
+            - detected_languages: Optional workspace languages (fallback)
 
     Returns:
-        SelectiveCodePromptResponse with:
-            - code_prompt: A formatted prompt string for code generation
-            - implementation_plan: Structured plan (populated by AI, null here)
-            - code_relevant_types_used: Which types were actually included
+        CodePromptResponse with the generated code prompt.
 
-    Example:
-        Request:
-        {
-            "multi_type_summary": {
-                "primary_focus": "Add user authentication feature",
-                "impact_scope": "system",
-                "code_relevant_types": ["code_change", "api_design"],
-                "summaries": [
-                    {
-                        "discussion_type": "code_change",
-                        "topic": "Implement JWT tokens",
-                        "core_problem": "No secure auth mechanism",
-                        "proposed_solution": "Add JWT middleware",
-                        "requires_code_change": true,
-                        "affected_components": ["auth/jwt.py"],
-                        "risk_level": "medium",
-                        "next_steps": ["Create JWT utility"]
-                    },
-                    {
-                        "discussion_type": "api_design",
-                        "topic": "Auth endpoints",
-                        "core_problem": "Need login/logout endpoints",
-                        "proposed_solution": "REST endpoints for auth",
-                        "requires_code_change": true,
-                        "affected_components": ["api/auth.py"],
-                        "risk_level": "medium",
-                        "next_steps": ["Design endpoint schema"]
-                    },
-                    {
-                        "discussion_type": "innovation",
-                        "topic": "Future biometric auth",
-                        "core_problem": "Long-term auth improvements",
-                        "proposed_solution": "Research biometric options",
-                        "requires_code_change": false,
-                        "affected_components": [],
-                        "risk_level": "low",
-                        "next_steps": ["Research phase"]
-                    }
-                ]
-            }
-        }
-
-        Response:
-        {
-            "code_prompt": "You are a senior software engineer...",
-            "implementation_plan": null,
-            "code_relevant_types_used": ["code_change", "api_design"]
-        }
-
-    Note:
-        The innovation summary is excluded because it's not in code_relevant_types.
+    Raises:
+        HTTPException 400: If selected_item_ids is empty or no items match.
     """
-    multi_summary = request.multi_type_summary
+    if not request.selected_item_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one selected_item_id is required",
+        )
 
-    logger.info(
-        f"Generating selective code prompt for focus: {multi_summary.primary_focus}, "
-        f"code_relevant_types: {multi_summary.code_relevant_types}"
-    )
-
-    # Convert TypedSummaryInput models to dictionaries for the wrapper
-    summaries_dicts = [
-        {
-            "discussion_type": s.discussion_type,
-            "topic": s.topic,
-            "core_problem": s.core_problem,
-            "proposed_solution": s.proposed_solution,
-            "requires_code_change": s.requires_code_change,
-            "impact_scope": s.impact_scope,
-            "affected_components": s.affected_components,
-            "risk_level": s.risk_level,
-            "next_steps": s.next_steps,
-        }
-        for s in multi_summary.summaries
+    # Filter items by selected IDs
+    selected_ids_set = set(request.selected_item_ids)
+    filtered_items = [
+        item for item in request.summary.code_relevant_items
+        if item.id in selected_ids_set
     ]
 
-    # Look up room code style if room_id provided
-    room_code_style = _get_room_code_style(request.room_id)
+    if not filtered_items:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No items matched the selected IDs: {request.selected_item_ids}",
+        )
 
-    # Use the selective code prompt wrapper
-    code_prompt_str, types_used = call_selective_code_prompt(
-        primary_focus=multi_summary.primary_focus,
-        impact_scope=multi_summary.impact_scope,
-        summaries=summaries_dicts,
-        code_relevant_types=multi_summary.code_relevant_types,
+    logger.info(
+        f"Selective code prompt: {len(filtered_items)} of "
+        f"{len(request.summary.code_relevant_items)} items selected "
+        f"(IDs: {request.selected_item_ids})"
+    )
+
+    room_code_style = _get_room_code_style(request.room_id)
+    room_output_mode = _get_room_output_mode(request.room_id)
+
+    items_dicts = [
+        {
+            "id": item.id,
+            "type": item.type,
+            "title": item.title,
+            "problem": item.problem,
+            "proposed_change": item.proposed_change,
+            "targets": item.targets,
+            "risk_level": item.risk_level,
+        }
+        for item in filtered_items
+    ]
+
+    snippets_dicts = None
+    if request.context_snippets:
+        snippets_dicts = [
+            {"file_path": s.file_path, "snippet": s.snippet}
+            for s in request.context_snippets
+        ]
+
+    code_prompt_str = call_code_prompt_from_items(
+        items=items_dicts,
+        topic=request.summary.topic,
         context_snippet=request.context_snippet,
+        context_snippets=snippets_dicts,
         room_code_style=room_code_style,
         detected_languages=request.detected_languages,
+        room_output_mode=room_output_mode,
     )
 
-    return SelectiveCodePromptResponse(
-        code_prompt=code_prompt_str,
-        implementation_plan=None,  # AI would populate this after processing the prompt
-        code_relevant_types_used=types_used,
+    return CodePromptResponse(code_prompt=code_prompt_str)
+
+
+class CodeRelevantItemInput(BaseModel):
+    """Input model for a single code-relevant item in items code-prompt request."""
+    id: str
+    type: Literal["api_design", "code_change", "product_flow", "architecture", "debugging"]
+    title: str
+    problem: str
+    proposed_change: str
+    targets: List[str] = []
+    risk_level: Literal["low", "medium", "high"] = "low"
+
+
+class ItemsCodePromptRequest(BaseModel):
+    """Request model for POST /ai/code-prompt/items endpoint."""
+    items: List[CodeRelevantItemInput]
+    topic: str = ""
+    context_snippet: Optional[str] = None
+    context_snippets: Optional[List[ContextSnippetInput]] = None
+    room_id: Optional[str] = None
+    detected_languages: Optional[List[str]] = None
+
+
+@router.post("/code-prompt/items", response_model=CodePromptResponse)
+async def generate_code_prompt_from_items(
+    request: ItemsCodePromptRequest,
+) -> CodePromptResponse:
+    """Generate a code prompt from selected implementation items.
+
+    Takes a list of code-relevant items (typically selected by the lead from
+    the checklist UI) and generates a focused coding prompt.
+
+    Args:
+        request: ItemsCodePromptRequest with selected items and metadata.
+
+    Returns:
+        CodePromptResponse with the generated code prompt.
+
+    Raises:
+        HTTPException 400: If no items are provided.
+    """
+    if not request.items:
+        raise HTTPException(status_code=400, detail="At least one item is required")
+
+    logger.info(f"Generating code prompt from {len(request.items)} selected items")
+
+    room_code_style = _get_room_code_style(request.room_id)
+    room_output_mode = _get_room_output_mode(request.room_id)
+
+    items_dicts = [
+        {
+            "id": item.id,
+            "type": item.type,
+            "title": item.title,
+            "problem": item.problem,
+            "proposed_change": item.proposed_change,
+            "targets": item.targets,
+            "risk_level": item.risk_level,
+        }
+        for item in request.items
+    ]
+
+    snippets_dicts = None
+    if request.context_snippets:
+        snippets_dicts = [
+            {"file_path": s.file_path, "snippet": s.snippet}
+            for s in request.context_snippets
+        ]
+
+    code_prompt_str = call_code_prompt_from_items(
+        items=items_dicts,
+        topic=request.topic,
+        context_snippet=request.context_snippet,
+        context_snippets=snippets_dicts,
+        room_code_style=room_code_style,
+        detected_languages=request.detected_languages,
+        room_output_mode=room_output_mode,
     )
+
+    return CodePromptResponse(code_prompt=code_prompt_str)
 
 
 class StyleTemplateItem(BaseModel):
@@ -566,6 +622,29 @@ async def get_style_templates() -> StyleTemplatesResponse:
     return StyleTemplatesResponse(
         templates=[StyleTemplateItem(**t) for t in templates]
     )
+
+
+def _get_room_output_mode(room_id: Optional[str]) -> Optional[str]:
+    """Look up output_mode for a room from the chat manager.
+
+    Args:
+        room_id: Optional room ID to look up.
+
+    Returns:
+        Output mode string if set, None otherwise.
+    """
+    if not room_id:
+        return None
+
+    try:
+        from app.chat.manager import manager
+
+        settings = manager.get_room_settings(room_id)
+        output_mode = settings.get("output_mode", "")
+        return output_mode if output_mode else None
+    except Exception as e:
+        logger.debug(f"Could not load room output_mode for {room_id}: {e}")
+        return None
 
 
 def _get_room_code_style(room_id: Optional[str]) -> Optional[str]:

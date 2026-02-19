@@ -18,6 +18,7 @@ from .base import AIProvider, ChatMessage
 from .prompts import (
     DiscussionType,
     get_classification_prompt,
+    get_code_relevant_items_prompt,
     get_targeted_summary_prompt,
 )
 
@@ -29,6 +30,18 @@ class ClassificationResult:
     """Result of discussion classification."""
     discussion_type: DiscussionType
     confidence: float
+
+
+@dataclass
+class CodeRelevantItem:
+    """A discrete, actionable implementation task extracted from the summary."""
+    id: str           # "item-1", "item-2", ...
+    type: str         # api_design|code_change|product_flow|architecture|debugging
+    title: str        # Short imperative title
+    problem: str      # Specific problem this item addresses
+    proposed_change: str  # What code change to make
+    targets: List[str]    # File paths or component names
+    risk_level: str       # low|medium|high
 
 
 @dataclass
@@ -48,6 +61,8 @@ class PipelineSummary:
     classification_confidence: float = 0.0
     # Code-relevant types for selective code prompt generation
     code_relevant_types: List[str] = None
+    # Structured implementation items extracted from the summary
+    code_relevant_items: List[CodeRelevantItem] = None
 
     def __post_init__(self):
         if self.affected_components is None:
@@ -56,6 +71,8 @@ class PipelineSummary:
             self.next_steps = []
         if self.code_relevant_types is None:
             self.code_relevant_types = []
+        if self.code_relevant_items is None:
+            self.code_relevant_items = []
 
 
 def compute_code_relevant_types(
@@ -343,6 +360,98 @@ def _infer_requires_code_change(data: dict, discussion_type: DiscussionType) -> 
     return ai_assessment
 
 
+def _fallback_item_from_summary(summary: PipelineSummary) -> CodeRelevantItem:
+    """Create a single fallback item from the summary's existing fields.
+
+    Used when stage 4 extraction fails but requires_code_change is True,
+    so we still provide at least one item.
+
+    Args:
+        summary: The PipelineSummary to derive the item from.
+
+    Returns:
+        A single CodeRelevantItem.
+    """
+    return CodeRelevantItem(
+        id="item-1",
+        type=summary.discussion_type if summary.discussion_type != "general" else "code_change",
+        title=summary.topic or "Implement proposed changes",
+        problem=summary.core_problem or "See summary for details",
+        proposed_change=summary.proposed_solution or "See summary for details",
+        targets=summary.affected_components or [],
+        risk_level=summary.risk_level or "low",
+    )
+
+
+def extract_code_relevant_items(
+    summary: PipelineSummary,
+    provider: AIProvider,
+) -> List[CodeRelevantItem]:
+    """Extract discrete implementation items from a pipeline summary.
+
+    Stage 4 of the pipeline: Uses the AI provider to decompose the summary
+    into actionable implementation tasks.
+
+    Args:
+        summary: The PipelineSummary from stages 1-3.
+        provider: The AI provider to use for extraction.
+
+    Returns:
+        List of CodeRelevantItem objects.
+
+    Raises:
+        ValueError: If extraction fails or JSON parsing fails.
+    """
+    prompt = get_code_relevant_items_prompt(summary)
+    logger.info(f"Extracting code-relevant items for topic: {summary.topic}")
+
+    response_text = provider.call_model(prompt)
+    response_text = _strip_markdown_code_block(response_text)
+
+    try:
+        data = json.loads(response_text)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse code-relevant items JSON: {response_text}")
+        raise ValueError(f"Invalid JSON response from code-relevant items extraction: {e}")
+
+    if not isinstance(data, list):
+        logger.error(f"Expected JSON array, got: {type(data)}")
+        raise ValueError("Expected JSON array for code-relevant items")
+
+    valid_types = {"api_design", "code_change", "product_flow", "architecture", "debugging"}
+    valid_risks = {"low", "medium", "high"}
+
+    items = []
+    for i, item_data in enumerate(data):
+        item_type = item_data.get("type", "code_change")
+        if item_type not in valid_types:
+            item_type = "code_change"
+
+        risk = item_data.get("risk_level", "low")
+        if risk not in valid_risks:
+            risk = "low"
+
+        # Assign sequential ID if omitted
+        item_id = item_data.get("id", f"item-{i + 1}")
+
+        items.append(CodeRelevantItem(
+            id=item_id,
+            type=item_type,
+            title=item_data.get("title", ""),
+            problem=item_data.get("problem", ""),
+            proposed_change=item_data.get("proposed_change", ""),
+            targets=item_data.get("targets", []),
+            risk_level=risk,
+        ))
+
+    # Ensure sequential IDs
+    for i, item in enumerate(items):
+        item.id = f"item-{i + 1}"
+
+    logger.info(f"Extracted {len(items)} code-relevant items")
+    return items
+
+
 def run_summary_pipeline(
     messages: List[ChatMessage],
     provider: AIProvider
@@ -383,11 +492,22 @@ def run_summary_pipeline(
         proposed_solution=summary.proposed_solution,
     )
 
+    # Stage 4: Extract code-relevant items (only when code changes are indicated)
+    if summary.requires_code_change or summary.code_relevant_types:
+        try:
+            summary.code_relevant_items = extract_code_relevant_items(summary, provider)
+        except Exception as e:
+            logger.warning(f"Stage 4 (item extraction) failed: {e}")
+            if summary.requires_code_change:
+                summary.code_relevant_items = [_fallback_item_from_summary(summary)]
+            # Otherwise leave as empty list
+
     logger.info(
         f"Pipeline complete: type={summary.discussion_type}, "
         f"confidence={summary.classification_confidence:.2f}, "
         f"requires_code_change={summary.requires_code_change}, "
-        f"code_relevant_types={summary.code_relevant_types}"
+        f"code_relevant_types={summary.code_relevant_types}, "
+        f"code_relevant_items={len(summary.code_relevant_items)}"
     )
 
     return summary

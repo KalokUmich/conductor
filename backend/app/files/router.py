@@ -132,6 +132,48 @@ async def download_file(file_id: str):
     )
 
 
+@router.get("/check-duplicate/{room_id}")
+async def check_duplicate(
+    request: Request,
+    room_id: str,
+    filename: str,
+):
+    """Check if a file with the same name already exists in the room.
+
+    Args:
+        room_id: Room ID to check
+        filename: Original filename to check for duplicates
+
+    Returns:
+        Dict with duplicate flag and existing file metadata if found
+    """
+    service = FileStorageService.get_instance()
+    room_files = service.get_room_files(room_id)
+
+    # Case-insensitive filename match (return most recent match)
+    filename_lower = filename.lower()
+    match = None
+    for f in room_files:
+        if f.original_filename.lower() == filename_lower:
+            match = f
+            break
+
+    if match:
+        return {
+            "duplicate": True,
+            "existing_file": {
+                "id": match.id,
+                "original_filename": match.original_filename,
+                "download_url": get_download_url(request, match.id),
+                "uploaded_at": match.uploaded_at,
+                "display_name": match.display_name,
+                "size_bytes": match.size_bytes,
+            },
+        }
+
+    return {"duplicate": False, "existing_file": None}
+
+
 @router.delete("/room/{room_id}")
 async def delete_room_files(room_id: str):
     """Delete all files for a room.

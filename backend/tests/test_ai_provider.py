@@ -845,7 +845,7 @@ class TestSummarizeEndpoint:
             resolver.resolve()
             set_resolver(resolver)
 
-            # Mock call_model for the pipeline (classification + summary)
+            # Mock call_model for the pipeline (classification + summary + items)
             with patch.object(
                 resolver.get_active_provider(),
                 "call_model",
@@ -863,7 +863,17 @@ class TestSummarizeEndpoint:
                         "affected_components": ["file1.py", "file2.py"],
                         "risk_level": "medium",
                         "next_steps": ["Step 1", "Step 2"]
-                    })
+                    }),
+                    # Third call: item extraction (stage 4)
+                    json.dumps([{
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Test item",
+                        "problem": "Test problem",
+                        "proposed_change": "Test change",
+                        "targets": ["file1.py"],
+                        "risk_level": "medium",
+                    }])
                 ]
             ):
                 client = TestClient(test_app)
@@ -891,6 +901,9 @@ class TestSummarizeEndpoint:
                 # Verify pipeline metadata
                 assert data["discussion_type"] == "general"
                 assert data["classification_confidence"] == 0.8
+                # Verify code_relevant_items
+                assert len(data["code_relevant_items"]) == 1
+                assert data["code_relevant_items"][0]["title"] == "Test item"
 
         # Clean up
         set_resolver(None)
@@ -2231,7 +2244,7 @@ class TestAISummaryPipeline:
         from app.ai_provider import ChatMessage
 
         mock_provider = MagicMock()
-        # First call for classification
+        # First call for classification, second for summary, third for item extraction
         mock_provider.call_model.side_effect = [
             json.dumps({"discussion_type": "code_change", "confidence": 0.95}),
             json.dumps({
@@ -2244,7 +2257,16 @@ class TestAISummaryPipeline:
                 "affected_components": ["handler.py"],
                 "risk_level": "low",
                 "next_steps": ["Fix the bug"]
-            })
+            }),
+            json.dumps([{
+                "id": "item-1",
+                "type": "code_change",
+                "title": "Add null check",
+                "problem": "Null pointer error",
+                "proposed_change": "Add null check in handler",
+                "targets": ["handler.py"],
+                "risk_level": "low",
+            }])
         ]
 
         messages = [
@@ -2259,7 +2281,8 @@ class TestAISummaryPipeline:
         assert result.classification_confidence == 0.95
         assert result.topic == "Bug Fix"
         assert result.requires_code_change is True  # code_change type always true
-        assert mock_provider.call_model.call_count == 2
+        assert mock_provider.call_model.call_count == 3  # classification + summary + items
+        assert len(result.code_relevant_items) == 1
 
     def test_pipeline_summary_dataclass_defaults(self):
         """Test PipelineSummary dataclass default values."""
@@ -2722,3 +2745,282 @@ class TestCodePromptEndpointWithDetectedLanguages:
         assert response.status_code == 200
         data = response.json()
         assert "code_prompt" in data
+
+
+# =============================================================================
+# TestExtractCodeRelevantItems
+# =============================================================================
+
+
+class TestExtractCodeRelevantItems:
+    """Tests for extract_code_relevant_items() - pipeline stage 4."""
+
+    def _make_summary(self, **kwargs):
+        from app.ai_provider.pipeline import PipelineSummary
+        defaults = {
+            "topic": "Add user auth",
+            "core_problem": "No auth exists",
+            "proposed_solution": "Add JWT-based auth",
+            "requires_code_change": True,
+            "affected_components": ["auth/login.py"],
+            "risk_level": "medium",
+            "next_steps": ["Create login endpoint"],
+            "discussion_type": "code_change",
+        }
+        defaults.update(kwargs)
+        return PipelineSummary(**defaults)
+
+    def test_single_item_extraction(self):
+        """Should extract a single item from AI response."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps([
+            {
+                "id": "item-1",
+                "type": "code_change",
+                "title": "Add login endpoint",
+                "problem": "No auth endpoint",
+                "proposed_change": "Create POST /auth/login",
+                "targets": ["auth/login.py"],
+                "risk_level": "medium",
+            }
+        ])
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert len(items) == 1
+        assert items[0].id == "item-1"
+        assert items[0].type == "code_change"
+        assert items[0].title == "Add login endpoint"
+        assert items[0].targets == ["auth/login.py"]
+        assert items[0].risk_level == "medium"
+
+    def test_multiple_items_extraction(self):
+        """Should extract multiple items and assign sequential IDs."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps([
+            {
+                "type": "api_design",
+                "title": "Create endpoint",
+                "problem": "No endpoint",
+                "proposed_change": "Add POST /users",
+                "targets": ["api/users.py"],
+                "risk_level": "low",
+            },
+            {
+                "type": "code_change",
+                "title": "Add middleware",
+                "problem": "No auth check",
+                "proposed_change": "Add auth middleware",
+                "targets": ["middleware/auth.py"],
+                "risk_level": "medium",
+            },
+        ])
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert len(items) == 2
+        assert items[0].id == "item-1"
+        assert items[1].id == "item-2"
+        assert items[0].type == "api_design"
+        assert items[1].type == "code_change"
+
+    def test_invalid_json_raises_value_error(self):
+        """Should raise ValueError when AI returns invalid JSON."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = "not valid json"
+
+        summary = self._make_summary()
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            extract_code_relevant_items(summary, mock_provider)
+
+    def test_markdown_wrapped_response(self):
+        """Should handle markdown-wrapped JSON responses."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        items_json = json.dumps([{
+            "id": "item-1",
+            "type": "code_change",
+            "title": "Fix bug",
+            "problem": "Bug exists",
+            "proposed_change": "Fix it",
+            "targets": ["app.py"],
+            "risk_level": "low",
+        }])
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = f"```json\n{items_json}\n```"
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert len(items) == 1
+        assert items[0].title == "Fix bug"
+
+    def test_sequential_id_assignment(self):
+        """Should assign sequential IDs even when AI omits them."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps([
+            {"type": "code_change", "title": "A", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
+            {"type": "code_change", "title": "B", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
+            {"type": "code_change", "title": "C", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
+        ])
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert [i.id for i in items] == ["item-1", "item-2", "item-3"]
+
+    def test_invalid_type_defaults_to_code_change(self):
+        """Should default invalid types to code_change."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps([{
+            "type": "invalid_type",
+            "title": "Test",
+            "problem": "",
+            "proposed_change": "",
+            "targets": [],
+            "risk_level": "low",
+        }])
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert items[0].type == "code_change"
+
+    def test_invalid_risk_defaults_to_low(self):
+        """Should default invalid risk levels to low."""
+        from app.ai_provider.pipeline import extract_code_relevant_items
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = json.dumps([{
+            "type": "code_change",
+            "title": "Test",
+            "problem": "",
+            "proposed_change": "",
+            "targets": [],
+            "risk_level": "critical",
+        }])
+
+        summary = self._make_summary()
+        items = extract_code_relevant_items(summary, mock_provider)
+
+        assert items[0].risk_level == "low"
+
+
+# =============================================================================
+# TestPipelineWithItems
+# =============================================================================
+
+
+class TestPipelineWithItems:
+    """Tests for run_summary_pipeline() with stage 4 item extraction."""
+
+    def test_pipeline_produces_items_when_code_change_required(self):
+        """Pipeline should produce code_relevant_items when requires_code_change is True."""
+        from app.ai_provider.pipeline import run_summary_pipeline
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.side_effect = [
+            # Stage 1: classification
+            json.dumps({"discussion_type": "code_change", "confidence": 0.9}),
+            # Stage 2: targeted summary
+            json.dumps({
+                "topic": "Add auth",
+                "core_problem": "No auth",
+                "proposed_solution": "Add JWT",
+                "requires_code_change": True,
+                "impact_scope": "module",
+                "affected_components": ["auth.py"],
+                "risk_level": "medium",
+                "next_steps": ["Add endpoint"],
+            }),
+            # Stage 4: item extraction
+            json.dumps([{
+                "id": "item-1",
+                "type": "code_change",
+                "title": "Add auth endpoint",
+                "problem": "No auth",
+                "proposed_change": "Create POST /auth",
+                "targets": ["auth.py"],
+                "risk_level": "medium",
+            }]),
+        ]
+
+        messages = [MagicMock(role="host", text="Add auth", timestamp=1234567890)]
+        result = run_summary_pipeline(messages, mock_provider)
+
+        assert len(result.code_relevant_items) == 1
+        assert result.code_relevant_items[0].title == "Add auth endpoint"
+        # call_model called 3 times: classification, summary, items
+        assert mock_provider.call_model.call_count == 3
+
+    def test_pipeline_fallback_on_stage4_failure(self):
+        """Pipeline should use fallback item when stage 4 fails and requires_code_change is True."""
+        from app.ai_provider.pipeline import run_summary_pipeline
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.side_effect = [
+            # Stage 1: classification
+            json.dumps({"discussion_type": "code_change", "confidence": 0.9}),
+            # Stage 2: targeted summary
+            json.dumps({
+                "topic": "Fix bug",
+                "core_problem": "Bug in auth",
+                "proposed_solution": "Patch the bug",
+                "requires_code_change": True,
+                "impact_scope": "local",
+                "affected_components": ["auth.py"],
+                "risk_level": "low",
+                "next_steps": ["Fix it"],
+            }),
+            # Stage 4: fails
+            Exception("AI failure"),
+        ]
+
+        messages = [MagicMock(role="host", text="Fix bug", timestamp=1234567890)]
+        result = run_summary_pipeline(messages, mock_provider)
+
+        # Should have fallback item
+        assert len(result.code_relevant_items) == 1
+        assert result.code_relevant_items[0].id == "item-1"
+        assert result.code_relevant_items[0].title == "Fix bug"
+        assert result.code_relevant_items[0].targets == ["auth.py"]
+
+    def test_pipeline_skips_stage4_when_no_code_change(self):
+        """Pipeline should skip stage 4 when no code change is needed."""
+        from app.ai_provider.pipeline import run_summary_pipeline
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.side_effect = [
+            # Stage 1: classification
+            json.dumps({"discussion_type": "general", "confidence": 0.7}),
+            # Stage 2: targeted summary
+            json.dumps({
+                "topic": "Team standup",
+                "core_problem": "Weekly planning",
+                "proposed_solution": "Continue current sprint",
+                "requires_code_change": False,
+                "impact_scope": "local",
+                "affected_components": [],
+                "risk_level": "low",
+                "next_steps": ["Continue work"],
+            }),
+        ]
+
+        messages = [MagicMock(role="host", text="Standup", timestamp=1234567890)]
+        result = run_summary_pipeline(messages, mock_provider)
+
+        assert result.code_relevant_items == []
+        # call_model called only 2 times: classification, summary (no stage 4)
+        assert mock_provider.call_model.call_count == 2

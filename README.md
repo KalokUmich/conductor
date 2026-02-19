@@ -18,14 +18,14 @@ Conductor is a VS Code collaboration extension plus a FastAPI backend for team c
   - `Hosting`
   - `Joining`
   - `Joined`
-- Live Share host/join flow with conflict checks before starting a new host session
+- Live Share host/join flow with conflict checks before starting a new host session; End Chat auto-closes the active Live Share session
 - Real-time WebSocket chat with:
   - reconnect recovery (`since`)
   - typing indicators
   - read receipts
   - message deduplication
   - paginated history
-- File upload/download (20MB limit, extension-host upload proxy)
+- File upload/download (20MB limit, extension-host upload proxy, duplicate detection, retry logic)
 - Code snippet sharing + editor navigation
 - Change review workflow:
   - `POST /generate-changes` (MockAgent)
@@ -35,15 +35,16 @@ Conductor is a VS Code collaboration extension plus a FastAPI backend for team c
   - audit logging (`POST /audit/log-apply`)
 - AI provider workflow:
   - provider health/status (`GET /ai/status`)
-  - two-stage summary pipeline (`POST /ai/summarize`)
+  - four-stage summary pipeline (`POST /ai/summarize`): classification, targeted summary, code relevance scoring, item extraction
   - code prompt generation (`POST /ai/code-prompt`)
+  - selective code prompt generation (`POST /ai/code-prompt/selective`)
   - AI message posting to room (`POST /chat/{room_id}/ai-message`)
 
 ### Implemented vs Not Fully Wired
 
 Implemented end-to-end:
-- Session FSM + host/join UX
-- Chat/file/snippet workflow
+- Session FSM + host/join UX (End Chat auto-closes Live Share)
+- Chat/file/snippet workflow (file upload with duplicate detection and retry logic)
 - AI summarize + code-prompt generation in extension UI
 
 Still limited:
@@ -167,14 +168,14 @@ Conductor 是一个 VS Code 协作扩展 + FastAPI 后端，提供团队聊天�
   - `Hosting`
   - `Joining`
   - `Joined`
-- Live Share 主持/加入流程，启动新会话前会做冲突检查
+- Live Share 主持/加入流程，启动新会话前会做冲突检查；结束会话时自动关闭 Live Share
 - WebSocket 实时聊天：
   - 断线恢复（`since`）
   - 输入状态
   - 已读回执
   - 消息去重
   - 历史分页
-- 文件上传/下载（20MB 上限，上传由 extension host 代理）
+- 文件上传/下载（20MB 上限，上传由 extension host 代理，重复文件检测，失败重试）
 - 代码片段分享与编辑器定位跳转
 - 变更审查流程：
   - `POST /generate-changes`（MockAgent）
@@ -184,15 +185,16 @@ Conductor 是一个 VS Code 协作扩展 + FastAPI 后端，提供团队聊天�
   - 审计日志（`POST /audit/log-apply`）
 - AI 流程：
   - Provider 状态（`GET /ai/status`）
-  - 两阶段摘要（`POST /ai/summarize`）
+  - 四阶段摘要（`POST /ai/summarize`）：分类、定向摘要、代码相关性评分、条目提取
   - 代码提示词生成（`POST /ai/code-prompt`）
+  - 选择性代码提示词生成（`POST /ai/code-prompt/selective`）
   - AI 消息入房间（`POST /chat/{room_id}/ai-message`）
 
 ### 已实现与未完全接入
 
 已实现：
-- 会话状态机 + Host/Guest 交互
-- 聊天/文件/代码片段流程
+- 会话状态机 + Host/Guest 交互（结束会话自动关闭 Live Share）
+- 聊天/文件/代码片段流程（文件上传含重复检测与失败重试）
 - 扩展端 AI 摘要与代码提示词流程
 
 仍有限制：

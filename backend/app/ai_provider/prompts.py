@@ -26,27 +26,50 @@ DiscussionType = Literal[
 # Stage 1: Classification Prompt
 # =============================================================================
 
-CLASSIFICATION_PROMPT = """You are a software engineering discussion classifier. Your task is to categorize a team conversation into exactly one discussion type.
+CLASSIFICATION_PROMPT = """You are a software engineering discussion classifier. Analyze a team conversation and assign it to exactly one category.
 
 <conversation>
 {conversation}
 </conversation>
 
-<instructions>
-Analyze the conversation above and classify it into ONE of the following categories:
+<categories>
+Each category is defined by its PRIMARY SIGNAL — the dominant characteristic that separates it from the others:
 
-1. api_design - Discussions about API endpoints, request/response formats, REST/GraphQL design, versioning
-2. product_flow - Discussions about user flows, feature requirements, UX decisions, product behavior
-3. code_change - Discussions about specific code modifications, refactoring, bug fixes, implementation details
-4. architecture - Discussions about system design, component structure, scalability, infrastructure
-5. innovation - Discussions about new ideas, experiments, proof of concepts, research
-6. debugging - Discussions about investigating issues, error analysis, troubleshooting, root cause analysis
-7. general - Discussions that don't fit clearly into the above categories
+1. **debugging** — A specific error, exception, crash, or unexpected behavior is being investigated or fixed.
+   Primary signal: error messages, stack traces, "it's broken", "why is X happening", root cause analysis.
 
-If the conversation is too short or unclear to classify confidently, use "general" with a low confidence score.
+2. **api_design** — The team is deciding WHAT an API should look like: endpoint paths, HTTP methods, request/response schemas, versioning, contracts between services.
+   Primary signal: endpoint paths, payload structure, REST/GraphQL semantics, API contracts.
+   Note: Use this even if implementation is also discussed, as long as the API contract is the focus.
+
+3. **architecture** — The team is deciding HOW to structure or organize the system: component relationships, data flow, patterns, infrastructure, service boundaries, technology choices.
+   Primary signal: "should we use X or Y", service decomposition, database design, scalability decisions.
+
+4. **product_flow** — The team is discussing user-facing behavior: what a feature should do from the user's perspective, UX decisions, acceptance criteria, user journeys, screen behavior.
+   Primary signal: "the user should be able to", "when they click X", feature requirements, UI/UX decisions.
+
+5. **innovation** — Exploring a new idea, technology, or approach where no clear implementation path exists yet. Speculative, research-oriented.
+   Primary signal: "what if we", "I wonder if", proof-of-concept, unknowns, research, experimentation.
+
+6. **code_change** — The team has already agreed on WHAT to build and is discussing the HOW: specific file/function changes, refactoring a known component, implementation approach for a well-defined task.
+   Primary signal: concrete file or function names, clear task scope with agreed-upon direction, refactoring.
+   Note: Do NOT use for bug investigation (→ debugging), API contract decisions (→ api_design), or structural design (→ architecture).
+
+7. **general** — The conversation does not fit any category above, is too short or vague to classify, or covers multiple unrelated topics equally.
+</categories>
+
+<decision_guide>
+Apply in this priority order — use the FIRST category whose primary signal is clearly present:
+1. Is there a specific bug, error, or unexpected behavior being investigated? → debugging
+2. Is the focus on what an API contract or endpoint should look like? → api_design
+3. Is the focus on how to structure or organize components/systems? → architecture
+4. Is the focus on user-facing behavior or feature requirements? → product_flow
+5. Is this exploring an unproven idea with significant unknowns? → innovation
+6. Is the team implementing a well-defined, already-agreed-upon change? → code_change
+7. Otherwise → general
+</decision_guide>
 
 Output ONLY valid JSON with no markdown formatting, no code blocks, and no additional explanation.
-</instructions>
 
 <output_schema>
 {{
@@ -55,14 +78,28 @@ Output ONLY valid JSON with no markdown formatting, no code blocks, and no addit
 }}
 </output_schema>
 
-<example>
-Input conversation:
-<message role="host">We need to add a GET /users endpoint that returns paginated results</message>
-<message role="engineer">I suggest using cursor-based pagination with a limit parameter</message>
+<examples>
+Conversation: "The /users endpoint is returning 500 when email is null. Stack trace points to validate_user(). We need to add a null check."
+Output: {{"discussion_type": "debugging", "confidence": 0.95}}
 
-Output:
-{{"discussion_type": "api_design", "confidence": 0.92}}
-</example>
+Conversation: "Should GET /users return all fields or just public ones? And should we use offset or cursor-based pagination?"
+Output: {{"discussion_type": "api_design", "confidence": 0.91}}
+
+Conversation: "I think we should split auth and billing into separate services. They have no reason to share a database."
+Output: {{"discussion_type": "architecture", "confidence": 0.88}}
+
+Conversation: "When the user clicks Save, show a loading spinner and disable the button until the API responds."
+Output: {{"discussion_type": "product_flow", "confidence": 0.87}}
+
+Conversation: "What if we replaced Anthropic with a local LLM? Let's prototype it and see if latency is acceptable."
+Output: {{"discussion_type": "innovation", "confidence": 0.84}}
+
+Conversation: "Let's refactor ChatManager to extract the connection pool. We know the files: chat/manager.py and chat/pool.py."
+Output: {{"discussion_type": "code_change", "confidence": 0.90}}
+
+Conversation: "We need to add pagination to the users list and also update the API docs."
+Output: {{"discussion_type": "api_design", "confidence": 0.78}}
+</examples>
 
 Output only the JSON object:"""
 
@@ -611,6 +648,128 @@ The following code snippet provides relevant context:
         impact_scope=impact_scope or "local",
         summaries_section=summaries_section,
         context_section=context_section,
+    )
+
+
+# =============================================================================
+# Stage 4: Code Relevant Items Extraction Prompt
+# =============================================================================
+
+CODE_RELEVANT_ITEMS_PROMPT = """You are a software engineering task decomposer. Your job is to extract discrete, actionable implementation tasks from a discussion summary.
+
+<summary>
+Discussion Type: {discussion_type}
+Topic: {topic}
+Core Problem: {core_problem}
+Proposed Solution: {proposed_solution}
+Affected Components: {affected_components}
+Next Steps: {next_steps}
+</summary>
+
+<instructions>
+Extract 1 to 5 discrete implementation items from the summary above. Each item should be a single, focused coding task that a developer could pick up independently.
+
+Rules:
+- Each item must have a clear, imperative title (e.g., "Add pagination to /users endpoint")
+- The "type" must be one of: api_design, code_change, product_flow, architecture, debugging
+  - api_design: the item is about creating or modifying an API endpoint or contract
+  - debugging: the item is a specific bug fix
+  - architecture: the item restructures how components relate
+  - product_flow: the item changes user-visible behavior or UI
+  - code_change: the item is a concrete implementation not covered by the above
+- "targets" should list specific file paths or component names when mentioned, otherwise use descriptive component names
+- "risk_level" must be one of: low, medium, high
+- If the summary describes a single focused change, return exactly 1 item
+- If the summary describes multiple distinct changes, split them into separate items (up to 5)
+- Assign sequential IDs: "item-1", "item-2", etc.
+
+Output ONLY a valid JSON array with no markdown formatting, no code blocks, and no additional explanation.
+</instructions>
+
+<output_schema>
+[
+  {{
+    "id": "item-1",
+    "type": "code_change",
+    "title": "Short imperative title",
+    "problem": "Specific problem this item addresses",
+    "proposed_change": "What code change to make",
+    "targets": ["file/path.py", "component_name"],
+    "risk_level": "low"
+  }}
+]
+</output_schema>
+
+<example>
+Input summary:
+Discussion Type: api_design
+Topic: Add user authentication with JWT
+Core Problem: No secure authentication mechanism exists
+Proposed Solution: Implement JWT-based auth with login/logout endpoints and middleware
+Affected Components: auth/login.py, auth/middleware.py, api/routes.py
+Next Steps: Create JWT utility, Add login endpoint, Add auth middleware
+
+Output:
+[
+  {{
+    "id": "item-1",
+    "type": "api_design",
+    "title": "Create JWT token utility and login endpoint",
+    "problem": "No authentication endpoint exists for users to obtain tokens",
+    "proposed_change": "Add POST /auth/login endpoint that validates credentials and returns JWT tokens",
+    "targets": ["auth/login.py", "api/routes.py"],
+    "risk_level": "medium"
+  }},
+  {{
+    "id": "item-2",
+    "type": "code_change",
+    "title": "Add JWT authentication middleware",
+    "problem": "API routes are not protected by authentication",
+    "proposed_change": "Create middleware that validates JWT tokens on protected routes and rejects unauthorized requests",
+    "targets": ["auth/middleware.py"],
+    "risk_level": "medium"
+  }}
+]
+</example>
+
+Output only the JSON array:"""
+
+
+def get_code_relevant_items_prompt(summary) -> str:
+    """Generate a prompt for extracting code-relevant items from a summary.
+
+    Args:
+        summary: A PipelineSummary or dict-like object with summary fields.
+
+    Returns:
+        Complete prompt string ready for AI model input.
+    """
+    # Support both dataclass and dict access
+    if hasattr(summary, "discussion_type"):
+        discussion_type = summary.discussion_type
+        topic = summary.topic
+        core_problem = summary.core_problem
+        proposed_solution = summary.proposed_solution
+        affected_components = summary.affected_components
+        next_steps = summary.next_steps
+    else:
+        discussion_type = summary.get("discussion_type", "general")
+        topic = summary.get("topic", "")
+        core_problem = summary.get("core_problem", "")
+        proposed_solution = summary.get("proposed_solution", "")
+        affected_components = summary.get("affected_components", [])
+        next_steps = summary.get("next_steps", [])
+
+    components_str = ", ".join(affected_components) if affected_components else "None specified"
+    steps_str = ", ".join(next_steps) if next_steps else "None specified"
+
+    return CODE_RELEVANT_ITEMS_PROMPT.format(
+        discussion_type=discussion_type,
+        topic=topic,
+        core_problem=core_problem,
+        proposed_solution=proposed_solution,
+        affected_components=components_str,
+        next_steps=steps_str,
     )
 
 

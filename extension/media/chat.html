@@ -185,6 +185,24 @@
         }
         .ai-card-border { animation: borderGlow 3s ease-in-out infinite; }
 
+        /* --- Staggered section entrance for AI summary card --- */
+        @keyframes sectionFadeUp {
+            from { opacity: 0; transform: translateY(5px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .ai-section-1 { animation: sectionFadeUp 0.25s ease-out 0.05s both; }
+        .ai-section-2 { animation: sectionFadeUp 0.25s ease-out 0.13s both; }
+        .ai-section-3 { animation: sectionFadeUp 0.25s ease-out 0.21s both; }
+        .ai-section-4 { animation: sectionFadeUp 0.25s ease-out 0.29s both; }
+        .ai-section-5 { animation: sectionFadeUp 0.25s ease-out 0.37s both; }
+
+        /* --- CGP card animated border --- */
+        @keyframes cgpBorderGlow {
+            0%, 100% { border-color: rgba(34,211,238,0.18); }
+            50%       { border-color: rgba(56,189,248,0.32); }
+        }
+        .cgp-card-border { animation: cgpBorderGlow 4s ease-in-out infinite; }
+
         /* --- Modal close button --- */
         .modal-close-btn { transition: transform 0.2s ease, color 0.2s ease; }
         .modal-close-btn:hover { transform: rotate(90deg); }
@@ -322,6 +340,50 @@
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
         }
+
+        /* === Upload spinner === */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .upload-spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        /* === Drag-drop input glow === */
+        @keyframes inputDropPulse {
+            0%, 100% { box-shadow: 0 0 12px rgba(139,92,246,0.4), 0 0 0 2px rgba(139,92,246,0.3); }
+            50% { box-shadow: 0 0 20px rgba(139,92,246,0.6), 0 0 0 3px rgba(139,92,246,0.5); }
+        }
+        .input-drop-active {
+            border-color: rgba(139,92,246,0.6) !important;
+            animation: inputDropPulse 1.2s ease-in-out infinite;
+        }
+
+        /* === Toast notification === */
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(12px); }
+        }
+        .toast {
+            position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 100;
+            padding: 0.75rem 1.25rem; border-radius: 0.75rem;
+            font-size: 0.8125rem; font-weight: 500;
+            backdrop-filter: blur(12px);
+            animation: toastIn 0.25s ease-out;
+            max-width: 320px;
+        }
+        .toast.hiding { animation: toastOut 0.25s ease-in forwards; }
+        .toast-error { background: rgba(239,68,68,0.85); color: #fff; border: 1px solid rgba(239,68,68,0.3); }
+        .toast-success { background: rgba(34,197,94,0.85); color: #fff; border: 1px solid rgba(34,197,94,0.3); }
+        .toast-info { background: rgba(59,130,246,0.85); color: #fff; border: 1px solid rgba(59,130,246,0.3); }
     </style>
 </head>
 <body class="bg-gray-900 bg-conductor text-gray-100 h-screen overflow-hidden">
@@ -654,8 +716,9 @@
                 <button
                     id="btn-stop-session"
                     class="btn-secondary text-xs px-3 py-1.5"
+                    title="Leave session — your chat data is preserved"
                 >
-                    Stop
+                    Quit
                 </button>
             </div>
 
@@ -668,8 +731,9 @@
                 <button
                     id="btn-leave-session"
                     class="btn-secondary text-xs px-3 py-1.5"
+                    title="Leave session — your chat data is preserved"
                 >
-                    Leave
+                    Quit
                 </button>
             </div>
 
@@ -845,7 +909,7 @@
                 <pre id="code-snippet-content" class="code-snippet-plain p-3 text-xs font-mono text-gray-300 overflow-x-auto max-h-32 overflow-y-auto"></pre>
             </div>
 
-            <div class="flex items-end gap-2">
+            <div id="input-wrapper" class="flex items-end gap-2">
                 <!-- Attachment Button -->
                 <button
                     id="btn-attach"
@@ -1055,6 +1119,17 @@
                                 Load
                             </button>
                         </div>
+                    </div>
+                    <!-- Output Mode Dropdown -->
+                    <div>
+                        <label for="room-output-mode" class="block text-sm font-medium text-gray-300 mb-2">Code Prompt Output Mode</label>
+                        <select id="room-output-mode" class="w-full bg-gray-900 border border-gray-600 text-gray-100 text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-violet-500 focus:border-violet-500">
+                            <option value="">Server Default</option>
+                            <option value="unified_diff">Unified Diff — git-apply patches only</option>
+                            <option value="direct_repo_edits">Direct Repo Edits — full file contents, run tests</option>
+                            <option value="plan_then_diff">Plan then Diff — implementation plan + patches</option>
+                        </select>
+                        <p class="text-xs text-gray-500 mt-1">Controls the output format in AI-generated code prompts for this room.</p>
                     </div>
                     <!-- Code Style Textarea with header row -->
                     <div>
@@ -1411,16 +1486,19 @@
         const btnLeaveSession = document.getElementById('btn-leave-session');
 
         // File upload elements
+        // Note: fileInput, filePreview, btnAttach are stable (never replaced).
+        // The others are inside filePreview and get destroyed by showDuplicatePrompt(),
+        // so we use let and re-query them after restoreFilePreviewUI().
         const fileInput = document.getElementById('file-input');
         const filePreview = document.getElementById('file-preview');
-        const filePreviewIcon = document.getElementById('file-preview-icon');
-        const filePreviewName = document.getElementById('file-preview-name');
-        const filePreviewSize = document.getElementById('file-preview-size');
-        const filePreviewImg = document.getElementById('file-preview-img');
-        const fileCaption = document.getElementById('file-caption');
+        let filePreviewIcon = document.getElementById('file-preview-icon');
+        let filePreviewName = document.getElementById('file-preview-name');
+        let filePreviewSize = document.getElementById('file-preview-size');
+        let filePreviewImg = document.getElementById('file-preview-img');
+        let fileCaption = document.getElementById('file-caption');
         const btnAttach = document.getElementById('btn-attach');
-        const btnRemoveFile = document.getElementById('btn-remove-file');
-        const btnUploadFile = document.getElementById('btn-upload-file');
+        let btnRemoveFile = document.getElementById('btn-remove-file');
+        let btnUploadFile = document.getElementById('btn-upload-file');
 
         // Code snippet elements
         const btnCodeSnippet = document.getElementById('btn-code-snippet');
@@ -1466,6 +1544,7 @@
         const roomSettingsContent = document.getElementById('room-settings-content');
         const roomSettingsFooter = document.getElementById('room-settings-footer');
         const roomCodeStyleTextarea = document.getElementById('room-code-style');
+        const roomOutputModeSelect = document.getElementById('room-output-mode');
         const styleTemplateSelect = document.getElementById('style-template-select');
         const btnLoadTemplate = document.getElementById('btn-load-template');
         const btnTogglePreview = document.getElementById('btn-toggle-preview');
@@ -1928,7 +2007,26 @@
             const nowInChat = chatStates.includes(state);
 
             if (nowInChat && !wasInChat) {
-                // Entering chat state — connect
+                // Entering chat state — reset ended flag and re-enable input
+                sessionEnded = false;
+                chatInput.disabled = false;
+                chatInput.placeholder = 'Type a message...';
+                btnSend.disabled = false;
+                btnSend.classList.remove('opacity-50', 'cursor-not-allowed');
+                // Clear stale messages from previous session
+                messagesContainer.innerHTML = '';
+                if (connectionStatus) {
+                    connectionStatus.style.display = '';
+                    messagesContainer.appendChild(connectionStatus);
+                }
+                chatMessages.length = 0;
+                lastMessageUserId = null;
+                lastMessageTime = 0;
+                lastMessageDate = null;
+                seenMessageIds.clear();
+                lastMessageTimestamp = 0;
+                reconnectAttempts = 0;
+                // Connect
                 connectWebSocket();
             } else if (!nowInChat && wasInChat) {
                 // Leaving chat state — disconnect
@@ -2141,6 +2239,9 @@
                 case 'uploadFileResult':
                     handleUploadFileResult(message);
                     break;
+                case 'checkDuplicateFileResult':
+                    handleCheckDuplicateFileResult(message);
+                    break;
                 case 'codeSnippet':
                     // Received code snippet from extension (user selected code in editor)
                     handleCodeSnippetFromExtension(message);
@@ -2254,11 +2355,11 @@
                 console.log('[WebView] File upload complete, preview cleared');
             } else {
                 console.error('[WebView] File upload failed:', message.error);
-                alert(`File upload failed: ${message.error}`);
+                showToast(`File upload failed: ${message.error}`, 'error');
                 // Reset upload state but keep preview so user can retry
                 isUploading = false;
                 btnUploadFile.disabled = false;
-                btnUploadFile.textContent = '⬆️ Upload';
+                btnUploadFile.textContent = 'Upload';
             }
         }
 
@@ -2406,6 +2507,26 @@
         function formatTime(ts) {
             const date = new Date(ts * 1000);
             return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        }
+
+        /**
+         * Show a toast notification.
+         * @param {string} message - Toast message text.
+         * @param {'error'|'success'|'info'} type - Toast type.
+         */
+        function showToast(message, type = 'error') {
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('hiding');
+                setTimeout(() => toast.remove(), 250);
+            }, 4000);
         }
 
         /**
@@ -2952,45 +3073,154 @@
             const components = aiData.affected_components || [];
             const steps = aiData.next_steps || [];
 
-            // Risk badge color
-            let riskBadgeClass = 'bg-green-600';
-            if (riskLevel === 'high') riskBadgeClass = 'bg-red-600';
-            else if (riskLevel === 'medium') riskBadgeClass = 'bg-yellow-600';
+            // Risk visual system
+            const riskVisual = ({
+                low:    { dot: 'bg-green-400',  text: 'text-green-400',  badge: 'bg-green-600/80'  },
+                medium: { dot: 'bg-amber-400',  text: 'text-amber-400',  badge: 'bg-amber-600/80'  },
+                high:   { dot: 'bg-red-400',    text: 'text-red-400',    badge: 'bg-red-600/80'    },
+            })[riskLevel] || { dot: 'bg-green-400', text: 'text-green-400', badge: 'bg-green-600/80' };
+
+            // Discussion type badge (header pill)
+            const discussionTypeBadge = aiData.discussion_type
+                ? `<span class="px-2 py-0.5 bg-purple-900/60 text-purple-300 text-[10px] rounded-full border border-purple-700/40 font-medium">${escapeHtml(aiData.discussion_type.replace(/_/g, ' '))}</span>`
+                : '';
 
             // Components HTML
             const componentsHtml = components.length > 0 ? `
-                <div class="mt-3">
-                    <div class="text-xs font-medium text-gray-400 mb-1">Affected Components:</div>
+                <div class="px-4 pb-3 ai-section-3">
+                    <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-1.5">Files</div>
                     <div class="flex flex-wrap gap-1">
-                        ${components.map(c => `<span class="px-2 py-0.5 bg-gray-700 text-gray-300 text-xs rounded">${escapeHtml(c)}</span>`).join('')}
+                        ${components.map(c => `<code class="px-2 py-0.5 bg-gray-900/70 text-gray-300 text-[11px] rounded-md border border-gray-700/50 font-mono">${escapeHtml(c)}</code>`).join('')}
                     </div>
                 </div>
             ` : '';
 
             // Next steps HTML
             const stepsHtml = steps.length > 0 ? `
-                <div class="mt-3">
-                    <div class="text-xs font-medium text-gray-400 mb-1">Next Steps:</div>
-                    <ul class="list-disc list-inside text-sm text-gray-300 space-y-0.5">
-                        ${steps.map(s => `<li>${escapeHtml(s)}</li>`).join('')}
-                    </ul>
+                <div class="px-4 pb-3 ai-section-4">
+                    <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-2">Next Steps</div>
+                    <div class="space-y-1.5">
+                        ${steps.map((s, i) => `
+                            <div class="flex items-start gap-2">
+                                <span class="flex-shrink-0 w-4 h-4 rounded-full bg-purple-900/60 border border-purple-700/40 text-[10px] font-bold text-purple-300 flex items-center justify-center mt-0.5">${i + 1}</span>
+                                <span class="text-xs text-gray-300 leading-relaxed">${escapeHtml(s)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
                 </div>
             ` : '';
 
-            // Generate Code Prompt button - only shown to lead when requires_code_change is true
+            // Code prompt section - checklist UI for items, or single button fallback
             const isUserLead = session.userId === session.leadId;
+            const codeRelevantItems = aiData.code_relevant_items || [];
             const showCodePromptBtn = isUserLead && aiData.requires_code_change;
             const codePromptBtnId = `gen-code-btn-${msg.id || Date.now()}`;
-            const codePromptBtnHtml = showCodePromptBtn ? `
-                <div class="mt-4 pt-3 border-t border-gray-600">
-                    <button id="${codePromptBtnId}" class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
-                        </svg>
-                        Generate Code Prompt
-                    </button>
-                </div>
-            ` : '';
+            const itemsChecklistId = `items-checklist-${msg.id || Date.now()}`;
+
+            let codePromptBtnHtml = '';
+            if (showCodePromptBtn && codeRelevantItems.length === 1) {
+                // Single item: skip checklist, show a direct button
+                const item = codeRelevantItems[0];
+                const typeBadgeColors = {
+                    'api_design': 'bg-cyan-700',
+                    'code_change': 'bg-blue-700',
+                    'product_flow': 'bg-emerald-700',
+                    'architecture': 'bg-purple-700',
+                    'debugging': 'bg-orange-700',
+                };
+                const riskBadgeColors = {
+                    'low': 'bg-green-600',
+                    'medium': 'bg-yellow-600',
+                    'high': 'bg-red-600',
+                };
+                const typeBg = typeBadgeColors[item.type] || 'bg-gray-700';
+                const riskBg = riskBadgeColors[item.risk_level] || 'bg-green-600';
+                const typeLabel = item.type.replace(/_/g, ' ');
+                codePromptBtnHtml = `
+                    <div class="px-4 pb-4 pt-3 border-t border-purple-900/40 ai-section-5">
+                        <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-widest mb-2">Implementation</div>
+                        <div class="flex items-center gap-1.5 flex-wrap mb-3">
+                            <span class="px-1.5 py-0.5 ${typeBg} text-white text-[10px] rounded-md font-medium">${escapeHtml(typeLabel)}</span>
+                            <span class="text-xs text-gray-200 font-semibold flex-1 min-w-0 truncate">${escapeHtml(item.title)}</span>
+                            <span class="flex-shrink-0 px-1.5 py-0.5 ${riskBg} text-white text-[10px] rounded-md">${item.risk_level}</span>
+                        </div>
+                        <button id="${codePromptBtnId}" class="w-full btn-primary text-sm px-4 py-2.5 flex items-center justify-center gap-2 font-semibold">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                            Generate Code Prompt
+                        </button>
+                    </div>
+                `;
+            } else if (showCodePromptBtn && codeRelevantItems.length > 1) {
+                // Multiple items: checklist UI with selectable items
+                const typeBadgeColors = {
+                    'api_design': 'bg-cyan-700',
+                    'code_change': 'bg-blue-700',
+                    'product_flow': 'bg-emerald-700',
+                    'architecture': 'bg-purple-700',
+                    'debugging': 'bg-orange-700',
+                };
+                const riskBadgeColors = {
+                    'low': 'bg-green-600',
+                    'medium': 'bg-yellow-600',
+                    'high': 'bg-red-600',
+                };
+
+                const itemsHtml = codeRelevantItems.map((item, idx) => {
+                    const typeBg = typeBadgeColors[item.type] || 'bg-gray-700';
+                    const riskBg = riskBadgeColors[item.risk_level] || 'bg-green-600';
+                    const typeLabel = item.type.replace(/_/g, ' ');
+                    return `
+                        <label class="flex items-start gap-2.5 px-3 py-2.5 rounded-lg cursor-pointer hover:bg-indigo-950/40 transition-colors border border-transparent hover:border-indigo-800/20">
+                            <input type="checkbox" checked data-item-index="${idx}" class="mt-0.5 accent-indigo-400 flex-shrink-0 item-checkbox-${itemsChecklistId}" />
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="px-1.5 py-0.5 ${typeBg} text-white text-[10px] rounded-md font-medium">${escapeHtml(typeLabel)}</span>
+                                    <span class="text-xs text-gray-200 font-medium flex-1 min-w-0 truncate">${escapeHtml(item.title)}</span>
+                                    <span class="flex-shrink-0 px-1.5 py-0.5 ${riskBg} text-white text-[10px] rounded-md">${item.risk_level}</span>
+                                </div>
+                                ${item.targets && item.targets.length > 0 ? `
+                                    <div class="flex flex-wrap gap-1 mt-1.5">
+                                        ${item.targets.map(t => `<code class="px-1.5 py-0.5 bg-gray-900/60 text-gray-400 text-[10px] rounded border border-gray-700/30 font-mono">${escapeHtml(t)}</code>`).join('')}
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </label>
+                    `;
+                }).join('');
+
+                codePromptBtnHtml = `
+                    <div class="border-t border-purple-900/40 ai-section-5">
+                        <div class="px-4 pt-3 pb-1">
+                            <div class="text-[10px] font-semibold text-gray-500 uppercase tracking-widest">Implementation Items</div>
+                        </div>
+                        <div id="${itemsChecklistId}" class="px-1 pb-2 space-y-0.5">
+                            ${itemsHtml}
+                        </div>
+                        <div class="px-4 pb-4">
+                            <button id="${codePromptBtnId}" class="w-full btn-primary text-sm px-4 py-2.5 flex items-center justify-center gap-2 font-semibold">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                Generate Code Prompt (${codeRelevantItems.length} selected)
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else if (showCodePromptBtn) {
+                // Fallback: single button when no items but requires_code_change
+                codePromptBtnHtml = `
+                    <div class="px-4 pb-4 pt-3 border-t border-purple-900/40 ai-section-5">
+                        <button id="${codePromptBtnId}" class="w-full btn-primary text-sm px-4 py-2.5 flex items-center justify-center gap-2 font-semibold">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                            Generate Code Prompt
+                        </button>
+                    </div>
+                `;
+            }
 
             div.innerHTML = `
                 <div class="w-7 h-7 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-full flex items-center justify-center text-white flex-shrink-0 mt-1">
@@ -2999,43 +3229,41 @@
                     </svg>
                 </div>
                 <div class="max-w-[85%] min-w-0 flex-1">
-                    <div class="text-xs text-gray-400 mb-1 ml-1 flex items-center gap-1"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-violet-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/></svg> ${escapeHtml(msg.displayName || 'AI')}</div>
-                    <div class="bg-gradient-to-br from-violet-950/60 via-purple-900/40 to-gray-900/80 rounded-lg overflow-hidden border border-purple-700/50 shadow-lg ai-card-border shimmer">
-                        <div class="px-4 py-3 bg-purple-800/20 border-b border-purple-700/30 flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-purple-400" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/>
-                            </svg>
-                            <span class="text-sm font-medium text-gradient">AI Distillation</span>
+                    <div class="text-xs text-gray-400 mb-1 ml-1 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-violet-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/></svg>
+                        ${escapeHtml(msg.displayName || 'AI')}
+                    </div>
+                    <div class="bg-gradient-to-b from-violet-950/80 via-purple-950/60 to-gray-900/95 rounded-xl overflow-hidden border border-purple-700/40 shadow-2xl ai-card-border">
+                        <!-- Header -->
+                        <div class="px-4 py-2.5 bg-purple-900/20 border-b border-purple-800/30 flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-purple-400 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/>
+                                </svg>
+                                <span class="text-xs font-semibold text-gradient tracking-wide">AI Distillation</span>
+                                ${discussionTypeBadge}
+                            </div>
+                            <div class="flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full ${riskVisual.dot}"></span>
+                                <span class="text-[10px] font-semibold ${riskVisual.text} uppercase tracking-wider">${riskLevel}</span>
+                            </div>
                         </div>
-                        <div class="p-4 space-y-3">
-                            <div>
-                                <div class="text-xs font-medium text-gray-400 mb-1">Topic:</div>
-                                <div class="text-sm font-semibold text-white">${escapeHtml(aiData.topic || 'No topic')}</div>
-                            </div>
-                            <div>
-                                <div class="text-xs font-medium text-gray-400 mb-1">Problem Statement:</div>
-                                <div class="text-sm text-gray-200">${escapeHtml(aiData.problem_statement || 'No problem statement')}</div>
-                            </div>
-                            <div>
-                                <div class="text-xs font-medium text-gray-400 mb-1">Proposed Solution:</div>
-                                <div class="text-sm text-gray-200">${escapeHtml(aiData.proposed_solution || 'No solution proposed')}</div>
-                            </div>
-                            <div class="flex items-center gap-4">
-                                <div>
-                                    <div class="text-xs font-medium text-gray-400 mb-1">Risk Level:</div>
-                                    <span class="px-2 py-0.5 rounded text-xs font-medium ${riskBadgeClass} text-white">${riskLevel.charAt(0).toUpperCase() + riskLevel.slice(1)}</span>
-                                </div>
-                                ${aiData.requires_code_change ? `
-                                <div>
-                                    <div class="text-xs font-medium text-gray-400 mb-1">Code Change:</div>
-                                    <span class="px-2 py-0.5 rounded text-xs font-medium bg-blue-600 text-white">Required</span>
-                                </div>
-                                ` : ''}
-                            </div>
-                            ${componentsHtml}
-                            ${stepsHtml}
+                        <!-- Topic -->
+                        <div class="px-4 pt-3.5 pb-2 ai-section-1">
+                            <div class="text-sm font-bold text-white leading-snug">${escapeHtml(aiData.topic || 'No topic')}</div>
                         </div>
-                        ${codePromptBtnHtml}
+                        <!-- Problem / Solution -->
+                        <div class="px-4 pb-3 space-y-2 ai-section-2">
+                            <div class="rounded-lg p-2.5 bg-black/20 border border-white/5">
+                                <div class="text-[9px] font-bold text-purple-400/80 uppercase tracking-[0.12em] mb-1">Problem</div>
+                                <div class="text-xs text-gray-300 leading-relaxed">${escapeHtml(aiData.problem_statement || '—')}</div>
+                            </div>
+                            <div class="rounded-lg p-2.5 bg-black/20 border border-white/5">
+                                <div class="text-[9px] font-bold text-indigo-400/80 uppercase tracking-[0.12em] mb-1">Solution</div>
+                                <div class="text-xs text-gray-300 leading-relaxed">${escapeHtml(aiData.proposed_solution || '—')}</div>
+                            </div>
+                        </div>
+                        ${componentsHtml}${stepsHtml}${codePromptBtnHtml}
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ml-1">
                         <span>${formatTime(msg.ts)}</span>
@@ -3048,20 +3276,93 @@
             // Add click handler for Generate Code Prompt button
             if (showCodePromptBtn) {
                 const codePromptBtn = document.getElementById(codePromptBtnId);
-                if (codePromptBtn) {
+
+                if (codeRelevantItems.length === 1 && codePromptBtn) {
+                    // Single item: directly generate without checkbox selection
                     codePromptBtn.addEventListener('click', (e) => {
                         e.stopPropagation();
-                        // Store the AI data for code prompt generation
-                        currentSummaryData = aiData;
-                        // Store the button ID for later update
                         currentCodePromptButtonId = codePromptBtnId;
-                        // Request code prompt generation
+                        vscode.postMessage({
+                            command: 'generateCodePromptFromItemsAndPost',
+                            items: [codeRelevantItems[0]],
+                            topic: aiData.topic || '',
+                            roomId: session.roomId
+                        });
+                        codePromptBtn.disabled = true;
+                        codePromptBtn.innerHTML = `
+                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Generating...
+                        `;
+                    });
+                } else if (codeRelevantItems.length > 1 && codePromptBtn) {
+                    // Checklist mode: update count on checkbox change, send selected items
+                    const checklistEl = document.getElementById(itemsChecklistId);
+                    const checkboxes = checklistEl ? checklistEl.querySelectorAll(`input.item-checkbox-${itemsChecklistId}`) : [];
+
+                    const updateButtonCount = () => {
+                        const checkedCount = checklistEl ? checklistEl.querySelectorAll(`input.item-checkbox-${itemsChecklistId}:checked`).length : 0;
+                        const btnTextNode = codePromptBtn.childNodes[codePromptBtn.childNodes.length - 1];
+                        if (btnTextNode && btnTextNode.nodeType === Node.TEXT_NODE) {
+                            btnTextNode.textContent = ` Generate Code Prompt (${checkedCount} selected)`;
+                        }
+                        codePromptBtn.disabled = checkedCount === 0;
+                        if (checkedCount === 0) {
+                            codePromptBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                        } else {
+                            codePromptBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                        }
+                    };
+
+                    checkboxes.forEach(cb => {
+                        cb.addEventListener('change', updateButtonCount);
+                    });
+
+                    codePromptBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        // Gather selected items
+                        const selectedItems = [];
+                        const allCheckboxes = checklistEl ? checklistEl.querySelectorAll(`input.item-checkbox-${itemsChecklistId}:checked`) : [];
+                        allCheckboxes.forEach(cb => {
+                            const idx = parseInt(cb.getAttribute('data-item-index'), 10);
+                            if (!isNaN(idx) && codeRelevantItems[idx]) {
+                                selectedItems.push(codeRelevantItems[idx]);
+                            }
+                        });
+
+                        if (selectedItems.length === 0) return;
+
+                        currentCodePromptButtonId = codePromptBtnId;
+                        vscode.postMessage({
+                            command: 'generateCodePromptFromItemsAndPost',
+                            items: selectedItems,
+                            topic: aiData.topic || '',
+                            roomId: session.roomId
+                        });
+
+                        // Show loading state
+                        codePromptBtn.disabled = true;
+                        codePromptBtn.innerHTML = `
+                            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Generating...
+                        `;
+                    });
+                } else if (codePromptBtn) {
+                    // Fallback: single button sends full summary
+                    codePromptBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        currentSummaryData = aiData;
+                        currentCodePromptButtonId = codePromptBtnId;
                         vscode.postMessage({
                             command: 'generateCodePromptAndPost',
                             decisionSummary: aiData,
                             roomId: session.roomId
                         });
-                        // Disable button and show loading state
                         codePromptBtn.disabled = true;
                         codePromptBtn.innerHTML = `
                             <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -3098,31 +3399,40 @@
             div.className = 'flex justify-start gap-2';
 
             const copyBtnId = `copy-prompt-btn-${msg.id || Date.now()}`;
+            const lineCount = (msg.content || '').split('\n').length;
 
             div.innerHTML = `
-                <div class="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
-                    🤖
+                <div class="w-7 h-7 bg-gradient-to-br from-cyan-600 to-blue-700 rounded-full flex items-center justify-center text-white flex-shrink-0 mt-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
                 </div>
                 <div class="max-w-[85%] min-w-0 flex-1">
-                    <div class="text-xs text-gray-400 mb-1 ml-1">🤖 ${escapeHtml(msg.displayName || 'AI')}</div>
-                    <div class="bg-gradient-to-br from-blue-900/50 to-gray-800 rounded-lg overflow-hidden border border-blue-700/50 shadow-lg">
-                        <div class="px-4 py-3 bg-blue-800/30 border-b border-blue-700/50 flex items-center justify-between">
+                    <div class="text-xs text-gray-400 mb-1 ml-1 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-cyan-500" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                        ${escapeHtml(msg.displayName || 'AI')}
+                    </div>
+                    <div class="bg-gradient-to-b from-gray-900 via-blue-950/20 to-gray-900 rounded-xl overflow-hidden border border-cyan-800/25 shadow-xl cgp-card-border">
+                        <div class="px-4 py-2.5 border-b border-cyan-800/20 flex items-center justify-between bg-cyan-950/10">
                             <div class="flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-cyan-400 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-sm font-medium text-blue-200">Code Generation Prompt</span>
+                                <span class="text-xs font-semibold text-cyan-200 tracking-wide">Code Generation Prompt</span>
                             </div>
-                            <button id="${copyBtnId}" class="px-3 py-1 btn-primary text-xs flex items-center gap-1">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                    <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
-                                    <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
-                                </svg>
-                                Copy
-                            </button>
+                            <div class="flex items-center gap-2.5">
+                                <span class="text-[10px] text-gray-600 font-mono">${lineCount} lines</span>
+                                <button id="${copyBtnId}" class="btn-secondary px-2.5 py-1 text-[11px] flex items-center gap-1.5">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z" />
+                                        <path d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z" />
+                                    </svg>
+                                    Copy
+                                </button>
+                            </div>
                         </div>
-                        <div class="p-4">
-                            <pre class="text-sm text-gray-200 whitespace-pre-wrap font-mono bg-gray-900/50 p-3 rounded border border-gray-700 max-h-96 overflow-y-auto">${escapeHtml(msg.content || '')}</pre>
+                        <div class="p-3">
+                            <pre class="text-[11px] text-gray-300 whitespace-pre-wrap font-mono leading-relaxed bg-black/30 p-3 rounded-lg border border-gray-800/60 max-h-72 overflow-y-auto">${escapeHtml(msg.content || '')}</pre>
                         </div>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ml-1">
@@ -3914,7 +4224,7 @@
             codeSnippetFilename.textContent = '';
             codeSnippetLines.textContent = '';
             codeSnippetContent.textContent = '';
-            chatInput.placeholder = 'Type your message or paste an image...';
+            chatInput.placeholder = 'Type a message...';
         }
 
         /**
@@ -3970,46 +4280,174 @@
             fileInput.value = '';
             fileCaption.value = '';
             btnUploadFile.disabled = false;
-            btnUploadFile.textContent = '⬆️ Upload';
+            btnUploadFile.textContent = 'Upload';
         }
 
         /**
-         * Upload a file to the backend via VS Code extension host
-         * (WebView cannot make direct fetch requests due to CORS restrictions)
+         * Upload a file to the backend via VS Code extension host.
+         * Checks for duplicates first via extension host proxy.
          */
         async function uploadFile(file, caption = null) {
-            // Prevent double uploads
             if (isUploading) {
                 console.log('[WebView] Upload already in progress, ignoring');
                 return;
             }
 
-            console.log('[WebView] uploadFile called with:', file?.name, 'caption:', caption);
-            console.log('[WebView] Session state:', {
-                backendUrl: session.backendUrl,
-                roomId: session.roomId,
-                userId: session.userId,
-                displayName: session.displayName
-            });
-
             if (!session.backendUrl || !session.roomId) {
                 console.error('[WebView] Cannot upload: missing backendUrl or roomId');
-                alert('Cannot upload: session not initialized. Please start or join a session first.');
+                showToast('Cannot upload: session not initialized. Please start or join a session first.', 'error');
                 return;
             }
 
-            // Mark as uploading
-            isUploading = true;
-            btnUploadFile.disabled = true;
-            btnUploadFile.textContent = '⏳ Uploading...';
-
-            // Validate file size
             if (file.size > MAX_FILE_SIZE) {
-                alert(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`);
-                isUploading = false;
-                btnUploadFile.disabled = false;
-                btnUploadFile.textContent = '⬆️ Upload';
+                showToast(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`, 'error');
                 return;
+            }
+
+            // Store pending data for duplicate check callback
+            pendingDupCheckFile = file;
+            pendingDupCheckCaption = caption;
+
+            // Ask extension host to check for duplicates
+            vscode.postMessage({
+                command: 'checkDuplicateFile',
+                backendUrl: session.backendUrl,
+                roomId: session.roomId,
+                fileName: file.name
+            });
+        }
+
+        // Pending state for duplicate check flow
+        let pendingDupCheckFile = null;
+        let pendingDupCheckCaption = null;
+
+        /**
+         * Handle duplicate check result from extension host.
+         */
+        function handleCheckDuplicateFileResult(message) {
+            const file = pendingDupCheckFile;
+            const caption = pendingDupCheckCaption;
+            pendingDupCheckFile = null;
+            pendingDupCheckCaption = null;
+
+            if (!file) return;
+
+            if (message.duplicate && message.existing_file) {
+                showDuplicatePrompt(file, caption, message.existing_file);
+            } else {
+                doUploadFile(file, caption);
+            }
+        }
+
+        /**
+         * Show duplicate file prompt in the file preview area.
+         */
+        function showDuplicatePrompt(file, caption, existingFile) {
+            const uploadDate = new Date(existingFile.uploaded_at * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+            const uploaderName = existingFile.display_name || 'someone';
+
+            filePreview.innerHTML = `
+                <div class="p-3">
+                    <div class="text-sm text-yellow-300 mb-2">⚠️ Duplicate file detected</div>
+                    <p class="text-xs text-gray-400 mb-3">
+                        <span class="text-gray-200 font-medium">${escapeHtml(file.name)}</span>
+                        was already uploaded by <span class="text-gray-200">${escapeHtml(uploaderName)}</span>
+                        on ${uploadDate}
+                    </p>
+                    <div class="flex gap-2">
+                        <button id="btn-dup-upload" class="btn-primary text-xs px-3 py-1.5">Upload New</button>
+                        <button id="btn-dup-existing" class="btn-secondary text-xs px-3 py-1.5">Use Existing</button>
+                        <button id="btn-dup-cancel" class="text-gray-400 hover:text-gray-200 text-xs px-2 py-1.5">Cancel</button>
+                    </div>
+                </div>
+            `;
+            filePreview.classList.remove('hidden');
+
+            document.getElementById('btn-dup-upload').addEventListener('click', () => {
+                restoreFilePreviewUI();
+                doUploadFile(file, caption);
+            });
+
+            document.getElementById('btn-dup-existing').addEventListener('click', () => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const fileMessage = {
+                        type: 'file',
+                        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+                        displayName: session.displayName || 'User',
+                        fileId: existingFile.id,
+                        originalFilename: existingFile.original_filename,
+                        fileType: null,
+                        mimeType: null,
+                        sizeBytes: existingFile.size_bytes,
+                        downloadUrl: existingFile.download_url,
+                        caption: caption,
+                        ts: Date.now() / 1000
+                    };
+                    ws.send(JSON.stringify(fileMessage));
+                }
+                clearFilePreview();
+            });
+
+            document.getElementById('btn-dup-cancel').addEventListener('click', () => {
+                clearFilePreview();
+            });
+        }
+
+        /**
+         * Restore file preview UI to its original HTML structure.
+         */
+        function restoreFilePreviewUI() {
+            filePreview.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span id="file-preview-icon" class="text-2xl">📎</span>
+                        <div>
+                            <div id="file-preview-name" class="text-sm text-gray-200 font-medium"></div>
+                            <div id="file-preview-size" class="text-xs text-gray-500"></div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-upload-file" class="btn-success text-sm px-3 py-1.5">Upload</button>
+                        <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1 transition-colors" title="Cancel">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <img id="file-preview-img" class="hidden mt-3 max-h-32 rounded-lg" />
+                <div class="mt-2">
+                    <input type="text" id="file-caption" placeholder="Add a caption (optional)..."
+                           class="input-premium w-full text-sm px-3 py-1.5" />
+                </div>
+            `;
+            // Re-query DOM references after innerHTML replacement
+            filePreviewIcon = document.getElementById('file-preview-icon');
+            filePreviewName = document.getElementById('file-preview-name');
+            filePreviewSize = document.getElementById('file-preview-size');
+            filePreviewImg = document.getElementById('file-preview-img');
+            fileCaption = document.getElementById('file-caption');
+            btnUploadFile = document.getElementById('btn-upload-file');
+            btnRemoveFile = document.getElementById('btn-remove-file');
+            // Re-bind button handlers
+            btnUploadFile.addEventListener('click', async () => {
+                if (pendingFile && !isUploading) {
+                    const cap = fileCaption.value.trim() || null;
+                    await uploadFile(pendingFile, cap);
+                }
+            });
+            btnRemoveFile.addEventListener('click', clearFilePreview);
+        }
+
+        /**
+         * Perform the actual file upload via extension host (no duplicate check).
+         */
+        function doUploadFile(file, caption = null) {
+            isUploading = true;
+            const uploadBtn = document.getElementById('btn-upload-file');
+            if (uploadBtn) {
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = '<span class="upload-spinner"></span> Uploading...';
             }
 
             // Store caption for use in response handler
@@ -4018,12 +4456,10 @@
             try {
                 console.log('[WebView] Uploading file via extension host:', file.name, file.size, 'bytes');
 
-                // Convert file to base64 for sending via postMessage
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    const base64Data = e.target.result.split(',')[1]; // Remove data URL prefix
+                    const base64Data = e.target.result.split(',')[1];
 
-                    // Send upload request to extension host
                     vscode.postMessage({
                         command: 'uploadFile',
                         backendUrl: session.backendUrl,
@@ -4040,19 +4476,23 @@
                 };
                 reader.onerror = function(e) {
                     console.error('[WebView] Failed to read file:', e);
-                    alert('Failed to read file');
+                    showToast('Failed to read file', 'error');
                     isUploading = false;
-                    btnUploadFile.disabled = false;
-                    btnUploadFile.textContent = '⬆️ Upload';
+                    if (uploadBtn) {
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = 'Upload';
+                    }
                 };
                 reader.readAsDataURL(file);
 
             } catch (error) {
                 console.error('[WebView] File upload failed:', error);
-                alert(`File upload failed: ${error.message}`);
+                showToast(`File upload failed: ${error.message}`, 'error');
                 isUploading = false;
-                btnUploadFile.disabled = false;
-                btnUploadFile.textContent = '⬆️ Upload';
+                if (uploadBtn) {
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Upload';
+                }
             }
         }
 
@@ -4078,7 +4518,7 @@
             if (!file) return;
 
             if (file.size > MAX_FILE_SIZE) {
-                alert(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`);
+                showToast(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`, 'error');
                 fileInput.value = '';
                 return;
             }
@@ -4106,6 +4546,56 @@
                 }
             }
         });
+
+        // Drag-and-drop file support on input area
+        // Note: VS Code WebViews intercept external file drags, so dataTransfer.files
+        // will typically be empty. We detect this and guide users to the Attach button.
+        (function initDragDrop() {
+            const inputWrapper = document.getElementById('input-wrapper');
+            const isVSCode = typeof acquireVsCodeApi === 'function';
+            let dragCounter = 0;
+            let savedPlaceholder = '';
+
+            // Prevent browser from opening the file
+            document.body.addEventListener('dragover', (e) => e.preventDefault());
+            document.body.addEventListener('drop', (e) => e.preventDefault());
+
+            inputWrapper.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                dragCounter++;
+                if (dragCounter === 1) {
+                    savedPlaceholder = chatInput.placeholder;
+                    chatInput.placeholder = isVSCode
+                        ? 'Use the clip button to attach files'
+                        : 'Release to attach file';
+                    inputWrapper.classList.add('input-drop-active');
+                }
+            });
+            inputWrapper.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+            inputWrapper.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    chatInput.placeholder = savedPlaceholder;
+                    inputWrapper.classList.remove('input-drop-active');
+                }
+            });
+            inputWrapper.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dragCounter = 0;
+                chatInput.placeholder = savedPlaceholder;
+                inputWrapper.classList.remove('input-drop-active');
+                const file = e.dataTransfer?.files?.[0];
+                if (file) {
+                    showFilePreview(file);
+                } else if (isVSCode) {
+                    showToast('Drag-and-drop is not supported in VS Code. Use the clip button to attach files.', 'info');
+                }
+            });
+        })();
 
         // Copy room ID button handler
         btnCopyRoomId.addEventListener('click', async () => {
@@ -4655,6 +5145,9 @@
             const codeStyle = data.code_style || '';
             roomCodeStyleTextarea.value = codeStyle;
             updateSourceBadge(!!codeStyle);
+            if (roomOutputModeSelect) {
+                roomOutputModeSelect.value = data.output_mode || '';
+            }
         }
 
         /**
@@ -4663,10 +5156,12 @@
         function saveRoomSettings() {
             console.log('[WebView] saveRoomSettings called');
             const codeStyle = roomCodeStyleTextarea.value;
+            const outputMode = roomOutputModeSelect ? roomOutputModeSelect.value : '';
             vscode.postMessage({
                 command: 'saveRoomSettings',
                 roomId: session.roomId,
-                codeStyle: codeStyle
+                codeStyle: codeStyle,
+                outputMode: outputMode
             });
         }
 

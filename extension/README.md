@@ -22,6 +22,7 @@ Conductor extension provides a collaboration panel in VS Code, integrating sessi
   - Host starts session
   - Guests join from invite URL
   - Existing Live Share conflict check before starting a new host session
+  - End Chat auto-closes the active Live Share session
 - WebSocket chat features:
   - reconnection recovery (`since`)
   - typing indicators
@@ -29,8 +30,11 @@ Conductor extension provides a collaboration panel in VS Code, integrating sessi
   - message deduplication
   - paginated history loading
 - File features:
-  - upload from WebView via extension-host proxy (CORS-safe)
+  - upload from WebView via extension-host proxy (CORS-safe, FormData + Blob)
+  - duplicate file detection before upload (case-insensitive filename match)
+  - retry logic (3 attempts) for both upload and duplicate check requests
   - local download via save dialog
+  - drag-and-drop gracefully degrades in VS Code (sidebar WebViews intercept OS file drops)
 - Code snippet collaboration:
   - extract current editor selection
   - send snippet in chat
@@ -124,6 +128,12 @@ extension/
 ```bash
 cd extension
 npm run compile
+npm run test                # Runs all out/tests/*.test.js
+```
+
+Or run individual test files:
+
+```bash
 node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js
@@ -162,6 +172,7 @@ Conductor 扩展在 VS Code 中提供协作面板，整合会话状态机、聊�
   - Host 发起会话
   - Guest 通过邀请链接加入
   - 启动新会话前检查已有 Live Share 冲突
+  - 结束会话时自动关闭 Live Share
 - WebSocket 聊天能力：
   - 断线恢复（`since`）
   - 输入状态
@@ -169,8 +180,11 @@ Conductor 扩展在 VS Code 中提供协作面板，整合会话状态机、聊�
   - 消息去重
   - 历史分页加载
 - 文件能力：
-  - WebView 通过扩展宿主代理上传（规避 CORS）
+  - WebView 通过扩展宿主代理上传（规避 CORS，使用 FormData + Blob）
+  - 上传前重复文件检测（大小写不敏感文件名匹配）
+  - 上传和重复检测均有失败重试机制（最多 3 次）
   - 本地保存下载
+  - VS Code 中拖拽上传优雅降级（侧边栏 WebView 拦截系统拖拽事件）
 - 代码片段协作：
   - 提取当前编辑器选区
   - 在聊天中发送片段
@@ -231,6 +245,12 @@ npm run compile
 ```bash
 cd extension
 npm run compile
+npm run test                # 运行所有 out/tests/*.test.js
+```
+
+或单独运行某个测试：
+
+```bash
 node --test out/tests/conductorStateMachine.test.js
 node --test out/tests/conductorController.test.js
 node --test out/tests/backendHealthCheck.test.js

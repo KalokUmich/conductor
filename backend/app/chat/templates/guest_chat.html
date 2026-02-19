@@ -52,134 +52,304 @@
         }
     </script>
     <style>
-        /* Custom scrollbar for WebKit browsers */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
+        /* ============================================================
+           CONDUCTOR — Premium Browser Chat
+           ============================================================ */
+
+        /* === Scrollbar === */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb {
-            background: #4b5563;
-            border-radius: 4px;
+            background: rgba(139,92,246,0.25);
+            border-radius: 9999px;
+            transition: background 0.2s;
         }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #6b7280;
+        ::-webkit-scrollbar-thumb:hover { background: rgba(139,92,246,0.45); }
+
+        /* === Layout === */
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+
+        /* === Scroll-to-bottom === */
+        #scroll-to-bottom { transition: opacity 0.2s, transform 0.2s; }
+        #scroll-to-bottom:hover { transform: scale(1.1); }
+
+        /* === Unread badge pulse === */
+        .unread-badge { animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+
+        /* === Role-based accent colors === */
+        .bubble-host { position: relative; }
+        .bubble-host::before { content: ''; position: absolute; top: 8px; left: -8px; width: 5px; height: 5px; border-radius: 50%; background: #f59e0b; }
+        .bubble-guest { position: relative; }
+        .bubble-guest::before { content: ''; position: absolute; top: 8px; left: -8px; width: 5px; height: 5px; border-radius: 50%; background: #3b82f6; }
+        .name-host { color: #fbbf24; }
+        .name-guest { color: #60a5fa; }
+
+        .role-pill {
+            font-size: 0.6rem; line-height: 1rem; padding: 0 0.375rem;
+            border-radius: 9999px; font-weight: 600;
+            letter-spacing: 0.05em; text-transform: uppercase;
+        }
+        .role-pill-host   { background: rgba(245,158,11,0.12); color: #fbbf24; }
+        .role-pill-guest   { background: rgba(59,130,246,0.12); color: #60a5fa; }
+        .role-pill-sso     { background: rgba(34,197,94,0.12); color: #4ade80; }
+
+        /* ============================================================
+           PREMIUM VISUAL SYSTEM
+           ============================================================ */
+
+        /* --- Glassmorphism --- */
+        .glass {
+            backdrop-filter: blur(16px) saturate(1.4);
+            -webkit-backdrop-filter: blur(16px) saturate(1.4);
+            background: rgba(15,18,30,0.75);
+            border: 1px solid rgba(255,255,255,0.06);
         }
 
-        /* Ensure proper flex layout */
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
+        /* --- Glow effects --- */
+        .glow-primary { box-shadow: 0 0 24px rgba(139,92,246,0.3), 0 0 6px rgba(139,92,246,0.15); }
+
+        /* --- Animated background for body --- */
+        body.bg-conductor {
+            background-color: #0a0d14;
+            background-image:
+                radial-gradient(ellipse 60% 50% at 20% 0%, rgba(124,58,237,0.12) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 80% 10%, rgba(59,130,246,0.08) 0%, transparent 55%),
+                radial-gradient(ellipse 40% 50% at 50% 100%, rgba(88,28,135,0.06) 0%, transparent 60%);
         }
 
-        /* Scroll to bottom button */
-        #scroll-to-bottom {
-            transition: opacity 0.2s, transform 0.2s;
-        }
-        #scroll-to-bottom:hover {
-            transform: scale(1.1);
-        }
-
-        /* Unread badge animation */
-        .unread-badge {
-            animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.7; }
+        /* --- Brand gradient text --- */
+        .text-gradient {
+            background: linear-gradient(135deg, #e0c3fc 0%, #a78bfa 25%, #818cf8 50%, #60a5fa 75%, #38bdf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
 
-        /* Mobile optimizations */
+        /* --- Shimmer animation --- */
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .shimmer {
+            background: linear-gradient(90deg, transparent 0%, rgba(139,92,246,0.08) 50%, transparent 100%);
+            background-size: 200% 100%;
+            animation: shimmer 2.5s infinite;
+        }
+
+        /* --- Message appear animation --- */
+        @keyframes messageSlideIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message-enter { animation: messageSlideIn 0.2s ease-out; }
+
+        /* --- Typing indicator --- */
+        .typing-dots { display: inline-flex; gap: 3px; align-items: center; }
+        .typing-dots span {
+            width: 5px; height: 5px; border-radius: 50%;
+            background: #9ca3af; animation: aiThinking 1.4s infinite;
+        }
+        .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes aiThinking {
+            0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
+            40% { opacity: 1; transform: scale(1); }
+        }
+
+        /* --- Status badge --- */
+        .status-dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            animation: statusPulse 2s ease-in-out infinite;
+        }
+        @keyframes statusPulse {
+            0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+            50% { box-shadow: 0 0 0 4px transparent; }
+        }
+
+        /* --- Gradient divider --- */
+        .divider-gradient {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent);
+            border: none;
+        }
+
+        /* ============================================================
+           PREMIUM BUTTON SYSTEM
+           ============================================================ */
+        .btn-primary {
+            background: linear-gradient(135deg, #7c3aed 0%, #6366f1 50%, #4f46e5 100%);
+            color: #fff; font-weight: 500; border-radius: 0.625rem;
+            transition: all 0.2s ease; position: relative; overflow: hidden;
+        }
+        .btn-primary::before {
+            content: ''; position: absolute; inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,0.12) 0%, transparent 50%);
+            opacity: 0; transition: opacity 0.2s;
+        }
+        .btn-primary:hover::before { opacity: 1; }
+        .btn-primary:hover {
+            box-shadow: 0 0 28px rgba(124,58,237,0.35), 0 4px 16px rgba(99,102,241,0.2);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            color: #e5e7eb; font-weight: 500; border-radius: 0.625rem;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.14);
+            box-shadow: 0 0 16px rgba(139,92,246,0.1);
+        }
+
+        /* ============================================================
+           PREMIUM INPUT
+           ============================================================ */
+        .input-premium {
+            background: rgba(15,18,30,0.6);
+            border: 1px solid rgba(255,255,255,0.07);
+            border-radius: 0.75rem;
+            transition: all 0.25s ease;
+            color: #f3f4f6;
+        }
+        .input-premium:focus {
+            outline: none;
+            border-color: rgba(139,92,246,0.4);
+            box-shadow: 0 0 0 3px rgba(139,92,246,0.1), 0 0 20px rgba(139,92,246,0.08);
+        }
+        .input-premium::placeholder { color: rgba(156,163,175,0.5); }
+
+        /* === Premium sidebar === */
+        .sidebar-premium {
+            background: rgba(10,13,20,0.5);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        /* === Upload spinner === */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .upload-spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: inline-block;
+            vertical-align: middle;
+        }
+
+        /* === Drag-drop input glow === */
+        @keyframes inputDropPulse {
+            0%, 100% { box-shadow: 0 0 12px rgba(139,92,246,0.4), 0 0 0 2px rgba(139,92,246,0.3); }
+            50% { box-shadow: 0 0 20px rgba(139,92,246,0.6), 0 0 0 3px rgba(139,92,246,0.5); }
+        }
+        .input-drop-active {
+            border-color: rgba(139,92,246,0.6) !important;
+            animation: inputDropPulse 1.2s ease-in-out infinite;
+        }
+
+        /* === Toast notification === */
+        @keyframes toastIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes toastOut {
+            from { opacity: 1; transform: translateY(0); }
+            to { opacity: 0; transform: translateY(12px); }
+        }
+        .toast {
+            position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 100;
+            padding: 0.75rem 1.25rem; border-radius: 0.75rem;
+            font-size: 0.8125rem; font-weight: 500;
+            backdrop-filter: blur(12px);
+            animation: toastIn 0.25s ease-out;
+            max-width: 320px;
+        }
+        .toast.hiding { animation: toastOut 0.25s ease-in forwards; }
+        .toast-error { background: rgba(239,68,68,0.85); color: #fff; border: 1px solid rgba(239,68,68,0.3); }
+        .toast-success { background: rgba(34,197,94,0.85); color: #fff; border: 1px solid rgba(34,197,94,0.3); }
+        .toast-info { background: rgba(59,130,246,0.85); color: #fff; border: 1px solid rgba(59,130,246,0.3); }
+
+        /* === Mobile optimizations === */
         @media (max-width: 640px) {
-            header {
-                padding: 0.75rem 1rem !important;
-            }
-            header h1 {
-                font-size: 1rem !important;
-            }
-            #messages-container {
-                padding-left: 0.75rem !important;
-                padding-right: 0.75rem !important;
-            }
-            .input-area {
-                padding: 0.75rem 1rem !important;
-            }
-            #btn-send span {
-                display: none;
-            }
-            #btn-send {
-                padding: 0.75rem !important;
-            }
+            header { padding: 0.75rem 1rem !important; }
+            header h1 { font-size: 1rem !important; }
+            #messages-container { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+            .input-area { padding: 0.75rem 1rem !important; }
+            #btn-send span { display: none; }
+            #btn-send { padding: 0.75rem !important; }
         }
 
         /* Hide sidebar on mobile */
         @media (max-width: 768px) {
-            #users-sidebar {
-                display: none !important;
-            }
+            #users-sidebar { display: none !important; }
         }
     </style>
 </head>
-<body class="bg-gray-900 text-gray-100 h-screen overflow-hidden">
+<body class="bg-gray-900 bg-conductor text-gray-100 h-screen overflow-hidden">
     <div class="flex h-full">
         <!-- Main Chat Area -->
         <div class="flex flex-col flex-1 min-h-0 overflow-hidden">
-            <!-- Header - compact on mobile -->
-            <header class="bg-gray-800 border-b border-gray-700 px-4 sm:px-6 py-3 sm:py-4 flex-shrink-0">
+            <!-- Header - glass style -->
+            <header class="glass flex-shrink-0 px-4 sm:px-6 py-3 sm:py-4" style="border-bottom: 1px solid; border-image: linear-gradient(90deg, transparent, rgba(139,92,246,0.2), transparent) 1;">
                 <div class="flex items-center justify-between gap-2">
                     <div class="min-w-0 flex-1">
-                        <h1 class="text-lg sm:text-xl font-semibold text-white truncate">Conductor</h1>
+                        <h1 class="text-lg sm:text-xl font-semibold text-gradient truncate">Conductor</h1>
                         <p class="text-xs sm:text-sm text-gray-400 mt-0.5 truncate">
                             Room: <span class="font-mono text-xs text-gray-500">{{ room_id[:8] }}...</span>
                         </p>
                     </div>
                     <div class="flex items-center gap-2 flex-shrink-0">
-                        <div id="connection-badge" class="px-2 sm:px-3 py-1 rounded-full text-xs font-medium bg-yellow-600 text-white whitespace-nowrap">
+                        <div id="connection-badge" class="glass px-2 sm:px-3 py-1 rounded-full text-xs font-medium text-yellow-300 whitespace-nowrap">
                             Connecting...
                         </div>
-                        <div id="my-role-badge" class="px-2 sm:px-3 py-1 rounded-full text-xs font-medium bg-purple-600 text-white whitespace-nowrap">
+                        <div id="my-role-badge" class="px-2 sm:px-3 py-1 rounded-full text-xs font-medium bg-purple-600/80 text-white whitespace-nowrap">
                             {{ role | capitalize }}
                         </div>
                     </div>
                 </div>
             </header>
 
-            <!-- Messages Area - WhatsApp-style scrollable container -->
+            <!-- Messages Area -->
             <div class="relative flex-1 min-h-0">
-                <div id="messages-container" class="absolute inset-0 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3" style="scrollbar-width: thin; scrollbar-color: #4b5563 transparent;">
+                <div id="messages-container" class="absolute inset-0 overflow-y-auto px-3 sm:px-6 py-3 sm:py-4 space-y-3" style="scrollbar-width: thin; scrollbar-color: rgba(139,92,246,0.25) transparent;">
+                    <div id="load-earlier-bar" class="hidden flex justify-center pb-2">
+                        <button id="btn-load-earlier" class="btn-secondary text-xs px-4 py-1.5 rounded-full">Load earlier messages</button>
+                    </div>
                     <div id="connection-status" class="flex justify-center">
-                        <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700">
+                        <div class="glass text-gray-400 text-xs px-3 py-1.5 rounded-full shimmer">
                             <span>Connecting to chat...</span>
                         </div>
                     </div>
                 </div>
 
                 <!-- Scroll to bottom button -->
-                <button id="scroll-to-bottom" class="hidden absolute bottom-4 right-4 bg-gray-700 hover:bg-gray-600 text-white p-2 rounded-full shadow-lg z-10" title="Scroll to bottom">
+                <button id="scroll-to-bottom" class="hidden absolute bottom-4 right-4 glass hover:bg-white/[0.08] text-white p-2 rounded-full shadow-lg z-10" title="Scroll to bottom">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
                     </svg>
-                    <span id="unread-count" class="hidden absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center unread-badge">0</span>
+                    <span id="unread-count" class="hidden absolute -top-1 -right-1 bg-violet-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center unread-badge">0</span>
                 </button>
             </div>
 
             <!-- Typing Indicator -->
-            <div id="typing-indicator" class="hidden flex-shrink-0 px-3 sm:px-6 py-2 text-xs text-gray-400 italic">
-                <span id="typing-text">Someone is typing...</span>
+            <div id="typing-indicator" class="hidden flex-shrink-0 px-3 sm:px-6 py-2 text-xs text-gray-400">
+                <span id="typing-text" class="flex items-center gap-1.5">Someone is typing<span class="typing-dots"><span></span><span></span><span></span></span></span>
             </div>
 
-            <!-- Input Area - responsive padding -->
-            <div class="input-area flex-shrink-0 border-t border-gray-700 bg-gray-800 px-3 sm:px-6 py-3 sm:py-4">
+            <!-- Input Area -->
+            <div class="input-area flex-shrink-0 glass px-3 sm:px-6 py-3 sm:py-4" style="border-top: 1px solid; border-image: linear-gradient(90deg, transparent, rgba(139,92,246,0.12), transparent) 1;">
                 <!-- Hidden file input -->
                 <input type="file" id="file-input" class="hidden"
                        accept="image/*,.pdf,audio/*,.mp3,.wav,.ogg,.m4a,.flac" />
 
                 <!-- File preview area -->
-                <div id="file-preview" class="hidden mb-3 p-3 bg-gray-900 rounded-lg border border-gray-700">
+                <div id="file-preview" class="hidden mb-3 p-3 bg-gray-900/60 rounded-xl border border-gray-700/40">
                     <div class="flex items-center justify-between">
                         <div class="flex items-center gap-3">
                             <span id="file-preview-icon" class="text-2xl">📎</span>
@@ -190,11 +360,11 @@
                         </div>
                         <div class="flex items-center gap-2">
                             <!-- Upload button -->
-                            <button id="btn-upload-file" class="bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors">
-                                ⬆️ Upload
+                            <button id="btn-upload-file" class="btn-primary text-sm font-medium px-3 py-1.5">
+                                Upload
                             </button>
                             <!-- Cancel button -->
-                            <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1" title="Cancel">
+                            <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1 transition-colors" title="Cancel">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
@@ -205,15 +375,15 @@
                     <!-- Optional caption input -->
                     <div class="mt-2">
                         <input type="text" id="file-caption" placeholder="Add a caption (optional)..."
-                               class="w-full bg-gray-800 text-gray-100 border border-gray-600 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500" />
+                               class="input-premium w-full text-sm px-3 py-1.5" />
                     </div>
                 </div>
 
-                <div class="flex items-end gap-2 sm:gap-3">
+                <div id="input-wrapper" class="flex items-end gap-2 sm:gap-3">
                     <!-- Attachment Button -->
                     <button
                         id="btn-attach"
-                        class="bg-gray-700 hover:bg-gray-600 text-gray-300 p-2.5 sm:p-3 rounded-lg transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-gray-500 flex-shrink-0"
+                        class="text-gray-400 hover:text-violet-300 hover:bg-violet-500/10 p-2.5 sm:p-3 rounded-lg transition-all duration-200 focus:outline-none flex-shrink-0"
                         title="Attach file (images, PDF, audio, max 20MB)"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -226,12 +396,12 @@
                             id="chat-input"
                             rows="1"
                             placeholder="Type a message..."
-                            class="w-full bg-gray-900 text-gray-100 border border-gray-700 rounded-lg px-3 sm:px-4 py-2.5 sm:py-3 resize-none focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent placeholder-gray-500 text-sm"
+                            class="input-premium w-full px-3 sm:px-4 py-2.5 sm:py-3 resize-none text-sm"
                         ></textarea>
                     </div>
                     <button
                         id="btn-send"
-                        class="bg-purple-600 hover:bg-purple-700 text-white font-medium px-3 sm:px-6 py-2.5 sm:py-3 rounded-lg transition-colors duration-200 flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-purple-500 flex-shrink-0"
+                        class="btn-primary px-3 sm:px-6 py-2.5 sm:py-3 flex items-center gap-2 flex-shrink-0"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
@@ -240,18 +410,18 @@
                     </button>
                 </div>
                 <div class="mt-2 text-xs text-gray-500 hidden sm:block">
-                    Press Enter to send, Shift+Enter for new line. Paste images directly or click 📎 to attach files.
+                    Press Enter to send, Shift+Enter for new line. Drag & drop, paste images, or click 📎 to attach files.
                 </div>
             </div>
         </div>
 
         <!-- Users Sidebar - hidden on mobile -->
-        <aside id="users-sidebar" class="w-56 bg-gray-800 border-l border-gray-700 flex-shrink-0 hidden md:flex flex-col">
-            <div class="px-4 py-3 border-b border-gray-700">
+        <aside id="users-sidebar" class="w-56 sidebar-premium flex-shrink-0 hidden md:flex flex-col" style="border-left: 1px solid rgba(255,255,255,0.06);">
+            <div class="px-4 py-3" style="border-bottom: 1px solid; border-image: linear-gradient(90deg, transparent, rgba(139,92,246,0.15), transparent) 1;">
                 <h2 class="text-sm font-semibold text-gray-300">Participants</h2>
                 <p id="user-count" class="text-xs text-gray-500 mt-1">0 online</p>
             </div>
-            <div id="users-list" class="flex-1 overflow-y-auto p-3 space-y-2">
+            <div id="users-list" class="flex-1 overflow-y-auto p-3 space-y-1">
                 <!-- Users will be rendered here -->
             </div>
         </aside>
@@ -294,16 +464,19 @@
         const myRoleBadge = document.getElementById('my-role-badge');
 
         // File upload elements
+        // Note: fileInput, filePreview, btnAttach are stable (never replaced).
+        // The others are inside filePreview and get destroyed by showDuplicatePrompt(),
+        // so we use let and re-query them after restoreFilePreviewUI().
         const fileInput = document.getElementById('file-input');
         const filePreview = document.getElementById('file-preview');
-        const filePreviewIcon = document.getElementById('file-preview-icon');
-        const filePreviewName = document.getElementById('file-preview-name');
-        const filePreviewSize = document.getElementById('file-preview-size');
-        const filePreviewImg = document.getElementById('file-preview-img');
-        const fileCaption = document.getElementById('file-caption');
+        let filePreviewIcon = document.getElementById('file-preview-icon');
+        let filePreviewName = document.getElementById('file-preview-name');
+        let filePreviewSize = document.getElementById('file-preview-size');
+        let filePreviewImg = document.getElementById('file-preview-img');
+        let fileCaption = document.getElementById('file-caption');
         const btnAttach = document.getElementById('btn-attach');
-        const btnRemoveFile = document.getElementById('btn-remove-file');
-        const btnUploadFile = document.getElementById('btn-upload-file');
+        let btnRemoveFile = document.getElementById('btn-remove-file');
+        let btnUploadFile = document.getElementById('btn-upload-file');
 
         // File upload state
         let pendingFile = null;
@@ -337,6 +510,9 @@
         let isLoadingHistory = false;
         let hasMoreHistory = true;
         const PAGINATION_THRESHOLD = 100;  // pixels from top to trigger load
+
+        // Load earlier button
+        const loadEarlierBar = document.getElementById('load-earlier-bar');
 
         // Avatar color mapping
         const avatarColors = {
@@ -456,6 +632,27 @@
             }
         }
 
+        /**
+         * Show a toast notification.
+         * @param {string} message - Toast message text.
+         * @param {'error'|'success'|'info'} type - Toast type.
+         */
+        function showToast(message, type = 'error') {
+            // Remove existing toast if any
+            const existing = document.querySelector('.toast');
+            if (existing) existing.remove();
+
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            setTimeout(() => {
+                toast.classList.add('hiding');
+                setTimeout(() => toast.remove(), 250);
+            }, 4000);
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
@@ -507,11 +704,11 @@
          */
         function renderDateSeparator(date) {
             const div = document.createElement('div');
-            div.className = 'flex justify-center my-4';
+            div.className = 'flex items-center gap-3 my-4 px-4';
             div.innerHTML = `
-                <span class="text-xs text-gray-500 bg-gray-800 px-3 py-1 rounded-full border border-gray-700">
-                    ${formatDateSeparator(date)}
-                </span>
+                <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-700/50 to-transparent"></div>
+                <span class="text-[0.6rem] text-gray-500 uppercase tracking-widest font-medium">${formatDateSeparator(date)}</span>
+                <div class="flex-1 h-px bg-gradient-to-r from-transparent via-gray-700/50 to-transparent"></div>
             `;
             messagesContainer.appendChild(div);
         }
@@ -699,18 +896,20 @@
                 const isHost = user.role === 'host';
                 const isMe = user.userId === config.userId;
                 return `
-                    <div class="flex items-center gap-3 p-2 rounded-lg ${isMe ? 'bg-gray-700/50' : 'hover:bg-gray-700/30'}">
-                        <div class="w-8 h-8 ${colorClass} rounded-full flex items-center justify-center text-white text-xs font-medium">
-                            ${getInitials(user.displayName)}
+                    <div class="flex items-center gap-2.5 py-1.5 px-2 rounded-lg ${isMe ? 'bg-white/[0.04]' : 'hover:bg-white/[0.03]'} transition-colors">
+                        <div class="relative flex-shrink-0">
+                            <div class="w-7 h-7 ${colorClass} rounded-full flex items-center justify-center text-white text-[0.65rem] font-medium">
+                                ${getInitials(user.displayName)}
+                            </div>
+                            <div class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-400 rounded-full border-2 border-gray-900"></div>
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-1">
-                                <span class="text-sm text-gray-200 truncate">${escapeHtml(user.displayName)}</span>
-                                ${isHost ? '<span class="text-xs">👑</span>' : ''}
-                                ${user.identitySource === 'sso' ? '<span class="text-xs text-green-400 font-medium">SSO</span>' : ''}
-                                ${isMe ? '<span class="text-xs text-gray-500">(you)</span>' : ''}
+                                <span class="text-xs text-gray-200 truncate">${escapeHtml(user.displayName)}</span>
+                                ${isHost ? '<span class="role-pill role-pill-host">host</span>' : ''}
+                                ${user.identitySource === 'sso' ? '<span class="role-pill role-pill-sso">sso</span>' : ''}
+                                ${isMe ? '<span class="text-[0.6rem] text-gray-500">(you)</span>' : ''}
                             </div>
-                            <span class="text-xs text-gray-500">${user.role}</span>
                         </div>
                     </div>
                 `;
@@ -733,16 +932,19 @@
             const div = document.createElement('div');
             div.setAttribute('data-message-id', msg.id || '');
             div.setAttribute('data-timestamp', msg.ts || '');
-            // Reduce spacing for grouped messages
-            div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2 ${isGrouped ? 'mt-1' : ''}`;
+            div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2 ${isGrouped ? 'mt-1' : ''} message-enter`;
+
+            const isHost = msg.role === 'host';
+            const bubbleAccent = !isOwnMessage ? (isHost ? 'bubble-host' : 'bubble-guest') : '';
 
             const bubbleColor = isOwnMessage
-                ? 'bg-purple-600 text-white rounded-2xl rounded-tr-sm'
-                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm border border-gray-700';
+                ? 'bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-violet-500/10'
+                : `bg-gray-800/40 backdrop-blur-sm text-gray-100 rounded-2xl rounded-tl-sm border border-white/[0.04] ${bubbleAccent}`;
 
             const timeAlign = isOwnMessage ? 'text-right' : '';
-            const roleLabel = msg.role === 'host' ? '👑 ' : '';
+            const roleLabel = isHost ? '<span class="role-pill role-pill-host mr-1">host</span>' : '';
             const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
+            const nameClass = isHost ? 'name-host' : 'name-guest';
 
             // Get avatar color from users map or default
             const userInfo = usersMap.get(msg.userId);
@@ -755,12 +957,12 @@
                 </div>
             ` : (!isOwnMessage && isGrouped) ? '<div class="w-8 flex-shrink-0"></div>' : '';
 
-            // Status indicator for own messages (✓ = sent, ✓✓ = read)
-            const statusHtml = isOwnMessage ? '<span class="message-status text-purple-300 ml-1">✓</span>' : '';
+            // Status indicator for own messages
+            const statusHtml = isOwnMessage ? '<span class="message-status text-purple-300/70 ml-1">✓</span>' : '';
 
             // SSO indicator
             const msgIdentitySource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
-            const ssoLabel = msgIdentitySource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
+            const ssoLabel = msgIdentitySource === 'sso' ? ' <span class="role-pill role-pill-sso">sso</span>' : '';
 
             // Show name only for first message in group
             const showName = !isOwnMessage && !isGrouped;
@@ -768,8 +970,8 @@
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${showName ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${ssoLabel}</div>` : ''}
-                    <div class="${bubbleColor} px-4 py-2 shadow-lg overflow-hidden">
+                    ${showName ? `<div class="text-xs mb-1 ml-1 flex items-center gap-1"><span class="${nameClass}">${escapeHtml(displayName)}</span>${roleLabel}${ssoLabel}</div>` : ''}
+                    <div class="${bubbleColor} px-4 py-2 overflow-hidden">
                         <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'} flex items-center ${isOwnMessage ? 'justify-end' : ''}">
@@ -789,14 +991,14 @@
 
         function renderSystemMessage(text) {
             const div = document.createElement('div');
-            div.className = 'flex justify-center';
+            div.className = 'flex justify-center message-enter';
             div.innerHTML = `
-                <div class="bg-gray-800/50 text-gray-400 text-xs px-3 py-1.5 rounded-full border border-gray-700">
+                <div class="bg-gray-800/30 text-gray-500 text-[0.65rem] px-3 py-1 rounded-full border border-white/[0.04]">
                     ${escapeHtml(text)}
                 </div>
             `;
             messagesContainer.appendChild(div);
-            scrollToBottom(false);  // System messages don't force scroll
+            scrollToBottom(false);
         }
 
         /**
@@ -944,6 +1146,17 @@
         }
 
         /**
+         * Update the "Load earlier messages" button visibility.
+         */
+        function updateLoadEarlierBar() {
+            if (hasMoreHistory) {
+                loadEarlierBar.classList.remove('hidden');
+            } else {
+                loadEarlierBar.classList.add('hidden');
+            }
+        }
+
+        /**
          * Load more message history (pagination).
          * Fetches older messages from the server and prepends them.
          */
@@ -959,11 +1172,12 @@
             if (!oldestTs) {
                 isLoadingHistory = false;
                 hasMoreHistory = false;
+                updateLoadEarlierBar();
                 return;
             }
 
             try {
-                const url = `/chat/${session.roomId}/history?before=${oldestTs}&limit=50`;
+                const url = `/chat/${config.roomId}/history?before=${oldestTs}&limit=50`;
                 console.log('[Guest] Loading more history from:', url);
 
                 const response = await fetch(url);
@@ -991,6 +1205,7 @@
                 }
 
                 hasMoreHistory = data.hasMore === true;
+                updateLoadEarlierBar();
             } catch (err) {
                 console.error('[Guest] Failed to load history:', err);
             } finally {
@@ -1020,16 +1235,20 @@
             div.setAttribute('data-timestamp', msg.ts || '');
             div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2`;
 
-            const bubbleColor = isOwnMessage
-                ? 'bg-purple-600 text-white rounded-2xl rounded-tr-sm'
-                : 'bg-gray-800 text-gray-100 rounded-2xl rounded-tl-sm border border-gray-700';
+            const isHost = msg.role === 'host';
+            const bubbleAccent = !isOwnMessage ? (isHost ? 'bubble-host' : 'bubble-guest') : '';
 
-            const roleLabel = msg.role === 'host' ? '👑 ' : '';
+            const bubbleColor = isOwnMessage
+                ? 'bg-gradient-to-br from-violet-600 to-indigo-600 text-white rounded-2xl rounded-tr-sm shadow-lg shadow-violet-500/10'
+                : `bg-gray-800/40 backdrop-blur-sm text-gray-100 rounded-2xl rounded-tl-sm border border-white/[0.04] ${bubbleAccent}`;
+
+            const roleLabel = isHost ? '<span class="role-pill role-pill-host mr-1">host</span>' : '';
             const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
+            const nameClass = isHost ? 'name-host' : 'name-guest';
             const userInfo = usersMap.get(msg.userId);
             const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
             const prependIdSource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
-            const prependSsoLabel = prependIdSource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
+            const prependSsoLabel = prependIdSource === 'sso' ? ' <span class="role-pill role-pill-sso">sso</span>' : '';
 
             const avatarHtml = !isOwnMessage ? `
                 <div class="w-8 h-8 ${colorClass} rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
@@ -1037,14 +1256,14 @@
                 </div>
             ` : '';
 
-            const statusHtml = isOwnMessage ? '<span class="message-status text-purple-300 ml-1">✓</span>' : '';
+            const statusHtml = isOwnMessage ? '<span class="message-status text-purple-300/70 ml-1">✓</span>' : '';
             const timeAlign = isOwnMessage ? 'text-right' : '';
 
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${prependSsoLabel}</div>` : ''}
-                    <div class="${bubbleColor} px-4 py-2 shadow-lg overflow-hidden">
+                    ${!isOwnMessage ? `<div class="text-xs mb-1 ml-1 flex items-center gap-1"><span class="${nameClass}">${escapeHtml(displayName)}</span>${roleLabel}${prependSsoLabel}</div>` : ''}
+                    <div class="${bubbleColor} px-4 py-2 overflow-hidden">
                         <p class="text-sm leading-relaxed break-words whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'} flex items-center ${isOwnMessage ? 'justify-end' : ''}">
@@ -1065,13 +1284,15 @@
         function renderFileMessage(msg) {
             const isOwnMessage = msg.userId === config.userId;
             const div = document.createElement('div');
-            div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2`;
+            div.className = `flex ${isOwnMessage ? 'justify-end' : 'justify-start'} gap-2 message-enter`;
 
             const timeAlign = isOwnMessage ? 'text-right' : '';
-            const roleLabel = msg.role === 'host' ? '👑 ' : '';
+            const isHost = msg.role === 'host';
+            const roleLabel = isHost ? '<span class="role-pill role-pill-host mr-1">host</span>' : '';
             const displayName = msg.displayName || usersMap.get(msg.userId)?.displayName || 'Unknown';
+            const nameClass = isHost ? 'name-host' : 'name-guest';
             const fileIdSource = msg.identitySource || usersMap.get(msg.userId)?.identitySource;
-            const fileSsoLabel = fileIdSource === 'sso' ? ' <span class="text-green-400 font-medium text-xs">SSO</span>' : '';
+            const fileSsoLabel = fileIdSource === 'sso' ? ' <span class="role-pill role-pill-sso">sso</span>' : '';
 
             const userInfo = usersMap.get(msg.userId);
             const colorClass = userInfo ? (avatarColors[userInfo.avatarColor] || 'bg-purple-600') : 'bg-gray-600';
@@ -1095,16 +1316,16 @@
                              onclick="window.open('${downloadUrl}', '_blank')" />
                         <div class="flex items-center gap-2 text-xs text-gray-400 mt-1">
                             <span>${filename} (${fileSize})</span>
-                            <span class="text-blue-400 cursor-pointer hover:underline file-download-btn"
+                            <span class="text-violet-400 cursor-pointer hover:underline file-download-btn"
                                   data-url="${escapeHtml(downloadUrl)}"
-                                  data-filename="${escapeHtml(msg.originalFilename || 'file')}">📥 Download</span>
+                                  data-filename="${escapeHtml(msg.originalFilename || 'file')}">Download</span>
                         </div>
                     </div>
                 `;
             } else {
                 const icon = getFileIcon(msg.fileType);
                 fileContentHtml = `
-                    <div class="file-attachment flex items-center gap-3 p-3 bg-gray-700/50 rounded-lg hover:bg-gray-700 transition-colors cursor-pointer file-download-btn"
+                    <div class="file-attachment flex items-center gap-3 p-3 bg-gray-800/50 rounded-lg border border-white/[0.04] hover:bg-gray-800/70 transition-colors cursor-pointer file-download-btn"
                          data-url="${escapeHtml(downloadUrl)}"
                          data-filename="${escapeHtml(msg.originalFilename || 'file')}">
                         <span class="text-2xl">${icon}</span>
@@ -1124,8 +1345,8 @@
             div.innerHTML = `
                 ${avatarHtml}
                 <div class="max-w-[75%] min-w-0">
-                    ${!isOwnMessage ? `<div class="text-xs text-gray-400 mb-1 ml-1">${roleLabel}${escapeHtml(displayName)}${fileSsoLabel}</div>` : ''}
-                    <div class="bg-gray-800 border border-gray-700 rounded-2xl ${isOwnMessage ? 'rounded-tr-sm' : 'rounded-tl-sm'} px-4 py-3 shadow-lg">
+                    ${!isOwnMessage ? `<div class="text-xs mb-1 ml-1 flex items-center gap-1"><span class="${nameClass}">${escapeHtml(displayName)}</span>${roleLabel}${fileSsoLabel}</div>` : ''}
+                    <div class="bg-gray-800/50 border border-white/[0.04] rounded-2xl ${isOwnMessage ? 'rounded-tr-sm' : 'rounded-tl-sm'} px-4 py-3">
                         ${fileContentHtml}
                         ${captionHtml}
                     </div>
@@ -1179,15 +1400,15 @@
                 console.log('[Guest] Download started:', filename);
             } catch (error) {
                 console.error('[Guest] Download failed:', error);
-                alert(`Download failed: ${error.message}`);
+                showToast(`Download failed: ${error.message}`, 'error');
             }
         }
 
         function updateConnectionStatus(status, isError = false) {
             if (connectionStatus) {
-                const colorClass = isError ? 'text-red-400 border-red-700' : 'text-gray-400 border-gray-700';
+                const colorClass = isError ? 'text-red-400' : 'text-gray-400';
                 connectionStatus.innerHTML = `
-                    <div class="bg-gray-800/50 ${colorClass} text-xs px-3 py-1.5 rounded-full border">
+                    <div class="glass ${colorClass} text-xs px-3 py-1.5 rounded-full ${!isError ? 'shimmer' : ''}">
                         <span>${status}</span>
                     </div>
                 `;
@@ -1197,10 +1418,10 @@
         function updateConnectionBadge(connected) {
             if (connected) {
                 connectionBadge.textContent = 'Connected';
-                connectionBadge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-green-600 text-white';
+                connectionBadge.className = 'glass px-3 py-1 rounded-full text-xs font-medium text-green-300';
             } else {
                 connectionBadge.textContent = 'Disconnected';
-                connectionBadge.className = 'px-3 py-1 rounded-full text-xs font-medium bg-red-600 text-white';
+                connectionBadge.className = 'glass px-3 py-1 rounded-full text-xs font-medium text-red-300';
             }
         }
 
@@ -1256,6 +1477,15 @@
                                 updateLastMessageTimestamp(msg.ts);
                             }
                         });
+
+                        // Show "Load earlier" if there might be older messages
+                        if (data.hasMore !== undefined) {
+                            hasMoreHistory = data.hasMore === true;
+                        } else {
+                            // If server doesn't tell us, assume more if we got a full page
+                            hasMoreHistory = data.messages.length >= 50;
+                        }
+                        updateLoadEarlierBar();
 
                         // Only send join if this is not a recovery (reconnect)
                         // SECURITY: Only send displayName, userId and role are handled by backend
@@ -1416,11 +1646,14 @@
             fileInput.value = '';
             fileCaption.value = '';
             btnUploadFile.disabled = false;
-            btnUploadFile.textContent = '⬆️ Upload';
+            btnUploadFile.textContent = 'Upload';
         }
 
+        /**
+         * Check for duplicate file and prompt user if found.
+         * If no duplicate, proceeds with upload directly.
+         */
         async function uploadFile(file, caption = null) {
-            // Prevent double uploads
             if (isUploading) {
                 console.log('[Guest] Upload already in progress, ignoring');
                 return;
@@ -1432,18 +1665,145 @@
             }
 
             if (file.size > MAX_FILE_SIZE) {
-                alert(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`);
+                showToast(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`, 'error');
                 return;
             }
 
+            // Check for duplicate
+            try {
+                const checkUrl = `/files/check-duplicate/${config.roomId}?filename=${encodeURIComponent(file.name)}`;
+                const checkResp = await fetch(checkUrl);
+                if (checkResp.ok) {
+                    const checkData = await checkResp.json();
+                    if (checkData.duplicate && checkData.existing_file) {
+                        showDuplicatePrompt(file, caption, checkData.existing_file);
+                        return;
+                    }
+                }
+            } catch (err) {
+                console.warn('[Guest] Duplicate check failed, proceeding with upload:', err);
+            }
+
+            doUploadFile(file, caption);
+        }
+
+        /**
+         * Show duplicate file prompt in the file preview area.
+         */
+        function showDuplicatePrompt(file, caption, existingFile) {
+            const uploadDate = new Date(existingFile.uploaded_at * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' });
+            const uploaderName = existingFile.display_name || 'someone';
+
+            // Replace file preview content with duplicate prompt
+            filePreview.innerHTML = `
+                <div class="p-3">
+                    <div class="text-sm text-yellow-300 mb-2">⚠️ Duplicate file detected</div>
+                    <p class="text-xs text-gray-400 mb-3">
+                        <span class="text-gray-200 font-medium">${escapeHtml(file.name)}</span>
+                        was already uploaded by <span class="text-gray-200">${escapeHtml(uploaderName)}</span>
+                        on ${uploadDate}
+                    </p>
+                    <div class="flex gap-2">
+                        <button id="btn-dup-upload" class="btn-primary text-xs px-3 py-1.5">Upload New</button>
+                        <button id="btn-dup-existing" class="btn-secondary text-xs px-3 py-1.5">Use Existing</button>
+                        <button id="btn-dup-cancel" class="text-gray-400 hover:text-gray-200 text-xs px-2 py-1.5">Cancel</button>
+                    </div>
+                </div>
+            `;
+            filePreview.classList.remove('hidden');
+
+            document.getElementById('btn-dup-upload').addEventListener('click', () => {
+                restoreFilePreviewUI();
+                doUploadFile(file, caption);
+            });
+
+            document.getElementById('btn-dup-existing').addEventListener('click', () => {
+                // Send existing file as a message without re-uploading
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const fileMessage = {
+                        type: 'file',
+                        id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(),
+                        displayName: config.displayName || 'Guest',
+                        fileId: existingFile.id,
+                        originalFilename: existingFile.original_filename,
+                        fileType: null,
+                        mimeType: null,
+                        sizeBytes: existingFile.size_bytes,
+                        downloadUrl: existingFile.download_url,
+                        caption: caption,
+                        ts: Date.now() / 1000
+                    };
+                    ws.send(JSON.stringify(fileMessage));
+                }
+                clearFilePreview();
+            });
+
+            document.getElementById('btn-dup-cancel').addEventListener('click', () => {
+                clearFilePreview();
+            });
+        }
+
+        /**
+         * Restore file preview UI to its original HTML structure.
+         */
+        function restoreFilePreviewUI() {
+            filePreview.innerHTML = `
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <span id="file-preview-icon" class="text-2xl">📎</span>
+                        <div>
+                            <div id="file-preview-name" class="text-sm text-gray-200 font-medium"></div>
+                            <div id="file-preview-size" class="text-xs text-gray-500"></div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-upload-file" class="btn-primary text-sm font-medium px-3 py-1.5">Upload</button>
+                        <button id="btn-remove-file" class="text-gray-400 hover:text-red-400 p-1 transition-colors" title="Cancel">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <img id="file-preview-img" class="hidden mt-3 max-h-32 rounded-lg" />
+                <div class="mt-2">
+                    <input type="text" id="file-caption" placeholder="Add a caption (optional)..."
+                           class="input-premium w-full text-sm px-3 py-1.5" />
+                </div>
+            `;
+            // Re-query DOM references after innerHTML replacement
+            filePreviewIcon = document.getElementById('file-preview-icon');
+            filePreviewName = document.getElementById('file-preview-name');
+            filePreviewSize = document.getElementById('file-preview-size');
+            filePreviewImg = document.getElementById('file-preview-img');
+            fileCaption = document.getElementById('file-caption');
+            btnUploadFile = document.getElementById('btn-upload-file');
+            btnRemoveFile = document.getElementById('btn-remove-file');
+            // Re-bind button handlers
+            btnUploadFile.addEventListener('click', async () => {
+                if (pendingFile && !isUploading) {
+                    const caption = fileCaption.value.trim() || null;
+                    await uploadFile(pendingFile, caption);
+                }
+            });
+            btnRemoveFile.addEventListener('click', clearFilePreview);
+        }
+
+        /**
+         * Perform the actual file upload (no duplicate check).
+         */
+        async function doUploadFile(file, caption = null) {
             // Mark as uploading
             isUploading = true;
-            btnUploadFile.disabled = true;
-            btnUploadFile.textContent = '⏳ Uploading...';
+            const uploadBtn = document.getElementById('btn-upload-file');
+            if (uploadBtn) {
+                uploadBtn.disabled = true;
+                uploadBtn.innerHTML = '<span class="upload-spinner"></span> Uploading...';
+            }
 
-            // SECURITY: userId is handled by backend
             const formData = new FormData();
             formData.append('file', file);
+            formData.append('user_id', config.userId);
             formData.append('display_name', config.displayName || 'Guest');
             if (caption) {
                 formData.append('caption', caption);
@@ -1467,7 +1827,6 @@
                 console.log('[Guest] Upload result:', result);
 
                 // Send file message via WebSocket
-                // SECURITY: userId and role are handled by backend
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     const fileMessage = {
                         type: 'file',
@@ -1493,11 +1852,13 @@
                 console.log('[Guest] File upload complete, preview cleared');
             } catch (error) {
                 console.error('[Guest] File upload failed:', error);
-                alert(`File upload failed: ${error.message}`);
+                showToast(`File upload failed: ${error.message}`, 'error');
                 // Reset upload state but keep preview so user can retry
                 isUploading = false;
-                btnUploadFile.disabled = false;
-                btnUploadFile.textContent = '⬆️ Upload';
+                if (uploadBtn) {
+                    uploadBtn.disabled = false;
+                    uploadBtn.textContent = 'Upload';
+                }
             }
         }
 
@@ -1524,6 +1885,9 @@
         // Scroll to bottom button click handler
         scrollToBottomBtn.addEventListener('click', () => scrollToBottom(true));
 
+        // Load earlier messages button click handler
+        document.getElementById('btn-load-earlier').addEventListener('click', () => loadMoreHistory());
+
         // Attachment button click handler
         btnAttach.addEventListener('click', () => {
             fileInput.click();
@@ -1543,7 +1907,7 @@
             if (!file) return;
 
             if (file.size > MAX_FILE_SIZE) {
-                alert(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`);
+                showToast(`File size exceeds 20MB limit. Your file is ${formatFileSize(file.size)}`, 'error');
                 fileInput.value = '';
                 return;
             }
@@ -1570,6 +1934,49 @@
                 }
             }
         });
+
+        // Drag-and-drop file support on input area
+        (function initDragDrop() {
+            const inputWrapper = document.getElementById('input-wrapper');
+            let dragCounter = 0;
+            let savedPlaceholder = '';
+
+            // Prevent browser from opening the file
+            document.body.addEventListener('dragover', (e) => e.preventDefault());
+            document.body.addEventListener('drop', (e) => e.preventDefault());
+
+            inputWrapper.addEventListener('dragenter', (e) => {
+                e.preventDefault();
+                dragCounter++;
+                if (dragCounter === 1) {
+                    savedPlaceholder = chatInput.placeholder;
+                    chatInput.placeholder = 'Release to attach file';
+                    inputWrapper.classList.add('input-drop-active');
+                }
+            });
+            inputWrapper.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+            inputWrapper.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                dragCounter--;
+                if (dragCounter <= 0) {
+                    dragCounter = 0;
+                    chatInput.placeholder = savedPlaceholder;
+                    inputWrapper.classList.remove('input-drop-active');
+                }
+            });
+            inputWrapper.addEventListener('drop', (e) => {
+                e.preventDefault();
+                dragCounter = 0;
+                chatInput.placeholder = savedPlaceholder;
+                inputWrapper.classList.remove('input-drop-active');
+                const file = e.dataTransfer?.files?.[0];
+                if (file) {
+                    showFilePreview(file);
+                }
+            });
+        })();
 
         // Initialize and start connection
         // SECURITY: userId will be assigned by backend via 'connected' message

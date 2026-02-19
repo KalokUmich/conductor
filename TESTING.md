@@ -38,30 +38,32 @@ cd backend
 ```
 
 Current collected count:
-- `243`
+- `368`
 
 Current breakdown:
-- `tests/test_ai_provider.py`: 95
+- `tests/test_ai_provider.py`: 131
+- `tests/test_prompt_builder.py`: 64
 - `tests/test_auth.py`: 38
-- `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
-- `tests/test_chat.py`: 8
-- `tests/test_main.py`: 1
+- `tests/test_chat.py`: 26
 - `tests/test_mock_agent.py`: 26
-- `tests/test_style_loader.py`: 14
-- `tests/test_summary.py`: 13
+- `tests/test_style_loader.py`: 22
+- `tests/test_room_settings.py`: 18
+- `tests/test_audit.py`: 14
+- `tests/test_main.py`: 1
 
 Run specific modules:
 
 ```bash
 cd backend
 ../.venv/bin/pytest tests/test_ai_provider.py -v
+../.venv/bin/pytest tests/test_prompt_builder.py -v
 ../.venv/bin/pytest tests/test_auth.py -v
 ../.venv/bin/pytest tests/test_chat.py -v
 ../.venv/bin/pytest tests/test_mock_agent.py -v
 ../.venv/bin/pytest tests/test_auto_apply_policy.py -v
 ../.venv/bin/pytest tests/test_audit.py -v
-../.venv/bin/pytest tests/test_summary.py -v
+../.venv/bin/pytest tests/test_room_settings.py -v
 ```
 
 ### 3. Extension Tests
@@ -85,9 +87,15 @@ node --test out/tests/aiMessageHandlers.test.js
 node --test out/tests/ssoIdentityCache.test.js
 ```
 
+Or run all extension tests at once:
+
+```bash
+cd extension
+npm run test
+```
+
 Notes:
 - These tests target service logic and API handler behavior, not full VS Code UI automation.
-- `package.json` currently does not include a default `npm test` script.
 - Some tests start local HTTP servers; in restricted sandbox environments they can fail with socket permission errors (`EPERM`).
 
 ### 4. Manual E2E Checklist
@@ -131,6 +139,7 @@ make run-backend
 8. Session termination validation:
 - Host ends session
 - Guests receive `session_ended`
+- Active Live Share session is automatically closed
 - Room files are deleted on backend
 
 ### 5. Quick API Smoke Commands
@@ -221,18 +230,19 @@ cd backend
 ```
 
 当前收集数量：
-- `243`
+- `368`
 
 当前分布：
-- `tests/test_ai_provider.py`: 95
+- `tests/test_ai_provider.py`: 131
+- `tests/test_prompt_builder.py`: 64
 - `tests/test_auth.py`: 38
-- `tests/test_audit.py`: 14
 - `tests/test_auto_apply_policy.py`: 28
-- `tests/test_chat.py`: 8
-- `tests/test_main.py`: 1
+- `tests/test_chat.py`: 26
 - `tests/test_mock_agent.py`: 26
-- `tests/test_style_loader.py`: 14
-- `tests/test_summary.py`: 13
+- `tests/test_style_loader.py`: 22
+- `tests/test_room_settings.py`: 18
+- `tests/test_audit.py`: 14
+- `tests/test_main.py`: 1
 
 ### 3. 扩展测试
 
@@ -255,9 +265,15 @@ node --test out/tests/aiMessageHandlers.test.js
 node --test out/tests/ssoIdentityCache.test.js
 ```
 
+或一次运行全部扩展测试：
+
+```bash
+cd extension
+npm run test
+```
+
 说明：
 - 这些测试覆盖服务逻辑和 API 处理逻辑，不是完整 VS Code UI 自动化。
-- `package.json` 当前没有默认 `npm test` 脚本。
 - 部分测试会启动本地 HTTP 服务；在受限沙箱环境中可能出现 `EPERM` 端口权限错误。
 
 ### 4. 手动 E2E 检查清单
@@ -301,4 +317,5 @@ make run-backend
 8. 会话结束验证：
 - Host 结束会话
 - Guest 收到 `session_ended`
+- 自动关闭活跃的 Live Share 会话
 - 后端删除该房间上传文件

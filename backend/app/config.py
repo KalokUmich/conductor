@@ -291,6 +291,18 @@ DEFAULT_AI_MODELS = [
 ]
 
 
+class PromptConfig(BaseModel):
+    """Code prompt generation configuration.
+
+    Attributes:
+        output_mode: Output format for generated code prompts.
+            "unified_diff" - unified diff patches (default).
+            "direct_repo_edits" - complete file contents.
+            "plan_then_diff" - implementation plan followed by diffs.
+    """
+    output_mode: str = "unified_diff"
+
+
 class SummaryConfig(BaseModel):
     """Summary/AI configuration.
 
@@ -330,6 +342,7 @@ class SettingsConfig(BaseModel):
     sso: SSOConfig = SSOConfig()
     google_sso: GoogleSSOConfig = GoogleSSOConfig()
     summary: SummaryConfig = SummaryConfig()
+    prompt: PromptConfig = PromptConfig()
     ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
     ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
 
@@ -367,6 +380,7 @@ class ConductorConfig(BaseModel):
     sso: SSOConfig = SSOConfig()
     google_sso: GoogleSSOConfig = GoogleSSOConfig()
     summary: SummaryConfig = SummaryConfig()
+    prompt: PromptConfig = PromptConfig()
     ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
     ai_providers: AIProvidersSecretsConfig = AIProvidersSecretsConfig()
     google_sso_secrets: GoogleSSOSecretsConfig = GoogleSSOSecretsConfig()
@@ -490,6 +504,7 @@ def load_config(
         "ai_models": "ai_models",
         "sso": "sso",
         "google_sso": "google_sso",
+        "prompt": "prompt",
     }
     for yaml_key, config_key in settings_key_map.items():
         if yaml_key in settings_data:

@@ -15,9 +15,9 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. It suppor
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Real-time chat (WebSocket) | Working | In-memory only, lost on restart |
-| AI summarization pipeline | Working | 3-stage: classify -> summarize -> score |
+| AI summarization pipeline | Working | 4-stage: classify -> summarize -> score -> extract items |
 | Code generation prompts | Working | With auto-detected language styles |
-| File upload/download | Working | Room-scoped, DuckDB metadata |
+| File upload/download | Working | Room-scoped, DuckDB metadata, duplicate detection, retry logic |
 | SSO (AWS + Google) | Working | Device authorization flow |
 | Auto-apply policy | Working | Basic: file count, line count, forbidden paths |
 | Audit logging | Working | DuckDB, tracks applied changes |
@@ -109,6 +109,8 @@ Goal: Replace the mock agent with real LLM-backed code generation. This is the c
 ### 2.2 Project Context Gathering
 
 **Problem**: The agent receives only a single file path and instruction. No awareness of project structure, dependencies, or conventions.
+
+**Partial progress**: `PromptBuilder` (`ai_provider/prompt_builder.py`) already supports language inference from affected components and configurable output modes. Room settings (`settings_router.py`) allow per-room code_style and output_mode configuration.
 
 **Plan**:
 - Extension sends workspace metadata alongside change requests:

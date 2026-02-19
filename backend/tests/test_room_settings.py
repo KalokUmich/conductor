@@ -22,7 +22,7 @@ class TestRoomSettingsManager:
         """get_room_settings should return defaults for unknown room."""
         mgr = ConnectionManager()
         settings = mgr.get_room_settings("unknown-room")
-        assert settings == {"code_style": ""}
+        assert settings == {"code_style": "", "output_mode": ""}
 
     def test_update_room_settings(self):
         """update_room_settings should store and return settings."""
@@ -45,13 +45,35 @@ class TestRoomSettingsManager:
         settings = mgr.get_room_settings("room-1")
         assert settings["code_style"] == "Google Style"
 
+    def test_update_output_mode(self):
+        """update_room_settings should store output_mode."""
+        mgr = ConnectionManager()
+        result = mgr.update_room_settings("room-1", {"output_mode": "plan_then_diff"})
+        assert result["output_mode"] == "plan_then_diff"
+
+    def test_get_output_mode_after_update(self):
+        """get_room_settings should return previously stored output_mode."""
+        mgr = ConnectionManager()
+        mgr.update_room_settings("room-1", {"output_mode": "direct_repo_edits"})
+        settings = mgr.get_room_settings("room-1")
+        assert settings["output_mode"] == "direct_repo_edits"
+
+    def test_update_output_mode_independent_of_code_style(self):
+        """Updating output_mode should not affect code_style."""
+        mgr = ConnectionManager()
+        mgr.update_room_settings("room-1", {"code_style": "PEP 8"})
+        mgr.update_room_settings("room-1", {"output_mode": "plan_then_diff"})
+        settings = mgr.get_room_settings("room-1")
+        assert settings["code_style"] == "PEP 8"
+        assert settings["output_mode"] == "plan_then_diff"
+
     def test_clear_room_clears_settings(self):
         """clear_room should remove room settings."""
         mgr = ConnectionManager()
         mgr.update_room_settings("room-1", {"code_style": "PEP 8"})
         mgr.clear_room("room-1")
         settings = mgr.get_room_settings("room-1")
-        assert settings == {"code_style": ""}
+        assert settings == {"code_style": "", "output_mode": ""}
 
     def test_room_settings_isolated_per_room(self):
         """Each room should have independent settings."""
@@ -71,6 +93,7 @@ class TestRoomSettingsEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["code_style"] == ""
+        assert data["output_mode"] == ""
 
     def test_put_settings(self, client):
         """PUT /rooms/{room_id}/settings should update and return settings."""
@@ -120,3 +143,49 @@ class TestRoomSettingsEndpoints:
         )
         assert response.status_code == 200
         assert response.json()["code_style"] == ""
+
+    def test_put_output_mode(self, client):
+        """PUT should update output_mode."""
+        response = client.put(
+            "/rooms/room-mode/settings",
+            json={"output_mode": "plan_then_diff"},
+        )
+        assert response.status_code == 200
+        assert response.json()["output_mode"] == "plan_then_diff"
+
+    def test_get_output_mode_after_put(self, client):
+        """GET should reflect previously PUT output_mode."""
+        client.put(
+            "/rooms/room-mode2/settings",
+            json={"output_mode": "direct_repo_edits"},
+        )
+        response = client.get("/rooms/room-mode2/settings")
+        assert response.status_code == 200
+        assert response.json()["output_mode"] == "direct_repo_edits"
+
+    def test_put_both_code_style_and_output_mode(self, client):
+        """PUT should update both code_style and output_mode."""
+        response = client.put(
+            "/rooms/room-both/settings",
+            json={"code_style": "PEP 8", "output_mode": "unified_diff"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["code_style"] == "PEP 8"
+        assert data["output_mode"] == "unified_diff"
+
+    def test_put_output_mode_partial(self, client):
+        """PUT with only output_mode should not overwrite code_style."""
+        client.put(
+            "/rooms/room-partial-mode/settings",
+            json={"code_style": "Google", "output_mode": "unified_diff"},
+        )
+        response = client.put(
+            "/rooms/room-partial-mode/settings",
+            json={"output_mode": "plan_then_diff"},
+        )
+        assert response.status_code == 200
+        get_resp = client.get("/rooms/room-partial-mode/settings")
+        data = get_resp.json()
+        assert data["code_style"] == "Google"
+        assert data["output_mode"] == "plan_then_diff"

@@ -306,6 +306,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     } catch (e) {
                         console.warn('[Conductor] FSM transition on sessionEnded failed:', e);
                     }
+                    // Close Live Share session if active
+                    this._closeLiveShare();
                     // Reset session state and generate new roomId
                     getSessionService().resetSession();
                     vscode.window.showInformationMessage('Chat session has ended.');
@@ -340,6 +342,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'uploadFile':
                     this._handleUploadFile(message);
                     return;
+                case 'checkDuplicateFile':
+                    this._handleCheckDuplicateFile(message);
+                    return;
                 case 'downloadFile':
                     this._handleDownloadFile(message);
                     return;
@@ -366,6 +371,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'generateCodePromptAndPost':
                     this._handleGenerateCodePromptAndPost(message.decisionSummary, message.roomId);
                     return;
+                case 'generateCodePromptFromItemsAndPost':
+                    this._handleGenerateCodePromptFromItemsAndPost(message.items, message.topic, message.roomId);
+                    return;
                 case 'getRoomSettings':
                     this._handleGetRoomSettings(message.roomId);
                     return;
@@ -373,7 +381,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     this._handleGetStyleTemplates();
                     return;
                 case 'saveRoomSettings':
-                    this._handleSaveRoomSettings(message.roomId, message.codeStyle);
+                    this._handleSaveRoomSettings(message.roomId, message.codeStyle, message.outputMode);
                     return;
                 case 'ssoLogin':
                     this._handleSSOLogin(message.provider || 'aws');
@@ -538,6 +546,24 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         } catch (error) {
             console.warn('[Conductor] Failed to check Live Share status:', error);
             return { isActive: false, role: vsls.Role.None };
+        }
+    }
+
+    /**
+     * Close the active Live Share session, if any.
+     * Called when the chat session ends so participants are fully disconnected.
+     */
+    private async _closeLiveShare(): Promise<void> {
+        try {
+            const liveShareApi = await vsls.getApi();
+            if (!liveShareApi || liveShareApi.session.id === null) {
+                return; // not active, nothing to close
+            }
+            console.log('[Conductor] Closing Live Share session...');
+            await liveShareApi.end();
+            console.log('[Conductor] Live Share session closed');
+        } catch (error) {
+            console.warn('[Conductor] Failed to close Live Share:', error);
         }
     }
 
@@ -801,10 +827,70 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Normalize backend URL for Node.js fetch compatibility.
+     * Replaces 'localhost' with '127.0.0.1' to avoid IPv6 resolution issues
+     * where Node.js resolves localhost to ::1 but the backend only listens on 127.0.0.1.
+     */
+    private _normalizeUrl(backendUrl: string): string {
+        return backendUrl.replace('://localhost', '://127.0.0.1');
+    }
+
+    /**
      * Handle file upload from WebView.
      * WebView cannot make fetch requests due to CORS restrictions,
      * so we proxy the upload through the extension host.
      */
+    private async _handleCheckDuplicateFile(message: {
+        backendUrl: string;
+        roomId: string;
+        fileName: string;
+    }): Promise<void> {
+        try {
+            const baseUrl = this._normalizeUrl(message.backendUrl);
+            const url = `${baseUrl}/files/check-duplicate/${message.roomId}?filename=${encodeURIComponent(message.fileName)}`;
+            console.log('[Conductor] Checking duplicate:', message.fileName);
+
+            // Retry up to 3 times for transient connection failures
+            // (same stale keep-alive issue as uploads)
+            let response: Response | undefined;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                try {
+                    response = await fetch(url);
+                    break;
+                } catch (e) {
+                    console.warn(`[Conductor] Duplicate check attempt ${attempt}/3 failed:`, e instanceof Error ? e.message : e);
+                    if (attempt < 3) {
+                        await new Promise(r => setTimeout(r, 300 * attempt));
+                    }
+                }
+            }
+
+            if (response?.ok) {
+                const data = await response.json() as { duplicate: boolean; existing_file: unknown };
+                console.log('[Conductor] Duplicate check result:', data.duplicate);
+                this._view?.webview.postMessage({
+                    command: 'checkDuplicateFileResult',
+                    duplicate: data.duplicate,
+                    existing_file: data.existing_file,
+                });
+            } else {
+                console.warn('[Conductor] Duplicate check failed, status:', response?.status ?? 'no response');
+                this._view?.webview.postMessage({
+                    command: 'checkDuplicateFileResult',
+                    duplicate: false,
+                    existing_file: null,
+                });
+            }
+        } catch (error) {
+            console.error('[Conductor] Duplicate check error:', error);
+            this._view?.webview.postMessage({
+                command: 'checkDuplicateFileResult',
+                duplicate: false,
+                existing_file: null,
+            });
+        }
+    }
+
     private async _handleUploadFile(message: {
         backendUrl: string;
         roomId: string;
@@ -822,59 +908,57 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             const fileBuffer = Buffer.from(message.fileData, 'base64');
             console.log('[Conductor] File buffer size:', fileBuffer.length, 'bytes');
 
-            // Create form data using Node.js compatible approach
-            const boundary = '----FormBoundary' + Math.random().toString(36).substring(2);
-            const formParts: Buffer[] = [];
-
-            // Encode filename for Content-Disposition header (RFC 5987)
-            // Use ASCII-safe filename and UTF-8 encoded filename*
-            const safeFileName = message.fileName.replace(/[^\x20-\x7E]/g, '_');
-            const encodedFileName = encodeURIComponent(message.fileName);
-
-            // Add file part with both filename and filename* for Unicode support
-            formParts.push(Buffer.from(
-                `--${boundary}\r\n` +
-                `Content-Disposition: form-data; name="file"; filename="${safeFileName}"; filename*=UTF-8''${encodedFileName}\r\n` +
-                `Content-Type: ${message.mimeType}\r\n\r\n`
-            ));
-            formParts.push(fileBuffer);
-            formParts.push(Buffer.from('\r\n'));
-
-            // Add user_id part
-            formParts.push(Buffer.from(
-                `--${boundary}\r\n` +
-                `Content-Disposition: form-data; name="user_id"\r\n\r\n` +
-                `${message.userId}\r\n`
-            ));
-
-            // Add display_name part
-            formParts.push(Buffer.from(
-                `--${boundary}\r\n` +
-                `Content-Disposition: form-data; name="display_name"\r\n\r\n` +
-                `${message.displayName}\r\n`
-            ));
-
-            // Add caption part if provided
+            // Build FormData using Node.js built-in API (available in Node 18+)
+            const formData = new FormData();
+            const fileBlob = new Blob([fileBuffer], { type: message.mimeType });
+            formData.append('file', fileBlob, message.fileName);
+            formData.append('user_id', message.userId);
+            formData.append('display_name', message.displayName);
             if (message.caption) {
-                formParts.push(Buffer.from(
-                    `--${boundary}\r\n` +
-                    `Content-Disposition: form-data; name="caption"\r\n\r\n` +
-                    `${message.caption}\r\n`
-                ));
+                formData.append('caption', message.caption);
             }
 
-            // Add closing boundary
-            formParts.push(Buffer.from(`--${boundary}--\r\n`));
+            const uploadUrl = `${this._normalizeUrl(message.backendUrl)}/files/upload/${message.roomId}`;
+            console.log('[Conductor] Upload URL:', uploadUrl);
 
-            const formBody = Buffer.concat(formParts);
+            // Retry up to 3 times for transient connection failures.
+            // Node.js undici can fail with "fetch failed" when reusing a stale
+            // keep-alive connection that the server has already closed.
+            const maxAttempts = 3;
+            let lastError: Error | undefined;
+            let response: Response | undefined;
 
-            const response = await fetch(`${message.backendUrl}/files/upload/${message.roomId}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': `multipart/form-data; boundary=${boundary}`
-                },
-                body: formBody
-            });
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 60000);
+                try {
+                    response = await fetch(uploadUrl, {
+                        method: 'POST',
+                        body: formData,
+                        signal: controller.signal
+                    });
+                    break; // success, exit retry loop
+                } catch (e) {
+                    lastError = e instanceof Error ? e : new Error(String(e));
+                    const isAbort = lastError.name === 'AbortError';
+                    console.warn(
+                        `[Conductor] Upload attempt ${attempt}/${maxAttempts} failed:`,
+                        lastError.message,
+                        isAbort ? '(timeout)' : ''
+                    );
+                    // Don't retry on explicit timeout/abort
+                    if (isAbort) { break; }
+                    if (attempt < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 500 * attempt));
+                    }
+                } finally {
+                    clearTimeout(timeoutId);
+                }
+            }
+
+            if (!response) {
+                throw lastError ?? new Error('Upload failed after retries');
+            }
 
             console.log('[Conductor] Upload response status:', response.status);
 
@@ -902,7 +986,20 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             });
 
         } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
+            let msg = error instanceof Error ? error.message : String(error);
+            if (error instanceof Error && error.name === 'AbortError') {
+                msg = 'Upload timed out after 60 seconds';
+            }
+            // Include full error cause chain for debugging
+            if (error instanceof Error && 'cause' in error && error.cause) {
+                const cause = error.cause;
+                const causeMsg = cause instanceof Error
+                    ? (cause.message || cause.name || cause.constructor.name)
+                    : String(cause);
+                if (causeMsg) {
+                    msg = `${msg} (${causeMsg})`;
+                }
+            }
             console.error('[Conductor] File upload failed:', msg);
             console.error('[Conductor] Error details:', error);
 
@@ -941,7 +1038,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             }
 
             // Fetch file from backend
-            const response = await fetch(message.downloadUrl);
+            const response = await fetch(this._normalizeUrl(message.downloadUrl));
             if (!response.ok) {
                 throw new Error(`Download failed: HTTP ${response.status}`);
             }
@@ -1222,6 +1319,15 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 affected_components: string[];
                 risk_level: 'low' | 'medium' | 'high';
                 next_steps: string[];
+                code_relevant_items?: Array<{
+                    id: string;
+                    type: string;
+                    title: string;
+                    problem: string;
+                    proposed_change: string;
+                    targets: string[];
+                    risk_level: string;
+                }>;
             };
             console.log('[Conductor] Summary received:', summaryData.topic);
 
@@ -1406,6 +1512,142 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         }
     }
 
+    /**
+     * Handle code prompt generation from selected implementation items.
+     * Calls POST /ai/code-prompt/items with the selected items, then posts
+     * the result to chat as an AI code prompt message.
+     *
+     * @param items Array of selected code-relevant items
+     * @param topic The summary topic for context
+     * @param roomId The room ID to post the result to
+     */
+    /**
+     * Read a short snippet (~30 lines) from a workspace file for context injection.
+     * Returns null if the file cannot be found or read.
+     */
+    private async _readSnippetFromTarget(relativePath: string): Promise<{ file_path: string; snippet: string } | null> {
+        try {
+            // Skip paths that don't look like real files (no extension)
+            const lastDot = relativePath.lastIndexOf('.');
+            const lastSlash = Math.max(relativePath.lastIndexOf('/'), relativePath.lastIndexOf('\\'));
+            if (lastDot <= 0 || lastDot < lastSlash) {
+                return null;
+            }
+
+            // Try to find the file in workspace; fetch up to 2 to detect ambiguity.
+            // If more than one match exists we can't tell which is correct, so skip
+            // the snippet and let the agent locate the right file itself.
+            const matches = await vscode.workspace.findFiles(`**/${relativePath}`, '**/node_modules/**', 2);
+            if (matches.length !== 1) {
+                return null;
+            }
+
+            const doc = await vscode.workspace.openTextDocument(matches[0]);
+            const maxLines = Math.min(doc.lineCount, 30);
+            const snippet = doc.getText(new vscode.Range(0, 0, maxLines, 0));
+            if (!snippet.trim()) {
+                return null;
+            }
+
+            return { file_path: relativePath, snippet };
+        } catch {
+            return null;
+        }
+    }
+
+    private async _handleGenerateCodePromptFromItemsAndPost(
+        items: Array<{
+            id: string;
+            type: string;
+            title: string;
+            problem: string;
+            proposed_change: string;
+            targets: string[];
+            risk_level: string;
+        }>,
+        topic: string,
+        roomId: string,
+    ): Promise<void> {
+        try {
+            console.log('[Conductor] Requesting code prompt from', items.length, 'selected items');
+            const detectedLanguages = await detectWorkspaceLanguages();
+
+            // Collect context snippets from target files
+            const uniqueTargets = [...new Set(items.flatMap(i => i.targets || []))];
+            const snippetPromises = uniqueTargets.map(t => this._readSnippetFromTarget(t));
+            const snippetResults = await Promise.all(snippetPromises);
+            const contextSnippets = snippetResults.filter(
+                (s): s is { file_path: string; snippet: string } => s !== null
+            );
+
+            if (contextSnippets.length > 0) {
+                console.log('[Conductor] Collected', contextSnippets.length, 'context snippets from target files');
+            }
+
+            const response = await fetch(`${getBackendUrl()}/ai/code-prompt/items`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    items,
+                    topic,
+                    room_id: roomId,
+                    detected_languages: detectedLanguages,
+                    ...(contextSnippets.length > 0 ? { context_snippets: contextSnippets } : {}),
+                })
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.warn('[Conductor] Items code prompt request failed:', response.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'codePromptPostResult',
+                    data: { error: `Failed to generate code prompt: ${response.status} - ${errorText}` }
+                });
+                return;
+            }
+
+            const data = await response.json() as { code_prompt: string };
+            console.log('[Conductor] Items code prompt generated successfully');
+
+            // Post the code prompt as an AI message to the chat
+            const postParams = new URLSearchParams({
+                message_type: 'ai_code_prompt',
+                model_name: 'claude_bedrock',
+                content: data.code_prompt
+            });
+
+            const postResponse = await fetch(`${getBackendUrl()}/chat/${roomId}/ai-message?${postParams.toString()}`, {
+                method: 'POST'
+            });
+
+            if (!postResponse.ok) {
+                const errorText = await postResponse.text();
+                console.warn('[Conductor] Failed to post AI code prompt message:', postResponse.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'codePromptPostResult',
+                    data: { error: `Failed to post code prompt to chat: ${postResponse.status}` }
+                });
+                return;
+            }
+
+            console.log('[Conductor] AI code prompt (from items) posted to chat successfully');
+
+            this._view?.webview.postMessage({
+                command: 'codePromptPostResult',
+                data: { success: true }
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] Failed to generate/post items code prompt:', msg);
+            this._view?.webview.postMessage({
+                command: 'codePromptPostResult',
+                data: { error: `Cannot connect to backend: ${msg}` }
+            });
+        }
+    }
+
     // ----- Room Settings handlers ------------------------------------------
 
     /**
@@ -1476,13 +1718,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      * Handle save room settings request from WebView.
      * Calls PUT /rooms/{roomId}/settings and forwards result.
      */
-    private async _handleSaveRoomSettings(roomId: string, codeStyle: string): Promise<void> {
+    private async _handleSaveRoomSettings(roomId: string, codeStyle: string, outputMode?: string): Promise<void> {
         try {
             console.log('[Conductor] Saving room settings for:', roomId);
+            const body: Record<string, string> = { code_style: codeStyle };
+            if (outputMode !== undefined) {
+                body.output_mode = outputMode;
+            }
             const response = await fetch(`${getBackendUrl()}/rooms/${roomId}/settings`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ code_style: codeStyle })
+                body: JSON.stringify(body)
             });
 
             if (!response.ok) {
