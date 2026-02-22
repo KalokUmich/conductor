@@ -856,6 +856,27 @@
                     </button>
                 </div>
             </div>
+
+            <!-- Rebuild workspace index button (shown when session is active) -->
+            <div id="rebuild-index-row" class="hidden px-3 pt-1 flex items-center justify-between">
+                <span class="text-[0.6rem] text-gray-500">Context index</span>
+                <button id="btn-rebuild-index" class="flex items-center gap-1 text-[0.6rem] text-amber-400/80 hover:text-amber-300 transition-colors" title="Delete and rebuild workspace index">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd"/>
+                    </svg>
+                    Rebuild Index
+                </button>
+            </div>
+
+            <!-- Workspace indexing progress bar (hidden by default) -->
+            <div id="index-progress-bar" class="hidden px-1 pt-1.5 pb-0.5">
+                <div class="flex items-center gap-2">
+                    <div class="flex-1 h-1 rounded-full overflow-hidden" style="background:rgba(255,255,255,0.06);">
+                        <div id="index-progress-fill" class="h-full rounded-full transition-all duration-300" style="width:0%;background:rgba(139,92,246,0.6);"></div>
+                    </div>
+                    <span id="index-progress-text" class="text-[0.55rem] text-gray-500 whitespace-nowrap"></span>
+                </div>
+            </div>
         </header>
 
         <!-- Chat / Tasks Tab bar — pill segment control -->
@@ -886,6 +907,39 @@
                     <div class="bg-gray-800/30 text-gray-500 text-xs px-3 py-1.5 rounded-full border border-gray-700/40 shimmer">
                         <span>Connecting to chat...</span>
                     </div>
+                </div>
+            </div>
+
+            <!-- Workspace scanning overlay (prominent indicator during indexing) -->
+            <div id="scanning-overlay" class="hidden absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 px-8" style="background:rgba(8,12,20,0.9);backdrop-filter:blur(6px);">
+                <!-- Branch-change banner -->
+                <div id="scan-branch-banner" class="hidden w-full max-w-[240px] text-[0.6rem] text-amber-400/80 text-center leading-relaxed rounded-lg px-3 py-2" style="background:rgba(217,119,6,0.06);border:1px solid rgba(217,119,6,0.18);">
+                    Branch changed — rebuilding index
+                </div>
+                <!-- Pulsing ring + spinner -->
+                <div class="relative flex items-center justify-center h-16 w-16">
+                    <div class="absolute inset-0 rounded-full animate-ping opacity-20" style="background:radial-gradient(circle,rgba(139,92,246,0.5),transparent);animation-duration:2s;"></div>
+                    <div class="absolute inset-2 rounded-full" style="border:1px solid rgba(139,92,246,0.25);"></div>
+                    <svg id="scan-overlay-spinner" class="h-6 w-6 animate-spin" style="color:rgba(139,92,246,0.8);animation-duration:1.4s;" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </div>
+                <!-- Phase + detail text -->
+                <div class="flex flex-col items-center gap-1.5 text-center">
+                    <span id="scan-overlay-phase" class="text-sm font-medium text-gray-200">Building workspace index</span>
+                    <span id="scan-overlay-detail" class="text-xs text-gray-500 max-w-[200px] leading-relaxed">Scanning files…</span>
+                </div>
+                <!-- Progress bar + percentage -->
+                <div class="flex flex-col items-center gap-1.5 w-full max-w-[200px]">
+                    <div class="w-full h-px rounded-full overflow-hidden" style="background:rgba(255,255,255,0.06);">
+                        <div id="scan-overlay-fill" class="h-full rounded-full transition-all duration-300" style="width:0%;background:linear-gradient(90deg,rgba(139,92,246,0.7),rgba(59,130,246,0.5));"></div>
+                    </div>
+                    <span id="scan-overlay-pct" class="text-[0.55rem] tabular-nums" style="color:rgba(139,92,246,0.5);">0%</span>
+                </div>
+                <!-- AST-only badge (shown when embedding is disabled) -->
+                <div id="scan-mode-badge" class="hidden text-[0.55rem] px-2 py-0.5 rounded-full" style="color:rgba(156,163,175,0.6);background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);">
+                    AST only — embedding unavailable
                 </div>
             </div>
 
@@ -988,6 +1042,29 @@
             </div>
         </div>
 
+        <!-- Rebuild Index Confirmation Modal -->
+        <div id="rebuild-index-confirm-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+            <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 w-[90%] max-w-sm shadow-2xl flex flex-col gap-3">
+                <div class="flex items-center justify-between">
+                    <span class="text-sm font-medium text-gray-200">Rebuild Workspace Index?</span>
+                    <button id="btn-close-rebuild-modal" class="text-gray-500 hover:text-white p-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                    </button>
+                </div>
+                <p class="text-xs text-gray-400 leading-relaxed">
+                    This will delete all cached embeddings, LSP data, and file metadata,
+                    then re-scan and re-embed the workspace. Embedding API calls will be
+                    re-issued. This may take a while depending on workspace size.
+                </p>
+                <div class="flex gap-2 justify-end">
+                    <button id="btn-rebuild-cancel" class="btn-secondary text-xs px-3 py-1.5">Cancel</button>
+                    <button id="btn-rebuild-confirm" class="text-xs px-3 py-1.5 rounded-lg font-medium text-white transition-colors" style="background:rgba(217,119,6,0.7);">Rebuild</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Typing Indicator -->
         <div id="typing-indicator" class="hidden flex-shrink-0 px-6 py-2 text-xs text-gray-400">
             <span id="typing-text" class="flex items-center gap-1.5">Someone is typing<span class="typing-dots"><span></span><span></span><span></span></span></span>
@@ -1084,17 +1161,6 @@
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                         <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                    </svg>
-                </button>
-
-                <!-- Explain Code Button (AI) -->
-                <button
-                    id="btn-explain-code"
-                    class="text-gray-500 hover:text-emerald-400 p-2.5 rounded-lg hover:bg-emerald-500/10 transition-all duration-200 focus:outline-none"
-                    title="Explain selected code with AI and share with team"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.68.166-1.32.42-1.897A5 5 0 006 10a5 5 0 006 10l-.579 2.894A1 1 0 0012 14z" />
                     </svg>
                 </button>
 
@@ -2104,25 +2170,6 @@
         function updateAiDependentButtons() {
             const aiOk = aiSummaryEnabledState && !!aiActiveProviderState;
 
-            // Explain Code button (💡) — requires AI
-            const explainBtn = document.getElementById('btn-explain-code');
-            if (explainBtn) {
-                if (aiOk) {
-                    explainBtn.removeAttribute('disabled');
-                    explainBtn.classList.remove('opacity-30', 'cursor-not-allowed');
-                    explainBtn.classList.add('hover:text-emerald-400', 'hover:bg-emerald-500/10');
-                    explainBtn.title = 'Explain selected code with AI and share with team';
-                } else {
-                    explainBtn.setAttribute('disabled', 'true');
-                    explainBtn.classList.add('opacity-30', 'cursor-not-allowed');
-                    explainBtn.classList.remove('hover:text-emerald-400', 'hover:bg-emerald-500/10');
-                    const reason = !aiSummaryEnabledState
-                        ? 'AI is disabled (summary.enabled = false in settings)'
-                        : 'No healthy AI provider available';
-                    explainBtn.title = `Explain Code unavailable: ${reason}`;
-                }
-            }
-
             // Summarize button — also requires AI (already hidden by role, but disable too)
             const summarizeBtn = document.getElementById('btn-create-summary');
             if (summarizeBtn) {
@@ -2136,6 +2183,22 @@
                     summarizeBtn.title = `Summarize unavailable: ${reason}`;
                 }
             }
+
+            // All snippet explain buttons in existing messages
+            document.querySelectorAll('.snippet-explain-btn').forEach(btn => {
+                if (btn.getAttribute('data-loading') === 'true') return; // skip in-flight
+                if (aiOk) {
+                    btn.removeAttribute('disabled');
+                    btn.classList.remove('text-gray-600', 'opacity-40', 'cursor-not-allowed');
+                    btn.classList.add('text-emerald-400/70', 'hover:text-emerald-300', 'hover:bg-emerald-500/10');
+                    btn.title = 'Explain with AI';
+                } else {
+                    btn.setAttribute('disabled', 'true');
+                    btn.classList.add('text-gray-600', 'opacity-40', 'cursor-not-allowed');
+                    btn.classList.remove('text-emerald-400/70', 'hover:text-emerald-300', 'hover:bg-emerald-500/10');
+                    btn.title = 'AI not available';
+                }
+            });
         }
 
         /**
@@ -2490,6 +2553,133 @@
                     // All changes have been reviewed
                     clearPendingChanges();
                     break;
+                case 'indexProgress': {
+                    const p = message.payload;
+                    // Tiny header bar
+                    const bar  = document.getElementById('index-progress-bar');
+                    const fill = document.getElementById('index-progress-fill');
+                    const text = document.getElementById('index-progress-text');
+                    // Prominent overlay
+                    const overlay       = document.getElementById('scanning-overlay');
+                    const overlayPhase  = document.getElementById('scan-overlay-phase');
+                    const overlayDetail = document.getElementById('scan-overlay-detail');
+                    const overlayFill   = document.getElementById('scan-overlay-fill');
+                    const overlayPct    = document.getElementById('scan-overlay-pct');
+                    const modeBadge     = document.getElementById('scan-mode-badge');
+
+                    if (p.phase === 'done') {
+                        bar?.classList.add('hidden');
+                        overlay?.classList.add('hidden');
+                        _scanBranchInfo = null;
+                        _clearScanOverlayTimeout();
+                        break;
+                    }
+
+                    // Show prominent overlay only for significant operations:
+                    // branch change, empty DB, or many stale files.
+                    // For incremental / small delta: just show the subtle header bar.
+                    const showOverlay = !p.isIncremental && (
+                        !!_scanBranchInfo ||
+                        p.staleFilesCount === undefined ||
+                        p.staleFilesCount > 20
+                    );
+
+                    bar?.classList.remove('hidden');
+                    if (showOverlay) {
+                        overlay?.classList.remove('hidden');
+                        _resetScanOverlayTimeout();
+                    } else {
+                        overlay?.classList.add('hidden');
+                    }
+
+                    // Show branch-change banner if pending
+                    if (_scanBranchInfo) {
+                        const banner = document.getElementById('scan-branch-banner');
+                        if (banner) {
+                            banner.textContent = 'Branch changed: ' + _scanBranchInfo.from + ' \u2192 ' + _scanBranchInfo.to + ' \u2014 rebuilding index';
+                            banner.classList.remove('hidden');
+                        }
+                    }
+
+                    // AST-only badge
+                    if (modeBadge) {
+                        modeBadge.classList.toggle('hidden', p.embeddingEnabled !== false);
+                    }
+
+                    let pct = 0;
+                    let phaseLabel = '';
+                    let detailLabel = '';
+
+                    if (p.phase === 'scanning') {
+                        pct = p.totalFiles > 0 ? Math.round((p.filesScanned / p.totalFiles) * 100) : 5;
+                        phaseLabel  = 'Scanning workspace';
+                        detailLabel = 'Collecting file metadata\u2026 (' + p.filesScanned + ' files)';
+                        if (text) text.textContent = 'Indexing workspace\u2026 (' + p.filesScanned + ' files)';
+                    } else if (p.phase === 'extracting') {
+                        // Use file-based progress as primary driver so the bar
+                        // always moves even when a workspace has 0 extracted symbols.
+                        const filePct  = p.totalFiles > 0 ? (p.filesIndexed || 0) / p.totalFiles : 0;
+                        const symBonus = p.totalFiles > 0 ? Math.min(0.3, p.symbolsExtracted / (p.totalFiles * 5)) : 0;
+                        pct = Math.round((filePct * 0.7 + symBonus) * 80) + 10; // 10–90 %
+                        pct = Math.min(90, Math.max(10, pct));
+                        phaseLabel  = 'Building AST index';
+                        const filesStr = p.filesIndexed ? p.filesIndexed + '/' + p.totalFiles + ' files' : p.symbolsExtracted + ' symbols';
+                        detailLabel = 'Extracting symbols\u2026 (' + filesStr + ')';
+                        if (text) text.textContent = 'Building code index\u2026 (' + filesStr + ')';
+                    } else if (p.phase === 'embedding') {
+                        pct = 70 + Math.min(28, Math.round((p.embeddingsEnqueued / Math.max(p.symbolsExtracted, 1)) * 28));
+                        phaseLabel  = 'Generating embeddings';
+                        detailLabel = 'Embedding symbols\u2026 (' + p.embeddingsEnqueued + ' queued)';
+                        if (text) text.textContent = 'Embedding symbols\u2026 (' + p.embeddingsEnqueued + ')';
+                    }
+
+                    if (fill) fill.style.width = pct + '%';
+                    if (overlayFill) overlayFill.style.width = pct + '%';
+                    if (overlayPct) overlayPct.textContent = pct + '%';
+                    if (overlayPhase) overlayPhase.textContent = phaseLabel;
+                    if (overlayDetail) overlayDetail.textContent = detailLabel;
+                    break;
+                }
+                case 'indexBranchChanged':
+                    // Store info so the overlay shows the banner on first indexProgress
+                    _scanBranchInfo = { from: message.from || '?', to: message.to || '?' };
+                    break;
+                case 'indexEmbeddingError': {
+                    const badge = document.getElementById('scan-mode-badge');
+                    if (badge) badge.classList.remove('hidden');
+                    break;
+                }
+                case 'indexRebuildComplete':
+                    handleIndexRebuildComplete(message);
+                    // Reset branch banner state after a manual rebuild
+                    _scanBranchInfo = null;
+                    document.getElementById('scan-branch-banner')?.classList.add('hidden');
+                    break;
+                case 'explainCodeFromSnippetDone':
+                    // Reset all in-flight snippet explain buttons
+                    document.querySelectorAll('.snippet-explain-btn[data-loading="true"]').forEach(btn => {
+                        btn.removeAttribute('data-loading');
+                        // Restore the lightbulb icon
+                        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.68.166-1.32.42-1.897A5 5 0 006 10a5 5 0 006 10l-.579 2.894A1 1 0 0012 14z"/></svg>`;
+                        if (aiSummaryEnabledState && aiActiveProviderState) {
+                            btn.removeAttribute('disabled');
+                        }
+                    });
+                    if (!message.success) showToast('Explain failed: ' + (message.error || 'unknown error'), 'error');
+                    break;
+                case 'indexFileSynced':
+                    // File watcher updated a single file — flash the header bar briefly
+                    (function() {
+                        const b = document.getElementById('index-progress-bar');
+                        const f = document.getElementById('index-progress-fill');
+                        const t = document.getElementById('index-progress-text');
+                        if (!b || !f || !t) return;
+                        f.style.width = '100%';
+                        t.textContent = '\u2713 ' + message.file + ' (' + (message.symbols || 0) + ' symbols)';
+                        b.classList.remove('hidden');
+                        setTimeout(() => b.classList.add('hidden'), 2000);
+                    })();
+                    break;
                 case 'changesGenerated':
                     // Legacy: Store the pending change set (kept for backwards compatibility)
                     pendingChangeSet = message.changeSet;
@@ -2514,6 +2704,15 @@
                         ssoProvider = message.ssoProvider || ssoProvider;
                     }
                     render(message.state, message.session);
+                    // Show rebuild-index row only when a session is active
+                    if (message.state === 'Hosting' || message.state === 'Joined') {
+                        document.getElementById('rebuild-index-row')?.classList.remove('hidden');
+                    } else {
+                        document.getElementById('rebuild-index-row')?.classList.add('hidden');
+                        // Hide scanning overlay when session ends
+                        document.getElementById('scanning-overlay')?.classList.add('hidden');
+                        document.getElementById('index-progress-bar')?.classList.add('hidden');
+                    }
                     break;
                 case 'uploadFileResult':
                     handleUploadFileResult(message);
@@ -2601,11 +2800,6 @@
                     handleTestFailuresResolved(message);
                     break;
 
-                // ---- AI code explanation ----
-                case 'codeExplanationReady':
-                    handleCodeExplanationReady(message);
-                    break;
-
                 // ---- TODO tracking ----
                 case 'todosLoaded':
                     renderTodoList(message.todos || []);
@@ -2624,6 +2818,9 @@
                     break;
                 case 'workspaceTodoUpdated':
                     handleWorkspaceTodoUpdated(message);
+                    break;
+                case 'historyLoaded':
+                    handleHistoryLoaded(message);
                     break;
             }
         });
@@ -3307,8 +3504,21 @@
                 <p class="text-sm leading-relaxed break-words whitespace-pre-wrap mb-2">${escapeHtml(msg.content)}</p>
             ` : '';
 
-            // Generate unique ID for the navigate button
-            const navigateBtnId = `nav-btn-${msg.id || Date.now()}`;
+            // Unique IDs for all interactive elements in this snippet bubble
+            const uid           = msg.id || Date.now();
+            const navigateBtnId = `nav-btn-${uid}`;
+            const explainBtnId  = `exp-btn-${uid}`;
+            const explainAreaId = `exp-area-${uid}`;
+            const questionInpId = `exp-q-${uid}`;
+            const explainSubId  = `exp-sub-${uid}`;
+            const explainCanId  = `exp-cancel-${uid}`;
+
+            const aiOk = aiSummaryEnabledState && !!aiActiveProviderState;
+            const explainDisabled = aiOk ? '' : 'disabled';
+            const explainCls = aiOk
+                ? 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-500/10'
+                : 'text-gray-600 opacity-40 cursor-not-allowed';
+            const explainTitle = aiOk ? 'Explain with AI' : 'AI not available';
 
             div.innerHTML = `
                 ${avatarHtml}
@@ -3321,16 +3531,36 @@
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
                                     <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-xs text-gray-300 font-mono truncate max-w-[180px]" title="${escapeHtml(snippet.filename || '')}">${escapeHtml(snippet.relativePath || snippet.filename || 'code')}</span>
+                                <span class="text-xs text-gray-300 font-mono truncate max-w-[140px]" title="${escapeHtml(snippet.filename || '')}">${escapeHtml(snippet.relativePath || snippet.filename || 'code')}</span>
                                 <span class="text-xs text-gray-500">${lineInfo}</span>
                             </div>
-                            <button id="${navigateBtnId}" class="navigate-to-code-btn p-1 rounded hover:bg-gray-600 transition-colors" title="Go to code location">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 hover:text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
-                                </svg>
-                            </button>
+                            <div class="flex items-center gap-0.5">
+                                <button id="${navigateBtnId}" class="navigate-to-code-btn p-1.5 rounded hover:bg-gray-600 transition-colors" title="Go to code location">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-gray-400 hover:text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd" />
+                                    </svg>
+                                </button>
+                                <button id="${explainBtnId}" ${explainDisabled} class="snippet-explain-btn p-1.5 rounded transition-colors ${explainCls}" title="${explainTitle}" data-snippet-uid="${uid}">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.68.166-1.32.42-1.897A5 5 0 006 10a5 5 0 006 10l-.579 2.894A1 1 0 0012 14z"/>
+                                    </svg>
+                                </button>
+                            </div>
                         </div>
                         <pre class="code-snippet-plain p-3 text-xs font-mono text-gray-300 whitespace-pre-wrap break-words max-h-48 overflow-y-auto max-w-full">${escapeHtml(snippet.code || '')}</pre>
+                        <!-- Inline question input (hidden until Explain button is clicked) -->
+                        <div id="${explainAreaId}" class="hidden border-t border-gray-700/50">
+                            <div class="px-3 py-2 flex flex-col gap-1.5" style="background:rgba(5,20,15,0.6);">
+                                <input id="${questionInpId}" type="text" maxlength="300"
+                                    placeholder="What do you want to know? (optional)"
+                                    class="w-full rounded-lg px-2.5 py-1.5 text-xs focus:outline-none"
+                                    style="background:rgba(30,40,35,0.95);color:rgba(220,220,220,0.9);border:1px solid rgba(52,211,153,0.25);placeholder-color:#6b7280;"/>
+                                <div class="flex items-center justify-end gap-2">
+                                    <button id="${explainCanId}" class="text-xs text-gray-500 hover:text-gray-300 px-2 py-0.5 rounded transition-colors">Cancel</button>
+                                    <button id="${explainSubId}" class="text-xs px-3 py-1 rounded-lg text-emerald-200 transition-colors" style="background:rgba(5,100,60,0.55);border:1px solid rgba(52,211,153,0.2);">Explain</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ${timeAlign} ${isOwnMessage ? 'mr-1' : 'ml-1'} flex items-center ${isOwnMessage ? 'justify-end' : ''}">
                         <span>${formatTime(msg.ts)}</span>${statusHtml}
@@ -3338,9 +3568,9 @@
                 </div>
             `;
 
-            // Add click handler for navigate button after element is added to DOM
             messagesContainer.appendChild(div);
 
+            // Navigate button
             const navigateBtn = document.getElementById(navigateBtnId);
             if (navigateBtn) {
                 navigateBtn.addEventListener('click', (e) => {
@@ -3349,8 +3579,57 @@
                         command: 'navigateToCode',
                         relativePath: snippet.relativePath || snippet.filename,
                         startLine: snippet.startLine,
-                        endLine: snippet.endLine
+                        endLine: snippet.endLine,
                     });
+                });
+            }
+
+            // Explain button — toggle inline question input
+            const explainBtn  = document.getElementById(explainBtnId);
+            const explainArea = document.getElementById(explainAreaId);
+            const questionInp = document.getElementById(questionInpId);
+            const explainSub  = document.getElementById(explainSubId);
+            const explainCan  = document.getElementById(explainCanId);
+
+            const _closeExplainArea = () => explainArea?.classList.add('hidden');
+
+            if (explainBtn && explainArea) {
+                explainBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (explainBtn.hasAttribute('disabled')) return;
+                    const opening = explainArea.classList.contains('hidden');
+                    explainArea.classList.toggle('hidden', !opening);
+                    if (opening) questionInp?.focus();
+                });
+            }
+            if (explainCan) explainCan.addEventListener('click', (e) => { e.stopPropagation(); _closeExplainArea(); });
+
+            const _doExplain = () => {
+                const question = (questionInp)?.value?.trim() || undefined;
+                // Show spinner in explain button while working
+                if (explainBtn) {
+                    explainBtn.setAttribute('disabled', 'true');
+                    explainBtn.setAttribute('data-loading', 'true');
+                    explainBtn.innerHTML = `<svg class="animate-spin h-3.5 w-3.5 text-emerald-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>`;
+                }
+                _closeExplainArea();
+                vscode.postMessage({
+                    command: 'explainCodeFromSnippet',
+                    code:         snippet.code,
+                    relativePath: snippet.relativePath || snippet.filename,
+                    startLine:    snippet.startLine,
+                    endLine:      snippet.endLine,
+                    language:     snippet.language,
+                    roomId:       session.roomId,
+                    question,
+                });
+            };
+
+            if (explainSub) explainSub.addEventListener('click', (e) => { e.stopPropagation(); _doExplain(); });
+            if (questionInp) {
+                questionInp.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); _doExplain(); }
+                    if (e.key === 'Escape') { e.stopPropagation(); _closeExplainArea(); }
                 });
             }
 
@@ -3363,51 +3642,6 @@
         }
 
         // ============================================================
-        // Explain Code Button
-        // ============================================================
-
-        const btnExplainCode = document.getElementById('btn-explain-code');
-        // _explainMode is set true when Explain button is clicked; handleCodeSnippetFromExtension checks it
-        let _explainMode = false;
-        let _explainLoadingEl = null;
-
-        function _showExplainLoading() {
-            _removeExplainLoading();
-            const el = document.createElement('div');
-            el.id = 'ai-explain-loading';
-            el.className = 'flex justify-start gap-2 mt-2 px-0 message-enter';
-            el.innerHTML = `
-                <div class="w-7 h-7 bg-emerald-800/60 rounded-full flex items-center justify-center text-emerald-300 text-[0.55rem] font-bold flex-shrink-0 mt-0.5 border border-emerald-700/40">AI</div>
-                <div class="flex items-center gap-3 px-4 py-2.5 rounded-xl max-w-[75%]" style="background:rgba(20,40,30,0.7);border:1px solid rgba(52,211,153,0.15);">
-                    <div class="ai-thinking-dots"><span></span><span></span><span></span></div>
-                    <span class="text-xs text-gray-400">Analysing code…</span>
-                </div>`;
-            messagesContainer.appendChild(el);
-            smartScroll(true);
-            _explainLoadingEl = el;
-        }
-
-        function _removeExplainLoading() {
-            if (_explainLoadingEl) { _explainLoadingEl.remove(); _explainLoadingEl = null; }
-        }
-
-        btnExplainCode.addEventListener('click', () => {
-            // Show informative toast when AI is not available instead of silently blocking
-            if (btnExplainCode.hasAttribute('disabled')) {
-                const reason = !aiSummaryEnabledState
-                    ? 'AI is disabled. Set summary.enabled = true in conductor.settings.yaml.'
-                    : !aiActiveProviderState
-                        ? 'No AI provider available. Configure an API key in conductor.secrets.yaml.'
-                        : 'AI backend not ready. Try again in a moment.';
-                showToast(reason, 'error');
-                return;
-            }
-            _explainMode = true;
-            _showExplainLoading();
-            // Select code in the active VS Code editor first, then click this button.
-            vscode.postMessage({ command: 'getCodeSnippet' }); // re-use same handler
-        });
-
         // ============================================================
         // renderStackTraceMessage
         // ============================================================
@@ -3576,17 +3810,8 @@
         }
 
         // ============================================================
-        // renderAiExplanationMessage + handleCodeExplanationReady
+        // renderAiExplanationMessage
         // ============================================================
-
-        function handleCodeExplanationReady(message) {
-            // Remove the loading indicator regardless of outcome.
-            // The actual explanation message arrives via WebSocket broadcast.
-            _removeExplainLoading();
-            if (message.error) {
-                showToast('Code explanation failed: ' + message.error, 'error');
-            }
-        }
 
         function renderAiExplanationMessage(msg) {
             const aiData = msg.aiData || {};
@@ -3618,7 +3843,7 @@
                             ${relativePath ? `<button id="${navigateBtnId}" class="ml-auto text-[0.65rem] text-blue-400 hover:text-blue-300 font-mono truncate max-w-[140px]" title="Navigate to code">${escapeHtml(relativePath)} ${lineInfo}</button>` : ''}
                         </div>
                         ${code ? `<pre class="px-3 pt-2 pb-1 text-xs font-mono text-gray-300 overflow-x-auto max-h-28 overflow-y-auto border-b border-emerald-900/20 bg-black/20">${escapeHtml(code)}</pre>` : ''}
-                        <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(msg.content || '')}</div>
+                        <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed break-words">${renderExplanationMarkdown(msg.content || '')}</div>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
                 </div>`;
@@ -4287,58 +4512,36 @@
          * Load more message history (pagination).
          * Fetches older messages from the server and prepends them.
          */
-        async function loadMoreHistory() {
-            if (isLoadingHistory || !hasMoreHistory || !session.backendUrl || !session.roomId) {
+        function loadMoreHistory() {
+            if (isLoadingHistory || !hasMoreHistory || !session.roomId) {
+                return;
+            }
+
+            const oldestTs = getOldestMessageTimestamp();
+            if (!oldestTs) {
+                hasMoreHistory = false;
                 return;
             }
 
             isLoadingHistory = true;
+            console.log('[WebView] Requesting more history via postMessage, before:', oldestTs);
+            vscode.postMessage({ command: 'loadHistory', roomId: session.roomId, before: oldestTs, limit: 50 });
+        }
 
-            // Find the oldest message timestamp
-            const messages = messagesContainer.querySelectorAll('[data-message-id]');
-            if (messages.length === 0) {
-                isLoadingHistory = false;
-                return;
-            }
-
-            // Get timestamp from first message (oldest visible)
-            const firstMessage = messages[0];
-            const messageId = firstMessage.getAttribute('data-message-id');
-            // We need to find the timestamp - look for it in the message data
-            // For now, use the message ID to find timestamp from our tracking
-            // Actually, we need to store timestamps. Let's use a different approach.
-
-            // Find oldest timestamp from seenMessageIds is not possible.
-            // We'll use lastMessageTimestamp tracking differently.
-            // Let's add data-timestamp attribute to messages.
-
-            // For now, use a simple approach: fetch with limit and check hasMore
+        /**
+         * Handle history loaded response from extension host.
+         * Prepends older messages and restores scroll position.
+         */
+        function handleHistoryLoaded(message) {
             try {
-                // Build URL - we need to get the oldest message's timestamp
-                // Since we don't have it stored, we'll need to track it
-                const oldestTs = getOldestMessageTimestamp();
-                if (!oldestTs) {
-                    isLoadingHistory = false;
-                    hasMoreHistory = false;
-                    return;
-                }
-
-                const url = `${session.backendUrl}/chat/${session.roomId}/history?before=${oldestTs}&limit=50`;
-                console.log('[WebView] Loading more history from:', url);
-
-                const response = await fetch(url);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-
-                const data = await response.json();
+                const data = message;
                 console.log('[WebView] Loaded history:', data.messages?.length, 'messages, hasMore:', data.hasMore);
 
                 if (data.messages && data.messages.length > 0) {
                     // Save scroll position
                     const scrollHeight = messagesContainer.scrollHeight;
 
-                    // Prepend messages (oldest first, so reverse to get chronological order)
+                    // Prepend messages (oldest first, so sort chronologically)
                     const sortedMessages = data.messages.sort((a, b) => a.ts - b.ts);
                     sortedMessages.forEach(msg => {
                         if (!isDuplicateMessage(msg.id)) {
@@ -4352,7 +4555,7 @@
 
                 hasMoreHistory = data.hasMore === true;
             } catch (err) {
-                console.error('[WebView] Failed to load history:', err);
+                console.error('[WebView] Failed to process history:', err);
             } finally {
                 isLoadingHistory = false;
             }
@@ -5150,6 +5353,24 @@
 
         let _workspaceTodosExpanded = false;
 
+        /** Pending branch-change info — shown in the scanning overlay banner. */
+        let _scanBranchInfo = null;
+        /** Safety-net timer to auto-dismiss the scanning overlay. */
+        let _scanOverlayTimeout = null;
+
+        function _resetScanOverlayTimeout() {
+            if (_scanOverlayTimeout) clearTimeout(_scanOverlayTimeout);
+            // If no 'done' arrives within 5 minutes, hide the overlay anyway.
+            _scanOverlayTimeout = setTimeout(() => {
+                document.getElementById('scanning-overlay')?.classList.add('hidden');
+                document.getElementById('index-progress-bar')?.classList.add('hidden');
+            }, 5 * 60 * 1000);
+        }
+
+        function _clearScanOverlayTimeout() {
+            if (_scanOverlayTimeout) { clearTimeout(_scanOverlayTimeout); _scanOverlayTimeout = null; }
+        }
+
         btnToggleWorkspaceTodos.addEventListener('click', () => {
             _workspaceTodosExpanded = !_workspaceTodosExpanded;
             workspaceTodosPanel.classList.toggle('hidden', !_workspaceTodosExpanded);
@@ -5272,6 +5493,47 @@
 
         function handleWorkspaceTodoUpdated(data) {
             if (!data.ok) showToast('Failed to save TODO to file', 'error');
+        }
+
+        // ============================================================
+        // Rebuild Index Button & Modal
+        // ============================================================
+
+        const rebuildIndexRow       = document.getElementById('rebuild-index-row');
+        const btnRebuildIndex       = document.getElementById('btn-rebuild-index');
+        const rebuildConfirmModal   = document.getElementById('rebuild-index-confirm-modal');
+        const btnCloseRebuildModal  = document.getElementById('btn-close-rebuild-modal');
+        const btnRebuildCancel      = document.getElementById('btn-rebuild-cancel');
+        const btnRebuildConfirm     = document.getElementById('btn-rebuild-confirm');
+
+        const _rebuildDefaultHTML = btnRebuildIndex.innerHTML;
+
+        btnRebuildIndex.addEventListener('click', () => {
+            rebuildConfirmModal.classList.remove('hidden');
+        });
+
+        function closeRebuildModal() {
+            rebuildConfirmModal.classList.add('hidden');
+        }
+        btnCloseRebuildModal.addEventListener('click', closeRebuildModal);
+        btnRebuildCancel.addEventListener('click', closeRebuildModal);
+
+        btnRebuildConfirm.addEventListener('click', () => {
+            closeRebuildModal();
+            // Set loading state
+            btnRebuildIndex.disabled = true;
+            btnRebuildIndex.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Rebuilding\u2026`;
+            vscode.postMessage({ command: 'rebuildIndex' });
+        });
+
+        function handleIndexRebuildComplete(message) {
+            btnRebuildIndex.disabled = false;
+            btnRebuildIndex.innerHTML = _rebuildDefaultHTML;
+            if (message.success) {
+                showToast('Workspace index rebuilt successfully', 'success');
+            } else {
+                showToast('Index rebuild failed: ' + (message.error || 'unknown error'), 'error');
+            }
         }
 
         // ============================================================
@@ -5411,28 +5673,6 @@
         function handleCodeSnippetFromExtension(message) {
             if (message.error) {
                 console.warn('[WebView] Code snippet error:', message.error);
-                // If we were in explain mode, the error means no selection — clean up loading
-                if (_explainMode) { _explainMode = false; _removeExplainLoading(); }
-                return;
-            }
-
-            // If explain mode is active, route to AI explanation instead of snippet preview
-            if (_explainMode) {
-                _explainMode = false;
-                if (!session.roomId) {
-                    console.warn('[WebView] No roomId for explanation');
-                    _removeExplainLoading();
-                    return;
-                }
-                vscode.postMessage({
-                    command: 'explainCode',
-                    code: message.code,
-                    relativePath: message.relativePath || message.filename,
-                    startLine: message.startLine,
-                    endLine: message.endLine,
-                    language: message.language,
-                    roomId: session.roomId,
-                });
                 return;
             }
 
@@ -6388,6 +6628,68 @@
          */
         function inlineCode(text) {
             return text.replace(/`([^`]+)`/g, '<code class="bg-gray-800 text-violet-300 px-1 rounded text-xs">$1</code>');
+        }
+
+        /**
+         * Apply inline formatting: `code` and **bold**.
+         * Expects already-escaped text (XSS-safe).
+         * @param {string} text - Escaped text with backtick/bold markers
+         * @returns {string} HTML with styled inline elements
+         */
+        function inlineFormat(text) {
+            // Inline code with emerald theme
+            text = text.replace(/`([^`]+)`/g, '<code class="bg-emerald-950/40 text-emerald-300 px-1 rounded text-xs">$1</code>');
+            // Bold
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-white">$1</strong>');
+            return text;
+        }
+
+        /**
+         * Render explanation text with light markdown support.
+         * Handles bullets, numbered lists, paragraphs, inline code, and bold.
+         * Escapes HTML first for XSS safety.
+         * @param {string} text - Raw explanation text from LLM
+         * @returns {string} Formatted HTML
+         */
+        function renderExplanationMarkdown(text) {
+            if (!text) return '';
+            const escaped = escapeHtml(text);
+            const lines = escaped.split('\n');
+            let html = '';
+            let inUl = false;
+            let inOl = false;
+
+            lines.forEach(function(line) {
+                const trimmed = line.trim();
+
+                // Bullet list (- item or * item)
+                if (/^[-*]\s+/.test(trimmed)) {
+                    if (inOl) { html += '</ol>'; inOl = false; }
+                    if (!inUl) { html += '<ul class="list-disc list-inside space-y-1 text-gray-200 my-1.5 ml-1">'; inUl = true; }
+                    html += '<li class="text-xs leading-relaxed">' + inlineFormat(trimmed.replace(/^[-*]\s+/, '')) + '</li>';
+                }
+                // Numbered list (1. item)
+                else if (/^\d+\.\s+/.test(trimmed)) {
+                    if (inUl) { html += '</ul>'; inUl = false; }
+                    if (!inOl) { html += '<ol class="list-decimal list-inside space-y-1 text-gray-200 my-1.5 ml-1">'; inOl = true; }
+                    html += '<li class="text-xs leading-relaxed">' + inlineFormat(trimmed.replace(/^\d+\.\s+/, '')) + '</li>';
+                }
+                // Blank line — paragraph break
+                else if (trimmed === '') {
+                    if (inUl) { html += '</ul>'; inUl = false; }
+                    if (inOl) { html += '</ol>'; inOl = false; }
+                }
+                // Regular text — paragraph
+                else {
+                    if (inUl) { html += '</ul>'; inUl = false; }
+                    if (inOl) { html += '</ol>'; inOl = false; }
+                    html += '<p class="text-xs text-gray-200 leading-relaxed my-1">' + inlineFormat(trimmed) + '</p>';
+                }
+            });
+
+            if (inUl) html += '</ul>';
+            if (inOl) html += '</ol>';
+            return html;
         }
 
         /**

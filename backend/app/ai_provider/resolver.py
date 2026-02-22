@@ -217,7 +217,7 @@ class ProviderResolver:
             logger.info("Summary is disabled, skipping provider resolution")
             return None
 
-        logger.info("Resolving AI providers...")
+        logger.debug("Resolving AI providers...")
 
         # Check all provider types
         for provider_type in self.PROVIDER_TYPES:
@@ -225,7 +225,7 @@ class ProviderResolver:
             self._provider_enabled[provider_type] = enabled
 
             if not enabled:
-                logger.info(f"Provider {provider_type} skipped (disabled in settings)")
+                logger.debug("Provider %s skipped (disabled)", provider_type)
                 self._provider_configured[provider_type] = False
                 self._provider_health[provider_type] = False
                 continue
@@ -234,15 +234,15 @@ class ProviderResolver:
             self._provider_configured[provider_type] = configured
 
             if configured:
-                logger.info(f"Checking provider {provider_type}...")
+                logger.debug("Checking provider %s...", provider_type)
                 healthy = self._check_provider_health(provider_type)
                 self._provider_health[provider_type] = healthy
                 if healthy:
-                    logger.info(f"Provider {provider_type} is healthy")
+                    logger.debug("Provider %s is healthy", provider_type)
                 else:
-                    logger.warning(f"Provider {provider_type} health check failed")
+                    logger.warning("Provider %s health check failed", provider_type)
             else:
-                logger.info(f"Provider {provider_type} skipped (not configured)")
+                logger.debug("Provider %s skipped (not configured)", provider_type)
                 self._provider_health[provider_type] = False
 
         # Set active model based on default_model config
@@ -252,7 +252,7 @@ class ProviderResolver:
         if default_model and self._provider_health.get(default_model.provider, False):
             self.active_model_id = default_model_id
             self.active_provider_type = default_model.provider
-            logger.info(f"Active model set to: {default_model_id} ({default_model.provider})")
+            logger.info("Active model: %s (%s)", default_model_id, default_model.provider)
             return self._providers.get(default_model.provider)
 
         # Fallback: find first available model
@@ -260,7 +260,7 @@ class ProviderResolver:
             if model.enabled and self._provider_health.get(model.provider, False):
                 self.active_model_id = model.id
                 self.active_provider_type = model.provider
-                logger.info(f"Fallback active model: {model.id} ({model.provider})")
+                logger.info("Fallback active model: %s (%s)", model.id, model.provider)
                 return self._providers.get(model.provider)
 
         logger.warning("No healthy AI provider found")

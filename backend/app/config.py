@@ -291,6 +291,40 @@ DEFAULT_AI_MODELS = [
 ]
 
 
+class EmbeddingConfig(BaseModel):
+    """Embedding pipeline configuration.
+
+    Controls which cloud provider and model are used to generate vector
+    embeddings for code symbols.  Changing ``model`` triggers lazy
+    re-embedding on next usage (the extension checks sha1 + model).
+
+    Attributes:
+        provider: Embedding provider (``bedrock`` | ``openai`` | ``cohere``).
+        model:    Provider-specific model ID used for embedding.
+        dim:      Expected vector dimensionality produced by the model.
+    """
+    provider: str = "bedrock"
+    model: str = "cohere.embed-english-v3"
+    dim: int = 1024
+
+
+class RagConfig(BaseModel):
+    """RAG (Retrieval-Augmented Generation) configuration.
+
+    Attributes:
+        enabled: Whether the RAG pipeline is enabled.
+        data_dir: Directory for persisted FAISS indices.
+        chunk_max_lines: Maximum lines per code chunk.
+        search_top_k: Default number of search results.
+        token_budget_ratio: Fraction of context budget allocated to RAG results.
+    """
+    enabled: bool = True
+    data_dir: str = "data/rag"
+    chunk_max_lines: int = 200
+    search_top_k: int = 10
+    token_budget_ratio: float = 0.6
+
+
 class PromptConfig(BaseModel):
     """Code prompt generation configuration.
 
@@ -345,6 +379,8 @@ class SettingsConfig(BaseModel):
     prompt: PromptConfig = PromptConfig()
     ai_provider_settings: AIProviderSettingsConfig = AIProviderSettingsConfig()
     ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
+    embedding: EmbeddingConfig = EmbeddingConfig()
+    rag: RagConfig = RagConfig()
 
 
 # =============================================================================
@@ -385,6 +421,8 @@ class ConductorConfig(BaseModel):
     ai_providers: AIProvidersSecretsConfig = AIProvidersSecretsConfig()
     google_sso_secrets: GoogleSSOSecretsConfig = GoogleSSOSecretsConfig()
     ai_models: list[AIModelConfig] = DEFAULT_AI_MODELS.copy()
+    embedding: EmbeddingConfig = EmbeddingConfig()
+    rag: RagConfig = RagConfig()
 
 
 # =============================================================================
@@ -505,6 +543,8 @@ def load_config(
         "sso": "sso",
         "google_sso": "google_sso",
         "prompt": "prompt",
+        "embedding": "embedding",
+        "rag": "rag",
     }
     for yaml_key, config_key in settings_key_map.items():
         if yaml_key in settings_data:

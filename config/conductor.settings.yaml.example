@@ -144,10 +144,61 @@ change_limits:
 logging:
   # Log level (debug, info, warning, error)
   level: "info"
-  
+
   # Enable DuckDB audit logging
   audit_enabled: true
-  
+
   # Path to audit log database file
   audit_path: "audit_logs.duckdb"
+
+# =============================================================================
+# Prompt Configuration
+# =============================================================================
+# Controls how the code generation prompt is formatted.
+# output_mode options:
+#   "unified_diff"       - Provide changes as unified diff patches (default)
+#   "direct_repo_edits"  - Provide complete file contents
+#   "plan_then_diff"     - Provide implementation plan, then diffs
+prompt:
+  output_mode: "unified_diff"
+
+# =============================================================================
+# Embedding Configuration
+# =============================================================================
+# Controls which cloud provider and model are used to generate vector
+# embeddings for code symbols. Changing model triggers lazy re-embedding
+# on next usage (the extension checks sha1 + model).
+embedding:
+  # Embedding provider (bedrock, openai, cohere)
+  provider: "bedrock"
+
+  # Provider-specific model ID for embeddings
+  # Bedrock: cohere.embed-english-v3, cohere.embed-multilingual-v3, amazon.titan-embed-text-v2:0
+  # OpenAI: text-embedding-3-small, text-embedding-3-large
+  model: "cohere.embed-english-v3"
+
+  # Expected vector dimensionality produced by the model
+  # cohere.embed-english-v3: 1024, text-embedding-3-small: 1536
+  dim: 1024
+
+# =============================================================================
+# RAG (Retrieval-Augmented Generation) Configuration
+# =============================================================================
+# Backend-centric FAISS vector store for semantic code retrieval.
+# Requires a working embedding service (see embedding section above).
+rag:
+  # Enable the RAG pipeline
+  enabled: true
+
+  # Directory for persisted FAISS indices (relative to working directory)
+  data_dir: "data/rag"
+
+  # Maximum lines per code chunk (oversized symbols are split at blank lines)
+  chunk_max_lines: 200
+
+  # Default number of search results returned
+  search_top_k: 10
+
+  # Fraction of LLM context budget allocated to RAG-retrieved code
+  token_budget_ratio: 0.6
 

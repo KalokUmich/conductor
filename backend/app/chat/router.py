@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -333,7 +332,7 @@ async def websocket_chat_endpoint(
         while True:
             data = await websocket.receive_json()
             message_type = data.get("type")
-            logger.debug(f"[WS] Room {room_id} received: {data}")
+            logger.debug("[WS] Room %s received: type=%s", room_id, data.get("type", "?"))
 
             # --- Handle JOIN message (user registration) ---
             # SECURITY: Use backend-assigned userId and role, ignore client-provided values

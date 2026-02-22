@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-02-20
+Last updated: 2026-02-22
 
 ## Current State
 
@@ -106,19 +106,60 @@ Goal: Replace the mock agent with real LLM-backed code generation. This is the c
 
 **Files**: New `agent/llm_agent.py`, modify `agent/router.py`, `config.py`
 
-### 2.2 Project Context Gathering
+### 2.2 FAISS-Based Code RAG (Codebase Retrieval)
 
-**Problem**: The agent receives only a single file path and instruction. No awareness of project structure, dependencies, or conventions.
+**Problem**: The agent receives only a single file path and instruction. No awareness of project structure, dependencies, or conventions. The extension has partial vector infrastructure (`vectorIndex.ts`, `embeddingQueue.ts`, `conductorDb.ts`) but it runs client-side in SQLite — wrong place for a shared team tool.
 
-**Partial progress**: `PromptBuilder` (`ai_provider/prompt_builder.py`) already supports language inference from affected components and configurable output modes. Room settings (`settings_router.py`) allow per-room code_style and output_mode configuration.
+**What exists today**:
+- Backend `embeddings/` module: Bedrock Cohere embedding provider, service, router — reusable as the embedding engine
+- Extension `symbolExtractor.ts`, `workspaceScanner.ts`: workspace traversal and symbol extraction — keep these, they feed the indexing pipeline
+- Extension `vectorIndex.ts`, `embeddingQueue.ts`, `conductorDb.ts`: client-side SQLite vector storage — **deprecate**, replaced by backend FAISS
 
 **Plan**:
-- Extension sends workspace metadata alongside change requests:
-  - Detected languages (already implemented via `languageDetector.ts`)
-  - Open file contents (active editor context)
-  - Project structure summary (directory tree, key files)
-- Backend aggregates context into the LLM prompt
-- Respect token limits — truncate/summarize context that exceeds provider limits
+
+#### 2.2.1 Backend `rag/` Module with FAISS Vector Store
+- New module `backend/app/rag/` with `vector_store.py`, `chunker.py`, `indexer.py`, `router.py`, `schemas.py`
+- `FaissVectorStore` class: `IndexFlatIP` (inner product on normalized vectors = cosine similarity) + parallel metadata dict keyed by FAISS ID
+- Metadata per chunk: `{file_path, start_line, end_line, symbol_name, symbol_type, language, last_modified}`
+- Persistence: `faiss.write_index()` / `faiss.read_index()` to `data/rag/{workspace_id}/` alongside a JSON metadata sidecar
+- Thread-safe reads via `threading.Lock` on write operations; reads are lock-free (FAISS `IndexFlat` is read-safe)
+
+#### 2.2.2 Symbol-Aware Code Chunking
+- `chunker.py`: splits source files into semantic chunks (functions, classes, methods, top-level blocks)
+- Reuses language-specific patterns from extension's `symbolExtractor.ts` (ported to Python or called via the extension relay)
+- Chunk size target: ~200 lines max, with overlap at natural boundaries (function/class start)
+- Each chunk gets: raw source text, symbol metadata, import context (first 30 lines of file prepended as context)
+- Embedding via existing `embeddings/service.py` (Bedrock Cohere `embed-english-v3.0`, 1024-dim)
+
+#### 2.2.3 Incremental Indexing Pipeline
+- `POST /rag/index` — accepts a batch of file changes `{workspace_id, files: [{path, content, action: "upsert"|"delete"}]}`
+- Extension file watcher (`FileSystemWatcher`) sends changed files to this endpoint on save
+- Full re-index: `POST /rag/reindex` — extension sends entire workspace file list; backend diffs against existing index
+- Indexer tracks `file_path → [chunk_ids]` mapping for efficient delete-then-reinsert on file change
+- Rate limiting: extension batches changes (debounce 2s) before sending
+
+#### 2.2.4 Codebase Retrieval Endpoint
+- `POST /rag/search` — the core retrieval endpoint (Augment Code's `codebase-retrieval` equivalent)
+- Input: `{workspace_id, query: str, top_k: int = 10, filters: {languages?: [], file_patterns?: []}}`
+- Process: embed query → FAISS `search(k=top_k)` → filter by metadata → return ranked chunks with scores
+- Output: `{results: [{file_path, start_line, end_line, symbol_name, content, score}]}`
+- Used by: context enricher (2.2.6), agent (2.1), and direct user queries from chat
+
+#### 2.2.5 Extension Refactor — Deprecate Local Vector Storage
+- New `extension/src/services/ragClient.ts`: thin HTTP client for `POST /rag/search`, `POST /rag/index`, `POST /rag/reindex`
+- Add `FileSystemWatcher` integration: on file save → batch → `POST /rag/index`
+- On workspace open: trigger `POST /rag/reindex` for initial indexing
+- **Deprecate**: `vectorIndex.ts`, `embeddingQueue.ts`, `conductorDb.ts` (SQLite `symbol_vectors` table)
+- **Keep**: `symbolExtractor.ts` (feeds chunk metadata), `workspaceScanner.ts` (feeds initial file list)
+- `contextGatherer.ts`: replace local vector lookup with `ragClient.search()` call
+
+#### 2.2.6 Context Enricher RAG Integration
+- `backend/app/context/enricher.py`: before calling the LLM, run `FaissVectorStore.search()` with the code snippet as query
+- Inject top-k relevant chunks into the explanation prompt as "Related code from the workspace"
+- Same integration for the agent pipeline (2.1): RAG results become part of the LLM context window
+- Token budget management: reserve 60% for user content + RAG results, 40% for LLM response
+
+**Files**: New `backend/app/rag/` module, modify `backend/app/context/enricher.py`, `backend/app/main.py` (mount router), new `extension/src/services/ragClient.ts`, modify `extension/src/services/contextGatherer.ts`, modify `extension/src/extension.ts` (file watcher setup)
 
 ### 2.3 Multi-File Change Generation
 
@@ -129,6 +170,36 @@ Goal: Replace the mock agent with real LLM-backed code generation. This is the c
 - Generate `replace_range` changes for existing files (not just `create_file`)
 - Add a validation step: parse generated changes, verify file paths exist, check syntax
 - Present a diff preview to the user before applying
+
+### 2.4 Git Commit Retrieval (Semantic Git History Search)
+
+**Problem**: When the agent or context enricher needs to understand *why* code looks the way it does, git history is invaluable. Currently there is no way to search commit history semantically — only `git log --grep` for exact string matches.
+
+**Inspired by**: Augment Code's `git-commit-retrieval` tool.
+
+**Plan**:
+
+#### 2.4.1 Commit Indexing Pipeline
+- New files in `backend/app/rag/`: `git_indexer.py`, `git_store.py`
+- On workspace index (or `POST /rag/git-reindex`), walk `git log` (configurable depth, default last 500 commits)
+- Per commit, build an embedding from: `"{commit_message}\n\nFiles changed:\n{file_list}\n\nDiff summary:\n{stat_summary}"`
+- Store in a separate FAISS index (`data/rag/{workspace_id}/git_index`) with metadata: `{commit_hash, author, date, message, files_changed}`
+- Incremental: track last indexed commit hash; on re-index, only process new commits since that hash
+
+#### 2.4.2 Git Commit Search Endpoint
+- `POST /rag/git-search` — semantic search over git history
+- Input: `{workspace_id, query: str, top_k: int = 5, filters: {author?: str, since?: date, paths?: []}}`
+- Process: embed query → FAISS search → metadata filter → return ranked commits
+- Output: `{results: [{commit_hash, author, date, message, files_changed, score}]}`
+- Each result includes enough info to reconstruct context; the extension can `git show <hash>` for full diff if needed
+
+#### 2.4.3 Integration Points
+- Context enricher: when explaining code, also search git history for "why was this written?" context
+- Agent pipeline: before generating changes, search for recent commits touching the same files to understand velocity and patterns
+- Chat: users can ask "what changed around the auth module last week?" and get semantic results
+- Extension `ragClient.ts`: add `gitSearch()` method alongside existing `search()`
+
+**Files**: New `backend/app/rag/git_indexer.py`, `backend/app/rag/git_store.py`, modify `backend/app/rag/router.py`, modify `extension/src/services/ragClient.ts`
 
 ---
 
@@ -248,15 +319,15 @@ Goal: Support multiple backend instances and larger teams.
 ```
 Now ──────────────────────────────────────────────────── Future
 
-Phase 1                Phase 2           Phase 3        Phase 4-5
-Production Ready       LLM Agent         Collab UX      Enterprise
+Phase 1                Phase 2              Phase 3        Phase 4-5
+Production Ready       LLM Agent + RAG      Collab UX      Enterprise
 
-1.1 Message persist    2.1 LLM agent     3.1 Search     4.1 Rate limits
-1.2 Room lifecycle     2.2 Context        3.2 Threads    4.2 Input validation
-1.3 Config enforce     2.3 Multi-file     3.3 Presence   4.3 Audit expansion
-1.4 Error responses                       3.4 Typing     5.1 Redis pub/sub
-                                                         5.2 PostgreSQL
-                                                         5.3 S3 storage
+1.1 Message persist    2.1 LLM agent        3.1 Search     4.1 Rate limits
+1.2 Room lifecycle     2.2 Code RAG (FAISS) 3.2 Threads    4.2 Input validation
+1.3 Config enforce     2.3 Multi-file       3.3 Presence   4.3 Audit expansion
+1.4 Error responses    2.4 Git retrieval    3.4 Typing     5.1 Redis pub/sub
+                                                           5.2 PostgreSQL
+                                                           5.3 S3 storage
 ```
 
-**Recommended order**: 1.3 (quick win, config enforcement) -> 1.1 (persistence is critical) -> 1.2 (prevents memory leaks) -> 2.1 (core product value) -> rest follows naturally.
+**Recommended order**: 1.3 (quick win, config enforcement) → 1.1 (persistence is critical) → 1.2 (prevents memory leaks) → 2.2 (Code RAG — foundation for everything else in Phase 2) → 2.4 (Git retrieval — reuses RAG infra) → 2.1 (LLM agent, now with RAG context) → 2.3 (multi-file, agent is ready) → Phase 3+.

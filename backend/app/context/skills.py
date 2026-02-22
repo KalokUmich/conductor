@@ -149,6 +149,7 @@ def build_explanation_prompt(
     imports: Optional[List[str]] = None,
     containing_function: Optional[str] = None,
     related_files: Optional[list] = None,
+    rag_context: Optional[str] = None,
 ) -> str:
     """Assemble a focused, context-rich prompt for code explanation.
 
@@ -163,6 +164,8 @@ def build_explanation_prompt(
         imports: Import statements in the file.
         containing_function: Enclosing function signature.
         related_files: List of RelatedFileSnippet-like dicts.
+        rag_context: Optional XML string of semantically related code chunks
+                     retrieved from the RAG pipeline.
 
     Returns:
         Complete prompt string ready to send to the LLM.
@@ -188,6 +191,12 @@ def build_explanation_prompt(
             f"</surrounding_code>\n\n"
         )
 
+    rag_section = ""
+    if rag_context:
+        rag_section = (
+            f"<related_workspace_code>\n{rag_context}\n</related_workspace_code>\n\n"
+        )
+
     return (
         f"You are an expert software engineer. Explain the following code clearly "
         f"and concisely so every team member — regardless of seniority — can "
@@ -200,12 +209,15 @@ def build_explanation_prompt(
         f"{surrounding_section}"
         f"<imports>\n{imports_text}\n</imports>\n\n"
         f"{'<related_files>' + related_section + '</related_files>' + chr(10) + chr(10) if related_section else ''}"
+        f"{rag_section}"
         f"<instructions>\n"
         f"Provide a concise explanation (3–8 sentences) covering:\n"
         f"1. What this code does (purpose and behaviour)\n"
         f"2. Key design decisions or patterns used\n"
         f"3. Any non-obvious side-effects, edge cases, or gotchas\n\n"
-        f"Write in plain English. No markdown headers. "
+        f"Write in plain English. You may use **bold** for emphasis, "
+        f"`backticks` for inline code references, and - bullet lists. "
+        f"No markdown headers (#). "
         f"Do NOT reproduce the code in your answer.\n"
         f"</instructions>"
     )

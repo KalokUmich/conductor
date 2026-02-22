@@ -30,12 +30,36 @@ from app.files.router import router as files_router
 from app.ngrok_service import get_public_url, start_ngrok, stop_ngrok
 from app.policy.router import router as policy_router
 from app.todos.router import router as todos_router
+from app.embeddings.bedrock import BedrockEmbeddingProvider
+from app.embeddings.router import router as embeddings_router
+from app.embeddings.service import EmbeddingService, get_embedding_service, set_embedding_service
+from app.rag.indexer import RagIndexer
+from app.rag.router import router as rag_router, set_indexer
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
+
+# Silence verbose third-party loggers.
+# botocore.auth logs the full SigV4 canonical request — including
+# x-amz-security-token — which leaks credentials into the console.
+# urllib3/httpx/httpcore log every TCP connection and TLS handshake.
+# None of these are useful when debugging business logic.
+for _noisy in (
+    "botocore",
+    "boto3",
+    "urllib3",
+    "urllib3.connectionpool",
+    "httpx",
+    "httpcore",
+    "httpcore.http11",
+    "httpcore.connection",
+    "pyngrok",               # "join connections" on every HTTP request
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,6 +68,13 @@ async def lifespan(app: FastAPI):
     """Application lifespan manager for startup/shutdown events."""
     # Startup
     config = get_config()
+
+    # Apply configured log level to root logger so that
+    # `logging.level: "debug"` in conductor.settings.yaml activates DEBUG output.
+    configured_level = getattr(logging, config.logging.level.upper(), None)
+    if configured_level is not None:
+        logging.getLogger().setLevel(configured_level)
+        logger.info("Root logger level set to %s", config.logging.level.upper())
 
     if config.ngrok_settings.enabled:
         logger.info("Ngrok is enabled in config, starting tunnel...")
@@ -78,6 +109,54 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("AI features disabled, skipping provider resolution")
 
+    # Initialise embedding service if Bedrock credentials are available.
+    emb_cfg = config.embedding
+    bedrock_cfg = config.ai_providers.aws_bedrock
+    if emb_cfg.provider == "bedrock":
+        try:
+            provider = BedrockEmbeddingProvider(
+                model_id=emb_cfg.model,
+                dim=emb_cfg.dim,
+                aws_access_key_id=bedrock_cfg.access_key_id or None,
+                aws_secret_access_key=bedrock_cfg.secret_access_key or None,
+                aws_session_token=bedrock_cfg.session_token or None,
+                region_name=bedrock_cfg.region,
+            )
+            set_embedding_service(EmbeddingService(provider))
+            logger.info(
+                "Embedding service ready: provider=bedrock model=%s dim=%d",
+                emb_cfg.model,
+                emb_cfg.dim,
+            )
+        except Exception as exc:
+            logger.warning("Failed to initialise embedding service: %s", exc)
+    else:
+        logger.info(
+            "Embedding provider '%s' not yet supported; service disabled.",
+            emb_cfg.provider,
+        )
+
+    # Initialise RAG indexer if enabled and embedding service is available.
+    rag_cfg = config.rag
+    if rag_cfg.enabled and get_embedding_service() is not None:
+        try:
+            indexer = RagIndexer(
+                data_dir=rag_cfg.data_dir,
+                dim=emb_cfg.dim,
+            )
+            set_indexer(indexer)
+            logger.info(
+                "RAG indexer ready: data_dir=%s dim=%d",
+                rag_cfg.data_dir,
+                emb_cfg.dim,
+            )
+        except Exception as exc:
+            logger.warning("Failed to initialise RAG indexer: %s", exc)
+    elif rag_cfg.enabled:
+        logger.info("RAG enabled but no embedding service available; indexer disabled.")
+    else:
+        logger.info("RAG disabled in config.")
+
     yield  # Application runs here
 
     # Shutdown
@@ -104,6 +183,8 @@ app.include_router(auth_router)
 app.include_router(room_settings_router)
 app.include_router(context_router)
 app.include_router(todos_router)
+app.include_router(embeddings_router)
+app.include_router(rag_router)
 
 
 @app.get("/health")

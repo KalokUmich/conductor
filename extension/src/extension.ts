@@ -15,7 +15,9 @@
  */
 import * as vscode from 'vscode';
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vsls from 'vsls/vscode';
+import { execSync } from 'child_process';
 
 import { checkBackendHealth } from './services/backendHealthCheck';
 import { ConductorController } from './services/conductorController';
@@ -29,14 +31,50 @@ import { getSessionService } from './services/session';
 import { wrapIdentity, getValidIdentity, getStoredProvider, isStale, SSOProvider } from './services/ssoIdentityCache';
 import { detectWorkspaceLanguages, clearLanguageCache } from './services/languageDetector';
 import { parseStackTrace, resolveFramePaths } from './services/stackTraceParser';
-import { ContextGatherer } from './services/contextGatherer';
 import { scanWorkspaceTodos, updateWorkspaceTodoInFile, UpdateTodoPayload } from './services/todoScanner';
+import {
+    initConductorWorkspaceStorage,
+    resetWorkspaceDb,
+    loadWorkspaceConfig,
+    WorkspaceConfig,
+    fetchEmbeddingConfig,
+    EmbeddingConfig,
+} from './services/workspaceStorage';
+import { ConductorDb } from './services/conductorDb';
+import { EmbeddingQueue } from './services/embeddingQueue';
+import { runExplainPipeline } from './services/explainWithContextPipeline';
+import { indexWorkspace, reindexSingleFile, cancelCurrentIndex } from './services/workspaceIndexer';
+import { RagClient, RagFileChange } from './services/ragClient';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
 
+/** SQLite DB instance for context enricher metadata (set after hosting starts). */
+let conductorDb: ConductorDb | null = null;
+
+/** Active workspace root (set alongside conductorDb). */
+let conductorWsRoot: string | null = null;
+
+/** Active EmbeddingQueue — kept so it can be cancelled on rebuild / session end. */
+let activeEmbeddingQueue: EmbeddingQueue | null = null;
+
+/** Workspace configuration loaded from .conductor/config.json (set after hosting starts). */
+let workspaceConfig: WorkspaceConfig | null = null;
+
+/** Embedding config fetched from conductor.settings.yaml via GET /embeddings/config. */
+let embeddingConfig: EmbeddingConfig | null = null;
+
+/** RagClient for backend-centric codebase indexing and search. */
+let ragClient: RagClient | null = null;
+
 /** GlobalState key for persisting FSM state across reloads. */
 const FSM_STATE_KEY = 'conductor.fsmState';
+
+/**
+ * If the index was last built less than this many milliseconds ago
+ * (and the branch hasn't changed) skip Phase 1+2 on session start.
+ */
+const SCAN_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Get the backend server URL from configuration.
@@ -44,6 +82,44 @@ const FSM_STATE_KEY = 'conductor.fsmState';
  */
 function getBackendUrl(): string {
     return getSessionService().getBackendUrl();
+}
+
+/**
+ * Return the current git branch for the given workspace root, or null if
+ * the directory is not a git repo or git is not available.
+ */
+function _getGitBranch(wsRoot: string): string | null {
+    try {
+        const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+            cwd: wsRoot,
+            timeout: 2000,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        return branch || null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Infer the VS Code language ID from a file path's extension.
+ * Used when the snippet message doesn't carry an explicit language field.
+ */
+function _langFromPath(filePath: string): string {
+    const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+    switch (ext) {
+        case 'py':                        return 'python';
+        case 'ts': case 'tsx':            return 'typescript';
+        case 'js': case 'jsx': case 'mjs': return 'javascript';
+        case 'java':                      return 'java';
+        case 'go':                        return 'go';
+        case 'rs':                        return 'rust';
+        case 'cs':                        return 'csharp';
+        case 'cpp': case 'cc': case 'cxx': return 'cpp';
+        case 'rb':                        return 'ruby';
+        default:                          return 'text';
+    }
 }
 
 /**
@@ -158,6 +234,12 @@ export function activate(context: vscode.ExtensionContext): void {
  * Performs cleanup of any resources.
  */
 export function deactivate(): void {
+    if (conductorDb) {
+        conductorDb.close();
+        conductorDb = null;
+    }
+    workspaceConfig = null;
+    embeddingConfig = null;
     console.log('AI Collab extension is now deactivated');
 }
 
@@ -214,6 +296,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private _pendingChanges: FileChange[] = [];
     /** Index of the current change being reviewed. */
     private _currentChangeIndex: number = 0;
+
+    // Incremental workspace indexing (file watcher)
+    /** Active VS Code FileSystemWatcher for hot index updates. */
+    private _fileWatcher: vscode.FileSystemWatcher | null = null;
+    /** Per-file debounce timers for file-change events. */
+    private _fileSyncDebounces = new Map<string, ReturnType<typeof setTimeout>>();
     /** Policy evaluation result for the current changeset. */
     private _policyResult?: PolicyResult;
 
@@ -309,6 +397,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     } catch (e) {
                         console.warn('[Conductor] FSM transition on sessionEnded failed:', e);
                     }
+                    // Stop all background indexing work before closing the session.
+                    cancelCurrentIndex();
+                    activeEmbeddingQueue?.cancel();
+                    activeEmbeddingQueue = null;
+                    this._stopFileWatcher();
                     // Close Live Share session if active
                     this._closeLiveShare();
                     // Reset session state and generate new roomId
@@ -431,6 +524,15 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'updateWorkspaceTodo':
                     await this._handleUpdateWorkspaceTodo(message.payload as UpdateTodoPayload);
                     return;
+                case 'loadHistory':
+                    await this._handleLoadHistory(message.roomId, message.before, message.limit);
+                    return;
+                case 'rebuildIndex':
+                    await this._handleRebuildIndex();
+                    return;
+                case 'explainCodeFromSnippet':
+                    await this._handleExplainCodeFromSnippet(message);
+                    return;
             }
         });
 
@@ -545,6 +647,117 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
             const roomId = this._controller.startHosting();
             console.log(`[Conductor] Hosting started, roomId=${roomId}`);
+
+            // Initialize .conductor/ workspace storage + SQLite DB, then run
+            // two-phase workspace indexing:
+            //   Phase 1 (blocking ≤5s): fast file metadata scan
+            //   Phase 2 (background):   symbol extraction + embedding
+            const folders = vscode.workspace.workspaceFolders;
+            console.log('[Conductor][StartSession] workspaceFolders:', folders?.length ?? 0,
+                folders?.map(f => f.uri.fsPath));
+            if (folders && folders.length > 0) {
+                const wsRoot = folders[0].uri.fsPath;
+                console.log('[Conductor][StartSession] Initializing workspace storage at:', wsRoot);
+                initConductorWorkspaceStorage(wsRoot).then(async db => {
+                    conductorDb    = db;
+                    conductorWsRoot = wsRoot;
+
+                    // Cancel any Phase 2 still running from a previous session.
+                    cancelCurrentIndex();
+                    activeEmbeddingQueue?.cancel();
+                    activeEmbeddingQueue = null;
+
+                    // Load extension-side tuning from .conductor/config.json.
+                    workspaceConfig = await loadWorkspaceConfig(wsRoot);
+
+                    // --- Branch-aware + empty-index auto-scan logic ---
+                    const currentBranch = _getGitBranch(wsRoot);
+                    const indexedBranch = db.getMeta('indexed_branch');
+                    const fileCount     = db.getFileCount();
+
+                    const branchChanged = !!(currentBranch && indexedBranch && currentBranch !== indexedBranch);
+                    const isEmpty       = fileCount === 0;
+
+                    if (branchChanged) {
+                        console.log(`[Conductor][StartSession] Branch changed: ${indexedBranch} → ${currentBranch} — hard-resetting index`);
+                        // Hard-reset: close DB, delete files, reopen fresh.
+                        conductorDb = db = await resetWorkspaceDb(wsRoot, db);
+                        this._view?.webview.postMessage({
+                            command: 'indexBranchChanged',
+                            from: indexedBranch,
+                            to: currentBranch,
+                        });
+                    } else if (isEmpty) {
+                        console.log('[Conductor][StartSession] Empty index — running initial scan');
+                    } else {
+                        console.log(`[Conductor][StartSession] Incremental scan on branch=${currentBranch ?? 'unknown'} (${fileCount} files cached)`);
+                    }
+
+                    // Fetch embedding config (best-effort).  Failure = AST-only mode.
+                    try {
+                        embeddingConfig = await fetchEmbeddingConfig(getBackendUrl());
+                        console.log(
+                            `[Conductor][StartSession] Embedding config: provider=${embeddingConfig.provider} ` +
+                            `model=${embeddingConfig.model} dim=${embeddingConfig.dim}`,
+                        );
+                    } catch (err) {
+                        console.warn('[Conductor][StartSession] Could not fetch embedding config — AST-only mode:', err);
+                        embeddingConfig = null;
+                    }
+
+                    // Collect open editor files to process them first in Phase 2.
+                    const priorityFiles = vscode.window.tabGroups.all
+                        .flatMap(g => g.tabs)
+                        .map(tab => (tab.input instanceof vscode.TabInputText) ? tab.input.uri.fsPath : null)
+                        .filter((p): p is string => p !== null);
+
+                    // Run two-phase indexing.  Phase 1 always runs (fast mtime diff).
+                    // Phase 2 processes only stale files; embedding only when config available.
+                    const indexResult = await indexWorkspace(wsRoot, db, {
+                        embeddingModel:  embeddingConfig?.model,
+                        embeddingDim:    embeddingConfig?.dim,
+                        backendUrl:      getBackendUrl(),
+                        phase1TimeoutMs: 5000,
+                        priorityFiles,
+                        onProgress: (p) => {
+                            this._view?.webview.postMessage({ command: 'indexProgress', payload: p });
+                        },
+                        onEmbeddingError: (err) => {
+                            console.warn('[Conductor][StartSession] Embedding error:', err.message);
+                            this._view?.webview.postMessage({ command: 'indexEmbeddingError', error: err.message });
+                        },
+                        onQueueReady: (q) => { activeEmbeddingQueue = q; },
+                    });
+
+                    // Persist the current branch.
+                    if (currentBranch) {
+                        db.setMeta('indexed_branch', currentBranch);
+                    }
+
+                    console.log(
+                        `[Conductor][StartSession] Index done: ${indexResult.filesScanned} files, ` +
+                        `${indexResult.staleFilesCount} stale, ${indexResult.symbolsExtracted} symbols, ` +
+                        `${indexResult.embeddingsEnqueued} embeddings enqueued`,
+                    );
+
+                    // Send workspace files to backend RAG for reindexing (best-effort).
+                    ragClient = new RagClient(getBackendUrl());
+                    this._sendWorkspaceToRag(wsRoot, roomId).catch(err => {
+                        console.warn('[Conductor][StartSession] RAG reindex failed:', err);
+                    });
+
+                    // Start watching for file changes (hot incremental updates).
+                    this._startFileWatcher(wsRoot);
+                }).catch(err => {
+                    console.error('[Conductor][StartSession] Workspace storage init FAILED:', err);
+                    if (err instanceof Error && err.stack) {
+                        console.error('[Conductor][StartSession] Stack:', err.stack);
+                    }
+                });
+            } else {
+                console.warn('[Conductor][StartSession] No workspace folders — skipping workspace storage init');
+            }
+
             // Send the fresh session state so the WebView can connect WebSocket
             // At this point, backendUrl will include ngrok URL if available
             this._sendSessionAndState();
@@ -2664,75 +2877,150 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         endLine: number;
         language: string;
         roomId: string;
+        question?: string;
     }): Promise<void> {
-        try {
-            const gatherer = new ContextGatherer();
-            const contextBundle = await gatherer.gather({
-                code: message.code,
-                relativePath: message.relativePath,
-                startLine: message.startLine,
-                endLine: message.endLine,
-                language: message.language,
-            });
+        const backendUrl = getBackendUrl();
 
-            const backendUrl = getBackendUrl();
-            const response = await fetch(`${backendUrl}/context/explain`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    room_id: message.roomId,
-                    snippet: message.code,
-                    file_path: message.relativePath,
-                    line_start: message.startLine,
-                    line_end: message.endLine,
-                    language: message.language,
-                    file_content: contextBundle.fileContent,
-                    surrounding_code: contextBundle.surroundingCode,
-                    imports: contextBundle.imports,
-                    containing_function: contextBundle.containingFunction,
-                    related_files: contextBundle.relatedFiles,
-                }),
-            });
+        console.log('[Conductor][ExplainCode] === Starting explain code ===');
+        console.log('[Conductor][ExplainCode] file:', message.relativePath,
+            'lines:', message.startLine, '-', message.endLine,
+            'lang:', message.language);
+        console.log('[Conductor][ExplainCode] code length:', message.code.length, 'chars');
+        console.log('[Conductor][ExplainCode] conductorDb:', conductorDb ? 'SET' : 'NULL');
+        console.log('[Conductor][ExplainCode] workspaceConfig:', workspaceConfig ? JSON.stringify(workspaceConfig) : 'NULL');
+        console.log('[Conductor][ExplainCode] embeddingConfig:', embeddingConfig ? JSON.stringify(embeddingConfig) : 'NULL');
+        console.log('[Conductor][ExplainCode] backendUrl:', backendUrl);
 
-            if (!response.ok) {
-                throw new Error(`Backend error: ${response.status}`);
+        // Resolve the active editor URI and cursor position for LSP queries.
+        // If there is no active editor we synthesise a position from the
+        // 1-based line numbers in the message so the pipeline degrades gracefully.
+        const editor   = vscode.window.activeTextEditor;
+        const position = editor?.selection.active
+            ?? new vscode.Position(Math.max(0, message.startLine - 1), 0);
+
+        console.log('[Conductor][ExplainCode] activeEditor:', editor ? editor.document.uri.fsPath : 'NONE');
+        console.log('[Conductor][ExplainCode] position:', position.line, ':', position.character);
+
+        let fileUri: vscode.Uri | undefined = editor?.document.uri;
+        if (!fileUri) {
+            console.log('[Conductor][ExplainCode] No active editor, resolving via workspace folders...');
+            // Fall back to resolving via workspace folders.
+            for (const folder of vscode.workspace.workspaceFolders ?? []) {
+                const candidate = vscode.Uri.joinPath(folder.uri, message.relativePath);
+                console.log('[Conductor][ExplainCode] Trying:', candidate.fsPath);
+                try {
+                    await vscode.workspace.fs.stat(candidate);
+                    fileUri = candidate;
+                    break;
+                } catch { /* try next */ }
             }
+        }
 
-            const data = await response.json() as { explanation: string; model: string };
+        if (!fileUri) {
+            console.warn('[Conductor][ExplainCode] Cannot locate file in workspace — aborting');
+            this._view?.webview.postMessage({
+                command: 'codeExplanationReady',
+                error: 'Cannot locate file in workspace.',
+            });
+            return;
+        }
 
+        console.log('[Conductor][ExplainCode] Resolved fileUri:', fileUri.fsPath);
+
+        try {
+            // ---- Run the 8-stage pipeline --------------------------------
+            console.log('[Conductor][ExplainCode] Launching 8-stage pipeline...');
+            const result = await runExplainPipeline({
+                uri:               fileUri,
+                selectionPosition: position,
+                relativePath:      message.relativePath,
+                language:          message.language,
+                code:              message.code,
+                startLine:         message.startLine,
+                endLine:           message.endLine,
+                question:          message.question,
+                backendUrl,
+                conductorDb,
+                workspaceFolders:  [...(vscode.workspace.workspaceFolders ?? [])],
+                workspaceConfig:   workspaceConfig  ?? undefined,
+                embeddingConfig:   embeddingConfig  ?? undefined,
+            });
+
+            console.log('[Conductor][ExplainCode] Pipeline returned:',
+                'model=', result.model,
+                'explanation=', result.explanation.length, 'chars',
+                'xmlPrompt=', result.xmlPrompt.length, 'chars',
+                'timings=', JSON.stringify(result.timings));
+
+            // ---- Stage 8: render ----------------------------------------
             // Post the explanation to the chat room via REST so all participants
-            // receive it through the WebSocket broadcast. The WebView MUST NOT call
-            // fetch() itself — that violates the WebView CSP for external (ngrok) URLs.
+            // receive it via the WebSocket broadcast.  The WebView MUST NOT
+            // call fetch() directly — the VS Code CSP blocks external URLs.
             const aiData = JSON.stringify({
-                code: message.code,
+                code:         message.code,
                 relativePath: message.relativePath,
-                startLine: message.startLine,
-                endLine: message.endLine,
+                startLine:    message.startLine,
+                endLine:      message.endLine,
             });
             const postParams = new URLSearchParams({
                 message_type: 'ai_explanation',
-                model_name: data.model || 'ai',
-                content: data.explanation,
-                ai_data: aiData,
+                model_name:   result.model || 'ai',
+                content:      result.explanation,
+                ai_data:      aiData,
             });
-            const postResponse = await fetch(
-                `${backendUrl}/chat/${encodeURIComponent(message.roomId)}/ai-message?${postParams.toString()}`,
-                { method: 'POST' },
-            );
+            const postUrl = `${backendUrl}/chat/${encodeURIComponent(message.roomId)}/ai-message?${postParams.toString()}`;
+            console.log('[Conductor][ExplainCode] POSTing explanation to chat, url length:', postUrl.length);
+            const postResponse = await fetch(postUrl, { method: 'POST' });
             if (!postResponse.ok) {
-                console.warn('[Conductor] Failed to post explanation to chat:', postResponse.status);
+                console.warn('[Conductor][ExplainCode] POST to chat failed:', postResponse.status, await postResponse.text().catch(() => ''));
+            } else {
+                console.log('[Conductor][ExplainCode] POST to chat succeeded');
             }
 
-            // Notify the WebView so it can dismiss any loading indicator.
-            // The actual rendered message will arrive via the WebSocket broadcast.
+            // Dismiss any loading indicator in the WebView.
             this._view?.webview.postMessage({ command: 'codeExplanationReady' });
 
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
-            console.error('[Conductor] Code explanation failed:', msg);
+            console.error('[Conductor][ExplainCode] Pipeline FAILED:', msg);
+            if (error instanceof Error && error.stack) {
+                console.error('[Conductor][ExplainCode] Stack:', error.stack);
+            }
             this._view?.webview.postMessage({
                 command: 'codeExplanationReady',
                 error: msg,
+            });
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Chat History
+    // -----------------------------------------------------------------------
+
+    /**
+     * Fetch paginated chat history from the backend and relay it to the WebView.
+     */
+    private async _handleLoadHistory(roomId: string, before: number, limit: number): Promise<void> {
+        try {
+            const url = `${getBackendUrl()}/chat/${encodeURIComponent(roomId)}/history?before=${before}&limit=${limit}`;
+            console.log('[Conductor] Loading history:', url);
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json() as { messages: unknown[]; hasMore: boolean };
+            this._view?.webview.postMessage({
+                command: 'historyLoaded',
+                messages: data.messages,
+                hasMore: data.hasMore,
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] Failed to load history:', msg);
+            this._view?.webview.postMessage({
+                command: 'historyLoaded',
+                messages: [],
+                hasMore: false,
             });
         }
     }
@@ -2800,6 +3088,358 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({ command: 'todoDeleted', todoId });
         } catch (e) {
             console.error('[Conductor] deleteTodo failed:', e);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Backend RAG integration
+    // -----------------------------------------------------------------------
+
+    /** Batch timer for collecting file changes before sending to RAG. */
+    private _ragBatchTimer: ReturnType<typeof setTimeout> | null = null;
+    /** Pending file changes to send to RAG. */
+    private _ragPendingChanges: Map<string, RagFileChange> = new Map();
+
+    /**
+     * Scan workspace files and send them to the backend RAG for reindexing.
+     * Called once at session start.
+     */
+    private async _sendWorkspaceToRag(wsRoot: string, workspaceId: string): Promise<void> {
+        if (!ragClient) return;
+
+        const SKIP = new Set([
+            'node_modules', '.venv', 'venv', '__pycache__', 'dist', 'build',
+            'out', 'target', '.git', '.conductor',
+        ]);
+        const EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.go']);
+        const MAX_FILE_SIZE = 100_000; // 100 KB
+
+        const files: RagFileChange[] = [];
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders) return;
+
+        // Use VS Code's findFiles for efficient workspace traversal
+        const uris = await vscode.workspace.findFiles(
+            '**/*.{ts,tsx,js,jsx,py,java,go}',
+            '{**/node_modules/**,**/.venv/**,**/venv/**,**/__pycache__/**,**/dist/**,**/build/**,**/out/**,**/target/**,**/.git/**}',
+        );
+
+        for (const uri of uris) {
+            const relPath = vscode.workspace.asRelativePath(uri, false);
+            const firstSeg = relPath.split(/[\\/]/)[0];
+            if (SKIP.has(firstSeg)) continue;
+
+            try {
+                const stat = await vscode.workspace.fs.stat(uri);
+                if (stat.size > MAX_FILE_SIZE) continue;
+
+                const doc = await vscode.workspace.openTextDocument(uri);
+                files.push({
+                    path: relPath,
+                    content: doc.getText(),
+                    action: 'upsert',
+                });
+            } catch {
+                // Skip unreadable files
+            }
+        }
+
+        if (files.length === 0) return;
+
+        console.log(`[Conductor][RAG] Sending ${files.length} files for reindex`);
+        const result = await ragClient.reindex(workspaceId, files);
+        console.log(
+            `[Conductor][RAG] Reindex complete: ${result.chunks_added} chunks added, ` +
+            `${result.chunks_removed} removed, ${result.files_processed} files processed`,
+        );
+    }
+
+    /**
+     * Queue a single file change for batched RAG indexing.
+     * Changes are collected for 2 seconds before sending.
+     */
+    private _queueRagFileChange(relPath: string, absPath: string, wsRoot: string): void {
+        if (!ragClient) return;
+
+        const roomId = getSessionService().getRoomId();
+        if (!roomId) return;
+
+        // Read file content and queue the change
+        const uri = vscode.Uri.file(absPath);
+        vscode.workspace.openTextDocument(uri).then(doc => {
+            this._ragPendingChanges.set(relPath, {
+                path: relPath,
+                content: doc.getText(),
+                action: 'upsert',
+            });
+
+            // Reset the 2-second batch timer
+            if (this._ragBatchTimer) clearTimeout(this._ragBatchTimer);
+            this._ragBatchTimer = setTimeout(() => {
+                this._flushRagBatch(roomId);
+            }, 2000);
+        }).then(undefined, err => {
+            console.warn('[Conductor][RAG] Failed to read file for RAG:', err);
+        });
+    }
+
+    /** Flush accumulated file changes to the backend RAG. */
+    private _flushRagBatch(workspaceId: string): void {
+        if (!ragClient || this._ragPendingChanges.size === 0) return;
+
+        const files = Array.from(this._ragPendingChanges.values());
+        this._ragPendingChanges.clear();
+        this._ragBatchTimer = null;
+
+        console.log(`[Conductor][RAG] Flushing ${files.length} file changes`);
+        ragClient.index(workspaceId, files).then(result => {
+            console.log(
+                `[Conductor][RAG] Index update: ${result.chunks_added} added, ` +
+                `${result.chunks_removed} removed`,
+            );
+        }).catch(err => {
+            console.warn('[Conductor][RAG] Batch index failed:', err);
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Incremental file watcher
+    // -----------------------------------------------------------------------
+
+    /**
+     * Start a VS Code FileSystemWatcher for the workspace.
+     * Each file change/create is debounced (300 ms) and triggers a single-file
+     * reindex so the index stays fresh without periodic full scans.
+     */
+    private _startFileWatcher(wsRoot: string): void {
+        this._stopFileWatcher();
+
+        const pattern = new vscode.RelativePattern(
+            wsRoot,
+            '**/*.{ts,tsx,js,jsx,py,java}',
+        );
+        this._fileWatcher = vscode.workspace.createFileSystemWatcher(pattern);
+
+        const schedule = (uri: vscode.Uri) => {
+            if (!conductorDb) return;
+            const existing = this._fileSyncDebounces.get(uri.fsPath);
+            if (existing) clearTimeout(existing);
+            const timer = setTimeout(() => {
+                this._fileSyncDebounces.delete(uri.fsPath);
+                this._reindexSingleFile(uri.fsPath, wsRoot);
+            }, 300);
+            this._fileSyncDebounces.set(uri.fsPath, timer);
+        };
+
+        this._fileWatcher.onDidChange(schedule);
+        this._fileWatcher.onDidCreate(schedule);
+        console.log('[Conductor] File watcher active for:', wsRoot);
+    }
+
+    private _stopFileWatcher(): void {
+        this._fileWatcher?.dispose();
+        this._fileWatcher = null;
+        for (const t of this._fileSyncDebounces.values()) clearTimeout(t);
+        this._fileSyncDebounces.clear();
+    }
+
+    private async _reindexSingleFile(absPath: string, wsRoot: string): Promise<void> {
+        if (!conductorDb) return;
+        const relPath = path.relative(wsRoot, absPath);
+        // Skip paths inside ignored directories
+        const firstSegment = relPath.split(/[\\/]/)[0];
+        const SKIP = new Set([
+            'node_modules', '.venv', 'venv', '__pycache__', 'dist', 'build', 'out', 'target', '.git',
+        ]);
+        if (SKIP.has(firstSegment)) return;
+
+        const count = await reindexSingleFile(wsRoot, absPath, conductorDb, {
+            embeddingModel:  embeddingConfig?.model,
+            embeddingDim:    embeddingConfig?.dim,
+            backendUrl:      getBackendUrl(),
+            onEmbeddingError: (err) => {
+                console.warn('[Conductor][FileWatcher] Embedding error:', err.message);
+            },
+        });
+
+        console.log(`[Conductor][FileWatcher] Reindexed ${relPath} (${count} symbols)`);
+        this._view?.webview.postMessage({ command: 'indexFileSynced', file: relPath, symbols: count });
+
+        // Also queue for backend RAG indexing (batched)
+        this._queueRagFileChange(relPath, absPath, wsRoot);
+    }
+
+    /**
+     * Handle "Explain with AI" clicked directly on a code-snippet message.
+     *
+     * The code, file path, and line range are already known from the snippet,
+     * so we don't need to ask the editor for a selection.  The user's optional
+     * question becomes the pipeline question.
+     */
+    private async _handleExplainCodeFromSnippet(message: {
+        code:          string;
+        relativePath:  string;
+        startLine:     number;
+        endLine:       number;
+        language?:     string;
+        roomId:        string;
+        question?:     string;
+    }): Promise<void> {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            this._view?.webview.postMessage({
+                command: 'explainCodeFromSnippetDone',
+                success: false,
+                error: 'No workspace folder open',
+            });
+            return;
+        }
+
+        const language = message.language || _langFromPath(message.relativePath);
+
+        // Reconstruct the file URI (best-effort — falls back to first folder if file is absent)
+        let fileUri = vscode.Uri.joinPath(folders[0].uri, message.relativePath);
+        for (const folder of folders) {
+            const candidate = vscode.Uri.joinPath(folder.uri, message.relativePath);
+            try {
+                await vscode.workspace.fs.stat(candidate);
+                fileUri = candidate;
+                break;
+            } catch { /* try next folder */ }
+        }
+
+        const position = new vscode.Position(Math.max(0, message.startLine - 1), 0);
+        const backendUrl = getBackendUrl();
+
+        try {
+            const result = await runExplainPipeline({
+                uri:               fileUri,
+                selectionPosition: position,
+                relativePath:      message.relativePath,
+                language,
+                code:              message.code,
+                startLine:         message.startLine,
+                endLine:           message.endLine,
+                question:          message.question ||
+                    `Describe this ${language} code: what it does, its inputs and outputs, ` +
+                    `the business scenario it serves, and any key dependencies or side-effects.`,
+                backendUrl,
+                conductorDb,
+                workspaceFolders:  [...folders],
+                workspaceConfig:   workspaceConfig  ?? undefined,
+                embeddingConfig:   embeddingConfig  ?? undefined,
+            });
+
+            // Broadcast the explanation as an AI message in the room.
+            // The endpoint uses Query params (same contract as _handleExplainCode).
+            const aiData = JSON.stringify({
+                code:         message.code,
+                relativePath: message.relativePath,
+                startLine:    message.startLine,
+                endLine:      message.endLine,
+                language,
+                model:        result.model,
+            });
+            const postParams = new URLSearchParams({
+                message_type: 'ai_explanation',
+                model_name:   result.model || 'ai',
+                content:      result.explanation,
+                ai_data:      aiData,
+            });
+            const aiMsgUrl = `${backendUrl}/chat/${encodeURIComponent(message.roomId)}/ai-message?${postParams.toString()}`;
+            const postResponse = await fetch(aiMsgUrl, { method: 'POST' });
+            if (!postResponse.ok) {
+                console.warn('[Conductor][ExplainFromSnippet] POST to chat failed:', postResponse.status);
+            }
+
+            this._view?.webview.postMessage({ command: 'explainCodeFromSnippetDone', success: true });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error('[Conductor][ExplainFromSnippet] Failed:', msg);
+            this._view?.webview.postMessage({
+                command: 'explainCodeFromSnippetDone',
+                success: false,
+                error:   msg,
+            });
+        }
+    }
+
+    private async _handleRebuildIndex(): Promise<void> {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!conductorDb || !folders || folders.length === 0) {
+            this._view?.webview.postMessage({
+                command: 'indexRebuildComplete',
+                success: false,
+                error: 'No workspace or database available',
+            });
+            return;
+        }
+
+        const wsRoot = conductorWsRoot ?? folders[0].uri.fsPath;
+
+        try {
+            // 1. Stop all running embedding tasks.
+            cancelCurrentIndex();
+            activeEmbeddingQueue?.cancel();
+            activeEmbeddingQueue = null;
+            this._stopFileWatcher();
+
+            // 2. Hard-reset: close DB, delete cache.db* + vectors/, reopen fresh.
+            conductorDb = await resetWorkspaceDb(wsRoot, conductorDb);
+            console.log('[Conductor][RebuildIndex] Workspace hard-reset complete');
+
+            // 3. Re-fetch embedding config (best-effort — failure = AST-only rebuild)
+            try {
+                embeddingConfig = await fetchEmbeddingConfig(getBackendUrl());
+                console.log(
+                    `[Conductor][RebuildIndex] Embedding config: ` +
+                    `provider=${embeddingConfig.provider} model=${embeddingConfig.model} dim=${embeddingConfig.dim}`,
+                );
+            } catch (err) {
+                console.warn('[Conductor][RebuildIndex] Could not fetch embedding config — AST-only mode:', err);
+                embeddingConfig = null;
+            }
+
+            // 4. Re-index workspace from scratch.
+            const indexResult = await indexWorkspace(wsRoot, conductorDb, {
+                embeddingModel:  embeddingConfig?.model,
+                embeddingDim:    embeddingConfig?.dim,
+                backendUrl:      getBackendUrl(),
+                phase1TimeoutMs: 5000,
+                onProgress: (p) => {
+                    this._view?.webview.postMessage({ command: 'indexProgress', payload: p });
+                },
+                onEmbeddingError: (err) => {
+                    this._view?.webview.postMessage({ command: 'indexEmbeddingError', error: err.message });
+                },
+                onQueueReady: (q) => { activeEmbeddingQueue = q; },
+            });
+
+            // 5. Persist current branch and restart file watcher.
+            const currentBranch = _getGitBranch(wsRoot);
+            if (currentBranch) {
+                conductorDb.setMeta('indexed_branch', currentBranch);
+            }
+            this._startFileWatcher(wsRoot);
+
+            console.log(
+                `[Conductor][RebuildIndex] Done: ${indexResult.filesScanned} files, ` +
+                `${indexResult.staleFilesCount} stale, ${indexResult.symbolsExtracted} symbols, ` +
+                `${indexResult.embeddingsEnqueued} embeddings enqueued`,
+            );
+
+            this._view?.webview.postMessage({
+                command: 'indexRebuildComplete',
+                success: true,
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.error('[Conductor][RebuildIndex] Failed:', msg);
+            this._view?.webview.postMessage({
+                command: 'indexRebuildComplete',
+                success: false,
+                error: msg,
+            });
         }
     }
 

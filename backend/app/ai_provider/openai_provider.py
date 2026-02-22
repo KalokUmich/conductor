@@ -181,12 +181,19 @@ class OpenAIProvider(AIProvider):
             next_steps=data.get("next_steps", []),
         )
 
-    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+    def call_model(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        system: str | None = None,
+    ) -> str:
         """Call the OpenAI model with a raw prompt.
 
         Args:
-            prompt: The prompt to send to the model.
+            prompt:     The user-turn prompt to send to the model.
             max_tokens: Maximum tokens in the response.
+            system:     Optional system instruction prepended as a
+                        ``role: "system"`` message.
 
         Returns:
             str: The model's response text.
@@ -196,15 +203,15 @@ class OpenAIProvider(AIProvider):
         """
         client = self._get_client()
 
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
         response = client.chat.completions.create(
             model=self.model,
             max_tokens=max_tokens,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            messages=messages,
         )
 
         return response.choices[0].message.content.strip()

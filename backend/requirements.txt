@@ -8,4 +8,6 @@ pyyaml
 pyngrok
 python-multipart
 boto3
+faiss-cpu
+numpy
 

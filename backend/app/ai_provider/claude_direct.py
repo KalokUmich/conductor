@@ -182,12 +182,19 @@ class ClaudeDirectProvider(AIProvider):
             next_steps=data.get("next_steps", []),
         )
 
-    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+    def call_model(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        system: str | None = None,
+    ) -> str:
         """Call the Claude model with a raw prompt.
 
         Args:
-            prompt: The prompt to send to the model.
+            prompt:     The user-turn prompt to send to the model.
             max_tokens: Maximum tokens in the response.
+            system:     Optional system instruction passed as the ``system``
+                        parameter of the Messages API.
 
         Returns:
             str: The model's response text.
@@ -197,15 +204,13 @@ class ClaudeDirectProvider(AIProvider):
         """
         client = self._get_client()
 
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-        )
+        kwargs: dict = {
+            "model":      self.model,
+            "max_tokens": max_tokens,
+            "messages":   [{"role": "user", "content": prompt}],
+        }
+        if system:
+            kwargs["system"] = system
 
+        response = client.messages.create(**kwargs)
         return response.content[0].text.strip()

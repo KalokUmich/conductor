@@ -16,6 +16,7 @@
  * handles missing fields gracefully.
  */
 import * as vscode from 'vscode';
+import { RagClient, RagSearchResultItem } from './ragClient';
 
 // ---------------------------------------------------------------------------
 // Public interface
@@ -76,6 +77,18 @@ const RELATED_SNIPPET_LINES = 30;
 // ---------------------------------------------------------------------------
 
 export class ContextGatherer {
+    private readonly _ragClient?: RagClient;
+    private readonly _workspaceId?: string;
+
+    /**
+     * @param ragClient   Optional RagClient for semantic search augmentation.
+     * @param workspaceId Workspace/room ID required when ragClient is provided.
+     */
+    constructor(ragClient?: RagClient, workspaceId?: string) {
+        this._ragClient = ragClient;
+        this._workspaceId = workspaceId;
+    }
+
     /**
      * Gather context for the given code selection.
      * All steps are best-effort; failures do not throw.
@@ -270,6 +283,47 @@ export class ContextGatherer {
                     if (results.length >= MAX_RELATED) return results;
                 }
             } catch { /* LSP unavailable */ }
+        }
+
+        // Augment with backend RAG semantic search (best-effort)
+        if (results.length < MAX_RELATED && this._ragClient && this._workspaceId) {
+            try {
+                const seen = new Set(results.map(r => r.relativePath));
+                seen.add(ownRelativePath);
+
+                // Use the file content around the selection as the search query
+                const doc = await vscode.workspace.openTextDocument(fileUri);
+                const queryStart = Math.max(0, startLine - 1 - 5);
+                const queryEnd = Math.min(doc.lineCount, endLine + 5);
+                const queryLines: string[] = [];
+                for (let i = queryStart; i < queryEnd; i++) {
+                    queryLines.push(doc.lineAt(i).text);
+                }
+                const query = queryLines.join('\n');
+
+                const ragResponse = await this._ragClient.search(
+                    this._workspaceId, query, MAX_RELATED * 2,
+                );
+                for (const item of ragResponse.results) {
+                    if (seen.has(item.file_path)) continue;
+                    seen.add(item.file_path);
+
+                    // Read the snippet from the file at the indicated lines
+                    const ragUri = await this._resolveFileUri(item.file_path);
+                    if (!ragUri) continue;
+                    const snippet = await this._readSnippetAt(ragUri, item.start_line - 1);
+                    if (snippet) {
+                        results.push({
+                            relativePath: item.file_path,
+                            snippet,
+                            reason: 'definition', // semantic match treated as definition
+                        });
+                    }
+                    if (results.length >= MAX_RELATED) break;
+                }
+            } catch {
+                // RAG unavailable — continue without
+            }
         }
 
         return results;

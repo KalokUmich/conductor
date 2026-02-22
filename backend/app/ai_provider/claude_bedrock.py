@@ -225,14 +225,21 @@ class ClaudeBedrockProvider(AIProvider):
             next_steps=data.get("next_steps", []),
         )
 
-    def call_model(self, prompt: str, max_tokens: int = 2048) -> str:
+    def call_model(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        system: str | None = None,
+    ) -> str:
         """Call the Claude model via Bedrock with a raw prompt.
 
         Uses the Converse API for compatibility with all model types.
 
         Args:
-            prompt: The prompt to send to the model.
+            prompt:     The user-turn prompt to send to the model.
             max_tokens: Maximum tokens in the response.
+            system:     Optional system instruction (maps to the Converse
+                        ``system`` parameter as a text block).
 
         Returns:
             str: The model's response text.
@@ -242,17 +249,18 @@ class ClaudeBedrockProvider(AIProvider):
         """
         client = self._get_client()
 
-        response = client.converse(
-            modelId=self.model_id,
-            messages=[
+        kwargs: dict = {
+            "modelId": self.model_id,
+            "messages": [
                 {
                     "role": "user",
-                    "content": [{"text": prompt}]
+                    "content": [{"text": prompt}],
                 }
             ],
-            inferenceConfig={
-                "maxTokens": max_tokens,
-            }
-        )
+            "inferenceConfig": {"maxTokens": max_tokens},
+        }
+        if system:
+            kwargs["system"] = [{"text": system}]
 
+        response = client.converse(**kwargs)
         return response["output"]["message"]["content"][0]["text"].strip()

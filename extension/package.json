@@ -74,6 +74,7 @@
     "build:css": "tailwindcss -i ./media/input.css -o ./media/tailwind.css --minify"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^20.x",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
@@ -84,6 +85,8 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "typescript": "^5.3.3",
     "vsls": "^1.0.4753"
   }
 }
