@@ -191,6 +191,20 @@ class TestChangesetHash:
 class TestAuditAPI:
     """Tests for audit log API endpoints."""
 
+    @pytest.fixture(autouse=True)
+    def _isolated_db(self, tmp_path):
+        """Give every API test its own temporary DuckDB instance.
+
+        The module-level ``client`` uses ``AuditLogService.get_instance()``,
+        which falls back to the singleton.  Without isolation the service can
+        pick up a stale/locked file left by a previous test run.
+        """
+        db_file = str(tmp_path / "audit_api_test.duckdb")
+        AuditLogService.reset_instance()
+        AuditLogService.get_instance(db_path=db_file)
+        yield
+        AuditLogService.reset_instance()
+
     def test_log_apply_endpoint(self):
         """Test the log-apply endpoint creates an audit log entry."""
         response = client.post("/audit/log-apply", json={

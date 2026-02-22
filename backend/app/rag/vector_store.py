@@ -192,10 +192,12 @@ class FaissVectorStore:
         scores, indices = self._index.search(vec, fetch_k)
 
         results: list[tuple[str, float, ChunkMetadata]] = []
+        # Snapshot id_map length to avoid IndexError from concurrent adds.
+        id_map_snapshot = self._id_map
         for score, idx in zip(scores[0], indices[0]):
-            if idx < 0:
+            if idx < 0 or idx >= len(id_map_snapshot):
                 continue
-            chunk_id = self._id_map[idx]
+            chunk_id = id_map_snapshot[idx]
             meta = self._metadata.get(chunk_id)
             if meta is None:
                 continue
