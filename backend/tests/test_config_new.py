@@ -1,14 +1,13 @@
 """Tests for the updated configuration module.
 
 Covers:
+* _find_config_file — search path logic
 * AppSettings instantiation with all new fields
 * CodeSearchSettings — all 5 backends, model defaults, validation
-* VoyageSecrets + MistralSecrets
-* _inject_embedding_env_vars — all 5 backends
-* load_settings — YAML loading + merging
+* VoyageSecrets + MistralSecrets + CohereSecrets
+* _inject_embedding_env_vars — all 5 embedding + reranking backends
+* load_settings — YAML loading + merging via _find_config_file
 * Edge cases: missing files, empty values, unknown backends
-
-Total: 42 tests
 """
 from __future__ import annotations
 
@@ -49,9 +48,68 @@ from backend.app.config import (  # noqa: E402
     OpenAISecrets,
     VoyageSecrets,
     MistralSecrets,
+    _find_config_file,
     _inject_embedding_env_vars,
     load_settings,
 )
+
+
+# ===================================================================
+# _find_config_file
+# ===================================================================
+
+
+class TestFindConfigFile:
+    def test_finds_in_config_subdir(self, tmp_path, monkeypatch):
+        """Priority 1: ./config/{filename}"""
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        target = config_dir / "conductor.settings.yaml"
+        target.write_text("server: {}")
+        assert _find_config_file("conductor.settings.yaml") == target
+
+    def test_finds_in_cwd(self, tmp_path, monkeypatch):
+        """Priority 2: ./{filename} (when config/ doesn't have it)"""
+        monkeypatch.chdir(tmp_path)
+        target = tmp_path / "conductor.settings.yaml"
+        target.write_text("server: {}")
+        assert _find_config_file("conductor.settings.yaml") == target
+
+    def test_prefers_config_subdir_over_cwd(self, tmp_path, monkeypatch):
+        """config/ should take priority over CWD."""
+        monkeypatch.chdir(tmp_path)
+        cwd_file = tmp_path / "conductor.settings.yaml"
+        cwd_file.write_text("cwd")
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        config_file = config_dir / "conductor.settings.yaml"
+        config_file.write_text("config")
+        assert _find_config_file("conductor.settings.yaml") == config_file
+
+    def test_finds_in_parent_config(self, tmp_path, monkeypatch):
+        """Priority 3: ../config/{filename}"""
+        parent = tmp_path / "parent"
+        child = parent / "child"
+        child.mkdir(parents=True)
+        config_dir = parent / "config"
+        config_dir.mkdir()
+        target = config_dir / "conductor.settings.yaml"
+        target.write_text("parent")
+        monkeypatch.chdir(child)
+        assert _find_config_file("conductor.settings.yaml") == target
+
+    def test_returns_none_when_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        assert _find_config_file("conductor.settings.yaml") is None
+
+    def test_finds_secrets_file(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        target = config_dir / "conductor.secrets.yaml"
+        target.write_text("aws: {}")
+        assert _find_config_file("conductor.secrets.yaml") == target
 
 
 # ===================================================================
@@ -308,24 +366,30 @@ class TestAppSettings:
 
 class TestLoadSettings:
     def test_missing_files_returns_defaults(self, tmp_path):
-        with patch("backend.app.config.SETTINGS_FILE", tmp_path / "missing.yaml"), \
-             patch("backend.app.config.SECRETS_FILE", tmp_path / "also_missing.yaml"):
+        def mock_find(filename):
+            return tmp_path / filename  # Points to non-existent files
+
+        with patch("backend.app.config._find_config_file", side_effect=mock_find):
             settings = load_settings()
             assert isinstance(settings, AppSettings)
 
     def test_loads_from_yaml(self, tmp_path):
-        settings_file = tmp_path / "settings.yaml"
+        settings_file = tmp_path / "conductor.settings.yaml"
         settings_file.write_text(yaml.dump({
             "code_search": {
                 "embedding_backend": "local",
                 "local_model_name": "custom-model",
             }
         }))
-        secrets_file = tmp_path / "secrets.yaml"
+        secrets_file = tmp_path / "conductor.secrets.yaml"
         secrets_file.write_text(yaml.dump({"openai": {"api_key": "sk-test"}}))
 
-        with patch("backend.app.config.SETTINGS_FILE", settings_file), \
-             patch("backend.app.config.SECRETS_FILE", secrets_file):
+        def mock_find(filename):
+            if "settings" in filename:
+                return settings_file
+            return secrets_file
+
+        with patch("backend.app.config._find_config_file", side_effect=mock_find):
             settings = load_settings()
             assert settings.code_search.embedding_backend == "local"
             assert settings.code_search.local_model_name == "custom-model"

@@ -18,25 +18,43 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Helpers — config file discovery
 # ---------------------------------------------------------------------------
 
-SETTINGS_FILE = Path("conductor.settings.yaml")
-SECRETS_FILE  = Path("conductor.secrets.yaml")
+
+def _find_config_file(filename: str) -> Optional[Path]:
+    """Find a configuration file in standard locations.
+
+    Search order (first match wins):
+      1. ./config/{filename}
+      2. ./{filename}
+      3. ../config/{filename}
+      4. ~/.conductor/{filename}
+    """
+    locations = [
+        Path.cwd() / "config" / filename,
+        Path.cwd() / filename,
+        Path.cwd().parent / "config" / filename,
+        Path.home() / ".conductor" / filename,
+    ]
+    for path in locations:
+        if path.exists():
+            logger.debug("Found config file: %s", path)
+            return path
+    return None
 
 
-def _load_yaml(path: Path) -> Dict[str, Any]:
-    if not path.exists():
+def _load_yaml(path: Optional[Path]) -> Dict[str, Any]:
+    if path is None or not path.exists():
         logger.warning("Config file not found: %s", path)
         return {}
     with path.open(encoding="utf-8") as fh:
@@ -294,9 +312,16 @@ def _inject_embedding_env_vars(settings: AppSettings) -> None:
 
 
 def load_settings() -> AppSettings:
-    """Load and merge settings + secrets into a single *AppSettings* object."""
-    settings_data = _load_yaml(SETTINGS_FILE)
-    secrets_data  = _load_yaml(SECRETS_FILE)
+    """Load and merge settings + secrets into a single *AppSettings* object.
+
+    Searches for config files in standard locations
+    (see :func:`_find_config_file` for the search order).
+    """
+    settings_path = _find_config_file("conductor.settings.yaml")
+    secrets_path  = _find_config_file("conductor.secrets.yaml")
+
+    settings_data = _load_yaml(settings_path)
+    secrets_data  = _load_yaml(secrets_path)
 
     # Merge: secrets live under the "secrets" key in AppSettings
     settings_data["secrets"] = secrets_data

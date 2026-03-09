@@ -1,21 +1,28 @@
 # Conductor Settings Configuration
-# Copy this file to conductor.settings.yaml and customize your settings
-#
+# =============================================================================
 # This file contains non-sensitive settings and CAN be committed to git.
 # For API keys and secrets, use conductor.secrets.yaml (gitignored).
 #
-# Usage:
-#   cp config/conductor.settings.yaml.example config/conductor.settings.yaml
-#   # Then edit conductor.settings.yaml with your preferences
+# Configuration file search order:
+#   1. ./config/conductor.settings.yaml
+#   2. ./conductor.settings.yaml
+#   3. ../config/conductor.settings.yaml
+#   4. ~/.conductor/conductor.settings.yaml
 
 # =============================================================================
 # Server Configuration
 # =============================================================================
 server:
-  # Backend server host and port
-  host: "localhost"
+  host: "0.0.0.0"
   port: 8000
-  
+  debug: false
+  reload: false
+  log_level: "info"
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+    - "vscode-webview://*"
+
   # Public URL for external access (set by ngrok or other tunnel service)
   # Leave empty to use localhost
   public_url: ""
@@ -32,21 +39,70 @@ ngrok:
   enabled: true
 
 # =============================================================================
+# Database
+# =============================================================================
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  echo_sql: false
+
+# =============================================================================
+# Authentication
+# =============================================================================
+auth:
+  token_expire_minutes: 60
+  refresh_expire_days: 7
+  require_email_verify: false
+
+# =============================================================================
+# Rooms
+# =============================================================================
+rooms:
+  max_participants: 50
+  max_rooms_per_user: 10
+  session_timeout_minutes: 120
+  enable_persistence: true
+
+# =============================================================================
+# Session Configuration
+# =============================================================================
+session:
+  timeout_minutes: 0
+  max_participants: 10
+
+# =============================================================================
+# Live Share (legacy — disabled, replaced by git_workspace)
+# =============================================================================
+live_share:
+  enabled: false
+  vscode_extension_id: "ms-vsliveshare.vsliveshare"
+  host_timeout_seconds: 300
+
+# =============================================================================
+# AWS SSO Configuration
+# =============================================================================
+sso:
+  enabled: true
+  start_url: "https://d-9c67136d70.awsapps.com/start"
+  region: "eu-west-2"
+
+# =============================================================================
+# Google SSO Configuration
+# =============================================================================
+google_sso:
+  enabled: false
+
+# =============================================================================
 # AI Summary Configuration
 # =============================================================================
 summary:
-  # Enable AI-powered summarization feature
   enabled: true
-  
-  # Default model to use for summarization and code explanation
-  # Must match an id from ai_models below
   default_model: "claude-sonnet-4-6-bedrock"
 
 # =============================================================================
 # AI Provider Settings
 # =============================================================================
-# Enable/disable providers. Even if enabled here, providers need valid API keys
-# in conductor.secrets.yaml to function. UI will show grayed out if unavailable.
 ai_provider_settings:
   anthropic_enabled: true
   aws_bedrock_enabled: true
@@ -55,13 +111,6 @@ ai_provider_settings:
 # =============================================================================
 # AI Models Configuration
 # =============================================================================
-# Define available models for each provider.
-# Only models for enabled providers with valid API keys will be usable.
-#
-# Note for AWS Bedrock:
-# - Some models (like Claude Sonnet 4) only support cross-region inference
-# - Use the inference profile ID format: us.anthropic.claude-sonnet-4-20250514-v1:0
-# - Or use models that support single-region: anthropic.claude-3-haiku-20240307-v1:0
 ai_models:
   - id: "claude-sonnet-4-6-bedrock"
     provider: "aws_bedrock"
@@ -114,23 +163,8 @@ ai_models:
 # =============================================================================
 # Prompt Configuration
 # =============================================================================
-# Controls how the code generation prompt is formatted.
-# output_mode options:
-#   "unified_diff"       - Provide changes as unified diff patches (default)
-#   "direct_repo_edits"  - Provide complete file contents
-#   "plan_then_diff"     - Provide implementation plan, then diffs
 prompt:
   output_mode: "unified_diff"
-
-# =============================================================================
-# Session Configuration
-# =============================================================================
-session:
-  # Session timeout in minutes (0 = no timeout)
-  timeout_minutes: 0
-  
-  # Maximum participants per room
-  max_participants: 10
 
 # =============================================================================
 # Change Limits Configuration
@@ -147,75 +181,83 @@ change_limits:
 # Logging Configuration
 # =============================================================================
 logging:
-  # Log level (debug, info, warning, error)
   level: "info"
-  
-  # Enable DuckDB audit logging
   audit_enabled: true
-  
-  # Path to audit log database file
   audit_path: "backend/audit_logs.duckdb"
 
 # =============================================================================
-# AWS SSO Configuration
+# Git Workspace Settings
 # =============================================================================
-# Enable SSO login for user identification via AWS IAM Identity Center.
-# Users can sign in before starting/joining a session.
-sso:
-  # Enable SSO login button in the extension
+git_workspace:
   enabled: true
-
-  # Your AWS SSO portal start URL (from IAM Identity Center settings)
-  start_url: "https://d-9c67136d70.awsapps.com/start"
-
-  # AWS region where your IAM Identity Center is configured
-  region: "eu-west-2"
-
-# =============================================================================
-# Google SSO Configuration
-# =============================================================================
-# Enable Google OAuth SSO login for user identification.
-# Requires client_id and client_secret in conductor.secrets.yaml.
-google_sso:
-  # Enable Google SSO login button in the extension
-  enabled: false
+  workspaces_dir: "./workspaces"
+  git_auth_mode: "token"                   # "token" (Mode A) or "delegate" (Mode B)
+  credential_ttl_seconds: 3600
+  max_worktrees_per_repo: 20
+  cleanup_on_room_close: true
 
 # =============================================================================
-# Embedding Configuration
+# Code Search Settings
 # =============================================================================
-# Controls which cloud provider and model are used to generate vector
-# embeddings for code symbols. Changing model triggers lazy re-embedding
-# on next usage (the extension checks sha1 + model).
-embedding:
-  # Embedding provider (bedrock, openai, cohere)
-  provider: "bedrock"
-
-  # Provider-specific model ID for embeddings
-  # Bedrock: cohere.embed-english-v3, cohere.embed-multilingual-v3, amazon.titan-embed-text-v2:0
-  # OpenAI: text-embedding-3-small, text-embedding-3-large
-  model: "cohere.embed-english-v3"
-
-  # Expected vector dimensionality produced by the model
-  # cohere.embed-english-v3: 1024, text-embedding-3-small: 1536
-  dim: 1024
-
-# =============================================================================
-# RAG (Retrieval-Augmented Generation) Configuration
-# =============================================================================
-# Backend-centric FAISS vector store for semantic code retrieval.
-# Requires a working embedding service (see embedding section above).
-rag:
-  # Enable the RAG pipeline
+# Semantic code search powered by CocoIndex (AST-aware chunking + sqlite-vec).
+#
+# Embedding backend options:
+#   "local"   — SentenceTransformers, free, no API key needed
+#   "bedrock" — AWS Bedrock (default: Cohere Embed v4, $0.12/1M tokens)
+#   "openai"  — OpenAI Embeddings API
+#   "voyage"  — Voyage AI (code-specialised, voyage-code-3)
+#   "mistral" — Mistral Embeddings (Codestral Embed)
+#
+# Default is "bedrock" with Cohere Embed v4. To switch providers, change
+# embedding_backend and ensure credentials are in conductor.secrets.yaml.
+code_search:
   enabled: true
+  index_dir: "./cocoindex_data"
+  embedding_backend: "bedrock"             # "local" | "bedrock" | "openai" | "voyage" | "mistral"
 
-  # Directory for persisted FAISS indices (relative to working directory)
-  data_dir: "data/rag"
+  # -- Local (SentenceTransformers) --
+  local_model_name: "all-MiniLM-L6-v2"    # Free, 384-d, ~80 MB on disk
 
-  # Maximum lines per code chunk (oversized symbols are split at blank lines)
-  chunk_max_lines: 200
+  # -- AWS Bedrock --
+  bedrock_model_id: "cohere.embed-v4:0"    # Cohere Embed v4 (1024-d, 128K ctx, $0.12/1M)
+  bedrock_region: "us-east-1"              # Also supports: amazon.titan-embed-text-v2:0
 
-  # Default number of search results returned
-  search_top_k: 10
+  # -- OpenAI --
+  openai_model_name: "text-embedding-3-small"  # 1536-d, $0.02/1M tokens
 
-  # Fraction of LLM context budget allocated to RAG-retrieved code
-  token_budget_ratio: 0.6
+  # -- Voyage AI --
+  voyage_model_name: "voyage-code-3"       # Code-specialised, 1024-d, $0.06/1M tokens
+
+  # -- Mistral --
+  mistral_model_name: "codestral-embed-2505"  # Code embedding, 1024-d
+
+  # -- Chunking / Search --
+  chunk_size: 512
+  top_k_results: 5
+
+  # -- RepoMap (graph-based context) --
+  repo_map_enabled: true
+  repo_map_top_n: 10
+
+  # ---------------------------------------------------------------------------
+  # Reranking (post-retrieval re-scoring)
+  # ---------------------------------------------------------------------------
+  # Reranking is an optional post-retrieval step that uses a cross-encoder
+  # or dedicated reranking model to re-score vector search candidates.
+  #
+  # How it works:
+  #   1. Vector search returns a large candidate set (rerank_candidates)
+  #   2. The reranker scores each (query, document) pair
+  #   3. Only the top-N best results are returned
+  #
+  # Backend options:
+  #   "none"           — No reranking (default, zero cost)
+  #   "cohere"         — Cohere Rerank API (rerank-v3.5, $2/1K queries)
+  #   "bedrock"        — AWS Bedrock Rerank (Cohere Rerank 3.5 on Bedrock)
+  #   "cross_encoder"  — Local cross-encoder (free, ~80 MB, runs on CPU)
+  rerank_backend: "none"
+  rerank_top_n: 5
+  rerank_candidates: 20
+  cohere_rerank_model: "rerank-v3.5"
+  bedrock_rerank_model_id: "cohere.rerank-v3-5:0"
+  cross_encoder_model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
