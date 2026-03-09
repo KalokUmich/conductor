@@ -19,10 +19,10 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
   - WorkspaceClient typed HTTP client
   - Workspace code search (`GET /workspace/{room_id}/search`)
 - **CocoIndex Code Search**:
-  - AST-aware chunking + embedding + sqlite-vec storage
-  - 5 configurable embedding backends (local, bedrock, openai, voyage, mistral)
+  - AST-aware chunking + embedding + vector storage (sqlite-vec or Postgres)
+  - LiteLLM unified embedding (100+ providers via one config field)
   - Default: Cohere Embed v4 via AWS Bedrock
-  - Pluggable EmbeddingProvider abstraction
+  - Postgres backend with incremental processing
 - **RepoMap (Graph-based Context)**:
   - tree-sitter AST parsing for symbol extraction
   - File dependency graph (networkx) with PageRank ranking
@@ -113,18 +113,25 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
 - [x] Context router with hybrid retrieval (`/api/context/`)
 - [x] Per-workspace index management
 
-### 4.5.2 Multi-Provider Embeddings (P0)
+### 4.5.2 Multi-Provider Embeddings (P0) → LiteLLM Unification
 - [x] EmbeddingProvider abstract base class
-- [x] LocalEmbeddingProvider (SentenceTransformers, `all-MiniLM-L6-v2`)
-- [x] BedrockEmbeddingProvider (Cohere Embed v4, Titan V2)
-- [x] OpenAIEmbeddingProvider (`text-embedding-3-small`)
-- [x] VoyageEmbeddingProvider (`voyage-code-3`)
-- [x] MistralEmbeddingProvider (`codestral-embed-2505`)
-- [x] Factory function `create_embedding_provider(settings)`
-- [x] VoyageSecrets + MistralSecrets in config
-- [x] `_inject_embedding_env_vars()` for all 5 backends
-- [x] Default: Bedrock with Cohere Embed v4 ($0.12/1M tokens)
-- [x] Comprehensive tests (78 test cases)
+- [x] LocalEmbeddingProvider (SentenceTransformers, `sbert/` prefix)
+- [x] LiteLLMEmbeddingProvider (unified provider for 100+ backends)
+- [x] Well-known dimensions map (`_KNOWN_DIMS`, 20+ entries)
+- [x] Factory with `sbert/` → Local, everything else → LiteLLM routing
+- [x] Legacy backward compatibility via `_legacy_backend_to_model()`
+- [x] Unified credential injection (`setdefault()` for all available secrets)
+- [x] `COCOINDEX_CODE_EMBEDDING_MODEL` env var passthrough
+- [x] Default: `bedrock/cohere.embed-v4:0` ($0.12/1M tokens)
+- [x] Comprehensive tests (85+ test cases)
+
+### 4.5.2b Postgres Backend & Incremental Processing
+- [x] `storage_backend` setting: `"sqlite"` (default) or `"postgres"`
+- [x] `COCOINDEX_DATABASE_URL` env var injection for Postgres
+- [x] `incremental: true` → passes `incremental=True` to `cocoindex.build()`
+- [x] `is_incremental` property (requires both postgres + incremental=true)
+- [x] `storage_backend` and `is_incremental` in health/status endpoints
+- [x] Comprehensive tests (integrated into code_search + config tests)
 
 ### 4.5.3 RepoMap Graph-Based Context (P1)
 - [x] `repo_graph/parser.py` — tree-sitter AST + regex fallback
@@ -204,7 +211,8 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
 | Phase 4: Git Workspace (Model A) | ✅ Complete | Sprint 4 |
 | Phase 4.2: Workspace Code Search | ✅ Complete | Sprint 4 |
 | Phase 4.5: Semantic Code Search | ✅ Complete | Sprint 5 |
-| Phase 4.5.2: Multi-Provider Embeddings | ✅ Complete | Sprint 5 |
+| Phase 4.5.2: LiteLLM Unified Embeddings | ✅ Complete | Sprint 5 |
+| Phase 4.5.2b: Postgres + Incremental | ✅ Complete | Sprint 5 |
 | Phase 4.5.3: RepoMap Graph Context | ✅ Complete | Sprint 5 |
 | Phase 4.5.4: Reranking for Code Search | ✅ Complete | Sprint 5 |
 | Phase 5: Model B + Advanced | 🟡 Planned | Sprint 6 |
@@ -261,3 +269,18 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
 **Decision**: Add optional reranking as a post-retrieval step with 4 backends (none, cohere, bedrock, cross_encoder).
 **Rationale**: Vector search returns approximate results — the embedding compresses semantics into a single vector, losing nuance. A reranker (cross-encoder) sees the full query and document text together, making more precise relevance judgments. Cohere Rerank 3.5 provides excellent quality at $2/1K queries. Bedrock variant reuses existing AWS credentials. Cross-encoder provides a free local option for development. The noop backend allows disabling reranking with zero overhead.
 **Status**: Implemented in Phase 4.5.4.
+
+### ADR-011: LiteLLM over hand-written provider classes
+**Decision**: Replace 5 hand-written embedding provider classes (Bedrock, OpenAI, Voyage, Mistral, Local) with LiteLLMEmbeddingProvider + LocalEmbeddingProvider.
+**Rationale**: Maintaining 5 separate classes with vendor-specific API calls was a maintenance burden. LiteLLM provides a unified `litellm.embedding()` interface for 100+ providers. One config field (`embedding_model`) replaces five. Adding a new provider requires zero code changes — just update the model string. LocalEmbeddingProvider is kept as a zero-cost fallback for development/CI since SentenceTransformers doesn't go through any API. Legacy backward compatibility is maintained via `_legacy_backend_to_model()`.
+**Status**: Implemented in Phase 4.5.2.
+
+### ADR-012: Postgres backend with incremental processing
+**Decision**: Add Postgres as an alternative storage backend to sqlite-vec, with incremental re-indexing.
+**Rationale**: sqlite-vec has single-writer limitation and requires full re-index on every change. Postgres supports concurrent access (needed for multi-instance deployments) and CocoIndex can track file checksums for incremental processing (only re-index changed files). The `is_incremental` property only returns true when both `incremental: true` and `storage_backend: "postgres"` are set, preventing misconfiguration.
+**Status**: Implemented in Phase 4.5.2b.
+
+### ADR-013: Unified credential injection with setdefault()
+**Decision**: `_inject_embedding_env_vars()` now injects ALL available credentials at startup using `os.environ.setdefault()` instead of only injecting the active backend's credentials with direct assignment.
+**Rationale**: With LiteLLM, the active backend is determined by the model string prefix, not a separate `embedding_backend` field. Injecting all available credentials means any model string works without config changes. Using `setdefault()` ensures pre-existing environment variables (from IAM roles, instance profiles, or CI) are never silently overwritten.
+**Status**: Implemented in Phase 4.5.2.

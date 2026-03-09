@@ -35,8 +35,10 @@ async def health(
     """Basic health check for the code search module."""
     return CodeSearchHealth(
         status          = "ok" if svc._initialized else "error",
-        embedding_backend = svc._embedding_backend,
+        embedding_model = svc._embedding_model,
+        storage_backend = svc._storage_backend,
         index_dir       = str(svc._index_dir),
+        incremental     = svc.is_incremental,
         detail          = None if svc._initialized else "Service not initialized",
     )
 

@@ -3,11 +3,14 @@
 Covers:
 * _find_config_file — search path logic
 * AppSettings instantiation with all new fields
-* CodeSearchSettings — all 5 backends, model defaults, validation
+* CodeSearchSettings — LiteLLM model strings, storage backends, validation
 * VoyageSecrets + MistralSecrets + CohereSecrets
-* _inject_embedding_env_vars — all 5 embedding + reranking backends
+* _inject_embedding_env_vars — unified credential injection
 * load_settings — YAML loading + merging via _find_config_file
-* Edge cases: missing files, empty values, unknown backends
+* Postgres backend configuration
+* Edge cases: missing files, empty values
+
+Total: 60+ tests
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ def _stub(name: str, **attrs) -> types.ModuleType:
 _stub("cocoindex")
 _stub("sentence_transformers", SentenceTransformer=MagicMock)
 _stub("sqlite_vec")
+_stub("litellm")
 
 # ---------------------------------------------------------------------------
 # Real imports
@@ -48,6 +52,7 @@ from app.config import (  # noqa: E402
     OpenAISecrets,
     VoyageSecrets,
     MistralSecrets,
+    CohereSecrets,
     _find_config_file,
     _inject_embedding_env_vars,
     load_settings,
@@ -118,33 +123,25 @@ class TestFindConfigFile:
 
 
 class TestCodeSearchSettingsDefaults:
-    def test_default_backend_is_bedrock(self):
+    def test_default_embedding_model(self):
         cfg = CodeSearchSettings()
-        assert cfg.embedding_backend == "bedrock"
+        assert cfg.embedding_model == "bedrock/cohere.embed-v4:0"
 
-    def test_default_bedrock_model(self):
+    def test_default_storage_backend(self):
         cfg = CodeSearchSettings()
-        assert cfg.bedrock_model_id == "cohere.embed-v4:0"
+        assert cfg.storage_backend == "sqlite"
 
-    def test_default_bedrock_region(self):
+    def test_default_postgres_url_is_none(self):
         cfg = CodeSearchSettings()
-        assert cfg.bedrock_region == "us-east-1"
+        assert cfg.postgres_url is None
 
-    def test_default_local_model(self):
+    def test_default_incremental_true(self):
         cfg = CodeSearchSettings()
-        assert cfg.local_model_name == "all-MiniLM-L6-v2"
+        assert cfg.incremental is True
 
-    def test_default_openai_model(self):
+    def test_default_embedding_dimensions_none(self):
         cfg = CodeSearchSettings()
-        assert cfg.openai_model_name == "text-embedding-3-small"
-
-    def test_default_voyage_model(self):
-        cfg = CodeSearchSettings()
-        assert cfg.voyage_model_name == "voyage-code-3"
-
-    def test_default_mistral_model(self):
-        cfg = CodeSearchSettings()
-        assert cfg.mistral_model_name == "codestral-embed-2505"
+        assert cfg.embedding_dimensions is None
 
     def test_default_chunk_size(self):
         cfg = CodeSearchSettings()
@@ -162,35 +159,46 @@ class TestCodeSearchSettingsDefaults:
         cfg = CodeSearchSettings()
         assert cfg.repo_map_top_n == 10
 
+    def test_default_rerank_backend(self):
+        cfg = CodeSearchSettings()
+        assert cfg.rerank_backend == "none"
+
 
 class TestCodeSearchSettingsCustom:
-    def test_set_local_backend(self):
-        cfg = CodeSearchSettings(embedding_backend="local")
-        assert cfg.embedding_backend == "local"
+    def test_set_embedding_model_openai(self):
+        cfg = CodeSearchSettings(embedding_model="text-embedding-3-small")
+        assert cfg.embedding_model == "text-embedding-3-small"
 
-    def test_set_openai_backend(self):
-        cfg = CodeSearchSettings(embedding_backend="openai")
-        assert cfg.embedding_backend == "openai"
+    def test_set_embedding_model_voyage(self):
+        cfg = CodeSearchSettings(embedding_model="voyage/voyage-code-3")
+        assert cfg.embedding_model == "voyage/voyage-code-3"
 
-    def test_set_voyage_backend(self):
-        cfg = CodeSearchSettings(embedding_backend="voyage")
-        assert cfg.embedding_backend == "voyage"
+    def test_set_embedding_model_local(self):
+        cfg = CodeSearchSettings(embedding_model="sbert/sentence-transformers/all-MiniLM-L6-v2")
+        assert cfg.embedding_model == "sbert/sentence-transformers/all-MiniLM-L6-v2"
 
-    def test_set_mistral_backend(self):
-        cfg = CodeSearchSettings(embedding_backend="mistral")
-        assert cfg.embedding_backend == "mistral"
+    def test_set_embedding_model_gemini(self):
+        cfg = CodeSearchSettings(embedding_model="gemini/text-embedding-004")
+        assert cfg.embedding_model == "gemini/text-embedding-004"
 
-    def test_invalid_backend_raises(self):
+    def test_set_storage_postgres(self):
+        cfg = CodeSearchSettings(storage_backend="postgres")
+        assert cfg.storage_backend == "postgres"
+
+    def test_invalid_storage_raises(self):
         with pytest.raises(Exception):  # pydantic ValidationError
-            CodeSearchSettings(embedding_backend="invalid")
+            CodeSearchSettings(storage_backend="invalid")
 
-    def test_custom_bedrock_model(self):
-        cfg = CodeSearchSettings(bedrock_model_id="amazon.titan-embed-text-v2:0")
-        assert cfg.bedrock_model_id == "amazon.titan-embed-text-v2:0"
+    def test_set_postgres_url(self):
+        cfg = CodeSearchSettings(
+            storage_backend="postgres",
+            postgres_url="postgresql://user:pass@host:5432/db"
+        )
+        assert cfg.postgres_url == "postgresql://user:pass@host:5432/db"
 
-    def test_custom_region(self):
-        cfg = CodeSearchSettings(bedrock_region="eu-west-1")
-        assert cfg.bedrock_region == "eu-west-1"
+    def test_set_explicit_dimensions(self):
+        cfg = CodeSearchSettings(embedding_dimensions=2048)
+        assert cfg.embedding_dimensions == 2048
 
     def test_custom_chunk_size(self):
         cfg = CodeSearchSettings(chunk_size=1024)
@@ -202,10 +210,10 @@ class TestCodeSearchSettingsSerialization:
         cfg = CodeSearchSettings()
         d = cfg.model_dump()
         assert isinstance(d, dict)
-        assert "embedding_backend" in d
-        assert "bedrock_model_id" in d
-        assert "voyage_model_name" in d
-        assert "mistral_model_name" in d
+        assert "embedding_model" in d
+        assert "storage_backend" in d
+        assert "postgres_url" in d
+        assert "incremental" in d
         assert "repo_map_enabled" in d
 
 
@@ -234,6 +242,16 @@ class TestMistralSecrets:
         assert s.api_key == "m-test"
 
 
+class TestCohereSecrets:
+    def test_default(self):
+        s = CohereSecrets()
+        assert s.api_key is None
+
+    def test_with_key(self):
+        s = CohereSecrets(api_key="co-test")
+        assert s.api_key == "co-test"
+
+
 class TestSecrets:
     def test_has_voyage(self):
         s = Secrets()
@@ -243,17 +261,23 @@ class TestSecrets:
         s = Secrets()
         assert isinstance(s.mistral, MistralSecrets)
 
+    def test_has_cohere(self):
+        s = Secrets()
+        assert isinstance(s.cohere, CohereSecrets)
+
     def test_all_fields(self):
         s = Secrets(
             aws=AwsSecrets(access_key_id="AK"),
             openai=OpenAISecrets(api_key="sk-test"),
             voyage=VoyageSecrets(api_key="pa-test"),
             mistral=MistralSecrets(api_key="m-test"),
+            cohere=CohereSecrets(api_key="co-test"),
         )
         assert s.aws.access_key_id == "AK"
         assert s.openai.api_key == "sk-test"
         assert s.voyage.api_key == "pa-test"
         assert s.mistral.api_key == "m-test"
+        assert s.cohere.api_key == "co-test"
 
 
 # ===================================================================
@@ -267,7 +291,8 @@ class TestInjectEnvVars:
         """Remove test env vars before/after each test."""
         keys = [
             "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION",
-            "OPENAI_API_KEY", "VOYAGE_API_KEY", "MISTRAL_API_KEY",
+            "OPENAI_API_KEY", "VOYAGE_API_KEY", "MISTRAL_API_KEY", "CO_API_KEY",
+            "COCOINDEX_DATABASE_URL", "COCOINDEX_CODE_EMBEDDING_MODEL",
         ]
         old = {k: os.environ.pop(k, None) for k in keys}
         yield
@@ -277,14 +302,13 @@ class TestInjectEnvVars:
             else:
                 os.environ.pop(k, None)
 
-    def _make_settings(self, backend="local", **secrets_kwargs):
+    def _make_settings(self, embedding_model="bedrock/cohere.embed-v4:0", **secrets_kwargs):
         secrets = Secrets(**secrets_kwargs)
-        cs = CodeSearchSettings(embedding_backend=backend)
+        cs = CodeSearchSettings(embedding_model=embedding_model)
         return AppSettings(code_search=cs, secrets=secrets)
 
-    def test_bedrock_injects_aws(self):
+    def test_injects_all_available_aws(self):
         settings = self._make_settings(
-            backend="bedrock",
             aws=AwsSecrets(access_key_id="AK", secret_access_key="SK", region="us-west-2"),
         )
         _inject_embedding_env_vars(settings)
@@ -292,42 +316,85 @@ class TestInjectEnvVars:
         assert os.environ["AWS_SECRET_ACCESS_KEY"] == "SK"
         assert os.environ["AWS_DEFAULT_REGION"] == "us-west-2"
 
-    def test_openai_injects_key(self):
+    def test_injects_openai_key(self):
         settings = self._make_settings(
-            backend="openai",
             openai=OpenAISecrets(api_key="sk-hello"),
         )
         _inject_embedding_env_vars(settings)
         assert os.environ["OPENAI_API_KEY"] == "sk-hello"
 
-    def test_voyage_injects_key(self):
+    def test_injects_voyage_key(self):
         settings = self._make_settings(
-            backend="voyage",
             voyage=VoyageSecrets(api_key="pa-hello"),
         )
         _inject_embedding_env_vars(settings)
         assert os.environ["VOYAGE_API_KEY"] == "pa-hello"
 
-    def test_mistral_injects_key(self):
+    def test_injects_mistral_key(self):
         settings = self._make_settings(
-            backend="mistral",
             mistral=MistralSecrets(api_key="m-hello"),
         )
         _inject_embedding_env_vars(settings)
         assert os.environ["MISTRAL_API_KEY"] == "m-hello"
 
-    def test_local_no_injection(self):
-        settings = self._make_settings(backend="local")
+    def test_injects_cohere_key(self):
+        settings = self._make_settings(
+            cohere=CohereSecrets(api_key="co-hello"),
+        )
         _inject_embedding_env_vars(settings)
-        assert "AWS_ACCESS_KEY_ID" not in os.environ
-        assert "OPENAI_API_KEY" not in os.environ
-        assert "VOYAGE_API_KEY" not in os.environ
-        assert "MISTRAL_API_KEY" not in os.environ
+        assert os.environ["CO_API_KEY"] == "co-hello"
 
-    def test_bedrock_missing_credentials_no_error(self):
-        settings = self._make_settings(backend="bedrock")
-        # Should not raise even without credentials
+    def test_injects_all_creds_regardless_of_model(self):
+        """All available credentials should be injected, not just the active model's."""
+        settings = self._make_settings(
+            embedding_model="voyage/voyage-code-3",
+            aws=AwsSecrets(access_key_id="AK", secret_access_key="SK"),
+            openai=OpenAISecrets(api_key="sk-test"),
+            voyage=VoyageSecrets(api_key="pa-test"),
+        )
         _inject_embedding_env_vars(settings)
+        # All should be injected
+        assert os.environ["AWS_ACCESS_KEY_ID"] == "AK"
+        assert os.environ["OPENAI_API_KEY"] == "sk-test"
+        assert os.environ["VOYAGE_API_KEY"] == "pa-test"
+
+    def test_sets_cocoindex_embedding_model(self):
+        settings = self._make_settings(embedding_model="text-embedding-3-small")
+        _inject_embedding_env_vars(settings)
+        assert os.environ["COCOINDEX_CODE_EMBEDDING_MODEL"] == "text-embedding-3-small"
+
+    def test_postgres_url_injected(self):
+        secrets = Secrets()
+        cs = CodeSearchSettings(
+            embedding_model="bedrock/cohere.embed-v4:0",
+            storage_backend="postgres",
+            postgres_url="postgresql://user:pass@host:5432/db",
+        )
+        settings = AppSettings(code_search=cs, secrets=secrets)
+        _inject_embedding_env_vars(settings)
+        assert os.environ["COCOINDEX_DATABASE_URL"] == "postgresql://user:pass@host:5432/db"
+
+    def test_sqlite_backend_no_postgres_url(self):
+        settings = self._make_settings(embedding_model="bedrock/cohere.embed-v4:0")
+        _inject_embedding_env_vars(settings)
+        assert "COCOINDEX_DATABASE_URL" not in os.environ
+
+    def test_no_credentials_no_error(self):
+        settings = self._make_settings(
+            embedding_model="sbert/sentence-transformers/all-MiniLM-L6-v2"
+        )
+        _inject_embedding_env_vars(settings)
+        # Should not raise, should set model env var
+        assert os.environ["COCOINDEX_CODE_EMBEDDING_MODEL"] == "sbert/sentence-transformers/all-MiniLM-L6-v2"
+
+    def test_setdefault_does_not_overwrite(self):
+        """If env var is already set, setdefault should not overwrite."""
+        os.environ["OPENAI_API_KEY"] = "existing-key"
+        settings = self._make_settings(
+            openai=OpenAISecrets(api_key="new-key"),
+        )
+        _inject_embedding_env_vars(settings)
+        assert os.environ["OPENAI_API_KEY"] == "existing-key"
 
 
 # ===================================================================
@@ -338,7 +405,7 @@ class TestInjectEnvVars:
 class TestAppSettings:
     def test_default_instantiation(self):
         cfg = AppSettings()
-        assert cfg.code_search.embedding_backend == "bedrock"
+        assert cfg.code_search.embedding_model == "bedrock/cohere.embed-v4:0"
 
     def test_has_all_sections(self):
         cfg = AppSettings()
@@ -377,8 +444,8 @@ class TestLoadSettings:
         settings_file = tmp_path / "conductor.settings.yaml"
         settings_file.write_text(yaml.dump({
             "code_search": {
-                "embedding_backend": "local",
-                "local_model_name": "custom-model",
+                "embedding_model": "voyage/voyage-code-3",
+                "storage_backend": "sqlite",
             }
         }))
         secrets_file = tmp_path / "conductor.secrets.yaml"
@@ -391,6 +458,29 @@ class TestLoadSettings:
 
         with patch("app.config._find_config_file", side_effect=mock_find):
             settings = load_settings()
-            assert settings.code_search.embedding_backend == "local"
-            assert settings.code_search.local_model_name == "custom-model"
+            assert settings.code_search.embedding_model == "voyage/voyage-code-3"
             assert settings.secrets.openai.api_key == "sk-test"
+
+    def test_loads_postgres_config(self, tmp_path):
+        settings_file = tmp_path / "conductor.settings.yaml"
+        settings_file.write_text(yaml.dump({
+            "code_search": {
+                "embedding_model": "bedrock/cohere.embed-v4:0",
+                "storage_backend": "postgres",
+                "postgres_url": "postgresql://user:pass@localhost:5432/cocoindex",
+                "incremental": True,
+            }
+        }))
+        secrets_file = tmp_path / "conductor.secrets.yaml"
+        secrets_file.write_text(yaml.dump({}))
+
+        def mock_find(filename):
+            if "settings" in filename:
+                return settings_file
+            return secrets_file
+
+        with patch("app.config._find_config_file", side_effect=mock_find):
+            settings = load_settings()
+            assert settings.code_search.storage_backend == "postgres"
+            assert "postgresql" in settings.code_search.postgres_url
+            assert settings.code_search.incremental is True

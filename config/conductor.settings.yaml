@@ -199,57 +199,49 @@ git_workspace:
 # =============================================================================
 # Code Search Settings
 # =============================================================================
-# Semantic code search powered by CocoIndex (AST-aware chunking + sqlite-vec).
+# Semantic code search powered by CocoIndex (AST-aware chunking + vector search).
 #
-# Embedding backend options:
-#   "local"   — SentenceTransformers, free, no API key needed
-#   "bedrock" — AWS Bedrock (default: Cohere Embed v4, $0.12/1M tokens)
-#   "openai"  — OpenAI Embeddings API
-#   "voyage"  — Voyage AI (code-specialised, voyage-code-3)
-#   "mistral" — Mistral Embeddings (Codestral Embed)
+# Embedding model uses LiteLLM format — supports 100+ providers with a single
+# model string. Examples:
 #
-# Default is "bedrock" with Cohere Embed v4. To switch providers, change
-# embedding_backend and ensure credentials are in conductor.secrets.yaml.
+#   "sbert/sentence-transformers/all-MiniLM-L6-v2"  — local, free, no API key
+#   "bedrock/cohere.embed-v4:0"       — AWS Bedrock Cohere (default)
+#   "text-embedding-3-small"          — OpenAI
+#   "voyage/voyage-code-3"            — Voyage AI (code-specialised)
+#   "mistral/codestral-embed-2505"    — Mistral
+#   "cohere/embed-english-v3.0"       — Cohere Direct
+#   "gemini/text-embedding-004"       — Google Gemini
+#   "ollama/nomic-embed-text"         — Ollama (local)
+#
+# Storage backend:
+#   "sqlite"   — embedded, zero setup (default)
+#   "postgres" — incremental processing, concurrent access, production-ready
+#
+# To switch providers, just change embedding_model and ensure the matching
+# API key is in conductor.secrets.yaml. No other config changes needed.
 code_search:
   enabled: true
   index_dir: "./cocoindex_data"
-  embedding_backend: "bedrock"             # "local" | "bedrock" | "openai" | "voyage" | "mistral"
 
-  # -- Local (SentenceTransformers) --
-  local_model_name: "all-MiniLM-L6-v2"    # Free, 384-d, ~80 MB on disk
+  # Embedding model (LiteLLM format — see examples above)
+  embedding_model: "bedrock/cohere.embed-v4:0"
 
-  # -- AWS Bedrock --
-  bedrock_model_id: "cohere.embed-v4:0"    # Cohere Embed v4 (1024-d, 128K ctx, $0.12/1M)
-  bedrock_region: "us-east-1"              # Also supports: amazon.titan-embed-text-v2:0
+  # Storage backend for vector index
+  storage_backend: "sqlite"                # "sqlite" | "postgres"
+  # postgres_url: "postgresql://user:pass@localhost:5432/cocoindex"
+  incremental: true                        # Only effective with postgres backend
 
-  # -- OpenAI --
-  openai_model_name: "text-embedding-3-small"  # 1536-d, $0.02/1M tokens
-
-  # -- Voyage AI --
-  voyage_model_name: "voyage-code-3"       # Code-specialised, 1024-d, $0.06/1M tokens
-
-  # -- Mistral --
-  mistral_model_name: "codestral-embed-2505"  # Code embedding, 1024-d
-
-  # -- Chunking / Search --
+  # Chunking / Search
   chunk_size: 512
   top_k_results: 5
 
-  # -- RepoMap (graph-based context) --
+  # RepoMap (graph-based context)
   repo_map_enabled: true
   repo_map_top_n: 10
 
   # ---------------------------------------------------------------------------
   # Reranking (post-retrieval re-scoring)
   # ---------------------------------------------------------------------------
-  # Reranking is an optional post-retrieval step that uses a cross-encoder
-  # or dedicated reranking model to re-score vector search candidates.
-  #
-  # How it works:
-  #   1. Vector search returns a large candidate set (rerank_candidates)
-  #   2. The reranker scores each (query, document) pair
-  #   3. Only the top-N best results are returned
-  #
   # Backend options:
   #   "none"           — No reranking (default, zero cost)
   #   "cohere"         — Cohere Rerank API (rerank-v3.5, $2/1K queries)

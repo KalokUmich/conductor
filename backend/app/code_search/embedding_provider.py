@@ -1,33 +1,87 @@
 """Embedding provider abstraction for code search.
 
-Supports five backends:
+Uses **LiteLLM** as a unified backend to support 100+ embedding providers
+through a single interface.  This replaces five hand-written provider
+classes with one thin wrapper around ``litellm.embedding()``.
 
-1. **local**    – SentenceTransformers (free, runs on CPU/GPU)
-2. **bedrock**  – AWS Bedrock (Cohere Embed v4 default, Titan optional)
-3. **openai**   – OpenAI Embeddings API
-4. **voyage**   – Voyage AI (code-specialised models)
-5. **mistral**  – Mistral Embeddings (Codestral Embed)
+A lightweight ``LocalEmbeddingProvider`` is kept as a zero-cost fallback
+for users who don't want to call any external API.
 
-The default backend is ``bedrock`` with Cohere Embed v4
-(``cohere.embed-v4:0``).
+Supported model strings (LiteLLM format)
+-----------------------------------------
+* ``sbert/sentence-transformers/all-MiniLM-L6-v2`` — local, free
+* ``bedrock/cohere.embed-v4:0``       — AWS Bedrock Cohere
+* ``bedrock/amazon.titan-embed-text-v2:0`` — AWS Bedrock Titan
+* ``text-embedding-3-small``          — OpenAI
+* ``voyage/voyage-code-3``            — Voyage AI
+* ``mistral/mistral-embed``           — Mistral
+* ``cohere/embed-english-v3.0``       — Cohere Direct
+* ``gemini/text-embedding-004``       — Google Gemini
+* ``ollama/nomic-embed-text``         — Ollama (local)
+* Any other LiteLLM-supported model string
 
 Usage::
 
     provider = create_embedding_provider(settings)
     vectors  = await provider.embed_texts(["def main(): pass"])
     dims     = provider.dimensions
+
+Migration note
+--------------
+The previous five provider classes (Local, Bedrock, OpenAI, Voyage,
+Mistral) are replaced.  The ``embedding_model`` setting now accepts a
+LiteLLM model string directly.  The old ``embedding_backend`` field is
+no longer used.
 """
 from __future__ import annotations
 
 import abc
 import asyncio
-import json
 import logging
+import os
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Well-known dimension map (avoids a probe call when the model is known)
+# ---------------------------------------------------------------------------
+
+_KNOWN_DIMS: Dict[str, int] = {
+    # Local (SentenceTransformers via sbert/ prefix)
+    "sbert/sentence-transformers/all-MiniLM-L6-v2":      384,
+    "sbert/nomic-ai/CodeRankEmbed":                      768,
+    # AWS Bedrock
+    "bedrock/cohere.embed-english-v3":                   1024,
+    "bedrock/cohere.embed-multilingual-v3":              1024,
+    "bedrock/cohere.embed-v4:0":                         1024,
+    "bedrock/amazon.titan-embed-text-v1":                1536,
+    "bedrock/amazon.titan-embed-text-v2:0":              1024,
+    # OpenAI
+    "text-embedding-3-small":                            1536,
+    "text-embedding-3-large":                            3072,
+    "text-embedding-ada-002":                            1536,
+    # Voyage AI
+    "voyage/voyage-code-3":                              1024,
+    "voyage/voyage-3":                                   1024,
+    "voyage/voyage-3-lite":                              512,
+    # Mistral
+    "mistral/codestral-embed-2505":                      1024,
+    "mistral/mistral-embed":                             1024,
+    # Cohere (direct)
+    "cohere/embed-english-v3.0":                         1024,
+    "cohere/embed-english-v4.0":                         1024,
+    # Google Gemini
+    "gemini/text-embedding-004":                         768,
+    # Ollama (local)
+    "ollama/nomic-embed-text":                           768,
+}
+
+# Default fallback dimensions
+_DEFAULT_DIMS = 1024
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +95,7 @@ class EmbeddingProvider(abc.ABC):
     @property
     @abc.abstractmethod
     def name(self) -> str:
-        """Human-readable backend name (e.g. ``"bedrock/cohere"``).."""
+        """Human-readable backend name (e.g. ``"litellm/bedrock/cohere.embed-v4:0"``)."""
 
     @property
     @abc.abstractmethod
@@ -51,11 +105,6 @@ class EmbeddingProvider(abc.ABC):
     @abc.abstractmethod
     async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
         """Embed a batch of texts.
-
-        Parameters
-        ----------
-        texts:
-            One or more text strings to embed.
 
         Returns
         -------
@@ -82,7 +131,7 @@ class EmbeddingProvider(abc.ABC):
 
 
 # ---------------------------------------------------------------------------
-# 1. Local (SentenceTransformers)
+# 1. Local (SentenceTransformers) — zero-cost fallback
 # ---------------------------------------------------------------------------
 
 
@@ -97,15 +146,12 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._model: Any = None  # lazy-loaded
         self._dims: Optional[int] = None
 
-    # -- lazy load ----------------------------------------------------------
-
     def _ensure_loaded(self) -> None:
         if self._model is not None:
             return
         from sentence_transformers import SentenceTransformer  # type: ignore
 
         self._model = SentenceTransformer(self._model_name)
-        # Probe dimensions with a dummy encode
         dummy = self._model.encode(["test"], convert_to_numpy=True)
         self._dims = dummy.shape[1]
         logger.info(
@@ -114,14 +160,18 @@ class LocalEmbeddingProvider(EmbeddingProvider):
             self._dims,
         )
 
-    # -- interface ----------------------------------------------------------
-
     @property
     def name(self) -> str:
         return f"local/{self._model_name}"
 
     @property
     def dimensions(self) -> int:
+        if self._dims is not None:
+            return self._dims
+        # Check known map with sbert/ prefix
+        sbert_key = f"sbert/sentence-transformers/{self._model_name}"
+        if sbert_key in _KNOWN_DIMS:
+            return _KNOWN_DIMS[sbert_key]
         self._ensure_loaded()
         assert self._dims is not None
         return self._dims
@@ -137,304 +187,71 @@ class LocalEmbeddingProvider(EmbeddingProvider):
 
 
 # ---------------------------------------------------------------------------
-# 2. Bedrock (Cohere Embed v4 / Titan)
+# 2. LiteLLM (unified provider for 100+ backends)
 # ---------------------------------------------------------------------------
 
 
-class BedrockEmbeddingProvider(EmbeddingProvider):
-    """AWS Bedrock embedding models.
+class LiteLLMEmbeddingProvider(EmbeddingProvider):
+    """Unified embedding provider using LiteLLM.
 
-    Default: ``cohere.embed-v4:0`` (1024-d, 128K context, $0.12 / 1M tokens).
-    Also supports Titan Embed V2 (``amazon.titan-embed-text-v2:0``, 1024-d).
+    Supports any model string that LiteLLM recognises::
+
+        bedrock/cohere.embed-v4:0
+        text-embedding-3-small
+        voyage/voyage-code-3
+        mistral/mistral-embed
+        cohere/embed-english-v3.0
+        gemini/text-embedding-004
+
+    Environment variables for credentials (set by _inject_embedding_env_vars):
+
+    * ``AWS_ACCESS_KEY_ID`` / ``AWS_SECRET_ACCESS_KEY`` for Bedrock
+    * ``OPENAI_API_KEY`` for OpenAI
+    * ``VOYAGE_API_KEY`` for Voyage
+    * ``MISTRAL_API_KEY`` for Mistral
+    * ``CO_API_KEY`` for Cohere
+    * ``GEMINI_API_KEY`` for Gemini
     """
 
-    # Known dimension map (avoids an API call at init time)
-    _DIM_MAP: Dict[str, int] = {
-        "cohere.embed-english-v3":     1024,
-        "cohere.embed-multilingual-v3": 1024,
-        "cohere.embed-v4:0":          1024,
-        "amazon.titan-embed-text-v1":  1536,
-        "amazon.titan-embed-text-v2:0": 1024,
-    }
+    def __init__(self, model: str, dimensions: Optional[int] = None) -> None:
+        self._model = model
+        self._dims = dimensions or _KNOWN_DIMS.get(model, _DEFAULT_DIMS)
+        self._litellm: Any = None  # lazy import
 
-    def __init__(
-        self,
-        model_id: str = "cohere.embed-v4:0",
-        region: str = "us-east-1",
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
-    ) -> None:
-        self._model_id = model_id
-        self._region = region
-        self._access_key_id = access_key_id
-        self._secret_access_key = secret_access_key
-        self._client: Any = None  # lazy boto3 client
-
-    def _ensure_client(self) -> None:
-        if self._client is not None:
+    def _ensure_litellm(self) -> None:
+        if self._litellm is not None:
             return
-        import boto3  # type: ignore
-
-        kwargs: Dict[str, Any] = {"service_name": "bedrock-runtime", "region_name": self._region}
-        if self._access_key_id and self._secret_access_key:
-            kwargs["aws_access_key_id"] = self._access_key_id
-            kwargs["aws_secret_access_key"] = self._secret_access_key
-        self._client = boto3.client(**kwargs)
-        logger.info(
-            "BedrockEmbeddingProvider initialised model=%s region=%s",
-            self._model_id,
-            self._region,
-        )
+        import litellm  # type: ignore
+        self._litellm = litellm
+        logger.info("LiteLLM loaded for embedding model=%s", self._model)
 
     @property
     def name(self) -> str:
-        return f"bedrock/{self._model_id}"
+        return f"litellm/{self._model}"
 
     @property
     def dimensions(self) -> int:
-        return self._DIM_MAP.get(self._model_id, 1024)
+        return self._dims
 
-    def _build_body(self, texts: List[str], input_type: str = "search_document") -> str:
-        """Build model-specific request body."""
-        if self._model_id.startswith("cohere."):
-            return json.dumps({
-                "texts": texts,
-                "input_type": input_type,
-                "truncate": "END",
-            })
-        # Titan — single-text API, caller must batch manually
-        return json.dumps({"inputText": texts[0]})
+    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
+        if len(texts) == 0:
+            return np.empty((0, self._dims), dtype=np.float32)
 
-    async def _invoke(self, body: str) -> Dict[str, Any]:
-        self._ensure_client()
+        self._ensure_litellm()
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: self._client.invoke_model(
-                modelId=self._model_id,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
-            ),
-        )
-        return json.loads(response["body"].read())
-
-    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
-        text_list = list(texts)
-        if self._model_id.startswith("cohere."):
-            # Cohere supports batch natively
-            body = self._build_body(text_list, input_type="search_document")
-            result = await self._invoke(body)
-            return np.array(result["embeddings"], dtype=np.float32)
-        else:
-            # Titan: one call per text
-            vectors = []
-            for t in text_list:
-                body = self._build_body([t])
-                result = await self._invoke(body)
-                vectors.append(result["embedding"])
-            return np.array(vectors, dtype=np.float32)
-
-    async def embed_query(self, query: str) -> np.ndarray:
-        if self._model_id.startswith("cohere."):
-            body = self._build_body([query], input_type="search_query")
-            result = await self._invoke(body)
-            return np.array(result["embeddings"][0], dtype=np.float32)
-        # Titan
-        body = self._build_body([query])
-        result = await self._invoke(body)
-        return np.array(result["embedding"], dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# 3. OpenAI
-# ---------------------------------------------------------------------------
-
-
-class OpenAIEmbeddingProvider(EmbeddingProvider):
-    """OpenAI Embeddings API (e.g. ``text-embedding-3-small``).
-
-    Requires ``OPENAI_API_KEY`` in env or passed explicitly.
-    """
-
-    _DIM_MAP: Dict[str, int] = {
-        "text-embedding-3-small": 1536,
-        "text-embedding-3-large": 3072,
-        "text-embedding-ada-002": 1536,
-    }
-
-    def __init__(
-        self,
-        model_name: str = "text-embedding-3-small",
-        api_key: Optional[str] = None,
-    ) -> None:
-        self._model_name = model_name
-        self._api_key = api_key
-        self._client: Any = None
-
-    def _ensure_client(self) -> None:
-        if self._client is not None:
-            return
-        import openai  # type: ignore
-
-        kwargs: Dict[str, Any] = {}
-        if self._api_key:
-            kwargs["api_key"] = self._api_key
-        self._client = openai.OpenAI(**kwargs)
-        logger.info("OpenAIEmbeddingProvider initialised model=%s", self._model_name)
-
-    @property
-    def name(self) -> str:
-        return f"openai/{self._model_name}"
-
-    @property
-    def dimensions(self) -> int:
-        return self._DIM_MAP.get(self._model_name, 1536)
-
-    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
-        self._ensure_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self._client.embeddings.create(
-                model=self._model_name,
+            lambda: self._litellm.embedding(
+                model=self._model,
                 input=list(texts),
             ),
         )
-        vectors = [d.embedding for d in response.data]
+        vectors = [d["embedding"] for d in response.data]
         return np.array(vectors, dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# 4. Voyage AI
-# ---------------------------------------------------------------------------
-
-
-class VoyageEmbeddingProvider(EmbeddingProvider):
-    """Voyage AI embedding models, specialised for code.
-
-    Default model: ``voyage-code-3`` (1024-d).
-    Requires ``VOYAGE_API_KEY`` in env or passed explicitly.
-    """
-
-    _DIM_MAP: Dict[str, int] = {
-        "voyage-code-3":  1024,
-        "voyage-3":       1024,
-        "voyage-3-lite":  512,
-    }
-
-    def __init__(
-        self,
-        model_name: str = "voyage-code-3",
-        api_key: Optional[str] = None,
-    ) -> None:
-        self._model_name = model_name
-        self._api_key = api_key
-        self._client: Any = None
-
-    def _ensure_client(self) -> None:
-        if self._client is not None:
-            return
-        import voyageai  # type: ignore
-
-        kwargs: Dict[str, Any] = {}
-        if self._api_key:
-            kwargs["api_key"] = self._api_key
-        self._client = voyageai.Client(**kwargs)
-        logger.info("VoyageEmbeddingProvider initialised model=%s", self._model_name)
-
-    @property
-    def name(self) -> str:
-        return f"voyage/{self._model_name}"
-
-    @property
-    def dimensions(self) -> int:
-        return self._DIM_MAP.get(self._model_name, 1024)
-
-    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
-        self._ensure_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self._client.embed(
-                list(texts),
-                model=self._model_name,
-                input_type="document",
-            ),
-        )
-        return np.array(response.embeddings, dtype=np.float32)
 
     async def embed_query(self, query: str) -> np.ndarray:
-        self._ensure_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self._client.embed(
-                [query],
-                model=self._model_name,
-                input_type="query",
-            ),
-        )
-        return np.array(response.embeddings[0], dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# 5. Mistral
-# ---------------------------------------------------------------------------
-
-
-class MistralEmbeddingProvider(EmbeddingProvider):
-    """Mistral Embeddings API (Codestral Embed).
-
-    Default model: ``codestral-embed-2505`` (1024-d).
-    Requires ``MISTRAL_API_KEY`` in env or passed explicitly.
-    """
-
-    _DIM_MAP: Dict[str, int] = {
-        "codestral-embed-2505": 1024,
-        "mistral-embed":        1024,
-    }
-
-    def __init__(
-        self,
-        model_name: str = "codestral-embed-2505",
-        api_key: Optional[str] = None,
-    ) -> None:
-        self._model_name = model_name
-        self._api_key = api_key
-        self._client: Any = None
-
-    def _ensure_client(self) -> None:
-        if self._client is not None:
-            return
-        from mistralai import Mistral  # type: ignore
-
-        kwargs: Dict[str, Any] = {}
-        if self._api_key:
-            kwargs["api_key"] = self._api_key
-        self._client = Mistral(**kwargs)
-        logger.info("MistralEmbeddingProvider initialised model=%s", self._model_name)
-
-    @property
-    def name(self) -> str:
-        return f"mistral/{self._model_name}"
-
-    @property
-    def dimensions(self) -> int:
-        return self._DIM_MAP.get(self._model_name, 1024)
-
-    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
-        self._ensure_client()
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self._client.embeddings.create(
-                model=self._model_name,
-                inputs=list(texts),
-            ),
-        )
-        vectors = [d.embedding for d in response.data]
-        return np.array(vectors, dtype=np.float32)
+        result = await self.embed_texts([query])
+        return result[0]
 
 
 # ---------------------------------------------------------------------------
@@ -448,52 +265,61 @@ def create_embedding_provider(settings) -> EmbeddingProvider:
     Parameters
     ----------
     settings:
-        An object with at least ``embedding_backend`` plus the relevant
-        model / credential fields (typically ``CodeSearchSettings``).
+        An object with ``embedding_model`` (LiteLLM model string).
+        Falls back to ``embedding_backend`` for legacy compatibility.
 
     Returns
     -------
     EmbeddingProvider
     """
-    backend = getattr(settings, "embedding_backend", "bedrock")
+    # New unified field: embedding_model (LiteLLM model string)
+    model = getattr(settings, "embedding_model", None)
 
+    if model is None:
+        # Legacy fallback: map old embedding_backend to LiteLLM model string
+        backend = getattr(settings, "embedding_backend", "local")
+        model = _legacy_backend_to_model(backend, settings)
+
+    # Local SentenceTransformers models (sbert/ prefix or "local" backend)
+    if model.startswith("sbert/"):
+        # Strip "sbert/" prefix — not needed for SentenceTransformers
+        st_model = model.replace("sbert/sentence-transformers/", "").replace("sbert/", "")
+        logger.info("Creating LocalEmbeddingProvider (model=%s)", st_model)
+        return LocalEmbeddingProvider(model_name=st_model)
+
+    if model == "local" or model.startswith("local/"):
+        local_name = model.replace("local/", "") if "/" in model else "all-MiniLM-L6-v2"
+        logger.info("Creating LocalEmbeddingProvider (model=%s)", local_name)
+        return LocalEmbeddingProvider(model_name=local_name)
+
+    # Everything else goes through LiteLLM
+    dims = getattr(settings, "embedding_dimensions", None)
+    logger.info("Creating LiteLLMEmbeddingProvider (model=%s)", model)
+    return LiteLLMEmbeddingProvider(model=model, dimensions=dims)
+
+
+def _legacy_backend_to_model(backend: str, settings) -> str:
+    """Map old-style embedding_backend values to LiteLLM model strings."""
     if backend == "local":
-        model = getattr(settings, "local_model_name", "all-MiniLM-L6-v2")
-        logger.info("Creating LocalEmbeddingProvider (model=%s)", model)
-        return LocalEmbeddingProvider(model_name=model)
+        model_name = getattr(settings, "local_model_name", "all-MiniLM-L6-v2")
+        return f"sbert/sentence-transformers/{model_name}"
 
     if backend == "bedrock":
         model_id = getattr(settings, "bedrock_model_id", "cohere.embed-v4:0")
-        region = getattr(settings, "bedrock_region", "us-east-1")
-        ak = getattr(settings, "bedrock_access_key_id", None)
-        sk = getattr(settings, "bedrock_secret_access_key", None)
-        logger.info("Creating BedrockEmbeddingProvider (model=%s, region=%s)", model_id, region)
-        return BedrockEmbeddingProvider(
-            model_id=model_id,
-            region=region,
-            access_key_id=ak,
-            secret_access_key=sk,
-        )
+        return f"bedrock/{model_id}"
 
     if backend == "openai":
-        model = getattr(settings, "openai_model_name", "text-embedding-3-small")
-        api_key = getattr(settings, "openai_api_key", None)
-        logger.info("Creating OpenAIEmbeddingProvider (model=%s)", model)
-        return OpenAIEmbeddingProvider(model_name=model, api_key=api_key)
+        return getattr(settings, "openai_model_name", "text-embedding-3-small")
 
     if backend == "voyage":
-        model = getattr(settings, "voyage_model_name", "voyage-code-3")
-        api_key = getattr(settings, "voyage_api_key", None)
-        logger.info("Creating VoyageEmbeddingProvider (model=%s)", model)
-        return VoyageEmbeddingProvider(model_name=model, api_key=api_key)
+        model_name = getattr(settings, "voyage_model_name", "voyage-code-3")
+        return f"voyage/{model_name}"
 
     if backend == "mistral":
-        model = getattr(settings, "mistral_model_name", "codestral-embed-2505")
-        api_key = getattr(settings, "mistral_api_key", None)
-        logger.info("Creating MistralEmbeddingProvider (model=%s)", model)
-        return MistralEmbeddingProvider(model_name=model, api_key=api_key)
+        model_name = getattr(settings, "mistral_model_name", "codestral-embed-2505")
+        return f"mistral/{model_name}"
 
     raise ValueError(
         f"Unknown embedding backend: {backend!r}. "
-        f"Must be one of: local, bedrock, openai, voyage, mistral"
+        f"Use a LiteLLM model string in embedding_model instead."
     )

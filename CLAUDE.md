@@ -48,8 +48,8 @@ backend/
 │   │   ├── delegate_broker.py       # DelegateBroker (Model B prep)
 │   │   └── router.py                # /api/git-workspace/ endpoints
 │   ├── code_search/                 # CocoIndex semantic code search
-│   │   ├── service.py               # CodeSearchService
-│   │   ├── embedding_provider.py    # 5 embedding backends (abstract + concrete)
+│   │   ├── service.py               # CodeSearchService (sqlite + postgres backends)
+│   │   ├── embedding_provider.py    # LiteLLM unified + Local SentenceTransformers
 │   │   ├── rerank_provider.py       # 4 reranking backends (abstract + concrete)
 │   │   ├── schemas.py               # Request/response Pydantic models
 │   │   └── router.py                # /api/code-search/ endpoints
@@ -63,12 +63,13 @@ backend/
 │   └── conductor.settings.yaml      # Non-secret settings template
 ├── requirements.txt
 └── tests/
-    ├── test_embedding_provider.py   # 78 tests — all 5 embedding backends
+    ├── conftest.py                  # Centralized stubs (cocoindex, litellm, etc.)
+    ├── test_embedding_provider.py   # 85+ tests — LiteLLM + Local providers
     ├── test_rerank_provider.py      # 86 tests — all 4 reranking backends
     ├── test_repo_graph.py           # 72 tests — parser + graph + service
-    ├── test_config_new.py           # 42 tests — config + secrets + env vars
-    ├── test_context.py              # 42 tests — context router + hybrid + reranking
-    ├── test_code_search.py          # 52 tests — code search service + router
+    ├── test_config_new.py           # 60+ tests — config + secrets + env vars
+    ├── test_context.py              # 42+ tests — context router + hybrid + reranking
+    ├── test_code_search.py          # 72+ tests — code search service + router
     └── test_git_workspace.py        # Git workspace lifecycle
 ```
 
@@ -92,17 +93,22 @@ extension/src/
 
 ### Embedding Provider Architecture
 
-The `embedding_provider.py` module defines an `EmbeddingProvider` ABC with 5 implementations:
+The `embedding_provider.py` module defines an `EmbeddingProvider` ABC with 2 implementations:
 
-| Provider | Default Model | Dimensions | Cost |
-|----------|--------------|------------|------|
-| `local` | `all-MiniLM-L6-v2` | 384 | Free |
-| `bedrock` | `cohere.embed-v4:0` | 1024 | $0.12/1M |
-| `openai` | `text-embedding-3-small` | 1536 | $0.02/1M |
-| `voyage` | `voyage-code-3` | 1024 | $0.06/1M |
-| `mistral` | `codestral-embed-2505` | 1024 | — |
+- **`LocalEmbeddingProvider`** — SentenceTransformers, triggered by `sbert/` model prefix
+- **`LiteLLMEmbeddingProvider`** — unified provider for 100+ backends via LiteLLM
 
-Default: **bedrock** with Cohere Embed v4.
+Common model strings:
+
+| Model String | Provider | Dimensions | Cost/1M |
+|-------------|----------|------------|------|
+| `sbert/sentence-transformers/all-MiniLM-L6-v2` | Local | 384 | Free |
+| `bedrock/cohere.embed-v4:0` | AWS Bedrock | 1024 | $0.12 |
+| `text-embedding-3-small` | OpenAI | 1536 | $0.02 |
+| `voyage/voyage-code-3` | Voyage AI | 1024 | $0.06 |
+| `mistral/codestral-embed-2505` | Mistral | 1024 | — |
+
+Default: **bedrock/cohere.embed-v4:0**.
 
 ### Reranking Provider Architecture
 
@@ -120,24 +126,29 @@ Default: **none** (disabled). Enable for better search precision.
 Configuration in `conductor.settings.yaml`:
 ```yaml
 code_search:
-  embedding_backend: "bedrock"     # local | bedrock | openai | voyage | mistral
-  rerank_backend: "none"           # none | cohere | bedrock | cross_encoder
-  rerank_top_n: 5                  # Return top N after reranking
-  rerank_candidates: 20            # Fetch this many from vector search
+  embedding_model: "bedrock/cohere.embed-v4:0"  # Any LiteLLM model string
+  storage_backend: "sqlite"                      # sqlite | postgres
+  incremental: true                              # Only with postgres
+  rerank_backend: "none"                         # none | cohere | bedrock | cross_encoder
+  rerank_top_n: 5
+  rerank_candidates: 20
 ```
 
 Credentials in `conductor.secrets.yaml`:
 ```yaml
+# All available credentials injected at startup via setdefault()
 aws:
   access_key_id: "AKIA..."
   secret_access_key: "..."
   region: "us-east-1"
+openai:
+  api_key: "sk-..."
 voyage:
   api_key: "pa-..."
 mistral:
   api_key: "..."
 cohere:
-  api_key: "..."                   # For direct Cohere Rerank API
+  api_key: "..."                   # For Cohere Rerank and/or Embed
 ```
 
 ### RepoMap Architecture
@@ -174,7 +185,8 @@ FileSystemProvider mounts conductor://{room_id}/ in VS Code
 ```python
 from backend.app.code_search.embedding_provider import create_embedding_provider
 
-provider = create_embedding_provider(settings)  # factory
+# Factory routes: sbert/ → Local, everything else → LiteLLM
+provider = create_embedding_provider(settings)
 vectors = await provider.embed_texts(["def main(): pass"])  # batch embed
 query_vec = await provider.embed_query("search for main")   # query embed
 ```
@@ -208,17 +220,21 @@ files = svc.get_context_files(ws, vector_files)       # hybrid merge
 from backend.app.config import load_settings, _inject_embedding_env_vars
 
 settings = load_settings()                  # loads YAML files
-_inject_embedding_env_vars(settings)        # pushes secrets → env vars
+_inject_embedding_env_vars(settings)        # pushes ALL available secrets → env vars
+# Uses os.environ.setdefault() — never overwrites existing env vars
 ```
 
 ## Testing Notes
 
 - Backend tests use `pytest` with mocked external dependencies
-- All embedding providers are tested with mocked API clients (no real API calls)
+- Centralized stubs in `conftest.py` for cocoindex, litellm, sentence_transformers, sqlite_vec
+- LiteLLM embedding provider tested with mocked `litellm.embedding()` calls
+- Local embedding provider tested with mocked SentenceTransformer
 - All reranking providers are tested with mocked API clients
 - RepoMap tests use real filesystem operations for parser/graph tests
 - tree-sitter and networkx are mocked in import stubs
-- Config tests verify env var injection for all 5 embedding + 4 reranking backends
+- Config tests verify env var injection via `setdefault()` for all credential types
+- Code search tests cover sqlite and postgres backends, incremental processing
 
 ## Environment Variables
 
@@ -228,16 +244,18 @@ BACKEND_HOST=0.0.0.0
 BACKEND_PORT=8000
 GIT_WORKSPACE_ROOT=/tmp/conductor_workspaces
 
-# Embedding (injected by _inject_embedding_env_vars)
-AWS_ACCESS_KEY_ID=...            # bedrock backend
-AWS_SECRET_ACCESS_KEY=...        # bedrock backend
-AWS_DEFAULT_REGION=us-east-1     # bedrock backend
-OPENAI_API_KEY=sk-...            # openai backend
-VOYAGE_API_KEY=pa-...            # voyage backend
-MISTRAL_API_KEY=...              # mistral backend
+# Credentials (all injected by _inject_embedding_env_vars via setdefault)
+AWS_ACCESS_KEY_ID=...            # Bedrock models
+AWS_SECRET_ACCESS_KEY=...        # Bedrock models
+AWS_DEFAULT_REGION=us-east-1     # Bedrock models
+OPENAI_API_KEY=sk-...            # OpenAI models
+VOYAGE_API_KEY=pa-...            # Voyage models
+MISTRAL_API_KEY=...              # Mistral models
+CO_API_KEY=...                   # Cohere (rerank + embed)
 
-# Reranking (injected by _inject_embedding_env_vars)
-CO_API_KEY=...                   # cohere rerank backend
+# CocoIndex (set by service.py)
+COCOINDEX_CODE_EMBEDDING_MODEL=bedrock/cohere.embed-v4:0
+COCOINDEX_DATABASE_URL=postgresql://...  # Only when storage_backend=postgres
 
 # Extension (VS Code settings)
 conductor.backendUrl=http://localhost:8000
@@ -246,13 +264,14 @@ conductor.enableWorkspace=true
 
 ## Recent Changes
 
-- **P0: Multi-Provider Embeddings** — 5 configurable embedding backends with `EmbeddingProvider` abstraction
-- **P1: RepoMap** — tree-sitter + networkx graph + PageRank for graph-based context
-- **P2: Reranking** — 4 configurable reranking backends (`RerankProvider` abstraction) integrated into the context router as a post-retrieval step
+- **LiteLLM Unified Embeddings** — replaced 5 hand-written provider classes with `LiteLLMEmbeddingProvider` + `LocalEmbeddingProvider`, supporting 100+ providers via one config field (`embedding_model`)
+- **Postgres Backend + Incremental Processing** — `storage_backend: "postgres"` for production-ready vector storage with incremental re-indexing
+- **Unified Credential Injection** — `_inject_embedding_env_vars()` now injects ALL available secrets via `setdefault()` (never overwrites existing env vars)
+- **Legacy Backward Compatibility** — `_legacy_backend_to_model()` maps old `embedding_backend` values to LiteLLM model strings
+- **Reranking** — 4 configurable reranking backends (`RerankProvider` abstraction) integrated into the context router
+- **RepoMap** — tree-sitter + networkx graph + PageRank for graph-based context
 - **Hybrid retrieval** — vector search + reranking + graph search combined in context router
-- Added `CohereSecrets`, `VoyageSecrets`, `MistralSecrets` to config
-- Updated `_inject_embedding_env_vars()` for all embedding + reranking backends
-- 300+ new backend test cases
+- 400+ backend test cases
 
 ## What's Next
 

@@ -48,6 +48,7 @@ _stub("openai")
 _stub("voyageai")
 _stub("mistralai", Mistral=MagicMock)
 _stub("cocoindex")
+_stub("litellm")
 _stub("sqlite_vec")
 _stub("tree_sitter_languages")
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock)
@@ -764,7 +765,7 @@ class TestEnvVarInjection:
         monkeypatch.delenv("CO_API_KEY", raising=False)
 
         s = AppSettings(
-            code_search={"embedding_backend": "local", "rerank_backend": "cohere"},
+            code_search={"embedding_model": "sbert/sentence-transformers/all-MiniLM-L6-v2", "rerank_backend": "cohere"},
             secrets={"cohere": {"api_key": "cohere-test-key"}},
         )
         _inject_embedding_env_vars(s)
@@ -778,7 +779,7 @@ class TestEnvVarInjection:
         monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
 
         s = AppSettings(
-            code_search={"embedding_backend": "local", "rerank_backend": "bedrock"},
+            code_search={"embedding_model": "sbert/sentence-transformers/all-MiniLM-L6-v2", "rerank_backend": "bedrock"},
             secrets={"aws": {"access_key_id": "AKIA", "secret_access_key": "secret"}},
         )
         _inject_embedding_env_vars(s)
@@ -793,7 +794,7 @@ class TestEnvVarInjection:
         monkeypatch.delenv("CO_API_KEY", raising=False)
 
         s = AppSettings(
-            code_search={"embedding_backend": "local", "rerank_backend": "none"},
+            code_search={"embedding_model": "sbert/sentence-transformers/all-MiniLM-L6-v2", "rerank_backend": "none"},
         )
         _inject_embedding_env_vars(s)
         import os

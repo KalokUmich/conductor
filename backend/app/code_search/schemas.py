@@ -73,12 +73,14 @@ class IndexBuildResult(BaseModel):
 
 
 class IndexStatusResponse(BaseModel):
-    workspace_path: str
-    indexed:        bool
-    files_count:    int
-    chunks_count:   int
-    last_updated:   Optional[str] = None   # ISO-8601
-    index_id:       Optional[str] = None
+    workspace_path:  str
+    indexed:         bool
+    files_count:     int
+    chunks_count:    int
+    last_updated:    Optional[str] = None   # ISO-8601
+    index_id:        Optional[str] = None
+    storage_backend: Optional[str] = None   # "sqlite" | "postgres"
+    is_incremental:  bool          = False
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +89,9 @@ class IndexStatusResponse(BaseModel):
 
 
 class CodeSearchHealth(BaseModel):
-    status:          str   # "ok" | "degraded" | "error"
-    embedding_backend: str
-    index_dir:       str
-    detail:          Optional[str] = None
+    status:            str   # "ok" | "degraded" | "error"
+    embedding_model:   str   # LiteLLM model string
+    storage_backend:   str   # "sqlite" | "postgres"
+    index_dir:         str
+    incremental:       bool  = False
+    detail:            Optional[str] = None

@@ -34,44 +34,49 @@ pytest --cov=. --cov-report=html   # coverage report
 | `tests/test_code_search.py` | CodeSearchService, search/index endpoints | `/api/code-search/` router |
 | `tests/test_config_new.py` | Config models, secrets, env injection | `config.py` |
 | `tests/test_context.py` | Context router, hybrid retrieval, reranking integration | `/api/context/` router |
-| `tests/test_embedding_provider.py` | All 5 embedding backends, factory | `embedding_provider.py` |
+| `tests/test_embedding_provider.py` | LiteLLM + Local providers, factory, legacy compat | `embedding_provider.py` |
 | `tests/test_rerank_provider.py` | All 4 reranking backends, factory | `rerank_provider.py` |
 | `tests/test_repo_graph.py` | Parser, graph, PageRank, RepoMapService | `repo_graph/` module |
 | `tests/test_git_workspace.py` | Git workspace lifecycle | `git_workspace/` module |
 
-### Embedding Provider Tests (78 tests)
+### Embedding Provider Tests (85+ tests)
 
-The `test_embedding_provider.py` file covers all 5 backends:
+The `test_embedding_provider.py` file covers the LiteLLM-unified architecture:
 
 **LocalEmbeddingProvider:**
 - Initialization (default/custom model, lazy loading)
 - `embed_texts()` — single/batch/empty, dtype verification
 - `embed_query()` — returns 1D vector
-- `dimensions` / `health_check()` / `name` properties
+- `dimensions` — known map lookup (sbert/ prefix) + loaded model fallback
+- `health_check()` / `name` properties
 
-**BedrockEmbeddingProvider:**
-- Cohere Embed v4 — batch embed, input_type="search_document" vs "search_query"
-- Titan V2 — per-text invocation, multiple texts
-- Body construction for both model families
-- Dimension lookup map
+**LiteLLMEmbeddingProvider:**
+- Initialization with model string + optional explicit dimensions
+- `embed_texts()` — batch embed via `litellm.embedding()`, empty input handling
+- `embed_query()` — delegates to embed_texts
+- Dimension resolution: `_KNOWN_DIMS` map → explicit override → default 1024
+- Lazy `litellm` import
+- Name format: `litellm/{model}`
 
-**OpenAIEmbeddingProvider:**
-- `text-embedding-3-small` / `text-embedding-3-large` / `ada-002`
-- Batch embedding, query embedding
-- Dimension lookup
+**Well-Known Dimensions Map (`_KNOWN_DIMS`):**
+- Coverage for 20+ model strings across all providers
+- Default fallback to `_DEFAULT_DIMS = 1024`
 
-**VoyageEmbeddingProvider:**
-- `voyage-code-3` / `voyage-3-lite` dimensions
-- `input_type="document"` vs `input_type="query"`
-
-**MistralEmbeddingProvider:**
-- `codestral-embed-2505` / `mistral-embed`
-- Batch and single embedding
-
-**Factory:**
-- `create_embedding_provider()` for all 5 backends
-- Custom model names, API keys, credentials
+**Legacy Backward Compatibility (`_legacy_backend_to_model`):**
+- Maps `"local"` → `sbert/sentence-transformers/all-MiniLM-L6-v2`
+- Maps `"bedrock"` → `bedrock/cohere.embed-v4:0`
+- Maps `"openai"` → `text-embedding-3-small`
+- Maps `"voyage"` → `voyage/voyage-code-3`
+- Maps `"mistral"` → `mistral/codestral-embed-2505`
+- Custom model names from settings attributes
 - Unknown backend raises `ValueError`
+
+**Factory (`create_embedding_provider`):**
+- `sbert/` prefix → `LocalEmbeddingProvider`
+- `local` / `local/` prefix → `LocalEmbeddingProvider`
+- All other model strings → `LiteLLMEmbeddingProvider`
+- Legacy `embedding_backend` fallback when `embedding_model` is None
+- Custom `embedding_dimensions` override
 - ABC contract — cannot instantiate base class
 
 ### Reranking Provider Tests (86 tests)
@@ -154,13 +159,18 @@ The `test_repo_graph.py` file covers:
 - `invalidate_cache()` — specific and all
 - `get_graph_stats()` — cached and uncached
 
-### Config Tests (42 tests)
+### Config Tests (60+ tests)
 
 The `test_config_new.py` file covers:
 
-- `CodeSearchSettings` — all defaults, all 5 embedding backends, all 4 reranking backends, invalid backend rejection
-- `VoyageSecrets` + `MistralSecrets` + `CohereSecrets` — new secret models
-- `_inject_embedding_env_vars()` — env var injection for bedrock/openai/voyage/mistral/local (embedding) + cohere/bedrock (reranking)
+- `CodeSearchSettings` — new `embedding_model` field (default `bedrock/cohere.embed-v4:0`), `storage_backend`, `postgres_url`, `incremental`, `embedding_dimensions`
+- All 4 reranking backends, invalid backend rejection
+- `VoyageSecrets` + `MistralSecrets` + `CohereSecrets` — secret models
+- `_inject_embedding_env_vars()` — unified injection of ALL available credentials via `os.environ.setdefault()`:
+  - AWS, OpenAI, Voyage, Mistral, Cohere credentials
+  - `COCOINDEX_CODE_EMBEDDING_MODEL` env var
+  - `COCOINDEX_DATABASE_URL` env var (when Postgres configured)
+  - `setdefault()` semantics (does not overwrite existing env vars)
 - `AppSettings` — full model instantiation and serialization
 - `load_settings()` — YAML loading, missing files, secrets merging
 
@@ -251,20 +261,21 @@ pytest --cov=. --cov-report=html   # 覆盖率报告
 
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
-| `tests/test_embedding_provider.py` | 78 | 5 个 embedding 后端 + 工厂函数 |
+| `tests/test_embedding_provider.py` | 85+ | LiteLLM + Local 提供商 + 工厂函数 + 旧版兼容 |
 | `tests/test_rerank_provider.py` | 86 | 4 个 reranking 后端 + 工厂函数 |
 | `tests/test_repo_graph.py` | 72 | 解析器 + 图构建 + PageRank + 服务 |
-| `tests/test_config_new.py` | 42 | 配置模型 + 密钥 + 环境变量注入 |
+| `tests/test_config_new.py` | 60+ | 配置模型 + 密钥 + setdefault 注入 + Postgres |
 | `tests/test_context.py` | 42 | 上下文路由 + 混合检索 + 重排序 |
-| `tests/test_code_search.py` | 52 | 代码搜索服务 + 端点 |
+| `tests/test_code_search.py` | 72+ | 代码搜索服务 + Postgres + 增量处理 |
 | `tests/test_git_workspace.py` | — | Git 工作区生命周期 |
 
 ### Embedding Provider 测试要点
 
-- 所有 5 个后端都有完整的初始化 + 嵌入 + 查询测试
-- Bedrock: Cohere v4 批量嵌入 vs Titan V2 逐条调用
-- Voyage: `input_type="document"` vs `"query"` 区分
-- 工厂函数: 所有后端 + 自定义模型 + API 密钥传递 + 未知后端异常
+- LiteLLM 统一提供商: `litellm.embedding()` 调用模拟 + 维度解析
+- Local 提供商: SentenceTransformer 懒加载 + 批量嵌入
+- `_legacy_backend_to_model()`: 5 种旧后端 → LiteLLM 模型字符串映射
+- `_KNOWN_DIMS`: 20+ 模型维度查找表
+- 工厂函数: `sbert/` → Local, 其他 → LiteLLM 路由 + 未知后端异常
 
 ### Reranking Provider 测试要点
 

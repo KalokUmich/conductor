@@ -38,6 +38,7 @@ def _stub(name: str, **attrs) -> types.ModuleType:
 
 _stub("cocoindex", FlowBuilder=MagicMock, IndexOptions=MagicMock)
 _stub("sentence_transformers", SentenceTransformer=MagicMock, CrossEncoder=MagicMock)
+_stub("litellm")
 _stub("sqlite_vec")
 _stub("tree_sitter_languages")
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)

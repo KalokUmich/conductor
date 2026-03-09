@@ -23,11 +23,11 @@ Last updated: 2026-03-09
 │                          │     │  │ Code Search Service   │  │
 │                          │     │  │ ┌─────────────────┐   │  │
 │                          │     │  │ │EmbeddingProvider│   │  │
-│                          │     │  │ │ local│bedrock│  │   │  │
-│                          │     │  │ │ openai│voyage│  │   │  │
-│                          │     │  │ │ mistral        │   │  │
+│                          │     │  │ │ Local (sbert/)  │   │  │
+│                          │     │  │ │ LiteLLM (100+)  │   │  │
 │                          │     │  │ └─────────────────┘   │  │
-│                          │     │  │ CocoIndex (sqlite-vec)│  │
+│                          │     │  │ CocoIndex             │  │
+│                          │     │  │ (sqlite │ postgres)   │  │
 │                          │     │  └───────────────────────┘  │
 │                          │     │                             │
 │                          │     │  ┌───────────────────────┐  │
@@ -75,29 +75,28 @@ Manages per-room Git worktrees for file collaboration:
 Semantic code search powered by CocoIndex:
 
 ```
-Source files → AST chunking → Embedding → sqlite-vec storage
-                                  │
-                    ┌─────────────┴────────────────┐
-                    │     EmbeddingProvider         │
-                    │                               │
-              ┌─────┴──────┐  ┌────────┐  ┌───────┴──────┐
-              │   Local     │  │Bedrock │  │   OpenAI     │
-              │SentenceTF   │  │Cohere  │  │ text-emb-3   │
-              └────────────┘  │Titan   │  └──────────────┘
-                              └────────┘
-              ┌────────────┐  ┌────────────┐
-              │  Voyage    │  │  Mistral   │
-              │voyage-code │  │codestral   │
-              └────────────┘  └────────────┘
+Source files → AST chunking → Embedding → vector storage
+                                  │            │
+                    ┌─────────────┴──────┐     ├── sqlite-vec (default)
+                    │  EmbeddingProvider │     └── postgres (incremental)
+                    │                    │
+              ┌─────┴────────┐  ┌────────┴──────────┐
+              │ Local        │  │ LiteLLM (100+     │
+              │ SentenceTF   │  │ providers)        │
+              │ (sbert/)     │  │ bedrock, openai,  │
+              └──────────────┘  │ voyage, mistral,  │
+                                │ cohere, gemini... │
+                                └───────────────────┘
 ```
 
 **EmbeddingProvider hierarchy:**
 - `EmbeddingProvider` (ABC) — defines `embed_texts()`, `embed_query()`, `dimensions`, `name`
-- `LocalEmbeddingProvider` — SentenceTransformers, runs on CPU
-- `BedrockEmbeddingProvider` — Cohere Embed v4 (default) or Titan V2
-- `OpenAIEmbeddingProvider` — OpenAI API
-- `VoyageEmbeddingProvider` — code-specialised models
-- `MistralEmbeddingProvider` — Codestral Embed
+- `LocalEmbeddingProvider` — SentenceTransformers, runs on CPU (triggered by `sbert/` prefix)
+- `LiteLLMEmbeddingProvider` — unified provider for all cloud/API models via LiteLLM
+
+**Storage backends:**
+- `sqlite` (default) — embedded sqlite-vec, zero setup
+- `postgres` — incremental processing, concurrent access, production-ready
 
 ### Reranking (`code_search/rerank_provider.py`)
 
@@ -200,23 +199,26 @@ The `POST /api/context/context` endpoint returns:
 2. Files cloned into worktree
 3. POST /api/code-search/index {workspace_path}
 4. CocoIndex scans files, applies AST-aware chunking
-5. EmbeddingProvider embeds each chunk
-6. Embeddings stored in sqlite-vec database
-7. RepoMapService lazily builds dependency graph on first query
+5. LiteLLM / SentenceTransformers embeds each chunk
+6. Embeddings stored in sqlite-vec or Postgres
+7. (Postgres only) Incremental processing: only changed files re-indexed
+8. RepoMapService lazily builds dependency graph on first query
 ```
 
 ## Configuration Reference
 
-### Embedding Backends
+### Embedding Models (LiteLLM format)
 
-| Backend | Model ID | Dimensions | Context | Cost/1M | Credentials |
-|---------|----------|------------|---------|---------|-------------|
-| `local` | `all-MiniLM-L6-v2` | 384 | — | Free | None |
-| `bedrock` | `cohere.embed-v4:0` | 1024 | 128K | $0.12 | AWS keys |
-| `bedrock` | `amazon.titan-embed-text-v2:0` | 1024 | 8K | $0.20 | AWS keys |
-| `openai` | `text-embedding-3-small` | 1536 | 8K | $0.02 | OpenAI key |
-| `voyage` | `voyage-code-3` | 1024 | 16K | $0.06 | Voyage key |
-| `mistral` | `codestral-embed-2505` | 1024 | — | — | Mistral key |
+| Model String | Provider | Dimensions | Context | Cost/1M | Credentials |
+|-------------|----------|------------|---------|---------|-------------|
+| `sbert/sentence-transformers/all-MiniLM-L6-v2` | Local | 384 | — | Free | None |
+| `bedrock/cohere.embed-v4:0` | AWS Bedrock | 1024 | 128K | $0.12 | AWS keys |
+| `bedrock/amazon.titan-embed-text-v2:0` | AWS Bedrock | 1024 | 8K | $0.20 | AWS keys |
+| `text-embedding-3-small` | OpenAI | 1536 | 8K | $0.02 | OpenAI key |
+| `voyage/voyage-code-3` | Voyage AI | 1024 | 16K | $0.06 | Voyage key |
+| `mistral/codestral-embed-2505` | Mistral | 1024 | — | — | Mistral key |
+| `cohere/embed-english-v3.0` | Cohere | 1024 | — | $0.10 | Cohere key |
+| `gemini/text-embedding-004` | Google | 768 | — | — | Gemini key |
 
 ### Reranking Backends
 
@@ -231,20 +233,26 @@ The `POST /api/context/context` endpoint returns:
 
 ```yaml
 code_search:
-  embedding_backend: "bedrock"           # local|bedrock|openai|voyage|mistral
-  bedrock_model_id: "cohere.embed-v4:0"
-  bedrock_region: "us-east-1"
-  local_model_name: "all-MiniLM-L6-v2"
-  openai_model_name: "text-embedding-3-small"
-  voyage_model_name: "voyage-code-3"
-  mistral_model_name: "codestral-embed-2505"
+  # Embedding (LiteLLM format — supports 100+ providers)
+  embedding_model: "bedrock/cohere.embed-v4:0"  # Any LiteLLM model string
+
+  # Storage backend
+  storage_backend: "sqlite"              # sqlite | postgres
+  # postgres_url: "postgresql://..."     # Only when storage_backend: postgres
+  incremental: true                      # Only effective with postgres backend
+
+  # Chunking / Search
+  chunk_size: 512
+  top_k_results: 5
+
+  # RepoMap
   repo_map_enabled: true
   repo_map_top_n: 10
 
   # Reranking
   rerank_backend: "none"                 # none|cohere|bedrock|cross_encoder
-  rerank_top_n: 5                        # Return top N after reranking
-  rerank_candidates: 20                  # Fetch from vector search before reranking
+  rerank_top_n: 5
+  rerank_candidates: 20
   cohere_rerank_model: "rerank-v3.5"
   bedrock_rerank_model_id: "cohere.rerank-v3-5:0"
   cross_encoder_model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
@@ -253,6 +261,8 @@ code_search:
 ### Secrets YAML
 
 ```yaml
+# All available credentials are injected into env vars at startup.
+# LiteLLM picks the right one based on the model string prefix.
 aws:
   access_key_id: "AKIA..."
   secret_access_key: "..."
@@ -264,5 +274,5 @@ voyage:
 mistral:
   api_key: "..."
 cohere:
-  api_key: "..."                         # For direct Cohere Rerank API
+  api_key: "..."                         # For Cohere Rerank and/or Cohere Embed
 ```

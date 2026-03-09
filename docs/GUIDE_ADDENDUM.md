@@ -1,12 +1,12 @@
-# Guide Addendum: Embedding Providers, RepoMap & Reranking
+# Guide Addendum: LiteLLM Embeddings, RepoMap & Reranking
 
 **This is an addendum to the main [Backend Code Walkthrough](GUIDE.md).**
 
-Sections 8.5, 8.6, and 8.7 extend the Workspace Code Search chapter.
+Sections 8.5, 8.6, 8.7, and 8.8 extend the Workspace Code Search chapter.
 
 ---
 
-## 8.5 Multi-Provider Embeddings
+## 8.5 LiteLLM Unified Embeddings
 
 ### 8.5.1 The Problem
 
@@ -14,11 +14,20 @@ Different teams have different cloud provider preferences and API access:
 - Some can use AWS Bedrock (existing infra)
 - Some prefer OpenAI (already have API keys)
 - Some want local/offline mode for development
-- Some want code-specialised models (Voyage, Mistral)
+- Some want code-specialised models (Voyage, Mistral, Cohere)
 
-We need a pluggable system that lets you switch embedding backends without changing service code.
+We need a system that lets you switch embedding providers by changing **one string** in the settings file.
 
-### 8.5.2 The EmbeddingProvider Abstraction
+### 8.5.2 The LiteLLM Solution
+
+Instead of maintaining five separate provider classes (one per vendor), we use **LiteLLM** as a unified embedding SDK. LiteLLM supports 100+ embedding providers through a single `litellm.embedding()` call. You just pass a model string like `bedrock/cohere.embed-v4:0` or `text-embedding-3-small` and LiteLLM handles the vendor-specific API.
+
+This means:
+- **Two classes** replace five: `LocalEmbeddingProvider` (SentenceTransformers) + `LiteLLMEmbeddingProvider` (everything else)
+- **One config field**: `embedding_model` accepts any LiteLLM model string
+- **No code changes** to switch providers — just update the YAML setting
+
+### 8.5.3 The EmbeddingProvider Abstraction
 
 ```python
 # backend/app/code_search/embedding_provider.py
@@ -37,22 +46,15 @@ class EmbeddingProvider(abc.ABC):
 
     async def embed_query(self, query: str) -> np.ndarray:
         # Default: delegates to embed_texts
-        # Override for models that distinguish document vs query input
         result = await self.embed_texts([query])
         return result[0]
 ```
 
-**Why two methods (`embed_texts` vs `embed_query`)?**
+The ABC is unchanged from before — it still defines `embed_texts()`, `embed_query()`, `dimensions`, `name`, and `health_check()`.
 
-Some embedding models use different input prefixes for documents vs queries. For example:
-- Cohere uses `input_type="search_document"` vs `input_type="search_query"`
-- Voyage uses `input_type="document"` vs `input_type="query"`
+### 8.5.4 The Two Implementations
 
-The default `embed_query` just calls `embed_texts`, but Bedrock and Voyage override it to pass the correct type.
-
-### 8.5.3 The Five Backends
-
-**1. Local (SentenceTransformers)**
+**1. LocalEmbeddingProvider (SentenceTransformers)**
 
 ```python
 class LocalEmbeddingProvider(EmbeddingProvider):
@@ -66,68 +68,74 @@ class LocalEmbeddingProvider(EmbeddingProvider):
         self._model = SentenceTransformer(self._model_name)
 ```
 
-Free, runs on CPU, no API key needed. Good for development and CI.
+Free, runs on CPU, no API key needed. Good for development and CI. Triggered by the `sbert/` prefix in the model string (e.g. `sbert/sentence-transformers/all-MiniLM-L6-v2`).
 
-**2. Bedrock (Cohere Embed v4)**
-
-```python
-class BedrockEmbeddingProvider(EmbeddingProvider):
-    async def embed_texts(self, texts):
-        body = json.dumps({
-            "texts": list(texts),
-            "input_type": "search_document",
-            "truncate": "END",
-        })
-        response = await self._invoke(body)
-        return np.array(response["embeddings"], dtype=np.float32)
-```
-
-Default backend. Cohere Embed v4 has 128K context window and costs $0.12/1M tokens. Also supports Titan V2 (but Titan only handles one text at a time and has only 8K context).
-
-**3. OpenAI**
+**2. LiteLLMEmbeddingProvider (all cloud/API models)**
 
 ```python
-class OpenAIEmbeddingProvider(EmbeddingProvider):
-    async def embed_texts(self, texts):
+class LiteLLMEmbeddingProvider(EmbeddingProvider):
+    def __init__(self, model: str, dimensions: Optional[int] = None):
+        self._model = model
+        self._dims = dimensions or _KNOWN_DIMS.get(model, _DEFAULT_DIMS)
+        self._litellm = None  # lazy import
+
+    async def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
+        self._ensure_litellm()
+        loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: self._client.embeddings.create(
-                model=self._model_name, input=list(texts)
-            ),
+            lambda: self._litellm.embedding(model=self._model, input=list(texts)),
         )
-        return np.array([d.embedding for d in response.data], dtype=np.float32)
+        vectors = [d["embedding"] for d in response.data]
+        return np.array(vectors, dtype=np.float32)
 ```
 
-Standard OpenAI API. `text-embedding-3-small` at $0.02/1M tokens.
+Routes to any LiteLLM-supported backend: Bedrock, OpenAI, Voyage, Mistral, Cohere, Gemini, Ollama, etc.
 
-**4. Voyage AI**
+### 8.5.5 Well-Known Dimensions Map
 
-Code-specialised models. `voyage-code-3` is trained on code and returns 1024-d vectors.
+```python
+_KNOWN_DIMS: Dict[str, int] = {
+    "sbert/sentence-transformers/all-MiniLM-L6-v2": 384,
+    "bedrock/cohere.embed-v4:0":                    1024,
+    "text-embedding-3-small":                       1536,
+    "text-embedding-3-large":                       3072,
+    "voyage/voyage-code-3":                         1024,
+    "mistral/codestral-embed-2505":                 1024,
+    "cohere/embed-english-v3.0":                    1024,
+    "gemini/text-embedding-004":                    768,
+    # ... 20+ entries
+}
+```
 
-**5. Mistral**
+This avoids a probe call to the API just to discover dimensions. If the model is not in the map, we fall back to `_DEFAULT_DIMS = 1024`.
 
-`codestral-embed-2505` is Mistral's code embedding model.
-
-### 8.5.4 The Factory
+### 8.5.6 The Factory
 
 ```python
 def create_embedding_provider(settings) -> EmbeddingProvider:
-    backend = settings.embedding_backend
+    model = getattr(settings, "embedding_model", None)
 
-    if backend == "local":
-        return LocalEmbeddingProvider(model_name=settings.local_model_name)
-    if backend == "bedrock":
-        return BedrockEmbeddingProvider(
-            model_id=settings.bedrock_model_id,
-            region=settings.bedrock_region,
-        )
-    # ... openai, voyage, mistral
-    raise ValueError(f"Unknown backend: {backend}")
+    if model is None:
+        # Legacy fallback
+        backend = getattr(settings, "embedding_backend", "local")
+        model = _legacy_backend_to_model(backend, settings)
+
+    if model.startswith("sbert/"):
+        st_model = model.replace("sbert/sentence-transformers/", "").replace("sbert/", "")
+        return LocalEmbeddingProvider(model_name=st_model)
+
+    # Everything else goes through LiteLLM
+    return LiteLLMEmbeddingProvider(model=model, dimensions=dims)
 ```
 
-The factory reads settings from `CodeSearchSettings` and instantiates the correct provider.
+**Routing logic:**
+- `sbert/` prefix → `LocalEmbeddingProvider`
+- Everything else → `LiteLLMEmbeddingProvider`
 
-### 8.5.5 Credential Management
+**Legacy backward compatibility** via `_legacy_backend_to_model()` which maps old `embedding_backend` values (`"local"`, `"bedrock"`, `"openai"`, `"voyage"`, `"mistral"`) to LiteLLM model strings.
+
+### 8.5.7 Credential Management
 
 Credentials flow from `conductor.secrets.yaml` through our config to environment variables:
 
@@ -135,21 +143,87 @@ Credentials flow from `conductor.secrets.yaml` through our config to environment
 conductor.secrets.yaml → Secrets model → _inject_embedding_env_vars() → os.environ
 ```
 
-This means the embedding SDK libraries (boto3, openai, voyageai, mistralai) can use their standard credential discovery without knowing about our config system.
+The updated `_inject_embedding_env_vars()` now injects **all available** credentials at once using `os.environ.setdefault()` (does not overwrite existing env vars):
 
 ```python
 def _inject_embedding_env_vars(settings):
-    if backend == "bedrock":
-        os.environ["AWS_ACCESS_KEY_ID"] = secrets.aws.access_key_id
-        os.environ["AWS_SECRET_ACCESS_KEY"] = secrets.aws.secret_access_key
-    elif backend == "voyage":
-        os.environ["VOYAGE_API_KEY"] = secrets.voyage.api_key
-    # ...
+    secrets = settings.secrets
+
+    # AWS credentials (for Bedrock)
+    if secrets.aws and secrets.aws.access_key_id:
+        os.environ.setdefault("AWS_ACCESS_KEY_ID", secrets.aws.access_key_id)
+        os.environ.setdefault("AWS_SECRET_ACCESS_KEY", secrets.aws.secret_access_key)
+        os.environ.setdefault("AWS_DEFAULT_REGION", secrets.aws.region or "us-east-1")
+
+    # OpenAI
+    if secrets.openai and secrets.openai.api_key:
+        os.environ.setdefault("OPENAI_API_KEY", secrets.openai.api_key)
+
+    # Voyage
+    if secrets.voyage and secrets.voyage.api_key:
+        os.environ.setdefault("VOYAGE_API_KEY", secrets.voyage.api_key)
+
+    # Mistral
+    if secrets.mistral and secrets.mistral.api_key:
+        os.environ.setdefault("MISTRAL_API_KEY", secrets.mistral.api_key)
+
+    # Cohere
+    if secrets.cohere and secrets.cohere.api_key:
+        os.environ.setdefault("CO_API_KEY", secrets.cohere.api_key)
+
+    # CocoIndex env vars
+    os.environ.setdefault("COCOINDEX_CODE_EMBEDDING_MODEL", settings.embedding_model)
+    if settings.postgres_url:
+        os.environ.setdefault("COCOINDEX_DATABASE_URL", settings.postgres_url)
 ```
 
-**Why not pass credentials directly?**
+**Why `setdefault()` instead of direct assignment?**
 
-Some libraries (especially boto3) have complex credential chains (env vars → instance profiles → config files). Injecting into env vars keeps our code simple and lets the SDK do its normal credential resolution.
+In production, credentials may already be set via instance profiles, IAM roles, or CI environment variables. Using `setdefault()` ensures our config injection never silently overrides pre-existing env vars.
+
+### 8.5.8 Supported Model Strings
+
+| Model String | Provider | Dimensions | Cost/1M | Notes |
+|-------------|----------|------------|---------|-------|
+| `sbert/sentence-transformers/all-MiniLM-L6-v2` | Local | 384 | Free | No API key |
+| `bedrock/cohere.embed-v4:0` | AWS Bedrock | 1024 | $0.12 | Default, 128K context |
+| `bedrock/amazon.titan-embed-text-v2:0` | AWS Bedrock | 1024 | $0.20 | 8K context |
+| `text-embedding-3-small` | OpenAI | 1536 | $0.02 | 8K context |
+| `text-embedding-3-large` | OpenAI | 3072 | $0.13 | 8K context |
+| `voyage/voyage-code-3` | Voyage AI | 1024 | $0.06 | Code-specialised |
+| `mistral/codestral-embed-2505` | Mistral | 1024 | — | Code-specialised |
+| `cohere/embed-english-v3.0` | Cohere | 1024 | $0.10 | Direct Cohere API |
+| `gemini/text-embedding-004` | Google | 768 | — | Google AI |
+| `ollama/nomic-embed-text` | Ollama | 768 | Free | Local Ollama server |
+
+For the full list of supported models, see the [LiteLLM embedding docs](https://docs.litellm.ai/docs/embedding/supported_embedding).
+
+### 8.5.9 Configuration
+
+```yaml
+# conductor.settings.yaml
+code_search:
+  embedding_model: "bedrock/cohere.embed-v4:0"  # Any LiteLLM model string
+  storage_backend: "sqlite"                      # sqlite | postgres
+  incremental: true                              # Only effective with postgres
+```
+
+```yaml
+# conductor.secrets.yaml — inject ALL credentials you have;
+# LiteLLM picks the right one based on the model string prefix.
+aws:
+  access_key_id: "AKIA..."
+  secret_access_key: "..."
+  region: "us-east-1"
+openai:
+  api_key: "sk-..."
+voyage:
+  api_key: "pa-..."
+mistral:
+  api_key: "..."
+cohere:
+  api_key: "..."
+```
 
 ---
 
@@ -481,12 +555,69 @@ For production, we recommend `bedrock` (reuses AWS credentials) or `cohere` (dir
 
 ---
 
+## 8.8 Postgres Backend & Incremental Processing
+
+### 8.8.1 The Problem with SQLite-vec
+
+The default sqlite-vec storage is great for single-developer use:
+- Zero setup (embedded database, local files)
+- Fast for small-to-medium repos
+
+But it has limitations at scale:
+- No concurrent write access (SQLite's single-writer lock)
+- Full re-index required on every change (no incremental)
+- Cannot be shared across multiple backend instances
+
+### 8.8.2 Postgres as an Alternative
+
+When `storage_backend: "postgres"` is set, the service:
+
+1. Sets `COCOINDEX_DATABASE_URL` env var so CocoIndex uses Postgres for vector storage
+2. Enables `incremental=True` when calling `cocoindex.build()`, so only changed files are re-indexed
+3. The `is_incremental` property returns `True` only when **both** `incremental: true` AND `storage_backend: "postgres"` are set (SQLite does not support incremental processing)
+
+### 8.8.3 Configuration
+
+```yaml
+# conductor.settings.yaml
+code_search:
+  storage_backend: "postgres"  # "sqlite" | "postgres"
+  # postgres_url: from secrets YAML or env var
+  incremental: true            # Only takes effect with postgres
+```
+
+```yaml
+# conductor.secrets.yaml
+postgres:
+  url: "postgresql://user:pass@localhost:5432/cocoindex"
+```
+
+Or set `COCOINDEX_DATABASE_URL` as an environment variable directly.
+
+### 8.8.4 Incremental Processing
+
+With Postgres, CocoIndex tracks file checksums in the database. On re-index:
+- Files that haven't changed are skipped
+- Only modified/new files are chunked, embedded, and stored
+- Deleted files have their chunks removed
+
+This dramatically reduces re-index time for large repos (minutes → seconds for small changes).
+
+### 8.8.5 When to Use Each Backend
+
+| Backend | Setup | Concurrent | Incremental | Best For |
+|---------|-------|-----------|-------------|----------|
+| `sqlite` | Zero | No | No | Development, single-user, CI |
+| `postgres` | Requires Postgres | Yes | Yes | Production, teams, large repos |
+
+---
+
 ## Testing the New Modules
 
 ### Running Tests
 
 ```bash
-# Embedding providers (78 tests)
+# Embedding providers (85+ tests)
 pytest tests/test_embedding_provider.py -v
 
 # Reranking providers (86 tests)
@@ -495,34 +626,51 @@ pytest tests/test_rerank_provider.py -v
 # Repo graph (72 tests)
 pytest tests/test_repo_graph.py -v
 
-# Config (42 tests)
+# Config (60+ tests)
 pytest tests/test_config_new.py -v
 
-# Context router (42 tests)
+# Code search service (72+ tests)
+pytest tests/test_code_search.py -v
+
+# Context router (42+ tests)
 pytest tests/test_context.py -v
 ```
 
 ### Writing New Embedding Provider Tests
 
-All providers follow the same pattern:
+With the LiteLLM refactor, tests now cover two providers:
 
 ```python
+# LocalEmbeddingProvider tests
 @pytest.fixture()
-def provider():
-    p = SomeEmbeddingProvider()
-    mock_client = MagicMock()
-    p._client = mock_client
-    return p, mock_client
+def local_provider():
+    p = LocalEmbeddingProvider(model_name="all-MiniLM-L6-v2")
+    mock_model = MagicMock()
+    p._model = mock_model
+    p._dims = 384
+    return p, mock_model
+
+# LiteLLMEmbeddingProvider tests
+@pytest.fixture()
+def litellm_provider():
+    p = LiteLLMEmbeddingProvider(model="text-embedding-3-small")
+    mock_litellm = MagicMock()
+    p._litellm = mock_litellm
+    return p, mock_litellm
 
 @pytest.mark.asyncio
-async def test_embed_texts(provider):
-    p, mock_client = provider
-    mock_client.some_method.return_value = ...
+async def test_litellm_embed_texts(litellm_provider):
+    p, mock_litellm = litellm_provider
+    mock_litellm.embedding.return_value = MockResponse(data=[...])
     result = await p.embed_texts(["hello", "world"])
-    assert result.shape == (2, expected_dims)
+    assert result.shape == (2, 1536)
 ```
 
-External API calls are always mocked. No real API calls in tests.
+Additional test areas:
+- `_legacy_backend_to_model()` mapping for all 5 old backends
+- `_KNOWN_DIMS` coverage for 20+ model strings
+- Factory routing: `sbert/` → Local, everything else → LiteLLM
+- ABC contract: cannot instantiate `EmbeddingProvider` directly
 
 ### Writing New Reranking Provider Tests
 

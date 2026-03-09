@@ -4,14 +4,16 @@ Lifespan initializes:
   * Database connection pool
   * Git Workspace Service (replaces Live Share)
   * CocoIndex Code Search Service (replaces home-built RAG)
-  * Embedding Provider (configurable: local / bedrock / openai / voyage / mistral)
+  * Embedding Provider via LiteLLM (100+ backends, single model string)
   * RepoMap Graph Service (Aider-style file dependency graph + PageRank)
   * Rerank Provider (configurable: none / cohere / bedrock / cross_encoder)
+  * Optional Postgres backend for incremental processing
 
 Removed in this version:
   * FAISS index loading
   * Bedrock Embeddings initialisation
   * Old RAG module imports
+  * Hand-written per-provider embedding classes (replaced by LiteLLM)
 
 """
 from __future__ import annotations

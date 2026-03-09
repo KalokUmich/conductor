@@ -14,18 +14,16 @@ numpy
 # --- Code Search (CocoIndex) ---
 # Core indexing and vector search engine
 cocoindex-code
-# Local embedding model (free, no API key needed)
-sentence-transformers
-# Vector storage backend used by CocoIndex
+# Vector storage backend used by CocoIndex (embedded)
 sqlite-vec
 
-# --- Embedding Providers ---
-# OpenAI embeddings (text-embedding-3-small etc.)
-openai
-# Voyage AI embeddings (voyage-code-3, code-specialised)
-voyageai
-# Mistral AI embeddings (codestral-embed-2505)
-mistralai
+# --- LiteLLM (unified embedding provider) ---
+# Supports 100+ embedding providers via single interface
+# Replaces separate openai, voyageai, mistralai packages
+litellm
+
+# --- Local embedding fallback (free, no API key) ---
+sentence-transformers
 
 # --- Reranking Providers ---
 # Cohere Rerank API (rerank-v3.5)
@@ -36,3 +34,7 @@ cohere
 networkx
 # AST parsing for symbol extraction (Python, JS, TS, Go, Rust, etc.)
 tree-sitter-languages
+
+# --- Postgres backend (optional, for incremental processing) ---
+# Uncomment if using storage_backend: "postgres"
+# psycopg2-binary
