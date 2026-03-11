@@ -166,12 +166,20 @@ export function activate(context: vscode.ExtensionContext): void {
     let initialState = ConductorState.Idle;
     let wasRestored = false;
 
-    if (persistedState && RESTORABLE_STATES.has(persistedState)) {
+    // In development mode (F5 debug sessions), always start from Idle so the
+    // login/landing page is shown instead of jumping straight into a stale session.
+    const isDevelopmentMode = context.extensionMode === vscode.ExtensionMode.Development;
+
+    if (!isDevelopmentMode && persistedState && RESTORABLE_STATES.has(persistedState)) {
         initialState = persistedState as ConductorState;
         wasRestored = true;
         console.log(`[Conductor] Restored FSM state: ${initialState}`);
     } else {
-        console.log('[Conductor] Starting FSM from Idle (fresh start)');
+        if (isDevelopmentMode && persistedState) {
+            console.log('[Conductor] Development mode — ignoring persisted FSM state, starting from Idle');
+        } else {
+            console.log('[Conductor] Starting FSM from Idle (fresh start)');
+        }
     }
 
     const fsm = new ConductorStateMachine(initialState);
@@ -641,11 +649,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'setupWorkspaceAndIndex':
                     await this._handleSetupWorkspaceAndIndex(message);
                     return;
+                case 'setupLocalWorkspace':
+                    await this._handleSetupLocalWorkspace();
+                    return;
                 case 'openConductorWorkspace':
                     this._handleOpenConductorWorkspace(message.roomId);
                     return;
                 case 'explainCodeFromSnippet':
                     await this._handleExplainCodeFromSnippet(message);
+                    return;
+                case 'askAI':
+                    await this._handleAskAI(message);
                     return;
             }
         });
@@ -3069,6 +3083,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 conductorDb,
                 workspaceFolders:  [...(vscode.workspace.workspaceFolders ?? [])],
                 workspaceConfig:   workspaceConfig  ?? undefined,
+                onProgress:        (evt) => this._view?.webview.postMessage({ command: 'explainProgress', ...evt }),
             });
 
             console.log('[Conductor][ExplainCode] Pipeline returned:',
@@ -3078,6 +3093,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 'timings=', JSON.stringify(result.timings));
 
             // ---- Stage 8: render ----------------------------------------
+            // Guard: if the pipeline returned an empty explanation, do NOT post
+            // an empty message to chat — show an error instead.
+            if (!result.explanation?.trim()) {
+                console.warn('[Conductor][ExplainCode] Pipeline returned empty explanation — not posting');
+                this._view?.webview.postMessage({
+                    command: 'codeExplanationReady',
+                    error: 'AI returned an empty explanation. Please try again.',
+                });
+                return;
+            }
+
             // Post the explanation to the chat room via REST so all participants
             // receive it via the WebSocket broadcast.  The WebView MUST NOT
             // call fetch() directly — the VS Code CSP blocks external URLs.
@@ -3495,7 +3521,20 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 conductorDb,
                 workspaceFolders:  [...folders],
                 workspaceConfig:   workspaceConfig  ?? undefined,
+                onProgress:        (evt) => this._view?.webview.postMessage({ command: 'explainProgress', ...evt }),
             });
+
+            // Guard: if the pipeline returned an empty explanation, do NOT post
+            // an empty message to chat — show an error instead.
+            if (!result.explanation?.trim()) {
+                console.warn('[Conductor][ExplainFromSnippet] Pipeline returned empty explanation — not posting');
+                this._view?.webview.postMessage({
+                    command: 'explainCodeFromSnippetDone',
+                    success: false,
+                    error: 'AI returned an empty explanation. Please try again.',
+                });
+                return;
+            }
 
             // Broadcast the explanation as an AI message in the room.
             // The endpoint uses Query params (same contract as _handleExplainCode).
@@ -3528,6 +3567,148 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 command: 'explainCodeFromSnippetDone',
                 success: false,
                 error:   msg,
+            });
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Ask AI (@AI in chat)
+    // -------------------------------------------------------------------
+
+    private async _handleAskAI(message: { roomId: string; query: string }): Promise<void> {
+        const backendUrl = getBackendUrl();
+        const roomId = message.roomId;
+        const query = message.query;
+
+        console.log(`[Conductor][AskAI] query="${query.slice(0, 80)}" room=${roomId}`);
+
+        try {
+            // Stream from the existing /api/context/query/stream endpoint
+            const streamUrl = `${backendUrl}/api/context/query/stream`;
+            const response = await fetch(streamUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room_id: roomId,
+                    query: query,
+                    max_iterations: 15,
+                }),
+            });
+
+            if (!response.ok) {
+                const body = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}: ${body}`);
+            }
+
+            // Parse SSE events
+            const reader = response.body!.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let finalAnswer = '';
+            let thinkingSteps: Array<Record<string, any>> = [];
+
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop()!;
+
+                for (const part of parts) {
+                    const lines = part.split('\n');
+                    let eventKind = '';
+                    let eventData = '';
+                    for (const line of lines) {
+                        if (line.startsWith('event: '))     eventKind = line.slice(7);
+                        else if (line.startsWith('data: ')) eventData = line.slice(6);
+                    }
+                    if (!eventKind || !eventData) continue;
+
+                    let data: Record<string, any>;
+                    try { data = JSON.parse(eventData); } catch { continue; }
+
+                    // Forward progress to WebView
+                    if (eventKind === 'thinking') {
+                        const text = (data.text as string || '').slice(0, 120);
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'thinking',
+                            message: text || 'Thinking...',
+                            detail: data,
+                        });
+                    } else if (eventKind === 'tool_call') {
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'tool_call',
+                            message: data.tool ? `${data.tool}` : 'Working...',
+                            detail: { tool: data.tool, iteration: data.iteration },
+                        });
+                    } else if (eventKind === 'tool_result') {
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'tool_result',
+                            message: `${data.tool}: ${data.summary || 'done'}`,
+                            detail: { tool: data.tool, success: data.success, iteration: data.iteration },
+                        });
+                    } else if (eventKind === 'done') {
+                        finalAnswer = data.answer || '';
+                        if (data.thinking_steps) {
+                            thinkingSteps = data.thinking_steps;
+                        }
+                    } else if (eventKind === 'error') {
+                        finalAnswer = data.answer || '';
+                        if (data.thinking_steps) {
+                            thinkingSteps = data.thinking_steps;
+                        }
+                        if (data.error) {
+                            console.error(`[Conductor][AskAI] Agent error: ${data.error}`);
+                        }
+                    }
+                }
+            }
+
+            console.log(`[Conductor][AskAI] Stream complete — answer=${finalAnswer.length} chars`);
+
+            // Guard: don't post empty answers
+            if (!finalAnswer.trim()) {
+                console.warn('[Conductor][AskAI] Agent returned empty answer — not posting');
+                this._view?.webview.postMessage({ command: 'askAIDone', error: 'AI returned an empty answer. Please try again.' });
+                return;
+            }
+
+            // Post the AI answer to the chat room
+            let modelName = 'ai';
+            try {
+                const statusResp = await fetch(`${backendUrl}/ai/status`);
+                if (statusResp.ok) {
+                    const statusData = await statusResp.json() as Record<string, string>;
+                    modelName = statusData.active_model || statusData.model_id || 'ai';
+                }
+            } catch { /* ignore */ }
+
+            const aiData = JSON.stringify({ query, thinking_steps: thinkingSteps });
+            const postParams = new URLSearchParams({
+                message_type: 'ai_answer',
+                model_name: modelName,
+                content: finalAnswer,
+                ai_data: aiData,
+            });
+            const postUrl = `${backendUrl}/chat/${encodeURIComponent(roomId)}/ai-message?${postParams.toString()}`;
+            const postResponse = await fetch(postUrl, { method: 'POST' });
+            if (!postResponse.ok) {
+                console.warn('[Conductor][AskAI] POST to chat failed:', postResponse.status);
+            }
+
+            this._view?.webview.postMessage({ command: 'askAIDone' });
+
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor][AskAI] Failed:', msg);
+            this._view?.webview.postMessage({
+                command: 'askAIDone',
+                error: msg,
             });
         }
     }
@@ -3736,6 +3917,63 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     : (indexResult.message || 'Workspace ready'),
                 workspace,
                 roomId,
+            });
+        } catch (e) {
+            this._view?.webview.postMessage({
+                command: 'setupAndIndexComplete',
+                success: false,
+                message: e instanceof Error ? e.message : String(e),
+            });
+        }
+    }
+
+    /**
+     * Handle "Use Local Workspace" — register the current VS Code workspace
+     * folder with the backend so code tools can operate on it directly.
+     * No git clone is performed; guests get read-only access.
+     */
+    private async _handleSetupLocalWorkspace(): Promise<void> {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            this._view?.webview.postMessage({
+                command: 'setupAndIndexComplete',
+                success: false,
+                message: 'No workspace folder open in VS Code.',
+            });
+            return;
+        }
+
+        const wsRoot = folders[0].uri.fsPath;
+        const backendUrl = getBackendUrl();
+        const roomId = getSessionService().getRoomId();
+
+        try {
+            this._view?.webview.postMessage({
+                command: 'setupAndIndexProgress',
+                phase: 'registering',
+                detail: 'Registering local workspace...',
+            });
+
+            const resp = await fetch(`${backendUrl}/api/git-workspace/workspaces/local`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    room_id: roomId,
+                    local_path: wsRoot,
+                }),
+            });
+
+            if (!resp.ok) {
+                const err = await resp.text();
+                throw new Error(`Registration failed (${resp.status}): ${err}`);
+            }
+
+            this._view?.webview.postMessage({
+                command: 'setupAndIndexComplete',
+                success: true,
+                message: `Local workspace registered: ${wsRoot}`,
+                roomId,
+                isLocal: true,
             });
         } catch (e) {
             this._view?.webview.postMessage({

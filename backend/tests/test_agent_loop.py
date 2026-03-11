@@ -12,7 +12,8 @@ import pytest
 from app.ai_provider.base import AIProvider, ToolCall, ToolUseResponse
 from app.ai_provider.claude_direct import _converse_to_anthropic
 from app.ai_provider.openai_provider import _converse_to_openai
-from app.agent_loop.service import AgentLoopService, AgentResult
+from app.agent_loop.prompts import build_system_prompt, scan_workspace_layout
+from app.agent_loop.service import AgentLoopService, AgentResult, ThinkingStep
 from app.code_tools.tools import invalidate_graph_cache
 
 
@@ -252,6 +253,182 @@ class TestAgentLoop:
         assert result.tool_calls_made == 2
         assert result.iterations == 2
 
+    @pytest.mark.asyncio
+    async def test_thinking_steps_collected(self, workspace):
+        """Thinking steps are accumulated across iterations."""
+        provider = MockProvider([
+            # Iteration 1: thinking text + tool call
+            ToolUseResponse(
+                text="Let me search for authentication code.",
+                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                stop_reason="tool_use",
+            ),
+            # Iteration 2: another tool call (no thinking text)
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="tc2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            # Iteration 3: final answer
+            ToolUseResponse(
+                text="Authentication uses JWT tokens.",
+                stop_reason="end_turn",
+            ),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=10)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        assert result.tool_calls_made == 2
+        # Should have: 1 thinking + 1 tool_call + 1 tool_result + 1 tool_call + 1 tool_result = 5
+        assert len(result.thinking_steps) == 5
+        kinds = [s.kind for s in result.thinking_steps]
+        assert kinds[0] == "thinking"
+        assert kinds[1] == "tool_call"
+        assert kinds[2] == "tool_result"
+        assert kinds[3] == "tool_call"
+        assert kinds[4] == "tool_result"
+        # Verify thinking text
+        assert "authentication" in result.thinking_steps[0].text.lower()
+        # Verify tool names
+        assert result.thinking_steps[1].tool == "grep"
+        assert result.thinking_steps[3].tool == "read_file"
+
+    @pytest.mark.asyncio
+    async def test_thinking_steps_empty_for_direct_answer(self, workspace):
+        """No thinking steps when model answers immediately."""
+        provider = MockProvider([
+            ToolUseResponse(text="The answer is 42.", stop_reason="end_turn"),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=5)
+        result = await agent.run("What is the answer?", str(workspace))
+
+        assert result.thinking_steps == []
+
+    @pytest.mark.asyncio
+    async def test_budget_note_injected(self, workspace):
+        """Iteration budget note is injected after tool results."""
+        call_log = []
+        original_chat = MockProvider.chat_with_tools
+
+        class TrackingProvider(MockProvider):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+                call_log.append(messages)
+                return original_chat(self, messages, tools, max_tokens, system)
+
+        provider = TrackingProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(text="Found it.", stop_reason="end_turn"),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=5)
+        await agent.run("Find auth", str(workspace))
+
+        # The second call should have the budget note in the messages
+        assert len(call_log) >= 2
+        last_user_msg = call_log[1][-1]
+        assert last_user_msg["role"] == "user"
+        # Should contain both toolResult and text (budget note)
+        content_kinds = {
+            list(block.keys())[0] for block in last_user_msg["content"]
+        }
+        assert "toolResult" in content_kinds
+        assert "text" in content_kinds
+        # Budget text should mention iteration count
+        text_blocks = [b["text"] for b in last_user_msg["content"] if "text" in b]
+        assert any("Iteration 1/" in t for t in text_blocks)
+
+    @pytest.mark.asyncio
+    async def test_budget_includes_max_iterations(self, workspace):
+        """System prompt includes the configured max_iterations."""
+        call_log = []
+
+        class TrackingProvider(MockProvider):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+                call_log.append(system)
+                return ToolUseResponse(text="Done.", stop_reason="end_turn")
+
+        provider = TrackingProvider([])
+        agent = AgentLoopService(provider=provider, max_iterations=12)
+        await agent.run("test", str(workspace))
+
+        assert call_log
+        assert "12 tool-calling iterations" in call_log[0]
+
+    @pytest.mark.asyncio
+    async def test_zero_result_grep_guidance(self, workspace):
+        """Zero-result grep injects recovery guidance."""
+        call_log = []
+
+        class TrackingProvider(MockProvider):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+                call_log.append(messages)
+                resp = super().chat_with_tools(messages, tools, max_tokens, system)
+                return resp
+
+        provider = TrackingProvider([
+            # grep returns 0 results
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "nonexistent_xyz"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(text="Not found.", stop_reason="end_turn"),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=5)
+        await agent.run("Find xyz", str(workspace))
+
+        # Second LLM call should see zero-result guidance
+        assert len(call_log) >= 2
+        last_user_msg = call_log[1][-1]
+        text_blocks = [b["text"] for b in last_user_msg["content"] if "text" in b]
+        combined = " ".join(text_blocks)
+        assert "0 results" in combined
+        assert "find_symbol" in combined
+
+    @pytest.mark.asyncio
+    async def test_scatter_detection(self, workspace):
+        """Reading files from 5+ directories triggers scatter warning."""
+        # Create files in many different directories
+        for d in ["svc_a", "svc_b", "svc_c", "svc_d", "svc_e"]:
+            (workspace / d).mkdir(exist_ok=True)
+            (workspace / d / "mod.py").write_text(f"# {d}")
+
+        call_log = []
+
+        class TrackingProvider(MockProvider):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+                call_log.append(messages)
+                resp = super().chat_with_tools(messages, tools, max_tokens, system)
+                return resp
+
+        provider = TrackingProvider([
+            # Read files from 5 different directories
+            ToolUseResponse(
+                text="",
+                tool_calls=[
+                    ToolCall(id="tc1", name="read_file", input={"path": "svc_a/mod.py"}),
+                    ToolCall(id="tc2", name="read_file", input={"path": "svc_b/mod.py"}),
+                    ToolCall(id="tc3", name="read_file", input={"path": "svc_c/mod.py"}),
+                    ToolCall(id="tc4", name="read_file", input={"path": "svc_d/mod.py"}),
+                    ToolCall(id="tc5", name="read_file", input={"path": "svc_e/mod.py"}),
+                ],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(text="Found it.", stop_reason="end_turn"),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=5)
+        await agent.run("Find something", str(workspace))
+
+        # Second LLM call should have scatter warning
+        assert len(call_log) >= 2
+        last_user_msg = call_log[1][-1]
+        text_blocks = [b["text"] for b in last_user_msg["content"] if "text" in b]
+        combined = " ".join(text_blocks)
+        assert "SCATTER WARNING" in combined
+
 
 # ---------------------------------------------------------------------------
 # Message format conversion tests
@@ -459,3 +636,119 @@ class TestConverseToOpenAI:
         # Tool result → role: tool
         assert result[2]["role"] == "tool"
         assert result[2]["tool_call_id"] == "tc1"
+
+
+# ---------------------------------------------------------------------------
+# Workspace layout scanning + prompt tests
+# ---------------------------------------------------------------------------
+
+
+class TestScanWorkspaceLayout:
+    """Tests for scan_workspace_layout — project structure discovery."""
+
+    def test_flat_project(self, tmp_path: Path):
+        """Simple project with files at root."""
+        (tmp_path / "main.py").write_text("print('hi')")
+        (tmp_path / "requirements.txt").write_text("flask")
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("# app")
+
+        layout = scan_workspace_layout(str(tmp_path))
+        assert "requirements.txt" in layout
+        assert "src/" in layout
+        assert "Detected project roots" in layout
+        assert "(root)" in layout  # marker at root level
+
+    def test_nested_project_detected(self, tmp_path: Path):
+        """Repo where source is nested under a subdirectory (abound-server scenario)."""
+        nested = tmp_path / "abound-server"
+        nested.mkdir()
+        (nested / "pom.xml").write_text("<project/>")
+        src = nested / "src" / "main" / "java"
+        src.mkdir(parents=True)
+        (src / "App.java").write_text("public class App {}")
+        # Also a README at root
+        (tmp_path / "README.md").write_text("# Docs")
+
+        layout = scan_workspace_layout(str(tmp_path))
+        assert "abound-server/" in layout
+        assert "pom.xml" in layout
+        assert "Detected project roots" in layout
+        # The nested dir should be identified as a project root
+        assert "abound-server" in layout
+
+    def test_multiple_project_roots(self, tmp_path: Path):
+        """Monorepo with multiple project roots."""
+        frontend = tmp_path / "frontend"
+        frontend.mkdir()
+        (frontend / "package.json").write_text("{}")
+        (frontend / "src").mkdir()
+
+        backend = tmp_path / "backend"
+        backend.mkdir()
+        (backend / "requirements.txt").write_text("fastapi")
+        (backend / "app").mkdir()
+
+        layout = scan_workspace_layout(str(tmp_path))
+        assert "frontend/" in layout
+        assert "backend/" in layout
+        assert "package.json" in layout
+        assert "requirements.txt" in layout
+
+    def test_excluded_dirs_skipped(self, tmp_path: Path):
+        """node_modules and .git should not appear in layout."""
+        (tmp_path / "node_modules").mkdir()
+        (tmp_path / "node_modules" / "lodash").mkdir()
+        (tmp_path / ".git").mkdir()
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "index.ts").write_text("// hi")
+
+        layout = scan_workspace_layout(str(tmp_path))
+        assert "node_modules" not in layout
+        assert ".git" not in layout
+        assert "src/" in layout
+
+    def test_empty_workspace(self, tmp_path: Path):
+        """Empty directory returns empty layout."""
+        layout = scan_workspace_layout(str(tmp_path))
+        # No project markers, minimal tree
+        assert "Detected project roots" not in layout
+
+    def test_nonexistent_path(self):
+        """Non-existent workspace returns empty string."""
+        layout = scan_workspace_layout("/nonexistent/path/xyz")
+        assert layout == ""
+
+    def test_max_entries_respected(self, tmp_path: Path):
+        """Layout is truncated when too many entries."""
+        for i in range(100):
+            (tmp_path / f"file_{i:03d}.txt").write_text(f"content {i}")
+
+        layout = scan_workspace_layout(str(tmp_path), max_entries=10)
+        assert "truncated" in layout
+
+
+class TestBuildSystemPrompt:
+    """Tests for build_system_prompt with workspace layout injection."""
+
+    def test_includes_workspace_path(self, tmp_path: Path):
+        prompt = build_system_prompt(str(tmp_path))
+        assert str(tmp_path) in prompt
+
+    def test_includes_layout_section(self, tmp_path: Path):
+        (tmp_path / "package.json").write_text("{}")
+        (tmp_path / "src").mkdir()
+
+        prompt = build_system_prompt(str(tmp_path))
+        assert "Directory layout" in prompt
+        assert "package.json" in prompt
+        assert "Orient & Plan" in prompt
+
+    def test_precomputed_layout(self, tmp_path: Path):
+        """Passing pre-computed layout skips scanning."""
+        prompt = build_system_prompt(str(tmp_path), workspace_layout="CUSTOM_LAYOUT_HERE")
+        assert "CUSTOM_LAYOUT_HERE" in prompt
+
+    def test_strategy_mentions_nested_dirs(self, tmp_path: Path):
+        prompt = build_system_prompt(str(tmp_path))
+        assert "nested" in prompt.lower() or "subdirector" in prompt.lower()

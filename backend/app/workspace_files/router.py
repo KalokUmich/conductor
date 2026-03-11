@@ -40,6 +40,15 @@ def _get_git_service() -> GitWorkspaceService:  # pragma: no cover
     return app.state.git_workspace_service
 
 
+def _guard_writable(room_id: str, svc: GitWorkspaceService) -> None:
+    """Raise 403 if the workspace is in local (read-only) mode."""
+    if svc.is_local_workspace(room_id):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Workspace is in local mode (read-only for remote users).",
+        )
+
+
 # Directories that VS Code auto-probes when a workspace folder is mounted.
 # Blocking access prevents the remote workspace from overriding local settings,
 # loading unknown tasks/launch configs, or triggering slow extension scans.
@@ -148,6 +157,7 @@ async def write_file_content(
     request: Request,
     svc: GitWorkspaceService = Depends(_get_git_service),
 ) -> dict:
+    _guard_writable(room_id, svc)
     resolved = _resolve(room_id, file_path, svc)
     resolved.parent.mkdir(parents=True, exist_ok=True)
     body = await request.body()
@@ -199,6 +209,7 @@ async def rename_file(
     body: RenameRequest,
     svc: GitWorkspaceService = Depends(_get_git_service),
 ) -> dict:
+    _guard_writable(room_id, svc)
     resolved = _resolve(room_id, file_path, svc)
     if not resolved.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")
@@ -221,6 +232,7 @@ async def create_directory(
     body: MkdirRequest,
     svc: GitWorkspaceService = Depends(_get_git_service),
 ) -> dict:
+    _guard_writable(room_id, svc)
     resolved = _resolve(room_id, file_path, svc)
     if resolved.exists():
         raise HTTPException(status.HTTP_409_CONFLICT, "Already exists")
@@ -239,6 +251,7 @@ async def delete_file(
     recursive: bool = False,
     svc: GitWorkspaceService = Depends(_get_git_service),
 ) -> dict:
+    _guard_writable(room_id, svc)
     resolved = _resolve(room_id, file_path, svc)
     if not resolved.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not found")

@@ -269,6 +269,7 @@ def mock_manager():
         return_value=(["develop", "main", "staging"], "main")
     )
     mgr.token_cache = None  # disabled by default in tests
+    mgr.is_local_workspace = MagicMock(return_value=False)
     return mgr
 
 

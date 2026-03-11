@@ -32,6 +32,7 @@ def client(tmp_worktree):
     """TestClient with a mocked GitWorkspaceService."""
     mock_svc = MagicMock()
     mock_svc.get_worktree_path.return_value = tmp_worktree
+    mock_svc.is_local_workspace.return_value = False
     app.dependency_overrides[_get_git_service] = lambda: mock_svc
     yield TestClient(app)
     app.dependency_overrides.pop(_get_git_service, None)
@@ -42,6 +43,7 @@ def client_no_workspace():
     """TestClient where workspace doesn't exist."""
     mock_svc = MagicMock()
     mock_svc.get_worktree_path.return_value = None
+    mock_svc.is_local_workspace.return_value = False
     app.dependency_overrides[_get_git_service] = lambda: mock_svc
     yield TestClient(app)
     app.dependency_overrides.pop(_get_git_service, None)

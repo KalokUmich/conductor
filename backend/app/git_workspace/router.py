@@ -17,6 +17,8 @@ from .schemas import (
     GitWorkspaceHealth,
     ListRemoteBranchesRequest,
     ListRemoteBranchesResponse,
+    LocalWorkspaceRequest,
+    LocalWorkspaceResult,
     SetupAndIndexRequest,
     SetupAndIndexResult,
     WorkspaceCommitRequest,
@@ -113,6 +115,40 @@ async def list_remote_branches(
         return ListRemoteBranchesResponse(branches=branches, default_branch=default)
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post("/workspaces/local", response_model=LocalWorkspaceResult)
+async def register_local_workspace(
+    req: LocalWorkspaceRequest,
+    svc: GitWorkspaceService = Depends(get_git_service),
+) -> LocalWorkspaceResult:
+    """Register a local filesystem folder as the workspace for a room.
+
+    This is the **Local Mode** — no git clone is performed.  The host's
+    local folder is used directly for code-intelligence tools.  Guests
+    joining this room get read-only access (cannot edit files).
+    """
+    try:
+        info = svc.register_local_workspace(req.room_id, req.local_path)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc),
+        ) from exc
+    return LocalWorkspaceResult(
+        room_id=req.room_id,
+        workspace=info,
+        message="Local workspace registered.",
+    )
+
+
+@router.delete("/workspaces/{room_id}/local")
+async def unregister_local_workspace(
+    room_id: str,
+    svc: GitWorkspaceService = Depends(get_git_service),
+) -> dict:
+    """Remove a local workspace registration (does NOT delete any files)."""
+    svc.unregister_local_workspace(room_id)
+    return {"status": "ok", "room_id": room_id}
 
 
 @router.post("/workspaces/setup-and-index", response_model=SetupAndIndexResult)
@@ -266,6 +302,8 @@ async def sync_workspace(
     svc: GitWorkspaceService = Depends(get_git_service),
 ) -> WorkspaceSyncResult:
     """Pull the latest changes from remote into the worktree."""
+    if svc.is_local_workspace(room_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Sync not available in local mode.")
     req.room_id = room_id
     return await svc.sync_workspace(req)
 
@@ -277,6 +315,8 @@ async def commit_workspace(
     svc: GitWorkspaceService = Depends(get_git_service),
 ) -> WorkspaceCommitResult:
     """Stage all changes and create a commit."""
+    if svc.is_local_workspace(room_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Commit not available in local mode.")
     req.room_id = room_id
     return await svc.commit_workspace(req)
 
@@ -288,6 +328,8 @@ async def push_workspace(
     svc: GitWorkspaceService = Depends(get_git_service),
 ) -> WorkspacePushResult:
     """Push the worktree branch to the remote."""
+    if svc.is_local_workspace(room_id):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Push not available in local mode.")
     req.room_id = room_id
     return await svc.push_workspace(req)
 

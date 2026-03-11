@@ -237,6 +237,40 @@ _PATTERNS: Dict[str, List[Tuple[str, re.Pattern]]] = {
         ("class",    re.compile(r"class\s+(\w+)\s*[\{<]", re.MULTILINE)),
         ("interface", re.compile(r"interface\s+(\w+)\s*[\{<]", re.MULTILINE)),
     ],
+    "java": [
+        # class / interface / enum / record / @interface
+        ("class",     re.compile(r"(?:public|private|protected|abstract|final|static)?\s*class\s+(\w+)\s*[\{<(]", re.MULTILINE)),
+        ("interface", re.compile(r"(?:public|private|protected)?\s*interface\s+(\w+)\s*[\{<]", re.MULTILINE)),
+        ("class",     re.compile(r"(?:public|private|protected)?\s*enum\s+(\w+)\s*[\{]", re.MULTILINE)),
+        ("class",     re.compile(r"(?:public|private|protected)?\s*record\s+(\w+)\s*[\(<]", re.MULTILINE)),
+        # methods: access-modifier [static] return-type name(
+        ("method",    re.compile(r"^\s+(?:public|private|protected)\s+(?:static\s+)?(?:synchronized\s+)?(?:final\s+)?(?:[\w<>\[\],\s]+?)\s+(\w+)\s*\(", re.MULTILINE)),
+    ],
+    "go": [
+        ("function", re.compile(r"^func\s+(\w+)\s*\(", re.MULTILINE)),
+        # method: func (receiver) Name(
+        ("method",   re.compile(r"^func\s+\([^)]+\)\s+(\w+)\s*\(", re.MULTILINE)),
+        ("class",    re.compile(r"^type\s+(\w+)\s+struct\s*\{", re.MULTILINE)),
+        ("interface", re.compile(r"^type\s+(\w+)\s+interface\s*\{", re.MULTILINE)),
+    ],
+    "rust": [
+        ("function", re.compile(r"(?:pub\s+)?(?:async\s+)?fn\s+(\w+)", re.MULTILINE)),
+        ("class",    re.compile(r"(?:pub\s+)?struct\s+(\w+)", re.MULTILINE)),
+        ("class",    re.compile(r"(?:pub\s+)?enum\s+(\w+)", re.MULTILINE)),
+        ("interface", re.compile(r"(?:pub\s+)?trait\s+(\w+)", re.MULTILINE)),
+        ("class",    re.compile(r"impl(?:<[^>]+>)?\s+(\w+)", re.MULTILINE)),
+    ],
+    "c": [
+        # function: return_type name(  (at start of line, not indented much)
+        ("function", re.compile(r"^(?:static\s+)?(?:inline\s+)?(?:const\s+)?(?:unsigned\s+)?(?:struct\s+)?\w[\w*\s]+?\s+(\w+)\s*\([^;]*$", re.MULTILINE)),
+        ("class",    re.compile(r"(?:typedef\s+)?struct\s+(\w+)\s*\{", re.MULTILINE)),
+        ("class",    re.compile(r"(?:typedef\s+)?enum\s+(\w+)\s*\{", re.MULTILINE)),
+    ],
+    "cpp": [
+        ("function", re.compile(r"^(?:static\s+)?(?:virtual\s+)?(?:inline\s+)?(?:const\s+)?[\w:*&<>\s]+?\s+(\w+)\s*\([^;]*$", re.MULTILINE)),
+        ("class",    re.compile(r"(?:class|struct)\s+(\w+)\s*[\{:]", re.MULTILINE)),
+        ("interface", re.compile(r"namespace\s+(\w+)\s*\{", re.MULTILINE)),
+    ],
 }
 
 # Reference pattern: identifiers that look like they reference other symbols

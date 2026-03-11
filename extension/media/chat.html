@@ -215,6 +215,47 @@
         .ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
         .ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
 
+        /* --- Explain progress indicator --- */
+        @keyframes explainProgressPulse {
+            0%, 100% { opacity: 0.7; }
+            50% { opacity: 1; }
+        }
+        #explain-thinking-indicator {
+            animation: explainProgressPulse 2s ease-in-out infinite;
+        }
+        #explain-thinking-indicator .step-list {
+            max-height: 120px;
+            overflow-y: auto;
+        }
+
+        /* --- Collapsible AI explanation --- */
+        .explain-collapse-toggle {
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        }
+        .explain-collapse-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+        .explain-body {
+            transition: max-height 0.3s ease, opacity 0.2s ease;
+            overflow: hidden;
+        }
+        .explain-body.collapsed {
+            max-height: 0 !important;
+            opacity: 0;
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
+        }
+
+        /* --- Collapsible thinking process --- */
+        .thinking-collapse-toggle {
+            transition: transform 0.2s ease;
+            cursor: pointer;
+        }
+        .thinking-collapse-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
         /* --- Animated gradient border for AI cards --- */
         @keyframes borderGlow {
             0%, 100% { border-color: rgba(139,92,246,0.3); }
@@ -860,14 +901,34 @@
             <!-- Setup workspace + index button (shown when session is active, before workspace exists) -->
             <div id="setup-index-row" class="hidden px-3 pt-1 flex items-center justify-between">
                 <span class="text-[0.6rem] text-gray-500">Workspace</span>
-                <button id="btn-setup-index" class="flex items-center gap-1 text-[0.6rem] text-violet-400/80 hover:text-violet-300 transition-colors" title="Clone repo, create branch, and index code">
+                <div class="flex items-center gap-2">
+                    <button id="btn-setup-local" class="flex items-center gap-1 text-[0.6rem] text-emerald-400/80 hover:text-emerald-300 transition-colors" title="Use current VS Code workspace (local mode, read-only for guests)">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"/>
+                        </svg>
+                        Use Local
+                    </button>
+                    <span class="text-gray-700">|</span>
+                    <button id="btn-setup-index" class="flex items-center gap-1 text-[0.6rem] text-violet-400/80 hover:text-violet-300 transition-colors" title="Clone repo, create branch, and index code">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
+                            <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
+                            <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
+                        </svg>
+                        Git Repo
+                    </button>
+                </div>
+            </div>
+
+            <!-- Local mode indicator (shown after local workspace setup completes) -->
+            <div id="local-mode-row" class="hidden px-3 pt-1 flex items-center justify-between">
+                <span class="text-[0.6rem] text-gray-500">Workspace</span>
+                <span class="flex items-center gap-1 text-[0.6rem] text-emerald-400/80">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
-                        <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
-                        <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
+                        <path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"/>
                     </svg>
-                    Setup & Index
-                </button>
+                    Local Mode (read-only for guests)
+                </span>
             </div>
 
             <!-- Open remote workspace in new VS Code window (shown after setup completes) -->
@@ -1775,9 +1836,13 @@
         let session = window.initialSession || { roomId: null, hostId: null, userId: null, createdAt: null, backendUrl: 'http://localhost:8000', displayName: 'Host', leadId: null };
         console.log('[WebView] Session initialized:', session.roomId ? `roomId=${session.roomId}, userId=${session.userId}` : 'no session');
 
-        // Conductor FSM state (injected by extension)
-        let conductorState = window.initialConductorState || 'Idle';
-        console.log('[WebView] Conductor state:', conductorState);
+        // Conductor FSM state (injected by extension).
+        // Intentionally initialised to 'Idle' (not the injected value) so that
+        // the very first render() call always sees a state *transition*, which
+        // guarantees connectWebSocket() fires even when the persisted state is
+        // already 'Hosting' or 'Joined' (e.g. after a production window reload).
+        let conductorState = 'Idle';
+        console.log('[WebView] Conductor initial state (injected):', window.initialConductorState || 'Idle');
 
         // Users map: userId -> user info
         const usersMap = new Map();
@@ -2759,7 +2824,23 @@
                 case 'setupAndIndexComplete':
                     handleSetupAndIndexComplete(message);
                     break;
+                case 'explainProgress':
+                    _updateExplainThinking(message);
+                    break;
+                case 'askAIProgress':
+                    _updateAskAIThinking(message);
+                    break;
+                case 'askAIDone':
+                    _removeAskAIThinking();
+                    if (message.error) {
+                        renderSystemMessage('⚠️ AI: ' + message.error);
+                    }
+                    break;
+                case 'codeExplanationReady':
+                    _removeExplainThinking();
+                    break;
                 case 'explainCodeFromSnippetDone':
+                    _removeExplainThinking();
                     // Reset all in-flight snippet explain buttons
                     document.querySelectorAll('.snippet-explain-btn[data-loading="true"]').forEach(btn => {
                         btn.removeAttribute('data-loading');
@@ -2818,6 +2899,7 @@
                         document.getElementById('setup-index-row')?.classList.add('hidden');
                         document.getElementById('rebuild-index-row')?.classList.add('hidden');
                         document.getElementById('open-workspace-row')?.classList.add('hidden');
+                        document.getElementById('local-mode-row')?.classList.add('hidden');
                         // Hide scanning overlay when session ends
                         document.getElementById('scanning-overlay')?.classList.add('hidden');
                         document.getElementById('index-progress-bar')?.classList.add('hidden');
@@ -3938,10 +4020,310 @@
         }
 
         // ============================================================
+        // Explain progress (thinking indicator)
+        // ============================================================
+
+        const _explainSteps = [];
+        let _explainCurrentAction = '';
+
+        function _updateExplainThinking(event) {
+            if (event.phase === 'complete') {
+                _removeExplainThinking();
+                return;
+            }
+
+            // Track completed steps for the step list
+            if (event.kind === 'tool_result' && event.detail) {
+                _explainSteps.push({
+                    tool: event.detail.tool || '',
+                    summary: event.message || 'done',
+                    success: event.detail.success !== false,
+                });
+            }
+
+            // Determine current action text
+            if (event.kind === 'tool_call') {
+                _explainCurrentAction = event.message || 'Working...';
+            } else if (event.kind === 'thinking') {
+                _explainCurrentAction = event.message || 'Thinking...';
+            } else if (event.phase === 'pipeline') {
+                _explainCurrentAction = event.message || 'Preparing...';
+            } else if (event.kind === 'start') {
+                _explainCurrentAction = event.message || 'Starting...';
+            }
+
+            let el = document.getElementById('explain-thinking-indicator');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'explain-thinking-indicator';
+                el.className = 'flex justify-start gap-2 mt-2';
+                messagesContainer.appendChild(el);
+            }
+
+            // Build completed steps HTML (show last 4)
+            const recentSteps = _explainSteps.slice(-4);
+            const stepsHtml = recentSteps.map(s => {
+                const icon = s.success ? '\u2713' : '\u2717';
+                const cls = s.success ? 'text-emerald-500' : 'text-red-400';
+                return `<div class="flex items-center gap-1.5 text-[0.6rem] text-gray-500"><span class="${cls}">${icon}</span><span class="truncate">${escapeHtml(s.summary)}</span></div>`;
+            }).join('');
+
+            const iterInfo = (event.detail && event.detail.iteration)
+                ? `<span class="text-[0.55rem] text-gray-600 ml-auto">step ${event.detail.iteration}</span>`
+                : '';
+
+            el.innerHTML = `
+                <div class="w-7 h-7 bg-emerald-700 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
+                    <svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </div>
+                <div class="max-w-[85%] min-w-0">
+                    <div class="bg-emerald-950/20 rounded-lg border border-emerald-800/30 px-3 py-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-emerald-300 font-medium">AI is analyzing...</span>
+                            ${iterInfo}
+                        </div>
+                        <div class="text-[0.65rem] text-emerald-400/80 mt-1 truncate">${escapeHtml(_explainCurrentAction)}</div>
+                        ${stepsHtml ? `<div class="step-list mt-1.5 pt-1.5 border-t border-emerald-900/30">${stepsHtml}</div>` : ''}
+                    </div>
+                </div>`;
+
+            smartScroll(false);
+        }
+
+        function _removeExplainThinking() {
+            const el = document.getElementById('explain-thinking-indicator');
+            if (el) {
+                // Fade out then remove
+                el.style.transition = 'opacity 0.3s ease';
+                el.style.opacity = '0';
+                setTimeout(() => el.remove(), 300);
+            }
+            _explainSteps.length = 0;
+            _explainCurrentAction = '';
+        }
+
+        // ============================================================
+        // Ask AI thinking indicator + answer renderer
+        // ============================================================
+
+        let _askAISteps = [];
+        let _askAICurrentAction = '';
+
+        function _updateAskAIThinking(event) {
+            if (event.phase === 'complete') {
+                _removeAskAIThinking();
+                return;
+            }
+
+            if (event.kind === 'tool_result' && event.detail) {
+                _askAISteps.push({
+                    tool: event.detail.tool || '',
+                    summary: event.message || 'done',
+                    success: event.detail.success !== false,
+                });
+            }
+
+            if (event.kind === 'tool_call') {
+                _askAICurrentAction = event.message || 'Working...';
+            } else if (event.kind === 'thinking') {
+                _askAICurrentAction = event.message || 'Thinking...';
+            }
+
+            let el = document.getElementById('ask-ai-thinking-indicator');
+            if (!el) {
+                el = document.createElement('div');
+                el.id = 'ask-ai-thinking-indicator';
+                el.className = 'flex justify-start gap-2 mt-2';
+                messagesContainer.appendChild(el);
+            }
+
+            const recentSteps = _askAISteps.slice(-4);
+            const stepsHtml = recentSteps.map(s => {
+                const icon = s.success ? '\u2713' : '\u2717';
+                const cls = s.success ? 'text-blue-400' : 'text-red-400';
+                return '<div class="flex items-center gap-1.5 text-[0.6rem] text-gray-500"><span class="' + cls + '">' + icon + '</span><span class="truncate">' + escapeHtml(s.summary) + '</span></div>';
+            }).join('');
+
+            const iterInfo = (event.detail && event.detail.iteration)
+                ? '<span class="text-[0.55rem] text-gray-600 ml-auto">step ' + event.detail.iteration + '</span>'
+                : '';
+
+            el.innerHTML = `
+                <div class="w-7 h-7 bg-blue-700 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
+                    <svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                </div>
+                <div class="max-w-[85%] min-w-0">
+                    <div class="bg-blue-950/20 rounded-lg border border-blue-800/30 px-3 py-2">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-blue-300 font-medium">AI is researching...</span>
+                            ${iterInfo}
+                        </div>
+                        <div class="text-[0.65rem] text-blue-400/80 mt-1 truncate">${escapeHtml(_askAICurrentAction)}</div>
+                        ${stepsHtml ? '<div class="step-list mt-1.5 pt-1.5 border-t border-blue-900/30">' + stepsHtml + '</div>' : ''}
+                    </div>
+                </div>`;
+
+            smartScroll(false);
+        }
+
+        function _removeAskAIThinking() {
+            const el = document.getElementById('ask-ai-thinking-indicator');
+            if (el) {
+                el.style.transition = 'opacity 0.3s ease';
+                el.style.opacity = '0';
+                setTimeout(() => el.remove(), 300);
+            }
+            _askAISteps.length = 0;
+            _askAICurrentAction = '';
+        }
+
+        function _buildThinkingStepsHtml(steps) {
+            if (!steps || !steps.length) return '';
+            const stepsHtml = steps.map(s => {
+                if (s.kind === 'thinking') {
+                    const text = (s.text || '').length > 150 ? s.text.slice(0, 150) + '...' : (s.text || '');
+                    return '<div class="flex items-start gap-1.5 text-[0.65rem] text-gray-400 py-0.5">'
+                        + '<span class="text-purple-400 flex-shrink-0 mt-0.5">💭</span>'
+                        + '<span class="break-words">' + escapeHtml(text) + '</span>'
+                        + '</div>';
+                } else if (s.kind === 'tool_call') {
+                    const params = s.params || {};
+                    let detail = '';
+                    if (params.pattern) detail = params.pattern;
+                    else if (params.path || params.file) detail = params.path || params.file;
+                    else if (params.name || params.symbol) detail = params.name || params.symbol;
+                    if (detail && detail.length > 60) detail = detail.slice(0, 60) + '...';
+                    return '<div class="flex items-center gap-1.5 text-[0.65rem] text-gray-400 py-0.5">'
+                        + '<span class="text-blue-400 flex-shrink-0">▶</span>'
+                        + '<span class="font-mono text-blue-300">' + escapeHtml(s.tool || '') + '</span>'
+                        + (detail ? '<span class="text-gray-500 truncate">(' + escapeHtml(detail) + ')</span>' : '')
+                        + '</div>';
+                } else if (s.kind === 'tool_result') {
+                    const icon = s.success !== false ? '✓' : '✗';
+                    const cls = s.success !== false ? 'text-emerald-400' : 'text-red-400';
+                    return '<div class="flex items-center gap-1.5 text-[0.65rem] text-gray-400 py-0.5">'
+                        + '<span class="' + cls + ' flex-shrink-0">' + icon + '</span>'
+                        + '<span class="font-mono text-gray-500">' + escapeHtml(s.tool || '') + '</span>'
+                        + '<span class="text-gray-600">→ ' + escapeHtml(s.summary || 'ok') + '</span>'
+                        + '</div>';
+                }
+                return '';
+            }).join('');
+            return stepsHtml;
+        }
+
+        function renderAiAnswerMessage(msg) {
+            _removeAskAIThinking();
+            const aiData = msg.aiData || {};
+            const isGrouped = shouldGroupMessage(msg);
+            lastMessageUserId = msg.userId;
+            lastMessageTime = (msg.ts || 0) * 1000;
+
+            if (needsDateSeparator(msg)) renderDateSeparator(new Date(msg.ts * 1000));
+
+            const modelMatch = (msg.displayName || '').match(/\((.+)\)/);
+            const modelLabel = modelMatch ? abbreviateModelId(modelMatch[1]) : '';
+            const query = aiData.query || '';
+            const thinkingSteps = aiData.thinking_steps || [];
+            const collapseBtnId = `answer-collapse-${msg.id || Date.now()}`;
+            const bodyId = `answer-body-${msg.id || Date.now()}`;
+            const thinkingBtnId = `answer-thinking-btn-${msg.id || Date.now()}`;
+            const thinkingBodyId = `answer-thinking-body-${msg.id || Date.now()}`;
+
+            // Build thinking steps section (collapsed by default)
+            const stepsHtml = _buildThinkingStepsHtml(thinkingSteps);
+            const thinkingSection = stepsHtml ? `
+                <div class="border-b border-blue-900/30">
+                    <div class="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer select-none hover:bg-blue-900/10" id="${thinkingBtnId}">
+                        <svg class="thinking-collapse-toggle h-2.5 w-2.5 text-gray-500 flex-shrink-0 transition-transform collapsed" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                        </svg>
+                        <span class="text-[0.65rem] text-gray-500">Thinking process</span>
+                        <span class="text-[0.55rem] text-gray-600">(${thinkingSteps.length} steps)</span>
+                    </div>
+                    <div id="${thinkingBodyId}" class="px-3 pb-2 max-h-64 overflow-y-auto collapsed" style="display:none;">
+                        ${stepsHtml}
+                    </div>
+                </div>` : '';
+
+            const div = document.createElement('div');
+            div.setAttribute('data-message-id', msg.id || '');
+            div.setAttribute('data-timestamp', msg.ts || '');
+            div.className = `flex justify-start gap-2 ${isGrouped ? 'mt-1' : 'mt-2'}`;
+            div.innerHTML = `
+                <div class="w-7 h-7 bg-blue-700 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">AI</div>
+                <div class="max-w-[90%] min-w-0">
+                    <div class="bg-blue-950/30 rounded-lg overflow-hidden border border-blue-800/40 shadow-lg">
+                        <div class="flex items-center gap-2 px-3 py-2 bg-blue-900/20 border-b border-blue-800/40 cursor-pointer select-none" id="${collapseBtnId}">
+                            <svg class="explain-collapse-toggle h-3 w-3 text-blue-500 flex-shrink-0 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                            <span class="text-blue-400 text-sm">🤖</span>
+                            <span class="text-xs font-semibold text-blue-300">AI Answer</span>
+                            ${modelLabel ? '<span class="text-[0.6rem] text-blue-600 font-mono">&middot; ' + escapeHtml(modelLabel) + '</span>' : ''}
+                            ${query ? '<span class="ml-auto text-[0.6rem] text-gray-500 truncate max-w-[200px]" title="' + escapeHtml(query) + '">' + escapeHtml(query.length > 40 ? query.slice(0, 40) + '...' : query) + '</span>' : ''}
+                        </div>
+                        <div id="${bodyId}" class="explain-body">
+                            ${thinkingSection}
+                            <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed break-words">${renderExplanationMarkdown(msg.content || '')}</div>
+                        </div>
+                    </div>
+                    <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
+                </div>`;
+
+            messagesContainer.appendChild(div);
+
+            // Collapse/expand toggle for the main body
+            const collapseBtn = document.getElementById(collapseBtnId);
+            const bodyEl = document.getElementById(bodyId);
+            if (collapseBtn && bodyEl) {
+                collapseBtn.addEventListener('click', () => {
+                    const chevron = collapseBtn.querySelector('.explain-collapse-toggle');
+                    const isCollapsed = bodyEl.classList.contains('collapsed');
+                    if (isCollapsed) {
+                        bodyEl.classList.remove('collapsed');
+                        chevron?.classList.remove('collapsed');
+                    } else {
+                        bodyEl.classList.add('collapsed');
+                        chevron?.classList.add('collapsed');
+                    }
+                });
+            }
+
+            // Collapse/expand toggle for thinking steps
+            const thinkingBtn = document.getElementById(thinkingBtnId);
+            const thinkingBody = document.getElementById(thinkingBodyId);
+            if (thinkingBtn && thinkingBody) {
+                thinkingBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const chevron = thinkingBtn.querySelector('.thinking-collapse-toggle');
+                    const isHidden = thinkingBody.style.display === 'none';
+                    if (isHidden) {
+                        thinkingBody.style.display = 'block';
+                        chevron?.classList.remove('collapsed');
+                    } else {
+                        thinkingBody.style.display = 'none';
+                        chevron?.classList.add('collapsed');
+                    }
+                });
+            }
+
+            smartScroll(true);
+        }
+
+        // ============================================================
         // renderAiExplanationMessage
         // ============================================================
 
         function renderAiExplanationMessage(msg) {
+            // Remove thinking indicator when the explanation arrives
+            _removeExplainThinking();
             const aiData = msg.aiData || {};
             const isOwnMessage = msg.userId === session.userId;
             const isGrouped = shouldGroupMessage(msg);
@@ -3956,6 +4338,8 @@
             const endLine = aiData.endLine || startLine;
             const lineInfo = startLine === endLine ? `L${startLine}` : `L${startLine}-${endLine}`;
             const navigateBtnId = `exp-nav-${msg.id || Date.now()}`;
+            const collapseBtnId = `exp-collapse-${msg.id || Date.now()}`;
+            const bodyId = `exp-body-${msg.id || Date.now()}`;
 
             // Extract model name from displayName format "AI (model.id)"
             const modelMatch = (msg.displayName || '').match(/\((.+)\)/);
@@ -3969,23 +4353,48 @@
                 <div class="w-7 h-7 bg-emerald-700 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">AI</div>
                 <div class="max-w-[90%] min-w-0">
                     <div class="bg-emerald-950/30 rounded-lg overflow-hidden border border-emerald-800/40 shadow-lg">
-                        <div class="flex items-center gap-2 px-3 py-2 bg-emerald-900/20 border-b border-emerald-800/40">
+                        <div class="flex items-center gap-2 px-3 py-2 bg-emerald-900/20 border-b border-emerald-800/40 cursor-pointer select-none" id="${collapseBtnId}">
+                            <svg class="explain-collapse-toggle h-3 w-3 text-emerald-500 flex-shrink-0 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
                             <span class="text-emerald-400 text-sm">💡</span>
                             <span class="text-xs font-semibold text-emerald-300">Code Explanation</span>
                             ${modelLabel ? `<span class="text-[0.6rem] text-emerald-600 font-mono">&middot; ${escapeHtml(modelLabel)}</span>` : ''}
                             ${relativePath ? `<button id="${navigateBtnId}" class="ml-auto text-[0.65rem] text-blue-400 hover:text-blue-300 font-mono truncate max-w-[140px]" title="Navigate to code">${escapeHtml(relativePath)} ${lineInfo}</button>` : ''}
                         </div>
-                        ${code ? `<pre class="px-3 pt-2 pb-1 text-xs font-mono text-gray-300 overflow-x-auto max-h-28 overflow-y-auto border-b border-emerald-900/20 bg-black/20">${escapeHtml(code)}</pre>` : ''}
-                        <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed break-words">${renderStructuredOrMarkdown(aiData, msg.content || '')}</div>
+                        <div id="${bodyId}" class="explain-body">
+                            ${code ? `<pre class="px-3 pt-2 pb-1 text-xs font-mono text-gray-300 overflow-x-auto max-h-28 overflow-y-auto border-b border-emerald-900/20 bg-black/20">${escapeHtml(code)}</pre>` : ''}
+                            <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed break-words">${renderStructuredOrMarkdown(aiData, msg.content || '')}</div>
+                        </div>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
                 </div>`;
 
             messagesContainer.appendChild(div);
 
+            // Collapse/expand toggle
+            const collapseBtn = document.getElementById(collapseBtnId);
+            const bodyEl = document.getElementById(bodyId);
+            if (collapseBtn && bodyEl) {
+                collapseBtn.addEventListener('click', (e) => {
+                    // Don't toggle if the navigate button was clicked
+                    if (e.target.closest('#' + navigateBtnId)) return;
+                    const chevron = collapseBtn.querySelector('.explain-collapse-toggle');
+                    const isCollapsed = bodyEl.classList.contains('collapsed');
+                    if (isCollapsed) {
+                        bodyEl.classList.remove('collapsed');
+                        chevron?.classList.remove('collapsed');
+                    } else {
+                        bodyEl.classList.add('collapsed');
+                        chevron?.classList.add('collapsed');
+                    }
+                });
+            }
+
             const navBtn = document.getElementById(navigateBtnId);
             if (navBtn && relativePath) {
-                navBtn.addEventListener('click', () => {
+                navBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
                     vscode.postMessage({ command: 'navigateToCode', relativePath, startLine, endLine });
                 });
             }
@@ -5056,6 +5465,11 @@
                             renderAiExplanationMessage(data);
                             updateLastMessageTimestamp(data.ts);
                         }
+                    } else if (data.type === 'ai_answer') {
+                        if (!isDuplicateMessage(data.id)) {
+                            renderAiAnswerMessage(data);
+                            updateLastMessageTimestamp(data.ts);
+                        }
                     } else if (data.type === 'role_restored') {
                         session.sessionRole = data.role;
                         session.leadId = data.leadId || session.leadId;
@@ -5186,6 +5600,9 @@
                 typingTimeout = null;
             }
 
+            // Detect @AI prefix — trigger Ask AI flow
+            const aiMatch = content.match(/^@AI\s+(.+)/is);
+
             // Build message with optional code snippet
             // SECURITY: userId and role are assigned by backend, we only send content
             const message = {
@@ -5207,6 +5624,17 @@
             // Clear code snippet after sending
             if (hasSnippet) {
                 clearCodeSnippet();
+            }
+
+            // If @AI was detected, ask the AI agent
+            if (aiMatch) {
+                const query = aiMatch[1].trim();
+                console.log('[WebView] @AI detected, sending askAI command:', query);
+                vscode.postMessage({
+                    command: 'askAI',
+                    roomId: session.roomId,
+                    query: query,
+                });
             }
         }
 
@@ -5790,6 +6218,7 @@
 
         const setupIndexRow       = document.getElementById('setup-index-row');
         const btnSetupIndex       = document.getElementById('btn-setup-index');
+        const btnSetupLocal       = document.getElementById('btn-setup-local');
         const setupIndexModal     = document.getElementById('setup-index-modal');
         const btnCloseSetupModal  = document.getElementById('btn-close-setup-modal');
         const btnSetupCancel      = document.getElementById('btn-setup-cancel');
@@ -5804,6 +6233,13 @@
         btnSetupIndex.addEventListener('click', () => {
             setupError.classList.add('hidden');
             setupIndexModal.classList.remove('hidden');
+        });
+
+        // "Use Local" button — register current VS Code workspace with backend
+        btnSetupLocal.addEventListener('click', () => {
+            btnSetupLocal.disabled = true;
+            btnSetupLocal.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Registering\u2026`;
+            vscode.postMessage({ command: 'setupLocalWorkspace' });
         });
 
         // "Open Workspace" button — opens the conductor:// workspace in a new VS Code window
@@ -5922,22 +6358,30 @@
             // Hide scanning overlay
             document.getElementById('scanning-overlay')?.classList.add('hidden');
 
-            // Restore button
+            // Restore buttons
             btnSetupIndex.disabled = false;
-            btnSetupIndex.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg> Setup & Index`;
+            btnSetupIndex.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg> Git Repo`;
+            btnSetupLocal.disabled = false;
+            btnSetupLocal.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z" clip-rule="evenodd"/></svg> Use Local`;
 
             if (message.success) {
                 _workspaceSetupDone = true;
                 setupIndexRow.classList.add('hidden');
-                showToast(`Workspace ready: ${message.filesIndexed} files, ${message.chunksIndexed} chunks indexed`, 'success');
 
-                // Show "Open Workspace" button
-                if (message.roomId) {
-                    const openWsRow = document.getElementById('open-workspace-row');
-                    const openWsBtn = document.getElementById('btn-open-workspace');
-                    if (openWsRow) openWsRow.classList.remove('hidden');
-                    if (openWsBtn) {
-                        openWsBtn.dataset.roomId = message.roomId;
+                if (message.isLocal) {
+                    // Local mode — show the local-mode indicator
+                    document.getElementById('local-mode-row')?.classList.remove('hidden');
+                    showToast('Local workspace registered — AI tools ready', 'success');
+                } else {
+                    // Git mode — show "Open Workspace" button
+                    showToast(`Workspace ready: ${message.filesIndexed || 0} files, ${message.chunksIndexed || 0} chunks indexed`, 'success');
+                    if (message.roomId) {
+                        const openWsRow = document.getElementById('open-workspace-row');
+                        const openWsBtn = document.getElementById('btn-open-workspace');
+                        if (openWsRow) openWsRow.classList.remove('hidden');
+                        if (openWsBtn) {
+                            openWsBtn.dataset.roomId = message.roomId;
+                        }
                     }
                 }
             } else {
@@ -7695,8 +8139,12 @@
 
         vscode.postMessage({ command: 'getAiStatus' });
 
-        // Initialize UI from the current FSM state
-        render(conductorState, null);
+        // Initialize UI from the current FSM state.
+        // Pass window.initialConductorState directly so render() sees the real
+        // target state, while the global `conductorState` sentinel ('Idle') acts
+        // as the "previous state" — ensuring the entering-chat branch fires and
+        // connectWebSocket() is called even when restoring a Hosting/Joined session.
+        render(window.initialConductorState || 'Idle', null);
 
         // Request latest conductor state from extension (in case it changed since HTML was built)
         vscode.postMessage({ command: 'getConductorState' });

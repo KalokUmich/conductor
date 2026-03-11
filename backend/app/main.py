@@ -109,9 +109,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Bedrock Model Catalog ----
     try:
         _catalog_config = get_config()
-        bedrock_region = _catalog_config.ai_providers.aws_bedrock.region or "eu-west-2"
+        _bdr = _catalog_config.ai_providers.aws_bedrock
+        bedrock_region = _bdr.region or "eu-west-2"
         from .langextract.catalog import BedrockCatalog
-        catalog = BedrockCatalog(region=bedrock_region)
+        catalog = BedrockCatalog(
+            region=bedrock_region,
+            access_key_id=_bdr.access_key_id or None,
+            secret_access_key=_bdr.secret_access_key or None,
+            session_token=_bdr.session_token or None,
+        )
         catalog.refresh()
         app.state.bedrock_catalog = catalog
         logger.info("Bedrock catalog: %d models in %s", len(catalog.get_all_models()), bedrock_region)

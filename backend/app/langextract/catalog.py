@@ -49,8 +49,17 @@ class BedrockModelInfo:
 class BedrockCatalog:
     """Dynamic model catalog populated from Bedrock APIs at startup."""
 
-    def __init__(self, region: str = "eu-west-2") -> None:
+    def __init__(
+        self,
+        region: str = "eu-west-2",
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
+    ) -> None:
         self.region = region
+        self._access_key_id = access_key_id
+        self._secret_access_key = secret_access_key
+        self._session_token = session_token
         self._models: list[BedrockModelInfo] = []
         self._by_vendor: dict[str, list[BedrockModelInfo]] = {}
         self._id_to_info: dict[str, BedrockModelInfo] = {}
@@ -65,7 +74,14 @@ class BedrockCatalog:
            - Only INFERENCE_PROFILE → check if a profile exists → use profile ID
            - Neither → skip
         """
-        bedrock = boto3.client("bedrock", region_name=self.region)
+        kwargs: dict = {"region_name": self.region}
+        if self._access_key_id:
+            kwargs["aws_access_key_id"] = self._access_key_id
+        if self._secret_access_key:
+            kwargs["aws_secret_access_key"] = self._secret_access_key
+        if self._session_token:
+            kwargs["aws_session_token"] = self._session_token
+        bedrock = boto3.client("bedrock", **kwargs)
 
         # 1. Foundation models
         fm_response = bedrock.list_foundation_models()

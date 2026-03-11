@@ -76,8 +76,8 @@ backend/
 ├── requirements.txt
 └── tests/
     ├── conftest.py                  # Centralized stubs (cocoindex, litellm, etc.)
-    ├── test_code_tools.py           # 52 tests — all 13 code tools + dispatcher
-    ├── test_agent_loop.py           # 21 tests — agent loop + message format conversion
+    ├── test_code_tools.py           # 67 tests — all 18 code tools + dispatcher
+    ├── test_agent_loop.py           # 32 tests — agent loop + message format + workspace layout
     ├── test_langextract.py          # 57 tests — Bedrock provider, catalog, service, router
     ├── test_repo_graph.py           # 72 tests — parser + graph + service
     ├── test_config_new.py           # 60+ tests — config + secrets + env vars
@@ -125,7 +125,7 @@ AgentLoopService.run(query, workspace_path)
 AgentResult (answer + context_chunks)
 ```
 
-**13 code tools** in `code_tools/tools.py`:
+**18 code tools** in `code_tools/tools.py`:
 
 | Tool | Description |
 |------|-------------|
@@ -142,6 +142,11 @@ AgentResult (answer + context_chunks)
 | `ast_search` | Structural AST search via ast-grep (`$VAR`, `$$$MULTI` patterns) |
 | `get_callees` | Functions/methods called within a specific function body |
 | `get_callers` | Functions/methods that call a given function (cross-file) |
+| `git_blame` | Per-line authorship with commit hash, author, date |
+| `git_show` | Full commit details (message + diff) |
+| `find_tests` | Find test functions covering a given function/class |
+| `test_outline` | Test file structure with mocks, assertions, fixtures |
+| `trace_variable` | Data flow tracing: aliases, arg→param mapping, sink/source detection |
 
 **AI Provider `chat_with_tools()`** — implemented in all 3 providers:
 - `ClaudeBedrockProvider` — Bedrock Converse API `toolConfig`
@@ -280,20 +285,28 @@ conductor.enableWorkspace=true
 
 ## Recent Changes
 
-- **Agentic Code Intelligence** — replaced RAG pipeline (CocoIndex + embeddings + reranking) with LLM agent loop + 13 code tools. The agent iteratively navigates code to answer questions.
-- **Code Tools** (`code_tools/`) — 13 tool implementations including ast-grep structural search, function-level call graph (get_callers/get_callees), plus the original grep, read_file, list_files, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff
+- **Agentic Code Intelligence** — replaced RAG pipeline (CocoIndex + embeddings + reranking) with LLM agent loop + 18 code tools. The agent iteratively navigates code to answer questions.
+- **Code Tools** (`code_tools/`) — 18 tool implementations including data flow tracing, git semantic analysis, test association, ast-grep structural search, and function-level call graph
+- **Data Flow Tracing** (`trace_variable`) — tracks a variable across function boundaries: alias detection (transitive), argument→parameter mapping via callee resolution, sink patterns (ORM `.filter()`, SQL `execute()`, JPA `findBy*()`, HTTP body, return), source patterns (HTTP request, annotations, config, DB result). Agent chains hops to trace e.g. `loan_id` from HTTP request to SQL WHERE clause.
+- **Git Semantic Tools** — `git_blame` (per-line authorship) + `git_show` (full commit details with diff) for understanding why code was written
+- **Test Association Tools** — `find_tests` (find tests for a function/class) + `test_outline` (test structure with mocks, assertions, fixtures)
+- **Workspace Reconnaissance** — auto-scan workspace directory layout + detect project markers (pom.xml, package.json, go.mod, etc.) before first LLM call, so agent knows project structure from iteration 1
 - **ast-grep Integration** — structural AST search via ast-grep CLI, supports pattern variables (`$VAR`, `$$$MULTI`), auto-detects language from file extension, meta-variable extraction
 - **Function-Level Call Graph** — `get_callees` finds what a function calls; `get_callers` finds who calls a function. Works with tree-sitter AST and regex fallback.
+- **Multi-Language Parser Fallback** — regex-based symbol extraction for Java, Go, Rust, C, C++ when tree-sitter is unavailable
 - **LangExtract Multi-Vendor Bedrock** (`langextract/`) — `BedrockLanguageModel` provider supports ALL Bedrock models (Claude, Amazon Nova, Llama, Mistral, DeepSeek, Qwen, etc.) via the unified Converse API. `BedrockCatalog` dynamically discovers available models at startup via `list_foundation_models()` + `list_inference_profiles()`, handles `eu.` inference profiles for cross-region models, groups by vendor. `GET /api/langextract/models` endpoint for UI model selection. Backwards-compatible `ClaudeLanguageModel` alias preserved.
-- **Agent Loop** (`agent_loop/`) — `AgentLoopService` drives the LLM loop, dispatches tool calls, collects context chunks
+- **Agent Loop** (`agent_loop/`) — `AgentLoopService` drives the LLM loop, dispatches tool calls, collects context chunks; accumulated-text fallback for empty answers
+- **SSE Streaming** — real-time progress for both `/query/stream` and `/explain-rich/stream` with live tool call progress in the WebView
+- **Collapsible AI Explanations** — explanation cards in chat can be collapsed/expanded
 - **`chat_with_tools()`** — added to all 3 AI providers (Bedrock Converse, Anthropic Messages, OpenAI Chat Completions) for native tool use
 - **`POST /api/context/query`** — new endpoint replacing the old hybrid retrieval context endpoint
 - **RepoMap** — tree-sitter + networkx graph + PageRank (still used by find_symbol, file_outline, dependency tools)
-- 130+ new test cases across code tools, agent loop, and langextract
+- 200+ test cases across code tools, agent loop, repo graph, and langextract
 
 ## What's Next
 
 See [ROADMAP.md](ROADMAP.md) for planned features. Current focus:
+- Precise static taint analysis (Phase C — long-term R&D, see ROADMAP 5.5.4)
 - Model B delegate authentication
 - Conflict resolution for concurrent edits
 - Enterprise features (room access control, audit export)

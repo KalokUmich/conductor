@@ -19,6 +19,13 @@ class GitAuthMode(str, Enum):
     DELEGATE = "delegate" # Mode B – client supplies credentials on demand
 
 
+class WorkspaceMode(str, Enum):
+    """Whether the workspace is a git worktree or a locally-mounted folder."""
+
+    GIT = "git"      # Backend cloned the repo and created a worktree
+    LOCAL = "local"  # Host registered a local filesystem path (read-only for guests)
+
+
 class WorktreeStatus(str, Enum):
     """Lifecycle state of a git worktree."""
 
@@ -100,6 +107,7 @@ class WorkspaceInfo(BaseModel):
     branch:       str
     worktree_path: str
     status:       WorktreeStatus
+    mode:         WorkspaceMode = WorkspaceMode.GIT
     created_at:   datetime
     last_synced:  Optional[datetime] = None
     error_detail: Optional[str]      = None
@@ -222,6 +230,21 @@ class SetupAndIndexResult(BaseModel):
     chunks_indexed: int = 0
     index_duration_ms: float = 0.0
     message: str
+
+
+class LocalWorkspaceRequest(BaseModel):
+    """Register a local filesystem path as the workspace for a room."""
+
+    room_id:    str = Field(..., description="Unique room identifier.")
+    local_path: str = Field(..., description="Absolute path on the host machine.")
+
+
+class LocalWorkspaceResult(BaseModel):
+    """Result of registering a local workspace."""
+
+    room_id:   str
+    workspace: WorkspaceInfo
+    message:   str
 
 
 class GitWorkspaceHealth(BaseModel):

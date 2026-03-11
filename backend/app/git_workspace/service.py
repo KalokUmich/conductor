@@ -30,6 +30,7 @@ from .schemas import (
     WorkspaceCreateRequest,
     WorkspaceDestroyResult,
     WorkspaceInfo,
+    WorkspaceMode,
     WorkspacePushRequest,
     WorkspacePushResult,
     WorkspaceSyncRequest,
@@ -135,6 +136,7 @@ class GitWorkspaceService:
     def __init__(self) -> None:
         self._workspaces_dir: Path = Path("./workspaces")
         self._worktrees: Dict[str, _WorktreeRecord] = {}
+        self._local_workspaces: Dict[str, Path] = {}  # room_id → local path
         self._credential_store = CredentialStore()
         self._token_cache: Optional[RepoTokenCache] = None
         self._broadcast_callbacks: Dict[str, list] = {}  # room_id → [callbacks]
@@ -406,6 +408,45 @@ class GitWorkspaceService:
         return index_wt if index_wt.exists() else None
 
     # ------------------------------------------------------------------
+    # Local workspace registration
+    # ------------------------------------------------------------------
+
+    def register_local_workspace(self, room_id: str, local_path: str) -> WorkspaceInfo:
+        """Register a local filesystem folder as the workspace for *room_id*.
+
+        This is the "Local Mode" — the backend does NOT clone anything; it
+        simply records that the given path is the workspace root for the room.
+        Guests joining this room get read-only access.
+
+        Raises ``ValueError`` if the path does not exist or is not a directory.
+        """
+        path = Path(local_path).resolve()
+        if not path.is_dir():
+            raise ValueError(f"Path does not exist or is not a directory: {local_path}")
+
+        self._local_workspaces[room_id] = path
+        logger.info("Local workspace registered for room %s at %s", room_id, path)
+        return WorkspaceInfo(
+            room_id=room_id,
+            repo_url="",
+            branch="(local)",
+            worktree_path=str(path),
+            status=WorktreeStatus.READY,
+            mode=WorkspaceMode.LOCAL,
+            created_at=datetime.now(timezone.utc),
+        )
+
+    def unregister_local_workspace(self, room_id: str) -> None:
+        """Remove a previously registered local workspace."""
+        removed = self._local_workspaces.pop(room_id, None)
+        if removed:
+            logger.info("Local workspace unregistered for room %s", room_id)
+
+    def is_local_workspace(self, room_id: str) -> bool:
+        """Return True if *room_id* uses a locally-mounted workspace."""
+        return room_id in self._local_workspaces
+
+    # ------------------------------------------------------------------
     # Sync (pull)
     # ------------------------------------------------------------------
 
@@ -490,6 +531,13 @@ class GitWorkspaceService:
     # ------------------------------------------------------------------
 
     async def destroy_workspace(self, room_id: str) -> WorkspaceDestroyResult:
+        # Check local workspaces first — just remove the mapping (never delete local files)
+        if room_id in self._local_workspaces:
+            self._local_workspaces.pop(room_id)
+            return WorkspaceDestroyResult(
+                room_id=room_id, success=True, message="Local workspace unregistered"
+            )
+
         record = self._worktrees.pop(room_id, None)
         if record is None:
             return WorkspaceDestroyResult(
@@ -513,7 +561,9 @@ class GitWorkspaceService:
 
     def get_worktree_path(self, room_id: str) -> Optional[Path]:
         record = self._worktrees.get(room_id)
-        return record.worktree_path if record else None
+        if record:
+            return record.worktree_path
+        return self._local_workspaces.get(room_id)
 
     @property
     def token_cache(self) -> Optional[RepoTokenCache]:
@@ -521,11 +571,35 @@ class GitWorkspaceService:
         return self._token_cache
 
     def list_workspaces(self) -> List[WorkspaceInfo]:
-        return [r.to_info() for r in self._worktrees.values()]
+        result = [r.to_info() for r in self._worktrees.values()]
+        for room_id, path in self._local_workspaces.items():
+            result.append(WorkspaceInfo(
+                room_id=room_id,
+                repo_url="",
+                branch="(local)",
+                worktree_path=str(path),
+                status=WorktreeStatus.READY,
+                mode=WorkspaceMode.LOCAL,
+                created_at=datetime.now(timezone.utc),
+            ))
+        return result
 
     def get_workspace(self, room_id: str) -> Optional[WorkspaceInfo]:
         record = self._worktrees.get(room_id)
-        return record.to_info() if record else None
+        if record:
+            return record.to_info()
+        local = self._local_workspaces.get(room_id)
+        if local:
+            return WorkspaceInfo(
+                room_id=room_id,
+                repo_url="",
+                branch="(local)",
+                worktree_path=str(local),
+                status=WorktreeStatus.READY,
+                mode=WorkspaceMode.LOCAL,
+                created_at=datetime.now(timezone.utc),
+            )
+        return None
 
     # ------------------------------------------------------------------
     # WebSocket file-sync broadcast

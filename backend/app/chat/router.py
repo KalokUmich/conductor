@@ -205,7 +205,7 @@ async def post_ai_message(
     import json
 
     # Validate message type
-    valid_types = ("ai_summary", "ai_code_prompt", "ai_explanation")
+    valid_types = ("ai_summary", "ai_code_prompt", "ai_explanation", "ai_answer")
     if message_type not in valid_types:
         return JSONResponse(
             {"error": f"Invalid message type: {message_type}"},
@@ -232,6 +232,7 @@ async def post_ai_message(
         "ai_summary": MessageType.AI_SUMMARY,
         "ai_code_prompt": MessageType.AI_CODE_PROMPT,
         "ai_explanation": MessageType.AI_EXPLANATION,
+        "ai_answer": MessageType.AI_ANSWER,
     }
     msg_type = _type_map[message_type]
     message = ChatMessage(

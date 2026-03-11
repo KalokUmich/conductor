@@ -80,6 +80,42 @@ class GetCallersParams(BaseModel):
     path: Optional[str] = Field(None, description="Relative path to limit the search.")
 
 
+class GitBlameParams(BaseModel):
+    file: str = Field(..., description="Relative file path within workspace.")
+    start_line: Optional[int] = Field(None, ge=1, description="First line to blame (1-based).")
+    end_line: Optional[int] = Field(None, ge=1, description="Last line to blame (1-based, inclusive).")
+
+
+class GitShowParams(BaseModel):
+    commit: str = Field(..., description="Commit hash (short or full) to show.")
+    file: Optional[str] = Field(None, description="Limit diff to this relative file path.")
+
+
+class FindTestsParams(BaseModel):
+    name: str = Field(..., description="Function or class name to find tests for.")
+    path: Optional[str] = Field(None, description="Relative path to limit the test search.")
+
+
+class TestOutlineParams(BaseModel):
+    path: str = Field(..., description="Relative path to a test file.")
+
+
+class TraceVariableParams(BaseModel):
+    variable_name: str = Field(..., description="Name of the variable to trace (e.g. 'loan_id').")
+    file: str = Field(..., description="Relative file path containing the variable.")
+    function_name: Optional[str] = Field(
+        None,
+        description="Function containing the variable. If omitted, the first function referencing it is used.",
+    )
+    direction: str = Field(
+        default="forward",
+        description=(
+            "'forward' = trace where the value flows to (call sites, ORM/SQL sinks). "
+            "'backward' = trace where the value comes from (callers, HTTP/config sources)."
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tool result schemas
 # ---------------------------------------------------------------------------
@@ -145,6 +181,31 @@ class GitCommit(BaseModel):
     message: str
     author: str = ""
     date: str = ""
+
+
+class BlameEntry(BaseModel):
+    commit_hash: str
+    author: str
+    date: str
+    line_number: int
+    content: str
+
+
+class TestMatch(BaseModel):
+    test_file: str
+    test_function: str
+    line_number: int
+    context: str = ""
+
+
+class TestOutlineEntry(BaseModel):
+    name: str
+    kind: str  # "test_function", "test_class", "describe_block", "it_block"
+    line_number: int
+    end_line: int = 0
+    mocks: List[str] = Field(default_factory=list)
+    assertions: List[str] = Field(default_factory=list)
+    fixtures: List[str] = Field(default_factory=list)
 
 
 class ToolResult(BaseModel):
@@ -271,5 +332,56 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "Useful for understanding impact and usage patterns."
         ),
         "input_schema": GetCallersParams.model_json_schema(),
+    },
+    {
+        "name": "git_blame",
+        "description": (
+            "Run git blame on a file to see who last changed each line, with commit hash, "
+            "author, and date. Optionally limit to a line range. "
+            "Use this to trace when and by whom specific code was introduced or modified. "
+            "Follow up with git_show on interesting commit hashes to understand WHY."
+        ),
+        "input_schema": GitBlameParams.model_json_schema(),
+    },
+    {
+        "name": "git_show",
+        "description": (
+            "Show full details of a specific git commit: author, date, full commit message "
+            "(including body/PR description), and the diff. "
+            "Use after git_log or git_blame to understand the motivation behind a change."
+        ),
+        "input_schema": GitShowParams.model_json_schema(),
+    },
+    {
+        "name": "find_tests",
+        "description": (
+            "Find test functions that test a given function or class. "
+            "Searches test files (test_*.py, *_test.py, *.test.ts, *.spec.ts, *_test.go) "
+            "for references to the target and returns the enclosing test function with context. "
+            "Useful for understanding test coverage and finding relevant test examples."
+        ),
+        "input_schema": FindTestsParams.model_json_schema(),
+    },
+    {
+        "name": "test_outline",
+        "description": (
+            "Get the detailed structure of a test file: test classes/suites, test functions, "
+            "what they mock (patch/MagicMock/jest.fn/vi.mock), what they assert, and fixtures used. "
+            "Richer than file_outline — understands test semantics for pytest, jest, mocha, vitest, and Go."
+        ),
+        "input_schema": TestOutlineParams.model_json_schema(),
+    },
+    {
+        "name": "trace_variable",
+        "description": (
+            "Trace a variable's data flow through function calls. "
+            "Forward: finds where the value goes — aliases, function call argument-to-parameter mapping, "
+            "and sinks (ORM filters, SQL parameters, HTTP bodies, return statements). "
+            "Backward: finds where the value comes from — callers that pass this parameter, "
+            "and sources (HTTP requests, config, DB results). "
+            "Use this to answer 'how does loan_id flow from the HTTP request into the SQL WHERE clause?' "
+            "by chaining forward hops across function boundaries."
+        ),
+        "input_schema": TraceVariableParams.model_json_schema(),
     },
 ]

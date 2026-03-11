@@ -13,7 +13,7 @@
  *   4. Context plan – deduplicated read-file operations
  *   5. Execute plan – read file slices via VS Code workspace API
  *   6. XML prompt   – assemble all snippets into a structured XML string
- *   7. LLM call     – POST /context/explain with the XML prompt
+ *   7. LLM call     – POST /api/context/explain-rich (agentic: backend explores codebase with tools)
  *   8. Response     – return explanation to the caller for rendering
  *
  * Graceful degradation
@@ -49,6 +49,18 @@ import {
 // Public types
 // ---------------------------------------------------------------------------
 
+/** Progress event emitted during the pipeline for real-time UI feedback. */
+export interface PipelineProgressEvent {
+    /** 'pipeline' for extension-side stages, 'agent' for backend agent loop, 'complete' when done. */
+    phase:    'pipeline' | 'agent' | 'complete';
+    /** Human-readable description of what's happening right now. */
+    message:  string;
+    /** Agent event kind (thinking / tool_call / tool_result / done / error). */
+    kind?:    string;
+    /** Extra details (e.g. tool name, params, iteration count). */
+    detail?:  Record<string, any>;
+}
+
 export interface PipelineInput {
     // ---- Selection (Stage 1) ------------------------------------------------
     uri:               vscodeT.Uri;
@@ -81,6 +93,10 @@ export interface PipelineInput {
      * Falls back to `DEFAULT_WORKSPACE_CONFIG` for any missing field.
      */
     workspaceConfig?: WorkspaceConfig;
+
+    // ---- Progress -----------------------------------------------------------
+    /** Optional callback for real-time progress updates. */
+    onProgress?: (event: PipelineProgressEvent) => void;
 }
 
 export interface PipelineOutput {
@@ -114,11 +130,15 @@ export async function runExplainPipeline(input: PipelineInput): Promise<Pipeline
     const timings: Record<string, number> = {};
     const question = input.question ?? `Explain this ${input.language} code.`;
 
+    const progress = input.onProgress;
+
     console.log(`${LOG} === Pipeline start ===`);
     console.log(`${LOG} file=${input.relativePath} lines=${input.startLine}-${input.endLine} lang=${input.language}`);
     console.log(`${LOG} conductorDb=${input.conductorDb ? 'SET' : 'NULL'}`);
     console.log(`${LOG} workspaceConfig=${input.workspaceConfig ? JSON.stringify(input.workspaceConfig) : 'NONE (using defaults)'}`);
     console.log(`${LOG} workspaceFolders=${input.workspaceFolders.length} backendUrl=${input.backendUrl}`);
+
+    progress?.({ phase: 'pipeline', message: 'Gathering context...' });
 
     // Resolve workspace tuning (ranking caps, topK) from .conductor/config.json.
     const cfg = { ...DEFAULT_WORKSPACE_CONFIG, ...(input.workspaceConfig ?? {}) };
@@ -198,6 +218,8 @@ export async function runExplainPipeline(input: PipelineInput): Promise<Pipeline
         const elapsed = performance.now() - t0;
         console.log(`${LOG} Stage 2.6 (import neighbours): ${elapsed.toFixed(1)}ms — found ${importNeighbors.length}`);
     }
+
+    progress?.({ phase: 'pipeline', message: 'Resolving dependencies...' });
 
     // -------------------------------------------------------------------------
     // Stage 2.7 — Augment-style dependency resolution
@@ -310,6 +332,8 @@ export async function runExplainPipeline(input: PipelineInput): Promise<Pipeline
         console.log(`${LOG} Stage 5.5 (project metadata): ${timings['project_metadata'].toFixed(1)}ms`);
     }
 
+    progress?.({ phase: 'pipeline', message: 'Preparing prompt...' });
+
     // -------------------------------------------------------------------------
     // Stage 6 — Build XML prompt
     // -------------------------------------------------------------------------
@@ -333,8 +357,10 @@ export async function runExplainPipeline(input: PipelineInput): Promise<Pipeline
     );
 
     // -------------------------------------------------------------------------
-    // Stage 7 — Send to LLM
+    // Stage 7 — Send to LLM (SSE streaming with progress)
     // -------------------------------------------------------------------------
+    progress?.({ phase: 'agent', message: 'AI is exploring the codebase...', kind: 'start' });
+
     const t7 = performance.now();
     let explanation = '';
     let model = 'ai';
@@ -353,6 +379,8 @@ export async function runExplainPipeline(input: PipelineInput): Promise<Pipeline
     console.log(
         `${LOG} Stage 7 (LLM call): ${timings['llm'].toFixed(1)}ms — model=${model}`,
     );
+
+    progress?.({ phase: 'complete', message: 'Done' });
 
     // Stage 8 (render) is handled by the caller after this function returns.
     console.log(`${LOG} Stage 8 (render): delegated to caller`);
@@ -1007,44 +1035,164 @@ function _buildXmlInput(
 }
 
 /**
- * POST the pre-assembled XML prompt to the backend `/context/explain-rich`
- * endpoint, which forwards it directly to the LLM without re-parsing.
+ * POST the code snippet to the backend `/api/context/explain-rich` endpoint.
+ *
+ * The backend runs an agentic loop (AgentLoopService) that iteratively calls
+ * code-intelligence tools — read_file, find_symbol, find_references, grep,
+ * get_callers, etc. — to gather context before producing an explanation.
+ *
+ * This replaces the old approach of assembling a large XML prompt in the
+ * extension (stages 1–6) and forwarding it to the LLM directly. The agent
+ * explores the codebase server-side, yielding richer and more accurate results.
+ *
+ * Note: the `_xmlPrompt` parameter is kept in the signature so callers do not
+ * need to change — it is no longer sent to the backend.
  */
+/** Human-readable description for a tool call. */
+function _toolLabel(tool: string, params: Record<string, any>): string {
+    switch (tool) {
+        case 'read_file':        return `Reading ${params.file_path || params.path || 'file'}`;
+        case 'grep':             return `Searching for "${params.pattern || '...'}"`;
+        case 'find_symbol':      return `Finding symbol "${params.name || '...'}"`;
+        case 'find_references':  return `Finding references to "${params.name || params.symbol_name || '...'}"`;
+        case 'file_outline':     return `Outlining ${params.file_path || params.path || 'file'}`;
+        case 'list_files':       return `Listing files`;
+        case 'get_dependencies': return `Checking dependencies`;
+        case 'get_dependents':   return `Checking dependents`;
+        case 'git_log':          return `Checking git history`;
+        case 'git_diff':         return `Comparing changes`;
+        case 'git_blame':        return `Tracing authorship of ${params.file || 'file'}`;
+        case 'git_show':         return `Reading commit ${params.commit || '...'}`;
+        case 'find_tests':       return `Finding tests for "${params.name || '...'}"`;
+        case 'test_outline':     return `Analyzing test structure of ${params.path || 'file'}`;
+        case 'ast_search':       return `AST pattern search`;
+        case 'get_callers':      return `Finding callers of "${params.function_name || '...'}"`;
+        case 'get_callees':      return `Finding callees of "${params.function_name || '...'}"`;
+        case 'trace_variable':   return `Tracing data flow of "${params.variable_name || '...'}" ${params.direction || 'forward'}`;
+        default:                 return `Running ${tool}`;
+    }
+}
+
 async function _callLlm(
-    xmlPrompt: string,
-    input:     PipelineInput,
+    _xmlPrompt: string,   // retained for call-site compatibility; not sent to backend
+    input:      PipelineInput,
 ): Promise<{ explanation: string; model: string; structured?: Record<string, string> }> {
-    console.log(`${LOG} [LLM] POST ${input.backendUrl}/context/explain-rich — prompt=${xmlPrompt.length} chars`);
-    const response = await fetch(`${input.backendUrl}/context/explain-rich`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-            assembled_prompt: xmlPrompt,
-            snippet:          input.code,
-            file_path:        input.relativePath,
-            line_start:       input.startLine,
-            line_end:         input.endLine,
-            language:         input.language,
-            workspace_id:     input.workspaceId ?? null,
-        }),
+    const progress = input.onProgress;
+    const requestBody = JSON.stringify({
+        room_id:    input.workspaceId ?? '',
+        code:       input.code,
+        file_path:  input.relativePath,
+        language:   input.language,
+        start_line: input.startLine,
+        end_line:   input.endLine,
+        question:   input.question ?? null,
     });
 
-    if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`/context/explain-rich returned HTTP ${response.status}: ${body}`);
+    // --- Try SSE streaming endpoint first ---
+    const streamUrl = `${input.backendUrl}/api/context/explain-rich/stream`;
+    console.log(`${LOG} [LLM] POST ${streamUrl} — SSE agentic explain (room=${input.workspaceId ?? 'none'})`);
+
+    try {
+        const response = await fetch(streamUrl, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    requestBody,
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        // Parse SSE events from the response body stream
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalAnswer = '';
+        let finalModel  = 'ai';
+
+        // eslint-disable-next-line no-constant-condition
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // Split on double newline (SSE event boundary)
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop()!;     // keep the incomplete tail
+
+            for (const part of parts) {
+                const lines = part.split('\n');
+                let eventKind = '';
+                let eventData = '';
+                for (const line of lines) {
+                    if (line.startsWith('event: '))     eventKind = line.slice(7);
+                    else if (line.startsWith('data: ')) eventData = line.slice(6);
+                }
+                if (!eventKind || !eventData) continue;
+
+                let data: Record<string, any>;
+                try { data = JSON.parse(eventData); } catch { continue; }
+
+                // Emit progress to the UI
+                if (eventKind === 'thinking') {
+                    const text = (data.text as string || '').slice(0, 120);
+                    progress?.({ phase: 'agent', kind: 'thinking', message: text || 'Thinking...', detail: data });
+                } else if (eventKind === 'tool_call') {
+                    const label = _toolLabel(data.tool, data.params || {});
+                    progress?.({
+                        phase: 'agent', kind: 'tool_call',
+                        message: label,
+                        detail: { tool: data.tool, iteration: data.iteration },
+                    });
+                } else if (eventKind === 'tool_result') {
+                    progress?.({
+                        phase: 'agent', kind: 'tool_result',
+                        message: `${data.tool}: ${data.summary || 'done'}`,
+                        detail: { tool: data.tool, success: data.success, iteration: data.iteration },
+                    });
+                } else if (eventKind === 'done') {
+                    finalAnswer = data.answer || '';
+                    finalModel  = data.model  || 'ai';
+                } else if (eventKind === 'error') {
+                    finalAnswer = data.answer || '';
+                    finalModel  = data.model  || 'ai';
+                    if (data.error) {
+                        console.error(`${LOG} [LLM] Agent error: ${data.error}`);
+                    }
+                }
+            }
+        }
+
+        console.log(`${LOG} [LLM] SSE stream complete — answer=${finalAnswer.length} chars, model=${finalModel}`);
+        return { explanation: finalAnswer, model: finalModel };
+
+    } catch (streamErr) {
+        // Fall back to non-streaming endpoint
+        console.log(`${LOG} [LLM] SSE stream unavailable, falling back to non-streaming:`, streamErr);
+        progress?.({ phase: 'agent', message: 'Waiting for AI response...' });
+
+        const url = `${input.backendUrl}/api/context/explain-rich`;
+        const response = await fetch(url, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    requestBody,
+        });
+
+        if (!response.ok) {
+            const body = await response.text().catch(() => '');
+            throw new Error(`/api/context/explain-rich returned HTTP ${response.status}: ${body}`);
+        }
+
+        const data = (await response.json()) as {
+            explanation: string;
+            model: string;
+            structured?: Record<string, string> | null;
+        };
+
+        return {
+            explanation: data.explanation,
+            model:       data.model,
+            structured:  data.structured ?? undefined,
+        };
     }
-
-    const data = (await response.json()) as {
-        explanation: string;
-        model: string;
-        structured?: { purpose: string; inputs: string; outputs: string; business_context: string; dependencies: string; gotchas: string } | null;
-    };
-
-    // Flatten the structured object into a simple Record<string, string> for the frontend.
-    let structured: Record<string, string> | undefined;
-    if (data.structured) {
-        structured = { ...data.structured };
-    }
-
-    return { explanation: data.explanation, model: data.model, structured };
 }

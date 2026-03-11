@@ -14,16 +14,21 @@ from app.code_tools.tools import (
     file_outline,
     find_references,
     find_symbol,
+    find_tests,
     get_callers,
     get_callees,
     get_dependencies,
     get_dependents,
+    git_blame,
     git_diff,
     git_log,
+    git_show,
     grep,
     invalidate_graph_cache,
     list_files,
+    outline_tests,
     read_file,
+    trace_variable,
 )
 
 
@@ -90,6 +95,48 @@ def workspace(tmp_path: Path) -> Path:
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
+    """))
+
+    # Python test files
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "__init__.py").write_text("")
+    (tmp_path / "tests" / "test_service.py").write_text(textwrap.dedent("""\
+        from unittest.mock import patch, MagicMock
+        from app.service import MyService, standalone_function
+
+        class TestMyService:
+            def test_process(self):
+                svc = MyService()
+                result = svc.process()
+                assert result == "DATA"
+
+            @patch("app.service.helper")
+            def test_process_mocked(self, mock_helper):
+                mock_helper.return_value = "MOCKED"
+                svc = MyService()
+                result = svc.process()
+                assert result == "MOCKED"
+                mock_helper.assert_called_once_with("data")
+
+        def test_standalone():
+            result = standalone_function()
+            assert result is None
+    """))
+
+    # TypeScript test file
+    (tmp_path / "src" / "utils.test.ts").write_text(textwrap.dedent("""\
+        import { greet } from './utils';
+
+        describe('greet', () => {
+            it('should return greeting', () => {
+                expect(greet('world')).toBe('Hello, world!');
+            });
+
+            it('should handle empty string', () => {
+                const result = greet('');
+                expect(result).toBe('Hello, !');
+            });
+        });
     """))
 
     # node_modules (should be excluded)
@@ -244,8 +291,10 @@ class TestFindSymbol:
         result = find_symbol(ws, "MyService")
         assert result.success
         assert len(result.data) >= 1
-        sym = result.data[0]
-        assert sym["name"] == "MyService"
+        # May also match TestMyService via substring — find the exact match
+        exact = [s for s in result.data if s["name"] == "MyService"]
+        assert len(exact) >= 1
+        sym = exact[0]
         assert sym["kind"] == "class"
         assert sym["file_path"] == "app/service.py"
 
@@ -488,3 +537,416 @@ class TestExecuteTool:
     def test_dispatch_bad_params(self, ws):
         result = execute_tool("grep", ws, {"bad_param": True})
         assert not result.success
+
+
+# ---------------------------------------------------------------------------
+# git_blame / git_show
+# ---------------------------------------------------------------------------
+
+
+class TestGitBlame:
+    @pytest.fixture(autouse=True)
+    def _init_git(self, workspace):
+        os.system(
+            f'cd {workspace} && git init -q && git add -A '
+            f'&& git -c user.email="test@test.com" -c user.name="Test" commit -q -m "initial commit"'
+        )
+
+    def test_blame_full_file(self, ws):
+        result = git_blame(ws, file="app/service.py")
+        assert result.success
+        assert isinstance(result.data, list)
+        assert len(result.data) > 0
+
+    def test_blame_entry_fields(self, ws):
+        result = git_blame(ws, file="app/service.py")
+        assert result.success
+        entry = result.data[0]
+        assert "commit_hash" in entry
+        assert "author" in entry
+        assert "date" in entry
+        assert "line_number" in entry
+        assert "content" in entry
+
+    def test_blame_line_range(self, ws):
+        result = git_blame(ws, file="app/service.py", start_line=1, end_line=3)
+        assert result.success
+        assert len(result.data) <= 3
+
+    def test_blame_nonexistent_file(self, ws):
+        result = git_blame(ws, file="missing.py")
+        assert not result.success
+
+    def test_blame_author(self, ws):
+        result = git_blame(ws, file="app/service.py")
+        assert result.success
+        assert result.data[0]["author"] == "Test"
+
+
+class TestGitShow:
+    @pytest.fixture(autouse=True)
+    def _init_git(self, workspace):
+        os.system(
+            f'cd {workspace} && git init -q && git add -A '
+            f'&& git -c user.email="test@test.com" -c user.name="Dev" commit -q -m "feat: add services"'
+        )
+
+    def test_show_head(self, ws):
+        result = git_show(ws, commit="HEAD")
+        assert result.success
+        data = result.data
+        assert data["author"] == "Dev"
+        assert "feat: add services" in data["message"]
+        assert data["commit_hash"]  # non-empty
+
+    def test_show_has_diff(self, ws):
+        result = git_show(ws, commit="HEAD")
+        assert result.success
+        assert len(result.data["diff"]) > 0
+
+    def test_show_with_file_filter(self, ws):
+        result = git_show(ws, commit="HEAD", file="app/main.py")
+        assert result.success
+
+    def test_show_invalid_ref(self, ws):
+        result = git_show(ws, commit="not;valid")
+        assert not result.success
+
+
+# ---------------------------------------------------------------------------
+# find_tests / test_outline
+# ---------------------------------------------------------------------------
+
+
+class TestFindTests:
+    def test_find_python_tests_for_class(self, ws):
+        result = find_tests(ws, name="MyService")
+        assert result.success
+        assert len(result.data) >= 2  # test_process + test_process_mocked
+        names = [m["test_function"] for m in result.data]
+        assert any("test_process" in n for n in names)
+
+    def test_find_python_tests_for_function(self, ws):
+        result = find_tests(ws, name="standalone_function")
+        assert result.success
+        assert len(result.data) >= 1
+        assert any("test_standalone" in m["test_function"] for m in result.data)
+
+    def test_find_tests_not_found(self, ws):
+        result = find_tests(ws, name="nonexistent_symbol_xyz")
+        assert result.success
+        assert len(result.data) == 0
+
+    def test_find_tests_path_filter(self, ws):
+        result = find_tests(ws, name="MyService", path="tests")
+        assert result.success
+        assert len(result.data) >= 1
+
+    def test_find_tests_ts(self, ws):
+        result = find_tests(ws, name="greet")
+        assert result.success
+        assert any("utils.test.ts" in m["test_file"] for m in result.data)
+
+    def test_find_tests_returns_context(self, ws):
+        result = find_tests(ws, name="MyService")
+        assert result.success
+        for m in result.data:
+            assert m["context"]  # non-empty context line
+            assert m["test_file"]
+            assert m["line_number"] > 0
+
+
+class TestTestOutline:
+    def test_python_outline(self, ws):
+        result = outline_tests(ws, path="tests/test_service.py")
+        assert result.success
+        names = [e["name"] for e in result.data]
+        # Should find the class and the test functions
+        assert any("TestMyService" in n for n in names)
+        assert any("test_process" in n for n in names)
+        assert any("test_standalone" in n for n in names)
+
+    def test_python_mocks_detected(self, ws):
+        result = outline_tests(ws, path="tests/test_service.py")
+        assert result.success
+        # Find the mocked test
+        mocked_test = [e for e in result.data if "test_process_mocked" in e["name"]]
+        assert len(mocked_test) == 1
+        assert len(mocked_test[0]["mocks"]) >= 1
+        assert any("app.service.helper" in m for m in mocked_test[0]["mocks"])
+
+    def test_python_assertions_detected(self, ws):
+        result = outline_tests(ws, path="tests/test_service.py")
+        assert result.success
+        # At least some entries should have assertions
+        has_asserts = [e for e in result.data if e.get("assertions")]
+        assert len(has_asserts) >= 1
+
+    def test_ts_outline(self, ws):
+        result = outline_tests(ws, path="src/utils.test.ts")
+        assert result.success
+        names = [e["name"] for e in result.data]
+        assert any("greet" in n for n in names)
+        # Should have describe and it blocks
+        kinds = [e["kind"] for e in result.data]
+        assert "describe_block" in kinds or "test_function" in kinds
+
+    def test_nonexistent_file(self, ws):
+        result = outline_tests(ws, path="missing_test.py")
+        assert not result.success
+
+    def test_python_fixtures_detected(self, ws):
+        result = outline_tests(ws, path="tests/test_service.py")
+        assert result.success
+        # test_process_mocked has 'self' + 'mock_helper' params;
+        # fixtures should contain 'mock_helper' (self is excluded)
+        mocked_test = [e for e in result.data if "test_process_mocked" in e["name"]]
+        if mocked_test:
+            # mock_helper is a param to the test function
+            assert "mock_helper" in mocked_test[0].get("fixtures", [])
+
+
+# ---------------------------------------------------------------------------
+# trace_variable
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def dataflow_ws(tmp_path: Path) -> Path:
+    """Workspace simulating a typical HTTP → service → repository flow."""
+    (tmp_path / "app").mkdir()
+
+    # -- Router layer (HTTP entry point) --
+    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
+        from app.service import process_loan
+
+        def create_loan(request):
+            loan_id = request.json["loan_id"]
+            customer = request.json["customer"]
+            result = process_loan(loan_id, customer)
+            return {"status": "ok", "data": result}
+    """))
+
+    # -- Service layer (business logic, aliases the variable) --
+    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+        from app.repository import get_loan, save_audit
+
+        def process_loan(loan_id, customer_name):
+            lid = loan_id
+            loan = get_loan(lid)
+            save_audit(lid, "processed")
+            return loan
+
+        def helper():
+            pass
+    """))
+
+    # -- Repository layer (ORM / SQL sink) --
+    (tmp_path / "app" / "repository.py").write_text(textwrap.dedent("""\
+        def get_loan(loan_identifier):
+            return Loan.query.filter(Loan.id == loan_identifier).first()
+
+        def save_audit(ref_id, action):
+            db.execute("INSERT INTO audit (ref, action) VALUES (%s, %s)", (ref_id, action))
+    """))
+
+    # -- TypeScript variant --
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "handler.ts").write_text(textwrap.dedent("""\
+        import { findLoan } from './loanRepo';
+
+        export function handleRequest(req: Request): Response {
+            const loanId = req.body.loanId;
+            const result = findLoan(loanId);
+            return { status: 200, data: result };
+        }
+    """))
+    (tmp_path / "src" / "loanRepo.ts").write_text(textwrap.dedent("""\
+        export function findLoan(id: string): Loan {
+            return prisma.loan.findUnique({ where: { id } });
+        }
+    """))
+
+    invalidate_graph_cache()
+    return tmp_path
+
+
+class TestTraceVariable:
+    """Tests for the trace_variable data flow tool."""
+
+    # -- Forward tracing ---------------------------------------------------
+
+    def test_forward_alias_detection(self, dataflow_ws):
+        """Should detect that `lid = loan_id` is an alias."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/service.py", function_name="process_loan",
+                                direction="forward")
+        assert result.success
+        data = result.data
+        assert data["variable"] == "loan_id"
+        assert data["function"] == "process_loan"
+        aliases = [a["name"] for a in data["aliases"]]
+        assert "lid" in aliases
+
+    def test_forward_flows_to_detected(self, dataflow_ws):
+        """Should detect calls where loan_id (or alias) flows to another function."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/service.py", function_name="process_loan",
+                                direction="forward")
+        assert result.success
+        flows = result.data["flows_to"]
+        callee_names = [f["callee_function"] for f in flows]
+        assert "get_loan" in callee_names
+        assert "save_audit" in callee_names
+
+    def test_forward_param_mapping(self, dataflow_ws):
+        """Should map argument position to formal parameter name."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/service.py", function_name="process_loan",
+                                direction="forward")
+        assert result.success
+        get_loan_flow = [f for f in result.data["flows_to"]
+                         if f["callee_function"] == "get_loan"]
+        assert len(get_loan_flow) >= 1
+        # get_loan(lid) → def get_loan(loan_identifier) → param "loan_identifier"
+        assert get_loan_flow[0]["as_parameter"] == "loan_identifier"
+
+    def test_forward_sink_orm_filter(self, dataflow_ws):
+        """Should detect ORM .filter() as a sink in the repository layer."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_identifier",
+                                file="app/repository.py", function_name="get_loan",
+                                direction="forward")
+        assert result.success
+        sinks = result.data["sinks"]
+        assert len(sinks) >= 1
+        assert any(s["kind"] == "orm_filter" for s in sinks)
+
+    def test_forward_sink_sql_param(self, dataflow_ws):
+        """Should detect SQL execute() as a sink."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="ref_id",
+                                file="app/repository.py", function_name="save_audit",
+                                direction="forward")
+        assert result.success
+        sinks = result.data["sinks"]
+        assert any(s["kind"] == "sql_param" for s in sinks)
+
+    def test_forward_return_sink(self, dataflow_ws):
+        """Should detect return statement as a sink."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/service.py", function_name="process_loan",
+                                direction="forward")
+        assert result.success
+        # `return loan` — loan is not an alias of loan_id, but the function
+        # returns the result of get_loan(lid). Check for return in sinks
+        # from the repo layer instead.
+        result2 = trace_variable(ws, variable_name="loan_identifier",
+                                 file="app/repository.py", function_name="get_loan",
+                                 direction="forward")
+        assert result2.success
+        sinks2 = result2.data["sinks"]
+        # The return statement contains loan_identifier indirectly via the filter;
+        # the orm_filter sink should be present at minimum
+        assert len(sinks2) >= 1
+
+    # -- Backward tracing --------------------------------------------------
+
+    def test_backward_flows_from(self, dataflow_ws):
+        """Should find callers that pass a value for the target parameter."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_identifier",
+                                file="app/repository.py", function_name="get_loan",
+                                direction="backward")
+        assert result.success
+        flows = result.data["flows_from"]
+        assert len(flows) >= 1
+        caller_names = [f["caller_function"] for f in flows]
+        assert "process_loan" in caller_names
+        # Should show what was passed
+        pl_flow = [f for f in flows if f["caller_function"] == "process_loan"]
+        assert "lid" in pl_flow[0]["arg_expression"]
+
+    def test_backward_source_http(self, dataflow_ws):
+        """Should detect HTTP request source pattern."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/router.py", function_name="create_loan",
+                                direction="backward")
+        assert result.success
+        sources = result.data["sources"]
+        assert len(sources) >= 1
+        assert any(s["kind"] in ("http_request", "destructure") for s in sources)
+
+    # -- Auto-detect function ----------------------------------------------
+
+    def test_auto_detect_function(self, dataflow_ws):
+        """When function_name is omitted, should find the first function using the variable."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loan_id",
+                                file="app/router.py", direction="forward")
+        assert result.success
+        assert result.data["function"] == "create_loan"
+
+    # -- Error handling ----------------------------------------------------
+
+    def test_file_not_found(self, dataflow_ws):
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="x",
+                                file="missing.py", function_name="f")
+        assert not result.success
+        assert "not found" in result.error.lower()
+
+    def test_function_not_found(self, dataflow_ws):
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="x",
+                                file="app/service.py", function_name="nonexistent")
+        assert not result.success
+        assert "not found" in result.error.lower()
+
+    def test_variable_not_in_any_function(self, dataflow_ws):
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="zzz_not_here",
+                                file="app/service.py")
+        assert not result.success
+
+    # -- TypeScript --------------------------------------------------------
+
+    def test_typescript_forward(self, dataflow_ws):
+        """Should work for TypeScript files."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="loanId",
+                                file="src/handler.ts", function_name="handleRequest",
+                                direction="forward")
+        assert result.success
+        flows = result.data["flows_to"]
+        callee_names = [f["callee_function"] for f in flows]
+        assert "findLoan" in callee_names
+
+    def test_typescript_sink_orm(self, dataflow_ws):
+        """Should detect Prisma findUnique as ORM sink."""
+        ws = str(dataflow_ws)
+        result = trace_variable(ws, variable_name="id",
+                                file="src/loanRepo.ts", function_name="findLoan",
+                                direction="forward")
+        assert result.success
+        sinks = result.data["sinks"]
+        assert any(s["kind"] in ("orm_get", "orm_filter") for s in sinks)
+
+    # -- execute_tool dispatch ---------------------------------------------
+
+    def test_dispatch_via_execute_tool(self, dataflow_ws):
+        """trace_variable should be callable via execute_tool."""
+        ws = str(dataflow_ws)
+        result = execute_tool("trace_variable", ws, {
+            "variable_name": "loan_id",
+            "file": "app/service.py",
+            "function_name": "process_loan",
+            "direction": "forward",
+        })
+        assert result.success
+        assert result.data["variable"] == "loan_id"

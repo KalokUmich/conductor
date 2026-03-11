@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from .schemas import (
     AstMatch,
+    BlameEntry,
     CalleeInfo,
     CallerInfo,
     DependencyInfo,
@@ -25,6 +26,8 @@ from .schemas import (
     GrepMatch,
     ReferenceLocation,
     SymbolLocation,
+    TestMatch,
+    TestOutlineEntry,
     ToolResult,
 )
 
@@ -927,6 +930,1004 @@ def invalidate_graph_cache(workspace: Optional[str] = None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Git semantic tools
+# ---------------------------------------------------------------------------
+
+
+def git_blame(
+    workspace: str,
+    file: str,
+    start_line: Optional[int] = None,
+    end_line: Optional[int] = None,
+) -> ToolResult:
+    """Run git blame on a file, returning structured per-line authorship data."""
+    fp = _resolve(workspace, file)
+    if not fp.is_file():
+        return ToolResult(tool_name="git_blame", success=False, error=f"File not found: {file}")
+
+    ws = Path(workspace).resolve()
+    rel = str(fp.relative_to(ws))
+
+    args = ["blame", "--line-porcelain"]
+    if start_line and end_line:
+        args.append(f"-L{start_line},{end_line}")
+    elif start_line:
+        args.append(f"-L{start_line},")
+    args += ["--", rel]
+
+    raw = _run_git(workspace, args, max_output=200_000)
+    if raw.startswith("("):
+        return ToolResult(tool_name="git_blame", success=False, error=raw)
+
+    entries = _parse_blame_porcelain(raw)
+    truncated = len(entries) > 200
+    if truncated:
+        entries = entries[:200]
+
+    return ToolResult(tool_name="git_blame", data=entries, truncated=truncated)
+
+
+def _parse_blame_porcelain(raw: str) -> List[Dict]:
+    """Parse git blame --line-porcelain output into structured entries."""
+    import datetime as _dt
+
+    entries: List[Dict] = []
+    cur: Dict[str, Any] = {}
+    final_line = 0
+
+    for line in raw.split("\n"):
+        if not line:
+            continue
+        if line.startswith("\t"):
+            # Content line — end of this block
+            cur["content"] = line[1:]
+            cur["line_number"] = final_line
+            cur.setdefault("commit_hash", "?")
+            cur.setdefault("author", "?")
+            cur.setdefault("date", "?")
+            entries.append(cur)
+            cur = {}
+        elif re.match(r"^[0-9a-f]{40}\s", line):
+            parts = line.split()
+            cur["commit_hash"] = parts[0][:8]
+            final_line = int(parts[2]) if len(parts) >= 3 else 0
+        elif line.startswith("author "):
+            cur["author"] = line[7:]
+        elif line.startswith("author-time "):
+            try:
+                ts = int(line[12:])
+                cur["date"] = _dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+            except (ValueError, OSError):
+                cur["date"] = line[12:]
+        # Skip other metadata lines (committer, summary, filename, etc.)
+
+    return entries
+
+
+def git_show(
+    workspace: str,
+    commit: str,
+    file: Optional[str] = None,
+) -> ToolResult:
+    """Show full details of a git commit: message, author, date, diff."""
+    if not re.match(r"^[a-zA-Z0-9_.^~/-]+$", commit):
+        return ToolResult(tool_name="git_show", success=False, error=f"Invalid commit ref: {commit}")
+
+    # Get metadata separately from diff for reliable parsing
+    fmt = "%H%n%an%n%ai%n%B"
+    meta_raw = _run_git(workspace, ["log", "-1", f"--format={fmt}", commit])
+    if meta_raw.startswith("("):
+        return ToolResult(tool_name="git_show", success=False, error=meta_raw)
+
+    meta_lines = meta_raw.strip().split("\n")
+    commit_hash = meta_lines[0] if meta_lines else ""
+    author = meta_lines[1] if len(meta_lines) > 1 else ""
+    date = meta_lines[2] if len(meta_lines) > 2 else ""
+    message = "\n".join(meta_lines[3:]).strip() if len(meta_lines) > 3 else ""
+
+    # Get the diff (--root handles the initial commit which has no parent)
+    diff_args = ["diff-tree", "--root", "-p", commit]
+    if file:
+        fp = _resolve(workspace, file)
+        diff_args += ["--", str(fp)]
+    diff_raw = _run_git(workspace, diff_args, max_output=100_000)
+
+    return ToolResult(tool_name="git_show", data={
+        "commit_hash": commit_hash[:8],
+        "author": author,
+        "date": date,
+        "message": message,
+        "diff": diff_raw,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Test association tools
+# ---------------------------------------------------------------------------
+
+_TEST_FILE_PATTERNS = [
+    re.compile(r"^test_.*\.py$"),
+    re.compile(r"^.*_test\.py$"),
+    re.compile(r"^.*\.test\.[jt]sx?$"),
+    re.compile(r"^.*\.spec\.[jt]sx?$"),
+    re.compile(r"^.*_test\.go$"),
+]
+
+
+def _is_test_file(filename: str) -> bool:
+    return any(p.match(filename) for p in _TEST_FILE_PATTERNS)
+
+
+# Regex patterns for finding test function definitions per language
+_PY_TEST_DEF = re.compile(r"^(\s*)(?:async\s+)?def\s+(test_\w+)\s*\(")
+_PY_CLASS_DEF = re.compile(r"^(\s*)class\s+(Test\w+)")
+_JS_TEST_BLOCK = re.compile(r"(test|it)\s*\(\s*['\"`](.+?)['\"`]")
+_GO_TEST_FUNC = re.compile(r"^func\s+(Test\w+|Benchmark\w+)\s*\(")
+
+
+def _find_enclosing_test(
+    lines: List[str],
+    match_line: int,
+    lang: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Walk backward from match_line (1-based) to find enclosing test function."""
+    idx = match_line - 1  # to 0-based
+
+    if lang in ("javascript", "typescript"):
+        for i in range(idx, -1, -1):
+            m = _JS_TEST_BLOCK.search(lines[i])
+            if m:
+                return {"name": m.group(2), "line": i + 1}
+        return None
+
+    if lang == "go":
+        for i in range(idx, -1, -1):
+            m = _GO_TEST_FUNC.match(lines[i])
+            if m:
+                return {"name": m.group(1), "line": i + 1}
+        return None
+
+    # Default: Python
+    for i in range(idx, -1, -1):
+        m = _PY_TEST_DEF.match(lines[i])
+        if m:
+            func_name = m.group(2)
+            indent_len = len(m.group(1))
+            # Check if inside a test class
+            if indent_len > 0:
+                for j in range(i - 1, -1, -1):
+                    cm = _PY_CLASS_DEF.match(lines[j])
+                    if cm and len(cm.group(1)) < indent_len:
+                        func_name = f"{cm.group(2)}::{func_name}"
+                        break
+            return {"name": func_name, "line": i + 1}
+
+    return None
+
+
+def find_tests(
+    workspace: str,
+    name: str,
+    path: Optional[str] = None,
+) -> ToolResult:
+    """Find test functions that test a given function or class."""
+    from app.repo_graph.parser import detect_language
+
+    ws = Path(workspace).resolve()
+    search_root = _resolve(workspace, path or ".")
+
+    name_re = re.compile(rf"\b{re.escape(name)}\b")
+    seen: set = set()
+    results: List[Dict] = []
+
+    for dirpath, dirnames, filenames in os.walk(search_root):
+        rel_dir = Path(dirpath).relative_to(ws)
+        if _is_excluded(rel_dir.parts):
+            dirnames.clear()
+            continue
+        dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
+
+        for f in filenames:
+            is_test_dir = "__tests__" in rel_dir.parts or "tests" in rel_dir.parts
+            if not _is_test_file(f) and not is_test_dir:
+                continue
+            fp = Path(dirpath) / f
+            if fp.stat().st_size > _MAX_FILE_SIZE:
+                continue
+
+            try:
+                source = fp.read_text(errors="replace")
+            except OSError:
+                continue
+
+            if not name_re.search(source):
+                continue
+
+            lines = source.split("\n")
+            rel = str(fp.relative_to(ws))
+            lang = detect_language(str(fp))
+
+            for line_no, line_text in enumerate(lines, 1):
+                if not name_re.search(line_text):
+                    continue
+                test_fn = _find_enclosing_test(lines, line_no, lang)
+                if test_fn:
+                    key = (rel, test_fn["name"])
+                    if key not in seen:
+                        seen.add(key)
+                        results.append(TestMatch(
+                            test_file=rel,
+                            test_function=test_fn["name"],
+                            line_number=test_fn["line"],
+                            context=line_text.strip()[:200],
+                        ).model_dump())
+
+            if len(results) >= 50:
+                break
+        if len(results) >= 50:
+            break
+
+    return ToolResult(
+        tool_name="find_tests",
+        data=results,
+        truncated=len(results) >= 50,
+    )
+
+
+# Mock / assertion patterns for test_outline
+_PY_MOCK_RE = [
+    re.compile(r'@(?:mock\.)?patch\([\'"](.+?)[\'"]\s*[\),]'),
+    re.compile(r'@(?:mock\.)?patch\.object\(\s*(\w+\s*,\s*[\'"]?\w+)'),
+    re.compile(r"mocker\.(?:patch|spy)\(['\"](.+?)['\"]\)"),
+    re.compile(r"monkeypatch\.setattr\((.+?),"),
+    re.compile(r"(\w+)\s*=\s*(?:Mock|MagicMock|AsyncMock)\("),
+]
+_PY_ASSERT_RE = re.compile(
+    r"(assert\s+.{0,80}|self\.assert\w+\(.{0,60}|pytest\.raises\(.{0,60}\))"
+)
+_PY_FIXTURE_RE = re.compile(r"def\s+test_\w+\(([^)]*)\)")
+
+_JS_MOCK_RE = [
+    re.compile(r"jest\.(?:fn|mock|spyOn)\((.{0,60}?)\)"),
+    re.compile(r"vi\.(?:fn|mock|spyOn)\((.{0,60}?)\)"),
+    re.compile(r"sinon\.(?:stub|spy|mock)\((.{0,60}?)\)"),
+]
+_JS_ASSERT_RE = re.compile(r"(expect\(.{0,60}\)[\s\S]{0,5}\.[\w.]+\(.{0,60}?\))")
+
+
+def outline_tests(
+    workspace: str,
+    path: str,
+) -> ToolResult:
+    """Get detailed test-aware structure of a test file."""
+    from app.repo_graph.parser import detect_language
+
+    fp = _resolve(workspace, path)
+    if not fp.is_file():
+        return ToolResult(tool_name="test_outline", success=False, error=f"File not found: {path}")
+
+    try:
+        source = fp.read_text(errors="replace")
+    except OSError as exc:
+        return ToolResult(tool_name="test_outline", success=False, error=str(exc))
+
+    lines = source.split("\n")
+    lang = detect_language(str(fp))
+
+    if lang in ("javascript", "typescript"):
+        entries = _js_test_outline(lines)
+    else:
+        entries = _py_test_outline(lines)
+
+    return ToolResult(tool_name="test_outline", data=[e.model_dump() for e in entries])
+
+
+def _py_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
+    """Parse Python test file for classes, functions, mocks, assertions, fixtures."""
+    entries: List[TestOutlineEntry] = []
+
+    # First pass: find test classes and test functions with their line ranges
+    defs: List[Dict[str, Any]] = []
+    for i, line in enumerate(lines):
+        cm = _PY_CLASS_DEF.match(line)
+        if cm:
+            defs.append({"name": cm.group(2), "kind": "test_class",
+                         "line": i + 1, "indent": len(cm.group(1))})
+            continue
+        fm = _PY_TEST_DEF.match(line)
+        if fm:
+            defs.append({"name": fm.group(2), "kind": "test_function",
+                         "line": i + 1, "indent": len(fm.group(1))})
+
+    # Compute end_line for each def (next def at same/lesser indent, or EOF)
+    for idx, d in enumerate(defs):
+        end = len(lines)
+        for nxt in defs[idx + 1:]:
+            if nxt["indent"] <= d["indent"]:
+                end = nxt["line"] - 1
+                break
+        d["end_line"] = end
+
+    for d in defs:
+        # Include decorator lines above the def (walk backward from def line)
+        decorator_start = d["line"] - 1  # 0-based index of def line
+        for k in range(d["line"] - 2, -1, -1):
+            stripped = lines[k].strip()
+            if stripped.startswith("@"):
+                decorator_start = k
+            elif stripped == "" or stripped.startswith("#"):
+                continue  # skip blank/comment lines between decorators
+            else:
+                break
+
+        body = lines[decorator_start : d["end_line"]]
+        body_text = "\n".join(body)
+
+        # Extract mocks
+        mocks: List[str] = []
+        for pattern in _PY_MOCK_RE:
+            for m in pattern.finditer(body_text):
+                mocks.append(m.group(1).strip()[:80])
+
+        # Extract assertions
+        assertions: List[str] = []
+        for m in _PY_ASSERT_RE.finditer(body_text):
+            assertions.append(m.group(1).strip()[:80])
+
+        # Extract fixtures (function params minus 'self')
+        fixtures: List[str] = []
+        if d["kind"] == "test_function":
+            # Find the def line within the body (may be preceded by decorators)
+            def_line = lines[d["line"] - 1] if d["line"] - 1 < len(lines) else ""
+            fm = _PY_FIXTURE_RE.search(def_line)
+            if fm and fm.group(1):
+                for p in fm.group(1).split(","):
+                    p = p.strip().split(":")[0].split("=")[0].strip()
+                    if p and p != "self":
+                        fixtures.append(p)
+
+        # Prefix class name for methods
+        name = d["name"]
+        if d["kind"] == "test_function" and d["indent"] > 0:
+            for prev in reversed(defs):
+                if prev["kind"] == "test_class" and prev["indent"] < d["indent"]:
+                    name = f"{prev['name']}::{d['name']}"
+                    break
+
+        entries.append(TestOutlineEntry(
+            name=name,
+            kind=d["kind"],
+            line_number=d["line"],
+            end_line=d["end_line"],
+            mocks=mocks[:10],
+            assertions=assertions[:10],
+            fixtures=fixtures,
+        ))
+
+    return entries
+
+
+def _js_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
+    """Parse JS/TS test file for describe/it/test blocks, mocks, assertions."""
+    entries: List[TestOutlineEntry] = []
+    describe_re = re.compile(r"(describe)\s*\(\s*['\"`](.+?)['\"`]")
+    test_re = re.compile(r"(test|it)\s*\(\s*['\"`](.+?)['\"`]")
+
+    # Track nesting via brace counting
+    describe_stack: List[str] = []
+    brace_depth = 0
+    describe_depths: List[int] = []
+
+    for i, line in enumerate(lines):
+        # Track braces
+        brace_depth += line.count("{") - line.count("}")
+
+        # Pop describe stack if we've exited
+        while describe_depths and brace_depth <= describe_depths[-1]:
+            describe_stack.pop()
+            describe_depths.pop()
+
+        dm = describe_re.search(line)
+        if dm:
+            desc_name = dm.group(2)
+            full_name = " > ".join(describe_stack + [desc_name]) if describe_stack else desc_name
+            entries.append(TestOutlineEntry(
+                name=full_name, kind="describe_block", line_number=i + 1,
+            ))
+            describe_stack.append(desc_name)
+            describe_depths.append(brace_depth - 1)
+            continue
+
+        tm = test_re.search(line)
+        if tm:
+            test_name = tm.group(2)
+            full_name = " > ".join(describe_stack + [test_name]) if describe_stack else test_name
+
+            # Scan ahead for mocks and assertions in this test body
+            mocks: List[str] = []
+            assertions: List[str] = []
+            inner_brace = 0
+            started = False
+            for j in range(i, min(i + 100, len(lines))):
+                tl = lines[j]
+                inner_brace += tl.count("{") - tl.count("}")
+                if "{" in tl:
+                    started = True
+                if started and inner_brace <= 0:
+                    break
+                for mp in _JS_MOCK_RE:
+                    for mm in mp.finditer(tl):
+                        mocks.append(mm.group(1).strip()[:60])
+                am = _JS_ASSERT_RE.search(tl)
+                if am:
+                    assertions.append(am.group(1).strip()[:80])
+
+            entries.append(TestOutlineEntry(
+                name=full_name, kind="test_function",
+                line_number=i + 1,
+                mocks=mocks[:10], assertions=assertions[:10],
+            ))
+
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Data flow tracing
+# ---------------------------------------------------------------------------
+
+
+def trace_variable(
+    workspace: str,
+    variable_name: str,
+    file: str,
+    function_name: Optional[str] = None,
+    direction: str = "forward",
+) -> ToolResult:
+    """Trace a variable's data flow through function calls.
+
+    Forward: find aliases, outgoing call sites (with argument → parameter
+    mapping), and sink patterns (ORM, SQL, HTTP, return).
+
+    Backward: find where the value originates — callers that pass this
+    parameter, plus source patterns (HTTP request, config, DB result).
+    """
+    from app.repo_graph.parser import extract_definitions, detect_language
+
+    fp = _resolve(workspace, file)
+    if not fp.is_file():
+        return ToolResult(tool_name="trace_variable", success=False,
+                          error=f"File not found: {file}")
+
+    lang = detect_language(str(fp))
+    if lang is None:
+        return ToolResult(tool_name="trace_variable", success=False,
+                          error=f"Unsupported language: {file}")
+
+    try:
+        source = fp.read_text(errors="replace")
+    except OSError as exc:
+        return ToolResult(tool_name="trace_variable", success=False, error=str(exc))
+
+    lines = source.split("\n")
+    symbols = extract_definitions(str(fp), fp.read_bytes())
+
+    # Resolve the target function
+    target_def = None
+    if function_name:
+        for d in symbols.definitions:
+            if d.name == function_name:
+                target_def = d
+                break
+        if target_def is None:
+            return ToolResult(
+                tool_name="trace_variable", success=False,
+                error=f"Function '{function_name}' not found in {file}",
+            )
+    else:
+        # Auto-detect: first function/method whose body contains the variable
+        for d in symbols.definitions:
+            if d.kind not in ("function", "method"):
+                continue
+            end = _infer_end_line(d, symbols.definitions, len(lines))
+            body = "\n".join(lines[d.start_line - 1 : end])
+            if re.search(rf"\b{re.escape(variable_name)}\b", body):
+                target_def = d
+                break
+        if target_def is None:
+            return ToolResult(
+                tool_name="trace_variable", success=False,
+                error=f"No function in {file} references '{variable_name}'",
+            )
+
+    # Get function body line range
+    start_line = target_def.start_line
+    end_line = _infer_end_line(target_def, symbols.definitions, len(lines))
+    body_lines = lines[start_line - 1 : end_line]
+
+    ws = Path(workspace).resolve()
+
+    # Find aliases of the variable within this function
+    aliases = _find_aliases(body_lines, start_line, variable_name)
+    all_names = {variable_name} | {a["name"] for a in aliases}
+
+    result: Dict[str, Any] = {
+        "variable": variable_name,
+        "file": str(fp.relative_to(ws)),
+        "function": target_def.name,
+        "direction": direction,
+        "aliases": aliases,
+        "flows_to": [],
+        "sinks": [],
+        "flows_from": [],
+        "sources": [],
+    }
+
+    if direction == "forward":
+        result["flows_to"] = _find_forward_flows(
+            workspace, body_lines, start_line, all_names, symbols,
+        )
+        result["sinks"] = _detect_sinks(body_lines, start_line, all_names)
+    else:
+        # Backward: determine parameter position, find callers
+        param_pos = _get_param_position(target_def, variable_name, lines)
+        if param_pos is not None:
+            result["flows_from"] = _find_backward_flows(
+                workspace, target_def.name, param_pos,
+            )
+        result["sources"] = _detect_sources(body_lines, start_line, variable_name)
+
+    return ToolResult(tool_name="trace_variable", data=result)
+
+
+def _infer_end_line(defn, all_defs, total_lines: int) -> int:
+    """Infer a function's end line when the parser only gives start_line."""
+    if defn.end_line > defn.start_line:
+        return defn.end_line
+    next_starts = sorted(
+        d.start_line for d in all_defs if d.start_line > defn.start_line
+    )
+    return (next_starts[0] - 1) if next_starts else total_lines
+
+
+# -- Alias detection --------------------------------------------------------
+
+def _find_aliases(
+    body_lines: List[str], start_line: int, variable: str,
+) -> List[Dict[str, Any]]:
+    """Find variable aliases within a function body.
+
+    Detects patterns like ``x = variable``, ``x = variable.attr``,
+    ``x: Type = variable`` (Python type annotation), and transitive
+    aliases (``y = x`` when x is already an alias).
+    """
+    aliases: List[Dict[str, Any]] = []
+    known: set = {variable}
+
+    # Multiple passes to catch transitive aliases (a = var; b = a)
+    for _pass in range(3):
+        found_new = False
+        for offset, line in enumerate(body_lines):
+            stripped = line.strip()
+            # Skip comments
+            if stripped.startswith("#") or stripped.startswith("//"):
+                continue
+            for name in list(known):
+                # x = name | x: Type = name | x = name.attr
+                m = re.search(
+                    rf"\b(\w+)\s*(?::\s*\w[\w\[\], ]*\s*)?=\s*\b{re.escape(name)}\b",
+                    stripped,
+                )
+                if m:
+                    alias = m.group(1)
+                    if alias not in known and alias not in ("self", "cls", "this"):
+                        known.add(alias)
+                        aliases.append({
+                            "name": alias,
+                            "line": start_line + offset,
+                            "expression": stripped[:200],
+                        })
+                        found_new = True
+        if not found_new:
+            break
+
+    return aliases
+
+
+# -- Forward flow detection -------------------------------------------------
+
+def _find_forward_flows(
+    workspace: str,
+    body_lines: List[str],
+    start_line: int,
+    all_names: set,
+    symbols,
+) -> List[Dict[str, Any]]:
+    """Find function calls where the variable (or alias) is passed as argument."""
+    # Pattern: func_name(  —  captures the function name before the open-paren
+    call_re = re.compile(r"(?<!\bdef\s)(?<!\bclass\s)\b([\w.]+)\s*\(")
+
+    flows: List[Dict[str, Any]] = []
+    seen_calls: set = set()  # avoid duplicate entries
+
+    for offset, line in enumerate(body_lines):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue
+
+        for call_match in call_re.finditer(stripped):
+            func_expr = call_match.group(1)
+            call_start = call_match.end()  # position after '('
+
+            args_str = _extract_paren_content(stripped, call_start - 1)
+            if args_str is None:
+                continue
+
+            arg_parts = _split_call_args(args_str)
+
+            for arg_idx, arg_text in enumerate(arg_parts):
+                arg_text_stripped = arg_text.strip()
+                # Check if any tracked name appears as this argument
+                for name in all_names:
+                    if not re.search(rf"\b{re.escape(name)}\b", arg_text_stripped):
+                        continue
+
+                    # Determine keyword or positional
+                    kw_match = re.match(r"(\w+)\s*=\s*", arg_text_stripped)
+                    keyword = kw_match.group(1) if kw_match else None
+
+                    func_simple = func_expr.split(".")[-1]
+                    dedup_key = (func_simple, arg_idx, start_line + offset)
+                    if dedup_key in seen_calls:
+                        continue
+                    seen_calls.add(dedup_key)
+
+                    # Resolve the callee's parameter name
+                    callee_info = _resolve_callee(workspace, func_simple)
+                    if keyword:
+                        as_param = keyword
+                        confidence = "high"
+                    elif callee_info:
+                        params = callee_info["params"]
+                        # Adjust for self/cls in method calls
+                        effective_idx = arg_idx
+                        if as_param := (params[effective_idx]
+                                        if effective_idx < len(params) else None):
+                            confidence = "high"
+                        else:
+                            as_param = f"arg[{arg_idx}]"
+                            confidence = "medium"
+                    else:
+                        as_param = keyword or f"arg[{arg_idx}]"
+                        confidence = "low"
+
+                    flow: Dict[str, Any] = {
+                        "callee_function": func_simple,
+                        "full_expression": func_expr,
+                        "as_parameter": as_param,
+                        "arg_expression": arg_text_stripped,
+                        "call_line": start_line + offset,
+                        "arg_position": arg_idx,
+                        "confidence": confidence,
+                    }
+                    if callee_info:
+                        flow["callee_file"] = callee_info["file"]
+                    flows.append(flow)
+                    break  # one match per argument is enough
+
+    return flows
+
+
+def _extract_paren_content(text: str, open_pos: int) -> Optional[str]:
+    """Extract content between matched parentheses starting at open_pos."""
+    if open_pos >= len(text) or text[open_pos] != "(":
+        return None
+    depth = 1
+    pos = open_pos + 1
+    while pos < len(text) and depth > 0:
+        ch = text[pos]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch in ('"', "'"):
+            # Skip string literals
+            quote = ch
+            pos += 1
+            while pos < len(text) and text[pos] != quote:
+                if text[pos] == "\\":
+                    pos += 1
+                pos += 1
+        pos += 1
+    return text[open_pos + 1 : pos - 1] if depth == 0 else None
+
+
+def _split_call_args(args_str: str) -> List[str]:
+    """Split function call arguments by comma, respecting nested parens/brackets/strings."""
+    args: List[str] = []
+    depth = 0
+    current: List[str] = []
+    i = 0
+    while i < len(args_str):
+        ch = args_str[i]
+        if ch in "([{":
+            depth += 1
+            current.append(ch)
+        elif ch in ")]}":
+            depth -= 1
+            current.append(ch)
+        elif ch in ('"', "'"):
+            current.append(ch)
+            quote = ch
+            i += 1
+            while i < len(args_str) and args_str[i] != quote:
+                if args_str[i] == "\\":
+                    current.append(args_str[i])
+                    i += 1
+                    if i < len(args_str):
+                        current.append(args_str[i])
+                else:
+                    current.append(args_str[i])
+                i += 1
+            if i < len(args_str):
+                current.append(args_str[i])
+        elif ch == "," and depth == 0:
+            args.append("".join(current).strip())
+            current = []
+        else:
+            current.append(ch)
+        i += 1
+    if current:
+        remainder = "".join(current).strip()
+        if remainder:
+            args.append(remainder)
+    return args
+
+
+def _resolve_callee(workspace: str, func_name: str) -> Optional[Dict[str, Any]]:
+    """Find a function definition in the workspace and return file + param names."""
+    if func_name in _CALL_NOISE:
+        return None
+
+    index = _get_symbol_index(workspace)
+    if index is None:
+        return None
+
+    ws = Path(workspace).resolve()
+    for rel, definitions in index.items():
+        for defn in definitions:
+            if defn.name == func_name and defn.kind in ("function", "method"):
+                params = _parse_params_from_signature(defn.signature)
+                return {"file": rel, "params": params}
+
+    return None
+
+
+def _parse_params_from_signature(sig: str) -> List[str]:
+    """Extract parameter names from a function signature string.
+
+    Handles: ``func(a, b: int, c=3)``, ``func(self, a, b)``,
+    ``function(a: string, b: number)``.
+    Strips ``self``/``cls``/``this`` and type annotations.
+    """
+    m = re.search(r"\(([^)]*)\)", sig)
+    if not m:
+        return []
+    args_str = m.group(1)
+    params: List[str] = []
+    for arg in _split_call_args(args_str):
+        arg = arg.strip()
+        if not arg or arg in ("self", "cls", "this"):
+            continue
+        # Skip *args, **kwargs
+        if arg.startswith("*"):
+            continue
+        # Get name before : or =
+        name_m = re.match(r"(\w+)", arg)
+        if name_m:
+            params.append(name_m.group(1))
+    return params
+
+
+# -- Backward flow detection ------------------------------------------------
+
+def _get_param_position(defn, variable_name: str, lines: List[str]) -> Optional[int]:
+    """Find the 0-based position of variable_name in the function's parameter list."""
+    sig = defn.signature
+    if not sig:
+        # Fallback: read the def line from source
+        if defn.start_line - 1 < len(lines):
+            sig = lines[defn.start_line - 1]
+    if not sig:
+        return None
+    params = _parse_params_from_signature(sig)
+    try:
+        return params.index(variable_name)
+    except ValueError:
+        return None
+
+
+def _find_backward_flows(
+    workspace: str,
+    func_name: str,
+    param_pos: int,
+) -> List[Dict[str, Any]]:
+    """Find callers and determine what value they pass for the target parameter."""
+    from app.repo_graph.parser import extract_definitions, detect_language
+
+    ws = Path(workspace).resolve()
+    call_re = re.compile(rf"\b{re.escape(func_name)}\s*\(")
+    flows: List[Dict[str, Any]] = []
+
+    for dirpath, dirnames, filenames in os.walk(ws):
+        rel_dir = Path(dirpath).relative_to(ws)
+        if _is_excluded(rel_dir.parts):
+            dirnames.clear()
+            continue
+        dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
+
+        for f in filenames:
+            fp = Path(dirpath) / f
+            if detect_language(str(fp)) is None:
+                continue
+            if fp.stat().st_size > _MAX_FILE_SIZE:
+                continue
+            try:
+                source = fp.read_text(errors="replace")
+            except OSError:
+                continue
+            if not call_re.search(source):
+                continue
+
+            rel = str(fp.relative_to(ws))
+            file_symbols = extract_definitions(str(fp), fp.read_bytes())
+            src_lines = source.split("\n")
+
+            for caller_def in file_symbols.definitions:
+                if caller_def.kind not in ("function", "method"):
+                    continue
+                end_ln = _infer_end_line(caller_def, file_symbols.definitions, len(src_lines))
+                body = src_lines[caller_def.start_line - 1 : end_ln]
+
+                for off, line in enumerate(body):
+                    for cm in call_re.finditer(line):
+                        args_str = _extract_paren_content(line, cm.end() - 1)
+                        if args_str is None:
+                            continue
+                        arg_parts = _split_call_args(args_str)
+                        if param_pos < len(arg_parts):
+                            arg_expr = arg_parts[param_pos].strip()
+                            flows.append({
+                                "caller_file": rel,
+                                "caller_function": caller_def.name,
+                                "arg_expression": arg_expr,
+                                "call_line": caller_def.start_line + off,
+                                "param_position": param_pos,
+                                "confidence": "high",
+                            })
+
+    return flows
+
+
+# -- Sink / source pattern detection ----------------------------------------
+
+def _detect_sinks(
+    body_lines: List[str], start_line: int, all_names: set,
+) -> List[Dict[str, Any]]:
+    """Detect data sink patterns (ORM, SQL, HTTP, return, log)."""
+    sinks: List[Dict[str, Any]] = []
+    names_pattern = "|".join(re.escape(n) for n in all_names)
+
+    patterns: List[tuple] = [
+        # ORM filter patterns
+        ("orm_filter", re.compile(
+            rf"\.(?:filter|filter_by|where|having)\s*\([^)]*\b({names_pattern})\b",
+        )),
+        ("orm_get", re.compile(
+            rf"\.(?:get|get_or_404|first_or_404|find|findOne|findUnique|findFirst)\s*\([^)]*\b({names_pattern})\b",
+        )),
+        # JPA / Spring Data patterns
+        ("jpa_query", re.compile(
+            rf"\.(?:findBy\w*|getBy\w*|deleteBy\w*|countBy\w*|existsBy\w*)\s*\([^)]*\b({names_pattern})\b",
+        )),
+        # SQL parameter patterns (use .* instead of [^)]* to handle nested parens in SQL strings)
+        ("sql_param", re.compile(
+            rf"\.(?:execute|executemany|raw|nativeQuery)\b.*\b({names_pattern})\b",
+        )),
+        ("sql_fstring", re.compile(
+            rf"(?:SELECT|INSERT|UPDATE|DELETE|WHERE|SET|VALUES)[^;]*\b({names_pattern})\b",
+            re.IGNORECASE,
+        )),
+        # HTTP outbound body
+        ("http_body", re.compile(
+            rf"(?:json|data|body|params)\s*[:=]\s*\{{[^}}]*\b({names_pattern})\b",
+        )),
+        # Return
+        ("return", re.compile(
+            rf"\breturn\b[^;\n]*\b({names_pattern})\b",
+        )),
+        # Logging
+        ("log", re.compile(
+            rf"(?:logger?|console|log)\.\w+\([^)]*\b({names_pattern})\b",
+        )),
+    ]
+
+    seen: set = set()
+    for offset, line in enumerate(body_lines):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue
+        for kind, pat in patterns:
+            m = pat.search(stripped)
+            if m:
+                key = (kind, start_line + offset)
+                if key not in seen:
+                    seen.add(key)
+                    sinks.append({
+                        "kind": kind,
+                        "expression": stripped[:200],
+                        "line": start_line + offset,
+                        "matched_variable": m.group(1),
+                        "confidence": "high",
+                    })
+
+    return sinks
+
+
+def _detect_sources(
+    body_lines: List[str], start_line: int, variable: str,
+) -> List[Dict[str, Any]]:
+    """Detect data source patterns (HTTP request, config, DB result)."""
+    sources: List[Dict[str, Any]] = []
+    var_esc = re.escape(variable)
+
+    patterns: List[tuple] = [
+        # HTTP request sources
+        ("http_request", re.compile(
+            rf"\b{var_esc}\s*=\s*.*(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)"
+            rf"|(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)\s*"
+            rf"(?:\[|\.get\(|\.)\s*['\"]?{var_esc}",
+        )),
+        # Java annotations (on previous line or same line)
+        ("http_annotation", re.compile(
+            rf"@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)\b.*\b{var_esc}\b"
+            rf"|\b{var_esc}\b.*@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)",
+        )),
+        # Pydantic / dataclass model field
+        ("model_field", re.compile(
+            rf"\b{var_esc}\s*[=:]\s*Field\s*\("
+            rf"|\b{var_esc}\s*:\s*\w+.*=\s*Field\s*\(",
+        )),
+        # Config / settings
+        ("config", re.compile(
+            rf"\b{var_esc}\s*=\s*.*(?:settings|config|env|os\.environ)",
+        )),
+        # DB query result
+        ("db_result", re.compile(
+            rf"\b{var_esc}\s*=\s*.*\.(?:fetchone|fetchall|first|scalar|one|all|execute)\s*\(",
+        )),
+        # Dict / object destructuring
+        ("destructure", re.compile(
+            rf"\b{var_esc}\s*=\s*\w+\s*\[\s*['\"]",
+        )),
+    ]
+
+    for offset, line in enumerate(body_lines):
+        stripped = line.strip()
+        if stripped.startswith("#") or stripped.startswith("//"):
+            continue
+        for kind, pat in patterns:
+            if pat.search(stripped):
+                sources.append({
+                    "kind": kind,
+                    "expression": stripped[:200],
+                    "line": start_line + offset,
+                    "confidence": "high",
+                })
+
+    return sources
+
+
+# ---------------------------------------------------------------------------
 # Tool dispatcher
 # ---------------------------------------------------------------------------
 
@@ -944,6 +1945,11 @@ TOOL_REGISTRY = {
     "ast_search": ast_search,
     "get_callees": get_callees,
     "get_callers": get_callers,
+    "git_blame": git_blame,
+    "git_show": git_show,
+    "find_tests": find_tests,
+    "test_outline": outline_tests,
+    "trace_variable": trace_variable,
 }
 
 
