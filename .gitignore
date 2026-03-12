@@ -98,6 +98,15 @@ conductor.yaml
 backend/data/
 
 # =============================================================================
+# Git Workspace Runtime Data (bare clones, worktrees, token cache)
+# These are large local git repos + sensitive credentials — never commit.
+# =============================================================================
+backend/workspaces/
+workspaces/
+# Explicit pattern for the repo-token SQLite cache (contains PATs in plaintext)
+token_cache.db
+
+# =============================================================================
 # Build & Temp Files
 # =============================================================================
 tmp/

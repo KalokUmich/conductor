@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:aiCollabView"
+    "onView:aiCollabView",
+    "onFileSystem:conductor"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -33,10 +34,18 @@
         }
       ]
     },
+    "virtualWorkspaces": {
+      "supported": "limited",
+      "description": "Conductor remote workspaces via conductor:// URI scheme"
+    },
     "commands": [
       {
         "command": "ai-collab.openPanel",
         "title": "AI Collab: Open Panel"
+      },
+      {
+        "command": "conductor.searchWorkspace",
+        "title": "Conductor: Search Remote Workspace"
       }
     ],
     "configuration": {
@@ -75,6 +84,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.x",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.15.0",

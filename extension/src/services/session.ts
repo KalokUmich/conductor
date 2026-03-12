@@ -15,6 +15,8 @@
 import * as vscode from 'vscode';
 import { randomUUID } from 'crypto';
 
+import { NgrokTunnel, selectPreferredNgrokUrl } from './connectionDiagnostics';
+
 /**
  * Session state data structure passed to the WebView.
  * Contains all information needed for the chat interface.
@@ -196,21 +198,48 @@ export class SessionService {
     }
 
     /**
-     * Detect and cache ngrok URL if ngrok is running.
-     * Ngrok exposes its API at http://localhost:4040/api/tunnels
+     * Detect and cache the public URL to use for invite links.
      *
-     * @returns The ngrok public URL if available, null otherwise
+     * Priority:
+     *   1. Backend GET /public-url  — reads conductor.settings.yaml server.public_url
+     *   2. Local ngrok API on localhost:4040 (useful if ngrok runs inside WSL)
+     *   3. Returns null → falls back to VS Code aiCollab.backendUrl / localhost
+     *
+     * @returns The public URL if available, null otherwise
      */
     public async detectNgrokUrl(): Promise<string | null> {
+        // --- 1. Ask the backend for its configured public_url ---
         try {
-            // Use dynamic import for node-fetch or use built-in fetch
+            const localBackend = vscode.workspace.getConfiguration('aiCollab')
+                .get<string>('backendUrl', 'http://localhost:8000');
+            const resp = await fetch(`${localBackend}/public-url`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(3000),
+            });
+            if (resp.ok) {
+                const data = await resp.json() as { public_url?: string };
+                const url = (data.public_url ?? '').trim();
+                if (url) {
+                    this._ngrokUrl = url;
+                    console.log('[Session] Using backend-configured public_url:', url);
+                    return url;
+                }
+            }
+        } catch {
+            // backend not reachable yet — fall through to local ngrok detection
+        }
+
+        // --- 2. Fall back to local ngrok API ---
+        try {
             const response = await fetch('http://localhost:4040/api/tunnels', {
                 method: 'GET',
-                headers: { 'Accept': 'application/json' }
+                headers: { 'Accept': 'application/json' },
+                signal: AbortSignal.timeout(3000),
             });
 
             if (!response.ok) {
-                console.log('[Session] Ngrok API not available');
+                console.log('[Session] Ngrok API unavailable on localhost:4040; using configured backend URL / localhost fallback');
                 return null;
             }
 
@@ -218,34 +247,25 @@ export class SessionService {
                 tunnels: Array<{
                     public_url: string;
                     proto: string;
-                    config: { addr: string };
+                    config?: { addr?: string } | null;
                 }>;
             };
 
-            // Find the HTTPS tunnel that points to our backend port (8000)
-            const tunnel = data.tunnels.find(t =>
-                t.proto === 'https' && t.config.addr.includes('8000')
-            );
-
-            if (tunnel) {
-                this._ngrokUrl = tunnel.public_url;
-                console.log('[Session] Detected ngrok URL:', this._ngrokUrl);
+            const detectedUrl = selectPreferredNgrokUrl(data.tunnels.map(tunnel => ({
+                publicUrl: tunnel.public_url,
+                proto: tunnel.proto,
+                config: tunnel.config,
+            } satisfies NgrokTunnel)));
+            if (detectedUrl) {
+                this._ngrokUrl = detectedUrl;
+                console.log('[Session] Using detected ngrok tunnel:', this._ngrokUrl);
                 return this._ngrokUrl;
             }
 
-            // If no specific tunnel found, try to get any HTTPS tunnel
-            const httpsTunnel = data.tunnels.find(t => t.proto === 'https');
-            if (httpsTunnel) {
-                this._ngrokUrl = httpsTunnel.public_url;
-                console.log('[Session] Detected ngrok URL (fallback):', this._ngrokUrl);
-                return this._ngrokUrl;
-            }
-
-            console.log('[Session] No suitable ngrok tunnel found');
+            console.log('[Session] No local ngrok HTTPS tunnel detected; using configured backend URL / localhost fallback');
             return null;
-        } catch (error) {
-            // Ngrok is not running or API is not accessible
-            console.log('[Session] Ngrok not detected:', error);
+        } catch {
+            console.log('[Session] No local ngrok tunnel detected; using configured backend URL / localhost fallback');
             return null;
         }
     }

@@ -59,6 +59,7 @@ class ModelStatus:
     provider: str
     display_name: str
     available: bool  # Provider is healthy and model is enabled
+    classifier: bool = False  # Can be used as a query pre-classifier
 
 
 @dataclass
@@ -213,10 +214,6 @@ class ProviderResolver:
         Returns:
             The active AIProvider or None if no healthy provider found.
         """
-        if not self.summary_config.enabled:
-            logger.info("Summary is disabled, skipping provider resolution")
-            return None
-
         logger.debug("Resolving AI providers...")
 
         # Check all provider types
@@ -332,6 +329,7 @@ class ProviderResolver:
                     self._provider_enabled.get(model.provider, False) and
                     self._provider_health.get(model.provider, False)
                 ),
+                classifier=model.classifier,
             )
             for model in self.models_config
             if self._provider_enabled.get(model.provider, False)
@@ -355,6 +353,42 @@ class ProviderResolver:
         if self.active_provider_type:
             return self._providers.get(self.active_provider_type)
         return None
+
+    def get_classifier_provider(self) -> Optional[AIProvider]:
+        """Get a provider for query pre-classification.
+
+        Returns the first enabled model with ``classifier: true`` whose
+        provider is healthy. Returns None if no classifier model is configured.
+        """
+        for model in self.models_config:
+            if (
+                model.classifier
+                and model.enabled
+                and self._provider_health.get(model.provider, False)
+            ):
+                provider = self._create_provider(model.provider, model.model_name)
+                if provider:
+                    logger.info("Classifier provider: %s (%s)", model.id, model.provider)
+                    return provider
+        return None
+
+    def get_classifier_provider_for_model(self, model_id: str) -> Optional[AIProvider]:
+        """Get a classifier provider for a specific model ID.
+
+        Returns None if the model is not found, not enabled, not marked as
+        classifier, or its provider is not healthy.
+        """
+        model = self._find_model(model_id)
+        if not model:
+            return None
+        if not model.classifier or not model.enabled:
+            return None
+        if not self._provider_health.get(model.provider, False):
+            return None
+        provider = self._create_provider(model.provider, model.model_name)
+        if provider:
+            logger.info("Classifier provider set to: %s (%s)", model.id, model.provider)
+        return provider
 
     def set_active_model(self, model_id: str) -> bool:
         """Set the active model for summarization.

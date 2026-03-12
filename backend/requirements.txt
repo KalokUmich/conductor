@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 pytest
+pytest-asyncio
 httpx
 jsonschema
 duckdb
@@ -8,11 +9,20 @@ pyyaml
 pyngrok
 python-multipart
 boto3
-faiss-cpu
-numpy
-tree-sitter>=0.23,<0.26
-tree-sitter-javascript>=0.23
-tree-sitter-typescript>=0.23
-tree-sitter-java>=0.23
-tree-sitter-go>=0.23
+
+# --- RepoMap (Graph-Based Context) ---
+# Dependency graph construction and PageRank
+networkx
+# AST parsing for symbol extraction (Python, JS, TS, Go, Rust, etc.)
+# tree-sitter-languages 1.x requires tree-sitter 0.21.x (Language API changed in 0.22+)
+tree-sitter>=0.21,<0.22
+tree-sitter-languages
+
+# --- ast-grep (Structural Code Search) ---
+# Used by ast_search tool for AST-pattern matching
+ast-grep-cli
+
+# --- LangExtract (Structured Document Extraction) ---
+# Google's LLM-powered extraction with custom Claude/Bedrock provider
+langextract
 

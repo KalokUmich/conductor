@@ -102,6 +102,7 @@ class MessageType(str, Enum):
     AI_SUMMARY = "ai_summary"
     AI_CODE_PROMPT = "ai_code_prompt"
     AI_EXPLANATION = "ai_explanation"
+    AI_ANSWER = "ai_answer"
 
 
 class RoomUser(BaseModel):

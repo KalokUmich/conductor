@@ -10,9 +10,9 @@ Usage:
 """
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from .base import AIProvider, ChatMessage, DecisionSummary
+from .base import AIProvider, ChatMessage, DecisionSummary, TokenUsage, ToolCall, ToolUseResponse
 from .prompts import get_summary_prompt
 
 logger = logging.getLogger(__name__)
@@ -214,3 +214,125 @@ class ClaudeDirectProvider(AIProvider):
 
         response = client.messages.create(**kwargs)
         return response.content[0].text.strip()
+
+    def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_tokens: int = 4096,
+        system: str | None = None,
+    ) -> ToolUseResponse:
+        """Send messages with tool definitions via the Anthropic Messages API.
+
+        Uses the native tool_use support in the Anthropic API.
+        Messages arrive in Bedrock Converse format and are converted to
+        Anthropic Messages API format before sending.
+        """
+        client = self._get_client()
+
+        # Convert tool definitions to Anthropic format
+        anthropic_tools = []
+        for tool in tools:
+            anthropic_tools.append({
+                "name": tool["name"],
+                "description": tool.get("description", ""),
+                "input_schema": tool.get("input_schema", {}),
+            })
+
+        kwargs: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": _converse_to_anthropic(messages),
+        }
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+        if system:
+            kwargs["system"] = system
+
+        response = client.messages.create(**kwargs)
+
+        text_parts = []
+        tool_calls = []
+
+        for block in response.content:
+            if block.type == "text":
+                text_parts.append(block.text)
+            elif block.type == "tool_use":
+                tool_calls.append(ToolCall(
+                    id=block.id,
+                    name=block.name,
+                    input=block.input,
+                ))
+
+        # Extract token usage from Anthropic Messages API response
+        usage = None
+        if hasattr(response, "usage") and response.usage:
+            u = response.usage
+            usage = TokenUsage(
+                input_tokens=getattr(u, "input_tokens", 0),
+                output_tokens=getattr(u, "output_tokens", 0),
+                total_tokens=getattr(u, "input_tokens", 0) + getattr(u, "output_tokens", 0),
+                cache_read_input_tokens=getattr(u, "cache_read_input_tokens", 0) or 0,
+                cache_write_input_tokens=getattr(u, "cache_creation_input_tokens", 0) or 0,
+            )
+
+        return ToolUseResponse(
+            text="\n".join(text_parts),
+            tool_calls=tool_calls,
+            stop_reason=response.stop_reason,
+            raw=response,
+            usage=usage,
+        )
+
+
+def _converse_to_anthropic(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert Bedrock Converse message format to Anthropic Messages API format.
+
+    Bedrock Converse uses:
+      - {"text": "..."}
+      - {"toolUse": {"toolUseId": ..., "name": ..., "input": ...}}
+      - {"toolResult": {"toolUseId": ..., "content": [{"text": "..."}]}}
+
+    Anthropic Messages API uses:
+      - {"type": "text", "text": "..."}
+      - {"type": "tool_use", "id": ..., "name": ..., "input": ...}
+      - {"type": "tool_result", "tool_use_id": ..., "content": "..."}
+    """
+    converted = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg.get("content", [])
+
+        # Already a plain string — pass through
+        if isinstance(content, str):
+            converted.append({"role": role, "content": content})
+            continue
+
+        anthropic_blocks = []
+        for block in content:
+            if "text" in block and "toolUse" not in block and "toolResult" not in block:
+                anthropic_blocks.append({"type": "text", "text": block["text"]})
+            elif "toolUse" in block:
+                tu = block["toolUse"]
+                anthropic_blocks.append({
+                    "type": "tool_use",
+                    "id": tu["toolUseId"],
+                    "name": tu["name"],
+                    "input": tu.get("input", {}),
+                })
+            elif "toolResult" in block:
+                tr = block["toolResult"]
+                result_content = tr.get("content", [])
+                if isinstance(result_content, list):
+                    text_parts = [c["text"] for c in result_content if "text" in c]
+                    result_text = "\n".join(text_parts)
+                else:
+                    result_text = str(result_content)
+                anthropic_blocks.append({
+                    "type": "tool_result",
+                    "tool_use_id": tr["toolUseId"],
+                    "content": result_text,
+                })
+
+        converted.append({"role": role, "content": anthropic_blocks})
+    return converted

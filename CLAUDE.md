@@ -4,180 +4,363 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Conductor is a VS Code collaboration extension with a FastAPI backend. It enables team chat via WebSocket, Live Share session management, file sharing, AI-assisted summarization/code workflows, AI code explanation, and workspace TODO scanning.
+Conductor is a VS Code collaboration extension with a FastAPI backend. The project has two main parts:
 
-## Common Commands
+1. **`extension/`** - TypeScript VS Code extension
+2. **`backend/`** - Python FastAPI server
 
+## Commands
+
+### Backend (Python/FastAPI)
 ```bash
-# Setup (first time)
-make setup                  # Creates .venv, installs backend + extension deps
+cd backend
+pip install -r requirements.txt
+uvicorn main:app --reload          # development server
+pytest                             # run all tests
+pytest -k "test_repo_graph"       # repo graph tests
+pytest -k "test_agent_loop"       # agent loop tests
+pytest -k "test_code_tools"       # code tools tests
+pytest --cov=. --cov-report=html   # coverage report
+```
 
-# Run backend (dev mode with auto-reload, port 8000)
-make run-backend
-
-# Compile extension (TypeScript + Tailwind CSS)
-make compile
-
-# Lint extension
-cd extension && npm run lint
-
-# Run all tests
-make test
-
-# Run backend tests only
-make test-backend
-
-# Run a single backend test module
-cd backend && ../.venv/bin/pytest tests/test_chat.py -v
-
-# Run a single backend test by name
-cd backend && ../.venv/bin/pytest tests/test_chat.py -v -k "test_name"
-
-# Run extension tests (must compile first)
-cd extension && npm run compile
-cd extension && npm run test              # Runs all out/tests/*.test.js
-
-# Run a single extension test file
-node --test extension/out/tests/conductorStateMachine.test.js
-
-# Partial setup
-make setup-backend              # Backend only (venv + pip install)
-make setup-extension            # Extension only (npm install)
-
-# Individual compile steps
-make compile-ts                 # TypeScript only
-make compile-css                # Tailwind CSS only
-
-# Clean all generated files (venv, out/, node_modules, __pycache__)
-make clean
-
-# Package extension as .vsix (compiles first)
-make package
+### Extension (TypeScript/VS Code)
+```bash
+cd extension
+npm install
+npm run compile                    # one-time build
+npm run watch                      # watch mode
+npm test                           # run extension tests
+npm run lint                       # ESLint
+vsce package                       # build .vsix
 ```
 
 ## Architecture
 
-Two runtime components communicate over REST + WebSocket:
+### Backend Structure
 
 ```
-VS Code Extension (TypeScript)  <-->  FastAPI Backend (Python, port 8000)
-       |                                       |
-       +-> Live Share                          +-> DuckDB (audit, file metadata)
-                                               +-> Local filesystem (uploads/)
+backend/
+├── app/
+│   ├── main.py                      # FastAPI app, lifespan, router registration
+│   ├── config.py                    # Settings + Secrets from YAML
+│   ├── git_workspace/               # Git workspace management (Model A)
+│   │   ├── service.py               # GitWorkspaceService
+│   │   ├── delegate_broker.py       # DelegateBroker (Model B prep)
+│   │   └── router.py                # /api/git-workspace/ endpoints
+│   ├── agent_loop/                  # Agentic code intelligence (LLM + tools)
+│   │   ├── service.py               # AgentLoopService — LLM loop, tool dispatch
+│   │   ├── budget.py                # BudgetController — token-based budget management
+│   │   ├── trace.py                 # SessionTrace — per-session JSON trace for offline analysis
+│   │   ├── query_classifier.py      # QueryClassifier — keyword + optional LLM classification
+│   │   ├── evidence.py              # EvidenceEvaluator — rule-based answer quality check
+│   │   ├── prompts.py               # 3-layer system prompt (Core Identity + Strategy + Runtime)
+│   │   └── router.py                # POST /api/context/query endpoint
+│   ├── code_tools/                  # 21 code intelligence tools
+│   │   ├── schemas.py               # Pydantic models + TOOL_DEFINITIONS for LLM
+│   │   ├── tools.py                 # Tool implementations (grep, AST, call graph, git, compressed view)
+│   │   ├── output_policy.py         # Per-tool truncation policies (budget-adaptive)
+│   │   └── router.py                # /api/code-tools/ direct access endpoints
+│   ├── langextract/                 # LangExtract + multi-vendor Bedrock integration
+│   │   ├── provider.py              # BedrockLanguageModel — all Bedrock vendors
+│   │   ├── claude_provider.py       # Backwards-compat re-exports from provider.py
+│   │   ├── catalog.py               # BedrockCatalog — dynamic model discovery
+│   │   ├── service.py               # LangExtractService async wrapper
+│   │   └── router.py                # GET /api/langextract/models endpoint
+│   ├── ai_provider/                 # LLM provider abstraction
+│   │   ├── base.py                  # AIProvider ABC + ToolCall/ToolUseResponse/TokenUsage
+│   │   ├── claude_bedrock.py        # Bedrock Converse API (+ chat_with_tools)
+│   │   ├── claude_direct.py         # Anthropic Messages API (+ chat_with_tools)
+│   │   ├── openai_provider.py       # OpenAI Chat Completions (+ chat_with_tools)
+│   │   └── resolver.py              # ProviderResolver — health checks, selection
+│   └── repo_graph/                  # AST-based symbol extraction + dependency graph
+│       ├── parser.py                # tree-sitter AST + regex fallback
+│       ├── graph.py                 # networkx dependency graph + PageRank
+│       └── service.py               # RepoMapService (map generation, caching)
+├── config/
+│   └── conductor.settings.yaml      # Non-secret settings template
+├── requirements.txt
+└── tests/
+    ├── conftest.py                  # Centralized stubs (cocoindex, litellm, etc.)
+    ├── test_code_tools.py           # 98 tests — all 21 code tools + dispatcher + multi-language
+    ├── test_agent_loop.py           # 39 tests — agent loop + message format + workspace layout + 3-layer prompt
+    ├── test_query_classifier.py     # 26 tests — keyword + LLM classification, dynamic tool sets, filter_tools
+    ├── test_compressed_tools.py     # 24 tests — compressed_view, module_summary, expand_symbol
+    ├── test_budget_controller.py    # 20 tests — token budget signals, tracking, edge cases
+    ├── test_session_trace.py        # 15 tests — SessionTrace, IterationTrace, save/load
+    ├── test_evidence.py             # 14 tests — evidence evaluator (file refs, tool calls, budget checks)
+    ├── test_symbol_role.py          # 24 tests — symbol role classification + sorting + decorator detection
+    ├── test_output_policy.py        # 19 tests — per-tool truncation, budget adaptation
+    ├── test_langextract.py          # 57 tests — Bedrock provider, catalog, service, router
+    ├── test_repo_graph.py           # 72 tests — parser + graph + service
+    ├── test_config_new.py           # 27 tests — config + secrets (RAG remnants removed)
+    └── test_git_workspace.py        # Git workspace lifecycle
 ```
 
-### Backend (`backend/app/`)
+### Extension Structure
 
-FastAPI application in `main.py`. Each feature is a separate module with its own router. Modules follow a `module/{__init__.py, router.py, service.py or domain files}` convention:
+```
+extension/src/
+├── extension.ts               # Entry point, command registration
+├── panels/
+│   ├── collabPanel.ts         # Main WebView panel
+│   └── workspacePanel.ts      # 5-step workspace creation wizard
+├── services/
+│   ├── sessionFSM.ts          # Session state machine
+│   ├── webSocketService.ts    # WebSocket client
+│   ├── fileSystemProvider.ts  # conductor:// URI scheme
+│   ├── workspaceClient.ts     # /workspace/ HTTP client
+│   └── fileUploadService.ts   # Upload/download proxy
+└── commands/
+    └── index.ts               # VS Code command handlers
+```
 
-- **chat/**: WebSocket real-time chat with `ConnectionManager` (room-scoped connections, in-memory message history, read receipts, message dedup). Room state is in-memory only. Room-scoped settings via `settings_router.py` (code_style, output_mode). `MessageType` enum includes `MESSAGE`, `CODE_SNIPPET`, `FILE`, `AI_SUMMARY`, `AI_CODE_PROMPT`, `AI_EXPLANATION`.
-- **ai_provider/**: AI summarization pipeline (`pipeline.py`) with 4 stages: classification (7 discussion types) → targeted summary → code relevance scoring → item extraction (`CodeRelevantItem`). Provider resolution (`resolver.py`) with `ProviderType` enum and priority-based fallback across Anthropic direct, AWS Bedrock, and OpenAI. Code prompt generation (`wrapper.py`) loads style guidelines based on detected workspace languages. Fluent prompt builder (`prompt_builder.py`) with `PromptBuilder` class for language inference from components, doc-only detection, and configurable output modes (unified_diff, direct_repo_edits, plan_then_diff).
-- **context/**: AI code explanation pipeline. `router.py` exposes two endpoints: `POST /context/explain` (legacy path — enriches the request with `ContextEnricher` then calls the LLM) and `POST /context/explain-rich` (preferred path — accepts a pre-assembled XML prompt from the extension's 8-stage pipeline, optionally augments it with RAG context, then forwards it directly to the LLM). `enricher.py` (`ContextEnricher`) fills missing context fields and calls the LLM. `skills.py` (`CodebaseSkills`) provides utilities: `extract_imports`, `extract_context_window`, `find_containing_function`, `build_explanation_prompt`. `schemas.py` defines `ExplainRequest`, `ExplainRichRequest`, and `ExplainResponse`.
-- **todos/**: Task tracking with DuckDB persistence. `service.py` (`TODOService`) provides CRUD for tasks with fields: title, description, type, priority, status (open/in_progress/done), file_path, line_number, created_by, assignee, source (ai_summary/manual/stack_trace/test_failure/workspace_scan). `router.py` exposes `GET/POST /todos/{room_id}` and `PUT/DELETE /todos/{room_id}/{todo_id}`.
-- **embeddings/**: Embedding vector service. `bedrock.py` (`BedrockEmbeddingProvider`) calls AWS Bedrock Cohere to produce 1024-dim float vectors. `service.py` (`EmbeddingService`) is a singleton initialized at startup; AWS credential errors set it to `None` so the extension stops retrying. `router.py` exposes `GET /embeddings/config` (model ID + dim, consumed by the extension on startup) and `POST /embeddings` (batch embed 1–32 texts, returns `[[float]]`).
-- **rag/**: FAISS-backed codebase retrieval. `chunker.py` splits source files into semantic chunks using AST parsing (Python stdlib `ast`, tree-sitter for JS/TS/Java/Go) with regex fallback; each chunk carries import context for embedding quality. `vector_store.py` (`FaissVectorStore`) wraps a FAISS `IndexFlatIP` (cosine similarity via normalized vectors) with a metadata sidecar and thread-safe writes. `indexer.py` (`RagIndexer`) manages per-workspace FAISS indices and a `file_path → [chunk_ids]` mapping for incremental updates. `router.py` exposes `POST /rag/index` (upsert/delete files), `POST /rag/reindex` (full workspace rebuild), `POST /rag/search` (semantic query, returns ranked `SearchResult` list with file_path, line range, symbol name, content, score). Returns 503 when the indexer is not configured (embeddings unavailable).
-- **agent/**: `MockAgent` for deterministic change generation (not LLM-based yet). `style_loader.py` loads Google-derived style guides for Python, Java, JavaScript, Go, JSON from `agent/styles/*.md`.
-- **auth/**: SSO login via device authorization flows — AWS IAM Identity Center and Google OAuth 2.0. Shared `_poll_for_identity()` helper handles the common poll-then-resolve-identity pattern.
-- **policy/**: Auto-apply safety policy evaluation for code changes (file count, line count, forbidden paths).
-- **audit/**: DuckDB-based audit logging for applied changes with SHA-256 changeset hashing.
-- **files/**: File upload/download with room-scoped storage (`uploads/{room_id}/`). DuckDB metadata tracking. 20MB size limit. Duplicate file detection via `GET /files/check-duplicate/{room_id}` (case-insensitive filename match).
-- **config.py**: Pydantic-validated YAML config loading. Split into `conductor.secrets.yaml` (gitignored, API keys) and `conductor.settings.yaml` (commitable settings). Search order: `./config/` → `./` → `../config/` → `~/.conductor/`.
-- **ngrok_service.py**: Ngrok tunnel lifecycle (`start_ngrok`, `stop_ngrok`, `get_public_url`). Started/stopped in `main.py` lifespan.
+### Agentic Code Intelligence Architecture
 
-### Extension (`extension/src/`)
+The code context system uses an **LLM agent loop** instead of a traditional RAG pipeline.
+The agent iteratively calls code tools to navigate the codebase and answer questions.
 
-Entry point: `extension.ts` which registers commands and sets up the WebView message bridge. File uploads use Node.js built-in `FormData` + `Blob` with retry logic (3 attempts) for both upload and duplicate check requests. Backend URLs are normalized (`localhost` → `127.0.0.1`) to avoid IPv6 resolution issues in Node.js. End Chat automatically closes the active Live Share session.
+```
+User query ("How does auth work?")
+       ↓
+QueryClassifier (keyword or LLM-based)
+  → query_type, strategy hint, dynamic tool_set
+       ↓
+3-Layer System Prompt:
+  L1: Core Identity (always) — hard constraints, exploration pattern
+  L2: Strategy (per query type) — e.g. "Business Flow Tracing"
+  L3: Runtime Guidance (dynamic) — budget, scatter, convergence
+       ↓
+AgentLoopService.run_stream(query, workspace_path)
+       ↓
+  ┌─────────────────────────────────────┐
+  │ LLM decides which tools to call     │
+  │ (via chat_with_tools)               │
+  │ Tools: dynamic subset (8-12 of 21)  │
+  │   ↓                                 │
+  │ Tool execution (grep, read_file,    │ ← up to 25 iterations
+  │   compressed_view, etc.)            │   or 500K input tokens
+  │   ↓                                 │
+  │ BudgetController.track(usage)       │ ← token tracking
+  │   → NORMAL / WARN / FORCE_CONCLUDE  │
+  │   ↓                                 │
+  │ Results + budget context → LLM      │
+  └─────────────────────────────────────┘
+       ↓
+AgentResult (answer + context_chunks + budget_summary)
+```
 
-**Critical architecture rule**: The WebView (`chat.html`) must **never** call `fetch()` to backend URLs directly — VS Code WebView CSP blocks connections to external/ngrok URLs. All HTTP calls go through the extension host (`extension.ts`) via `postMessage`, and the host relays responses back via `webview.postMessage`.
+**21 code tools** in `code_tools/tools.py`:
 
-- **services/conductorStateMachine.ts**: 6-state FSM (Idle, BackendDisconnected, ReadyToHost, Hosting, Joining, Joined). Join-only mode works via `BackendDisconnected -> Joining`. Pure logic, no VS Code dependency.
-- **services/conductorController.ts**: Orchestrates FSM transitions, backend health checks, session lifecycle.
-- **services/languageDetector.ts**: Detects workspace languages via `findFiles` glob patterns (Python, Java, JavaScript/TypeScript, Go). Results cached; cache cleared on workspace folder changes. Sends `detected_languages` to backend for style-aware CGP generation.
-- **services/session.ts**: `globalState` persistence for room/session IDs, backend URL resolution including ngrok detection.
-- **services/permissions.ts**: Role-based access (`lead` vs `member` via `aiCollab.role` VS Code setting).
-- **services/diffPreview.ts**: Sequential diff preview and code change application.
-- **services/backendHealthCheck.ts**: Stateless async health check against `GET /health`, no VS Code API dependency.
-- **services/ssoIdentityCache.ts**: SSO identity storage with 24h expiry, provider tagging (`aws`/`google`), globalState persistence.
-- **services/contextGatherer.ts**: Enriches a code snippet with workspace context before sending to `POST /context/explain`. Gathers: full file content (capped at 40 KB), surrounding ±15 lines, import statements (language-specific regex), enclosing function/class signature (pattern matching), and related files via LSP definitions/references. Returns a `ContextBundle`.
-- **services/stackTraceParser.ts**: Parses raw stack trace text into structured `ParsedStackTrace` objects. Supports Python, JavaScript/TypeScript, Java, Go. Resolves frame paths to workspace-relative paths. Used when users paste or share stack traces in chat.
-- **services/todoScanner.ts**: Scans workspace files for structured TODO comments. Format: `// TODO: title` optionally followed by `// TODO_DESC: description`. Returns `WorkspaceTodo[]` with file path, line number, title, description, and comment prefix. `updateWorkspaceTodoInFile()` writes edits back to source. Excludes `node_modules`, `.venv`, `out/`, `dist/`, `__pycache__`, `.git`.
-- **services/explainWithContextPipeline.ts**: Orchestrates the full 8-stage "Explain with Context" pipeline (see data flow below). Called by the extension host when the user clicks the explain button. Produces a `PipelineOutput` with the explanation, model name, assembled XML prompt, and per-stage timing data.
-- **services/lspResolver.ts**: Resolves VS Code LSP `definition` and `references` commands for a given URI + position. Returns `{definition?, references[]}` with workspace-relative paths and ranges.
-- **services/relevanceRanker.ts**: Hybrid structural + semantic relevance scoring. Inputs: LSP results, import neighbours, semantic `SearchResult[]`. Outputs a ranked list of `{path, role, score}` items. Structural signals: LSP definition (highest), LSP references, import graph distance. Semantic signals: embedding cosine similarity from `vectorIndex`.
-- **services/contextPlanGenerator.ts**: Converts ranked file references into deduplicated `ReadFileOp[]` items with expanded line ranges and byte caps. Merges overlapping ranges from the same file.
-- **services/xmlPromptAssembler.ts**: Assembles a structured XML string from current-file snippet, definition file, and related files. Enforces an 80,000-character total budget, trimming related files first. Uses `<file role="current|definition|related">` tags with CDATA-escaped content and a `<question>` section.
-- **services/ragClient.ts**: HTTP client for the backend RAG endpoints. `index(workspaceId, files)` → `POST /rag/index`, `reindex(workspaceId, files)` → `POST /rag/reindex`, `search(workspaceId, query, topK?, filters?)` → `POST /rag/search`.
-- **services/embeddingClient.ts**: HTTP client for `POST /embeddings`. Takes `string[]`, returns `number[][]`. Used by `explainWithContextPipeline` for semantic search.
-- **services/embeddingQueue.ts**: Batches and rate-limits embedding requests to avoid overwhelming the backend. Coalesces rapid back-to-back calls.
-- **services/vectorIndex.ts**: In-extension SQLite-backed vector index for local semantic search. Stores `(symbol_id, model, vector_blob)` rows. `loadRows()` + `search(queryVec, topK)` using cosine similarity. Used as the local semantic layer in the explain pipeline (while FAISS is the server-side layer for RAG).
-- **services/conductorDb.ts**: SQLite database (`~/.conductor/workspace.db`) for workspace context. Tables: `symbols` (path, name, type, start_line, end_line, signature), `symbol_vectors` (symbol_id, model, vector). Used by the explain pipeline for symbol lookup and dependency resolution.
-- **services/workspaceScanner.ts**: Traverses workspace folders to find source files. Respects `.gitignore`-style exclusions. Feeds the initial file list for indexing.
-- **services/symbolExtractor.ts**: Extracts symbols (functions, classes, methods) from source files using language-specific regex patterns. Returns `{symbols[], imports[]}`. Used by the indexing pipeline to populate `conductorDb`.
-- **services/workspaceIndexer.ts**: Orchestrates background indexing: scans workspace → extracts symbols → embeds via `embeddingClient` → stores in `conductorDb`. Triggered on workspace open and file save.
-- **services/workspaceStorage.ts**: Initialises the `.conductor/` directory in the workspace root. Creates `config.json` (workspace tuning: `maxRelated`, `maxContextFiles`, `semanticTopK`). Provides `WorkspaceConfig` and `EmbeddingConfig` type definitions and their defaults.
-- **media/chat.html**: Single-file WebView UI (all JS inline). Communicates with extension host via `postMessage`. Header uses a 2-row compact layout (brand row + session action bar). Tabs use a pill/segment control style. Code snippet messages use `whitespace-pre-wrap` to prevent horizontal overflow.
+| Tool | Description |
+|------|-------------|
+| `grep` | Regex search across files (excludes .git, node_modules, etc.) |
+| `read_file` | Read file contents with optional line ranges |
+| `list_files` | List directory tree with depth/glob filters |
+| `find_symbol` | AST-based symbol definition search (tree-sitter) |
+| `find_references` | Find symbol usages (grep + AST validation) |
+| `file_outline` | Get all definitions in a file with line numbers |
+| `get_dependencies` | Files this file imports (dependency graph) |
+| `get_dependents` | Files that import this file (reverse dependencies) |
+| `git_log` | Recent commits, optionally per-file |
+| `git_diff` | Diff between two git refs |
+| `ast_search` | Structural AST search via ast-grep (`$VAR`, `$$$MULTI` patterns) |
+| `get_callees` | Functions/methods called within a specific function body |
+| `get_callers` | Functions/methods that call a given function (cross-file) |
+| `git_blame` | Per-line authorship with commit hash, author, date |
+| `git_show` | Full commit details (message + diff) |
+| `find_tests` | Find test functions covering a given function/class |
+| `test_outline` | Test file structure with mocks, assertions, fixtures |
+| `trace_variable` | Data flow tracing: aliases, arg→param mapping, sink/source detection |
+| `compressed_view` | File signatures + call relationships + side effects (~80% token savings) |
+| `module_summary` | Module-level summary: services, models, functions, file list (~95% savings) |
+| `expand_symbol` | Expand a symbol from compressed view to full source code |
 
-### Shared Contract
+**AI Provider `chat_with_tools()`** — implemented in all 3 providers:
+- `ClaudeBedrockProvider` — Bedrock Converse API `toolConfig`
+- `ClaudeDirectProvider` — Anthropic Messages API `tool_use`
+- `OpenAIProvider` — OpenAI Chat Completions `tools` API
 
-`shared/changeset.schema.json` defines the `ChangeSet` format used between backend and extension. `FileChange.type` is either `create_file` or `replace_range`.
+### RepoMap / Symbol Extraction
 
-## Configuration
+The `repo_graph/` module provides AST-based symbol extraction used by code tools:
 
-Two YAML files in `config/`:
-- `conductor.secrets.yaml` (gitignored; see `.example` files) — sections: `ai_providers` (anthropic, aws_bedrock, openai), `google_sso` (client_id, client_secret), `ngrok` (authtoken)
-- `conductor.settings.yaml` (commitable) — sections: `server`, `ngrok`, `sso`, `google_sso`, `summary`, `ai_provider_settings`, `ai_models`, `session`, `change_limits`, `logging`, `prompt`
+1. **Parser** (`parser.py`): Extract symbol definitions and references using tree-sitter AST (with regex fallback)
+2. **Graph** (`graph.py`): Directed dependency graph (file A → file B). Uses networkx + PageRank
+3. **Service** (`service.py`): RepoMapService for graph building and caching
 
-Key VS Code extension settings: `aiCollab.role` (lead/member), `aiCollab.backendUrl`, `aiCollab.autoStartLiveShare`.
+### Model A Architecture (Current)
 
-## Key Data Flows
+```
+User provides PAT
+       ↓
+Extension sends token + repo URL to backend
+       ↓
+Backend creates bare repo clone with GIT_ASKPASS
+       ↓
+Backend creates worktree at worktrees/{room_id}/
+       ↓
+FileSystemProvider mounts conductor://{room_id}/ in VS Code
+```
 
-### CGP (Code Generation Prompt) Flow
-1. Extension detects workspace languages (`languageDetector.ts`)
-2. Extension sends `POST /ai/code-prompt` with `decision_summary`, `room_id`, `detected_languages`
-3. Backend loads style guidelines: room-level override > detected languages (universal + language-specific `.md` files) > fallback universal only
-4. `PromptBuilder` constructs CGP with language inference from affected components, doc-only detection, and configurable output mode (unified_diff, direct_repo_edits, plan_then_diff)
-5. Response sent back to WebView for display
+## Key Patterns
 
-### AI Summarization Pipeline Flow
-1. Extension sends chat messages via `POST /ai/summarize`
-2. Stage 1: Classify discussion type (7 types: api_design, product_flow, code_change, architecture, innovation, debugging, general)
-3. Stage 2: Generate targeted summary with type-specific prompt
-4. Stage 3: Compute code-relevant types for selective CGP generation
-5. Stage 4: Extract actionable items as `CodeRelevantItem` list
-6. Response sent back with `PipelineSummary` including classification metadata and extracted items
+### Agent Loop Pattern
+```python
+from app.agent_loop.service import AgentLoopService
+from app.agent_loop.budget import BudgetConfig
 
-### Explain Code Flow (8-Stage Pipeline)
-1. User selects code in VS Code editor, clicks the 💡 button in the chat toolbar
-2. WebView sends `getCodeSnippet` to extension host; host captures file URI, position, lines, language
-3. **Stage 2 — LSP context**: `lspResolver.resolveLspContext()` fetches VS Code `definition` + `references`
-4. **Stage 2.5 — Full file**: current file is read and capped at 60 KB
-5. **Stage 2.6 — Import neighbours**: imports resolved to workspace-relative paths
-6. **Stage 2.7 — Dependency resolution**: `_buildDependencyPlan()` extracts types, services, method calls from the snippet; three rounds of parallel resolution (file read / symbol DB / semantic) populate content snippets
-7. **Stage 3 — Ranking**: `relevanceRanker.rank()` scores files via LSP + import graph + embedding cosine similarity
-8. **Stage 4 — Context plan**: `contextPlanGenerator.buildContextPlan()` deduplicates and expands file ranges
-9. **Stage 5 — Read files**: plan executed via VS Code workspace API
-10. **Stage 6 — XML assembly**: `xmlPromptAssembler.assembleXmlPrompt()` combines all snippets into a structured XML string (≤80,000 chars) with `<file role="current|definition|related">` and `<question>` tags
-11. **Stage 7 — LLM call**: extension host POSTs to `POST /context/explain-rich` with the pre-assembled XML; backend optionally augments with FAISS RAG results then calls the active AI provider
-12. Extension host posts the explanation to the chat room via `POST /chat/{room_id}/ai-message` (type `ai_explanation`) — **not** from the WebView (CSP restriction)
-13. Backend broadcasts `ai_explanation`; WebView renders with navigate-to-code button
+agent = AgentLoopService(
+    provider=ai_provider,
+    max_iterations=25,
+    budget_config=BudgetConfig(max_input_tokens=500_000),
+    classifier_provider=haiku_provider,  # optional: LLM pre-classification
+    use_llm_classifier=True,            # enable LLM classification (default: keyword)
+)
+result = await agent.run(query="How does auth work?", workspace_path="/path/to/ws")
+# result.answer — LLM's final answer
+# result.context_chunks — code read during the loop
+# result.tool_calls_made — total tools invoked
+# result.budget_summary — token usage breakdown
+```
 
-### Workspace TODO Scanner Flow
-1. User clicks **Scan** in the Tasks → Code TODOs section
-2. WebView sends `scanWorkspaceTodos` to extension host
-3. `todoScanner.scanWorkspaceTodos()` traverses all workspace folders, reads source files, and matches lines against `// TODO: title` (and `// TODO_DESC: description`) patterns
-4. Returns `WorkspaceTodo[]` sorted by file path then line number
-5. WebView renders the list; clicking an item navigates to its source location
-6. User can edit title/description in a modal; Save sends `updateWorkspaceTodo` to extension host
-7. `updateWorkspaceTodoInFile()` rewrites the relevant comment lines in the source file
+### Code Tools Pattern
+```python
+from app.code_tools.tools import execute_tool
 
-## Testing
+result = execute_tool("grep", workspace="/path/to/ws", params={"pattern": "authenticate"})
+# result.success, result.data, result.error
+```
 
-- Backend: pytest (478 tests). Tests are in `backend/tests/`, one file per module. Shared fixtures in `tests/conftest.py`.
-- Extension: Node test runner (5 test files in `extension/src/tests/`). Run all with `cd extension && npm run test` or individually with `node --test`.
-- Extension tests cover service logic, not VS Code UI automation. Some tests start local HTTP servers and may fail in sandboxed environments.
+### chat_with_tools Pattern
+```python
+# All 3 providers (Bedrock, Direct, OpenAI) implement chat_with_tools
+response = provider.chat_with_tools(
+    messages=[{"role": "user", "content": [{"text": "Find auth code"}]}],
+    tools=TOOL_DEFINITIONS,  # from code_tools.schemas
+    system="You are a code assistant.",
+)
+# response.text — model's text output
+# response.tool_calls — List[ToolCall] with id, name, input
+# response.stop_reason — "end_turn", "tool_use", "max_tokens"
+# response.usage — TokenUsage(input_tokens, output_tokens, total_tokens, cache_read/write)
+```
 
-## Related Documentation
+### LangExtract Pattern
+```python
+from app.langextract.service import LangExtractService
+from app.langextract.catalog import BedrockCatalog
+from langextract.data import ExampleData, Extraction
 
-- `ROADMAP.md` — Future project plan (5 phases: production readiness, LLM agent, collaboration features, security, scalability)
-- `docs/GUIDE.md` — Code walkthrough for engineers (architecture, patterns, data flows)
-- `docs/ARCHITECTURE.md` — Concise architecture reference with runtime sequences
+# Optional: attach a catalog for model discovery + inference profile resolution
+catalog = BedrockCatalog(region="eu-west-2")
+catalog.refresh()
+
+svc = LangExtractService(
+    model_id="claude-sonnet-4-20250514",  # or any Bedrock model ID
+    region="eu-west-2",
+    catalog=catalog,
+)
+result = await svc.extract_from_text(
+    text="Meeting notes: Alice will review the PR by March 15...",
+    prompt="Extract people, dates, and action items.",
+    examples=[ExampleData(
+        text="Bob will fix the bug by Friday.",
+        extractions=[
+            Extraction(extraction_class="Person", extraction_text="Bob"),
+            Extraction(extraction_class="Date", extraction_text="Friday"),
+            Extraction(extraction_class="Action", extraction_text="fix the bug"),
+        ],
+    )],
+)
+# result.success, result.documents, result.error
+
+# List available models grouped by vendor
+models_by_vendor = svc.list_available_models()  # {"Anthropic": [...], "Amazon": [...]}
+```
+
+### Config Pattern
+```python
+from app.config import load_settings
+
+settings = load_settings()                  # loads YAML files (settings + secrets)
+# settings.code_search.repo_map_enabled    # RepoMap config
+# settings.secrets.jwt                     # JWT auth secrets
+```
+
+## Testing Notes
+
+- Backend tests use `pytest` with mocked external dependencies
+- Centralized stubs in `conftest.py` for cocoindex, litellm, sentence_transformers, sqlite_vec
+- **Code tools tests** use real filesystem operations (tmp_path fixtures)
+- **Agent loop tests** use `MockProvider` subclass of `AIProvider` with scripted responses
+- RepoMap tests use real filesystem operations for parser/graph tests
+- tree-sitter and networkx are mocked in import stubs
+- Config tests verify env var injection via `setdefault()` for all credential types
+- **LangExtract tests** mock Bedrock/Anthropic API calls and `lx.extract()`
+- ast-grep tests require `ast-grep-cli` installed in the venv
+- Run new tests: `pytest tests/test_code_tools.py tests/test_agent_loop.py tests/test_budget_controller.py tests/test_langextract.py -v`
+
+## Environment Variables
+
+```bash
+# Backend
+BACKEND_HOST=0.0.0.0
+BACKEND_PORT=8000
+GIT_WORKSPACE_ROOT=/tmp/conductor_workspaces
+
+# AI Provider Credentials (configured in conductor.secrets.yaml)
+AWS_ACCESS_KEY_ID=...            # Bedrock provider
+AWS_SECRET_ACCESS_KEY=...        # Bedrock provider
+AWS_DEFAULT_REGION=us-east-1     # Bedrock provider
+OPENAI_API_KEY=sk-...            # OpenAI provider
+
+# Extension (VS Code settings)
+conductor.backendUrl=http://localhost:8000
+conductor.enableWorkspace=true
+```
+
+## Recent Changes
+
+- **Evidence Evaluator** — `evidence.py` in `agent_loop/` checks answer quality before finalizing: requires file:line refs or code blocks, ≥2 tool calls, ≥1 file accessed. If evidence insufficient and budget remains, rejects the answer and forces the LLM to investigate further. 14 tests.
+- **Symbol Role Classification** — `find_symbol` results now include a `role` field (route_entry, business_logic, domain_model, infrastructure, utility, test, unknown) and are sorted by role priority. Classification uses 3 tiers: decorator/annotation context (reads lines above symbol), file path patterns, name patterns. 24 tests.
+- **Session Trace** — `SessionTrace` in `agent_loop/trace.py` records per-iteration metrics (LLM latency, tool latencies, token breakdown, budget signals) as structured JSON. Saved to `{trace_dir}/{session_id}.json` for offline analysis. Opt-in via `trace_dir` on `AgentLoopService`. 15 tests.
+- **Tool Output Policy** — `output_policy.py` in `code_tools/` replaces uniform 30KB hard cutoff with per-tool truncation policies. Search tools truncate by result count, read_file by line boundaries, git tools with generous char limits. Budget-adaptive: limits shrink 50% when remaining tokens < 100K. 19 tests.
+- **Config Cleanup** — removed RAG remnants: `EmbeddingSecrets`, `VoyageSecrets`, `MistralSecrets`, `CohereSecrets`, `AwsSecrets`, `OpenAISecrets`, `_inject_embedding_env_vars()`. Cleaned `CodeSearchSettings` to only `repo_map_enabled`/`repo_map_top_n`. Removed RAG router from `main.py`.
+- **Token-Based Budget Controller** — `BudgetController` in `agent_loop/budget.py` replaces iteration-only budget management with token tracking. Tracks cumulative input/output tokens per session via `TokenUsage` extracted from all 3 providers (Bedrock Converse, Anthropic Messages, OpenAI). Three signals: NORMAL → WARN_CONVERGE (70% threshold or diminishing returns) → FORCE_CONCLUDE (90% or max iterations). LLM sees token budget context each turn. `budget_summary` dict in `AgentResult` for downstream analysis. 20 tests.
+- **TokenUsage on ToolUseResponse** — `TokenUsage` dataclass added to `ai_provider/base.py`. All 3 providers now extract `input_tokens`, `output_tokens`, `total_tokens`, and cache token counts from API responses and attach to `ToolUseResponse.usage`.
+- **Agentic Code Intelligence** — replaced RAG pipeline (CocoIndex + embeddings + reranking) with LLM agent loop + 21 code tools. The agent iteratively navigates code to answer questions.
+- **3-Layer System Prompt** — `prompts.py` restructured from monolithic ~7500-token prompt into 3 layers: Core Identity (~100 lines, always included), Strategy (~30 lines, selected by query type), Runtime Guidance (dynamic budget/scatter). ~4000 tokens per call.
+- **Query Classifier** — `query_classifier.py` classifies into 7 types with keyword matching (default) or optional LLM pre-classification (Haiku). Configurable via `classifier.use_llm` / `classifier.model_id` in settings YAML. Each type defines a dynamic tool_set (8-12 of 21 tools). 26 tests.
+- **Dynamic Tool Set** — LLM only sees tools relevant to query type (e.g. root_cause gets git tools, architecture gets module_summary). Reduces hallucinated tool calls and token waste. `filter_tools()` helper in schemas.py.
+- **Accumulated Text Trimming** — agent loop keeps only last 3 thinking turns to prevent context window bloat from intermediate reasoning.
+- **Budget Hard Constraints** — WARN_CONVERGE now refuses new broad searches (grep, find_symbol) and only allows verification calls (expand_symbol, read_file with line ranges).
+- **Compressed View Tools** — 3 new tools for token-efficient code navigation:
+  - `compressed_view` — file signatures + call relationships + side effects + raises (~80% savings vs read_file). Rich symbol extraction including class methods. Multi-language.
+  - `module_summary` — module-level summary: services, models, controllers, functions, imports, file list (~95% savings). Classifies symbols by role.
+  - `expand_symbol` — expand a symbol from compressed view to full source. Workspace-wide search with substring matching.
+  - 24 tests in `test_compressed_tools.py`.
+- **Language Support Hardening** — `find_tests` and `test_outline` now support Java (JUnit/Mockito), Go (testing.T/testify), Rust (#[test]), and C/C++. 10 new language-specific tests.
+- **Code Tools** (`code_tools/`) — 21 tool implementations including data flow tracing, git semantic analysis, test association, ast-grep structural search, function-level call graph, and compressed view tools
+- **Data Flow Tracing** (`trace_variable`) — tracks a variable across function boundaries: alias detection (transitive), argument→parameter mapping via callee resolution, sink patterns (ORM `.filter()`, SQL `execute()`, JPA `findBy*()`, HTTP body, return), source patterns (HTTP request, annotations, config, DB result). Agent chains hops to trace e.g. `loan_id` from HTTP request to SQL WHERE clause.
+- **Git Semantic Tools** — `git_blame` (per-line authorship) + `git_show` (full commit details with diff) for understanding why code was written
+- **Test Association Tools** — `find_tests` (find tests for a function/class) + `test_outline` (test structure with mocks, assertions, fixtures)
+- **Workspace Reconnaissance** — auto-scan workspace directory layout + detect project markers (pom.xml, package.json, go.mod, etc.) before first LLM call, so agent knows project structure from iteration 1
+- **ast-grep Integration** — structural AST search via ast-grep CLI, supports pattern variables (`$VAR`, `$$$MULTI`), auto-detects language from file extension, meta-variable extraction
+- **Function-Level Call Graph** — `get_callees` finds what a function calls; `get_callers` finds who calls a function. Works with tree-sitter AST and regex fallback.
+- **Multi-Language Parser Fallback** — regex-based symbol extraction for Java, Go, Rust, C, C++ when tree-sitter is unavailable
+- **LangExtract Multi-Vendor Bedrock** (`langextract/`) — `BedrockLanguageModel` provider supports ALL Bedrock models (Claude, Amazon Nova, Llama, Mistral, DeepSeek, Qwen, etc.) via the unified Converse API. `BedrockCatalog` dynamically discovers available models at startup via `list_foundation_models()` + `list_inference_profiles()`, handles `eu.` inference profiles for cross-region models, groups by vendor. `GET /api/langextract/models` endpoint for UI model selection. Backwards-compatible `ClaudeLanguageModel` alias preserved.
+- **Agent Loop** (`agent_loop/`) — `AgentLoopService` drives the LLM loop, dispatches tool calls, collects context chunks; accumulated-text fallback for empty answers
+- **SSE Streaming** — real-time progress for both `/query/stream` and `/explain-rich/stream` with live tool call progress in the WebView
+- **Collapsible AI Explanations** — explanation cards in chat can be collapsed/expanded
+- **`chat_with_tools()`** — added to all 3 AI providers (Bedrock Converse, Anthropic Messages, OpenAI Chat Completions) for native tool use
+- **`POST /api/context/query`** — new endpoint replacing the old hybrid retrieval context endpoint
+- **RepoMap** — tree-sitter + networkx graph + PageRank (still used by find_symbol, file_outline, dependency tools)
+- 900+ test cases across code tools, agent loop, budget controller, session trace, output policy, query classifier, compressed tools, repo graph, config, and langextract
+
+## What's Next
+
+See [ROADMAP.md](ROADMAP.md) for planned features. Current focus:
+- Precise static taint analysis (Phase C — long-term R&D, see ROADMAP 5.5.4)
+- Model B delegate authentication
+- Conflict resolution for concurrent edits
+- Enterprise features (room access control, audit export)

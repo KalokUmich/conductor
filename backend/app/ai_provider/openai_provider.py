@@ -10,9 +10,9 @@ Usage:
 """
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
-from .base import AIProvider, ChatMessage, DecisionSummary
+from .base import AIProvider, ChatMessage, DecisionSummary, TokenUsage, ToolCall, ToolUseResponse
 from .prompts import get_summary_prompt
 
 logger = logging.getLogger(__name__)
@@ -215,4 +215,165 @@ class OpenAIProvider(AIProvider):
         )
 
         return response.choices[0].message.content.strip()
+
+    def chat_with_tools(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        max_tokens: int = 4096,
+        system: str | None = None,
+    ) -> ToolUseResponse:
+        """Send messages with tool definitions via the OpenAI Chat Completions API.
+
+        Messages arrive in Bedrock Converse format and are converted to
+        OpenAI Chat Completions format before sending.
+        """
+        client = self._get_client()
+
+        # Convert tool definitions to OpenAI format
+        openai_tools = []
+        for tool in tools:
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": tool.get("input_schema", {}),
+                },
+            })
+
+        oai_messages = []
+        if system:
+            oai_messages.append({"role": "system", "content": system})
+        oai_messages.extend(_converse_to_openai(messages))
+
+        create_kwargs: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "messages": oai_messages,
+        }
+        if openai_tools:
+            create_kwargs["tools"] = openai_tools
+
+        response = client.chat.completions.create(**create_kwargs)
+
+        choice = response.choices[0]
+        msg = choice.message
+
+        text = msg.content or ""
+        tool_calls = []
+        if msg.tool_calls:
+            for tc in msg.tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    input=args,
+                ))
+
+        # Map OpenAI finish_reason to our stop_reason
+        stop_map = {
+            "stop": "end_turn",
+            "tool_calls": "tool_use",
+            "length": "max_tokens",
+        }
+        stop_reason = stop_map.get(choice.finish_reason, choice.finish_reason or "end_turn")
+
+        # Extract token usage from OpenAI response
+        usage = None
+        if hasattr(response, "usage") and response.usage:
+            u = response.usage
+            usage = TokenUsage(
+                input_tokens=getattr(u, "prompt_tokens", 0) or 0,
+                output_tokens=getattr(u, "completion_tokens", 0) or 0,
+                total_tokens=getattr(u, "total_tokens", 0) or 0,
+            )
+
+        return ToolUseResponse(
+            text=text,
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            raw=response,
+            usage=usage,
+        )
+
+
+def _converse_to_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Convert Bedrock Converse message format to OpenAI Chat Completions format.
+
+    Bedrock Converse uses:
+      - {"role": "user",      "content": [{"text": "..."}]}
+      - {"role": "assistant", "content": [{"text": "..."}, {"toolUse": {...}}]}
+      - {"role": "user",      "content": [{"toolResult": {...}}]}
+
+    OpenAI Chat Completions uses:
+      - {"role": "user",      "content": "..."}
+      - {"role": "assistant", "content": "...", "tool_calls": [{...}]}
+      - {"role": "tool",      "tool_call_id": "...", "content": "..."}
+    """
+    converted = []
+    for msg in messages:
+        role = msg["role"]
+        content = msg.get("content", [])
+
+        # Already a plain string — pass through
+        if isinstance(content, str):
+            converted.append({"role": role, "content": content})
+            continue
+
+        has_tool_use = any("toolUse" in b for b in content)
+        has_tool_result = any("toolResult" in b for b in content)
+
+        if has_tool_use and role == "assistant":
+            # Assistant message with tool calls
+            text_parts = [b["text"] for b in content if "text" in b]
+            oai_tool_calls = []
+            for b in content:
+                if "toolUse" in b:
+                    tu = b["toolUse"]
+                    oai_tool_calls.append({
+                        "id": tu["toolUseId"],
+                        "type": "function",
+                        "function": {
+                            "name": tu["name"],
+                            "arguments": json.dumps(tu.get("input", {})),
+                        },
+                    })
+            oai_msg: Dict[str, Any] = {
+                "role": "assistant",
+                "content": "\n".join(text_parts) if text_parts else None,
+            }
+            if oai_tool_calls:
+                oai_msg["tool_calls"] = oai_tool_calls
+            converted.append(oai_msg)
+
+        elif has_tool_result:
+            # Tool results → one "tool" message per result
+            for b in content:
+                if "toolResult" in b:
+                    tr = b["toolResult"]
+                    result_content = tr.get("content", [])
+                    if isinstance(result_content, list):
+                        text_parts = [c["text"] for c in result_content if "text" in c]
+                        result_text = "\n".join(text_parts)
+                    else:
+                        result_text = str(result_content)
+                    converted.append({
+                        "role": "tool",
+                        "tool_call_id": tr["toolUseId"],
+                        "content": result_text,
+                    })
+
+        else:
+            # Regular user/assistant message
+            text_parts = [b["text"] for b in content if "text" in b]
+            converted.append({
+                "role": role,
+                "content": "\n".join(text_parts) if text_parts else "",
+            })
+
+    return converted
 

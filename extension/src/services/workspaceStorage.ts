@@ -27,12 +27,7 @@ import { ConductorDb } from './conductorDb';
  * written before a field was added continue to work without manual migration.
  */
 /**
- * Settings stored in `.conductor/config.json` — extension-side tuning knobs
- * that do NOT duplicate backend configuration.
- *
- * Embedding model and dimension are intentionally absent here.
- * They live in `conductor.settings.yaml` (backend) and are fetched at
- * runtime via `GET /embeddings/config` so there is a single source of truth.
+ * Settings stored in `.conductor/config.json` — extension-side tuning knobs.
  */
 export interface WorkspaceConfig {
     /** Directory names to skip during workspace scanning. */
@@ -47,9 +42,7 @@ export interface WorkspaceConfig {
      * Maps to `maxFiles` in `relevanceRanker.rank()`.
      */
     maxContextFiles: number;
-    /**
-     * Top-K value passed to `VectorIndex.search()` when running semantic search.
-     */
+    /** Top-K cap for ranked context results. */
     semanticTopK: number;
 }
 
@@ -70,52 +63,6 @@ export const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
 
 /** @deprecated Use `DEFAULT_WORKSPACE_CONFIG` — kept for backward compatibility. */
 const DEFAULT_CONFIG = DEFAULT_WORKSPACE_CONFIG;
-
-// ---------------------------------------------------------------------------
-// Embedding configuration (fetched from backend, not stored locally)
-// ---------------------------------------------------------------------------
-
-/** Embedding configuration returned by `GET /embeddings/config`. */
-export interface EmbeddingConfig {
-    model:    string;
-    dim:      number;
-    provider: string;
-}
-
-/** Safe fallback used when the backend is unreachable at startup. */
-export const DEFAULT_EMBEDDING_CONFIG: EmbeddingConfig = {
-    model:    'cohere.embed-english-v3',
-    dim:      1024,
-    provider: 'bedrock',
-};
-
-/**
- * Fetch the active embedding configuration from the backend.
- *
- * The backend reads `conductor.settings.yaml`, so this is the single source
- * of truth.  Falls back to `DEFAULT_EMBEDDING_CONFIG` when the backend is
- * not reachable (e.g. first run before hosting starts).
- *
- * @param backendUrl  Base URL of the Conductor backend.
- */
-export async function fetchEmbeddingConfig(backendUrl: string): Promise<EmbeddingConfig> {
-    try {
-        const response = await fetch(`${backendUrl}/embeddings/config`);
-        if (!response.ok) {
-            console.warn(`[ConductorStorage] GET /embeddings/config returned ${response.status} — using defaults`);
-            return { ...DEFAULT_EMBEDDING_CONFIG };
-        }
-        const data = await response.json() as Partial<EmbeddingConfig>;
-        return {
-            model:    data.model    ?? DEFAULT_EMBEDDING_CONFIG.model,
-            dim:      data.dim      ?? DEFAULT_EMBEDDING_CONFIG.dim,
-            provider: data.provider ?? DEFAULT_EMBEDDING_CONFIG.provider,
-        };
-    } catch (err) {
-        console.warn('[ConductorStorage] Could not fetch embedding config — using defaults:', err);
-        return { ...DEFAULT_EMBEDDING_CONFIG };
-    }
-}
 
 /** Default contents for `.conductor/file_meta.json`. */
 const DEFAULT_FILE_META = {
@@ -180,7 +127,7 @@ async function ensureJsonFile(
  * .conductor/
  * ├── config.json       — enricher settings  (see WorkspaceConfig)
  * ├── file_meta.json    — tracked file metadata
- * └── vectors/          — vector embeddings cache
+ * └── cache.db          — SQLite symbol index
  * ```
  *
  * @param workspaceRoot - Absolute path to the workspace root folder.

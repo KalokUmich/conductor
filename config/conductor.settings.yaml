@@ -1,24 +1,32 @@
 # Conductor Settings Configuration
-# Copy this file to conductor.settings.yaml and customize your settings
-#
+# =============================================================================
 # This file contains non-sensitive settings and CAN be committed to git.
 # For API keys and secrets, use conductor.secrets.yaml (gitignored).
 #
-# Usage:
-#   cp config/conductor.settings.yaml.example config/conductor.settings.yaml
-#   # Then edit conductor.settings.yaml with your preferences
+# Configuration file search order:
+#   1. ./config/conductor.settings.yaml
+#   2. ./conductor.settings.yaml
+#   3. ../config/conductor.settings.yaml
+#   4. ~/.conductor/conductor.settings.yaml
 
 # =============================================================================
 # Server Configuration
 # =============================================================================
 server:
-  # Backend server host and port
-  host: "localhost"
+  host: "0.0.0.0"
   port: 8000
-  
+  debug: false
+  reload: false
+  log_level: "info"
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:5173"
+    - "vscode-webview://*"
+
   # Public URL for external access (set by ngrok or other tunnel service)
-  # Leave empty to use localhost
-  public_url: ""
+  # When ngrok is enabled, the live tunnel URL takes priority over this value.
+  # Leave empty to use localhost (only works when NOT in VS Code Remote-WSL).
+  public_url: "https://preoriginal-bromidically-elliana.ngrok-free.dev"
 
 # =============================================================================
 # Ngrok Settings (non-secrets)
@@ -32,21 +40,63 @@ ngrok:
   enabled: true
 
 # =============================================================================
+# Database
+# =============================================================================
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  echo_sql: false
+
+# =============================================================================
+# Authentication
+# =============================================================================
+auth:
+  token_expire_minutes: 60
+  refresh_expire_days: 7
+  require_email_verify: false
+
+# =============================================================================
+# Rooms
+# =============================================================================
+rooms:
+  max_participants: 50
+  max_rooms_per_user: 10
+  session_timeout_minutes: 120
+  enable_persistence: true
+
+# =============================================================================
+# Live Share (legacy — disabled, replaced by git_workspace)
+# =============================================================================
+live_share:
+  enabled: false
+  vscode_extension_id: "ms-vsliveshare.vsliveshare"
+  host_timeout_seconds: 300
+
+# =============================================================================
+# AWS SSO Configuration
+# =============================================================================
+sso:
+  enabled: true
+  start_url: "https://d-9c67136d70.awsapps.com/start"
+  region: "eu-west-2"
+
+# =============================================================================
+# Google SSO Configuration
+# =============================================================================
+google_sso:
+  enabled: false
+
+# =============================================================================
 # AI Summary Configuration
 # =============================================================================
 summary:
-  # Enable AI-powered summarization feature
   enabled: true
-  
-  # Default model to use for summarization and code explanation
-  # Must match an id from ai_models below
   default_model: "claude-sonnet-4-6-bedrock"
 
 # =============================================================================
 # AI Provider Settings
 # =============================================================================
-# Enable/disable providers. Even if enabled here, providers need valid API keys
-# in conductor.secrets.yaml to function. UI will show grayed out if unavailable.
 ai_provider_settings:
   anthropic_enabled: true
   aws_bedrock_enabled: true
@@ -55,18 +105,18 @@ ai_provider_settings:
 # =============================================================================
 # AI Models Configuration
 # =============================================================================
-# Define available models for each provider.
-# Only models for enabled providers with valid API keys will be usable.
-#
-# Note for AWS Bedrock:
-# - Some models (like Claude Sonnet 4) only support cross-region inference
-# - Use the inference profile ID format: us.anthropic.claude-sonnet-4-20250514-v1:0
-# - Or use models that support single-region: anthropic.claude-3-haiku-20240307-v1:0
 ai_models:
+  # ---- Claude (Bedrock) ----
   - id: "claude-sonnet-4-6-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-sonnet-4-6"
     display_name: "Claude Sonnet 4.6 (Bedrock EU)"
+    enabled: true
+
+  - id: "claude-opus-4-6-bedrock"
+    provider: "aws_bedrock"
+    model_name: "eu.anthropic.claude-opus-4-6"
+    display_name: "Claude Opus 4.6 (Bedrock EU)"
     enabled: true
 
   - id: "claude-sonnet-4-5-bedrock"
@@ -75,18 +125,49 @@ ai_models:
     display_name: "Claude Sonnet 4.5 (Bedrock EU)"
     enabled: true
 
-  - id: "claude-sonnet-4-anthropic"
-    provider: "anthropic"
-    model_name: "claude-sonnet-4-20250514"
-    display_name: "Claude Sonnet 4 (Anthropic)"
+  - id: "claude-haiku-4-5-bedrock"
+    provider: "aws_bedrock"
+    model_name: "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+    display_name: "Claude Haiku 4.5 (Bedrock EU)"
     enabled: true
+    classifier: true  # fast + cheap — good for query pre-classification
 
   - id: "claude-3-haiku-bedrock"
     provider: "aws_bedrock"
     model_name: "anthropic.claude-3-haiku-20240307-v1:0"
     display_name: "Claude 3 Haiku (Bedrock)"
     enabled: true
+    classifier: true  # cheapest Claude — fallback classifier
 
+  # ---- Claude (Anthropic Direct) ----
+  - id: "claude-sonnet-4-anthropic"
+    provider: "anthropic"
+    model_name: "claude-sonnet-4-20250514"
+    display_name: "Claude Sonnet 4 (Anthropic)"
+    enabled: true
+
+  # ---- Amazon Nova (Bedrock) ----
+  - id: "amazon-nova-pro-bedrock"
+    provider: "aws_bedrock"
+    model_name: "amazon.nova-pro-v1:0"
+    display_name: "Amazon Nova Pro (Bedrock)"
+    enabled: true
+
+  - id: "amazon-nova-lite-bedrock"
+    provider: "aws_bedrock"
+    model_name: "amazon.nova-lite-v1:0"
+    display_name: "Amazon Nova Lite (Bedrock)"
+    enabled: true
+    classifier: true  # very fast, suitable for classification
+
+  - id: "amazon-nova-micro-bedrock"
+    provider: "aws_bedrock"
+    model_name: "amazon.nova-micro-v1:0"
+    display_name: "Amazon Nova Micro (Bedrock)"
+    enabled: true
+    classifier: true
+
+  # ---- Qwen (Bedrock) ----
   - id: "qwen3-coder-next-bedrock"
     provider: "aws_bedrock"
     model_name: "qwen.qwen3-coder-next"
@@ -99,6 +180,34 @@ ai_models:
     display_name: "Qwen3 Next 80B (Bedrock EU)"
     enabled: true
 
+  # ---- Meta Llama (Bedrock) ----
+  - id: "llama4-scout-bedrock"
+    provider: "aws_bedrock"
+    model_name: "meta.llama4-scout-17b-16e-instruct-v1:0"
+    display_name: "Llama 4 Scout 17B (Bedrock)"
+    enabled: true
+
+  - id: "llama4-maverick-bedrock"
+    provider: "aws_bedrock"
+    model_name: "meta.llama4-maverick-17b-128e-instruct-v1:0"
+    display_name: "Llama 4 Maverick 17B (Bedrock)"
+    enabled: true
+
+  # ---- Mistral (Bedrock) ----
+  - id: "mistral-large-bedrock"
+    provider: "aws_bedrock"
+    model_name: "mistral.mistral-large-2407-v1:0"
+    display_name: "Mistral Large (Bedrock)"
+    enabled: true
+
+  # ---- DeepSeek (Bedrock) ----
+  - id: "deepseek-r1-bedrock"
+    provider: "aws_bedrock"
+    model_name: "deepseek.r1-v1:0"
+    display_name: "DeepSeek R1 (Bedrock)"
+    enabled: true
+
+  # ---- OpenAI ----
   - id: "gpt-4o"
     provider: "openai"
     model_name: "gpt-4o"
@@ -110,112 +219,49 @@ ai_models:
     model_name: "gpt-4o-mini"
     display_name: "GPT-4o Mini"
     enabled: true
+    classifier: true
 
 # =============================================================================
 # Prompt Configuration
 # =============================================================================
-# Controls how the code generation prompt is formatted.
-# output_mode options:
-#   "unified_diff"       - Provide changes as unified diff patches (default)
-#   "direct_repo_edits"  - Provide complete file contents
-#   "plan_then_diff"     - Provide implementation plan, then diffs
 prompt:
   output_mode: "unified_diff"
-
-# =============================================================================
-# Session Configuration
-# =============================================================================
-session:
-  # Session timeout in minutes (0 = no timeout)
-  timeout_minutes: 0
-  
-  # Maximum participants per room
-  max_participants: 10
 
 # =============================================================================
 # Change Limits Configuration
 # =============================================================================
 change_limits:
   max_files_per_request: 10
-  max_lines_per_file: 500
   max_total_lines: 2000
   auto_apply:
-    enabled: false
     max_lines: 50
 
 # =============================================================================
 # Logging Configuration
 # =============================================================================
 logging:
-  # Log level (debug, info, warning, error)
-  level: "info"
-  
-  # Enable DuckDB audit logging
   audit_enabled: true
-  
-  # Path to audit log database file
   audit_path: "backend/audit_logs.duckdb"
 
 # =============================================================================
-# AWS SSO Configuration
+# Git Workspace Settings
 # =============================================================================
-# Enable SSO login for user identification via AWS IAM Identity Center.
-# Users can sign in before starting/joining a session.
-sso:
-  # Enable SSO login button in the extension
+git_workspace:
   enabled: true
-
-  # Your AWS SSO portal start URL (from IAM Identity Center settings)
-  start_url: "https://d-9c67136d70.awsapps.com/start"
-
-  # AWS region where your IAM Identity Center is configured
-  region: "eu-west-2"
-
-# =============================================================================
-# Google SSO Configuration
-# =============================================================================
-# Enable Google OAuth SSO login for user identification.
-# Requires client_id and client_secret in conductor.secrets.yaml.
-google_sso:
-  # Enable Google SSO login button in the extension
-  enabled: false
+  workspaces_dir: "./workspaces"
+  git_auth_mode: "token"                   # "token" (Mode A) or "delegate" (Mode B)
+  credential_ttl_seconds: 3600
+  max_worktrees_per_repo: 20
+  cleanup_on_room_close: true
 
 # =============================================================================
-# Embedding Configuration
+# Session Trace Settings
 # =============================================================================
-# Controls which cloud provider and model are used to generate vector
-# embeddings for code symbols. Changing model triggers lazy re-embedding
-# on next usage (the extension checks sha1 + model).
-embedding:
-  # Embedding provider (bedrock, openai, cohere)
-  provider: "bedrock"
-
-  # Provider-specific model ID for embeddings
-  # Bedrock: cohere.embed-english-v3, cohere.embed-multilingual-v3, amazon.titan-embed-text-v2:0
-  # OpenAI: text-embedding-3-small, text-embedding-3-large
-  model: "cohere.embed-english-v3"
-
-  # Expected vector dimensionality produced by the model
-  # cohere.embed-english-v3: 1024, text-embedding-3-small: 1536
-  dim: 1024
-
-# =============================================================================
-# RAG (Retrieval-Augmented Generation) Configuration
-# =============================================================================
-# Backend-centric FAISS vector store for semantic code retrieval.
-# Requires a working embedding service (see embedding section above).
-rag:
-  # Enable the RAG pipeline
+# Records per-query metrics (tokens, latencies, tool calls) for offline analysis.
+# Run for a few days, then analyze with AI to optimize prompts and tool usage.
+trace:
   enabled: true
+  backend: "local"                          # "local" (JSON files) or "database" (SQLite)
+  local_path: ".conductor/session_traces"   # gitignored by default
+  # database_url: "sqlite:///traces.db"     # uncomment to use SQLite DB instead
 
-  # Directory for persisted FAISS indices (relative to working directory)
-  data_dir: "data/rag"
-
-  # Maximum lines per code chunk (oversized symbols are split at blank lines)
-  chunk_max_lines: 200
-
-  # Default number of search results returned
-  search_top_k: 10
-
-  # Fraction of LLM context budget allocated to RAG-retrieved code
-  token_budget_ratio: 0.6

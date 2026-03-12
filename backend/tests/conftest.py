@@ -1,8 +1,33 @@
-"""Shared test fixtures and configuration for backend tests."""
-import pytest
-from fastapi.testclient import TestClient
+"""Shared test fixtures and configuration for backend tests.
 
-from app.main import app
+Heavy dependencies are stubbed here so all test modules can import
+application code without needing real installations.
+"""
+import sys
+import types
+
+
+def _stub(name: str, **attrs) -> types.ModuleType:
+    """Register a stub module in sys.modules to prevent real imports."""
+    if name in sys.modules:
+        return sys.modules[name]
+    m = types.ModuleType(name)
+    for k, v in attrs.items():
+        setattr(m, k, v)
+    sys.modules[name] = m
+    return m
+
+
+# Stub heavy optional dependencies before any app code is imported
+from unittest.mock import MagicMock  # noqa: E402
+
+_stub("tree_sitter_languages")
+_stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)
+
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture

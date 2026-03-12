@@ -1,186 +1,178 @@
 /**
- * Conductor controller – orchestration layer between the FSM and side-effects.
+ * ConductorController – orchestrates the Conductor extension lifecycle.
  *
- * Owns a {@link ConductorStateMachine} and coordinates external checks
- * (e.g. backend health) before firing events on the FSM.
+ * Responsibilities
+ * ----------------
+ * - Run a one-shot health check on `start()` to determine the initial FSM state.
+ * - Expose session lifecycle methods (startHosting, stopHosting, startJoining,
+ *   joinSucceeded, joinFailed, leaveSession) that drive FSM transitions.
+ * - Forward state-change notifications from the FSM to external listeners.
  *
- * All I/O is injected via constructor parameters so the controller is fully
- * unit-testable without real HTTP calls or VS Code APIs.
+ * Design principles
+ * -----------------
+ * - All dependencies are injected through the constructor (no static imports of
+ *   VS Code APIs) so the class can be unit-tested without an extension host.
+ * - The FSM is owned externally; the controller drives it but does not create it.
  *
  * @module services/conductorController
  */
 
 import {
-    ConductorEvent,
-    ConductorState,
     ConductorStateMachine,
-    StateChangeListener,
+    ConductorState,
+    ConductorEvent,
+    StateChangeCallback,
 } from './conductorStateMachine';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/**
- * A function that checks whether the backend at the given URL is healthy.
- * Must return `true` when the backend is reachable and healthy, `false` otherwise.
- */
-export type HealthCheckFn = (backendUrl: string) => Promise<boolean>;
+/** Signature for the health-check function injected into the controller. */
+export type HealthCheckFn = (url: string) => Promise<boolean>;
 
-/**
- * A function that returns the backend URL to health-check against.
- * Keeps the controller decoupled from VS Code configuration.
- */
-export type UrlProviderFn = () => string;
-
-/**
- * A function that resets the session and returns the new room ID.
- * Called when starting a new hosting session so every session gets a fresh ID.
- */
-export type SessionResetFn = () => string;
-
-/**
- * Data parsed from an invite URL.
- * Contains the information a guest needs to join a session.
- */
+/** Parsed result returned by {@link ConductorController.startJoining}. */
 export interface ParsedInvite {
-    /** The room ID extracted from the invite URL. */
     roomId: string;
-    /** The backend URL (origin) extracted from the invite URL. */
     backendUrl: string;
-    /** The Live Share URL extracted from the invite URL (if present). */
-    liveShareUrl?: string;
+    liveShareUrl: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
-// Controller
+// ConductorController
 // ---------------------------------------------------------------------------
 
-/**
- * Orchestrator that drives the {@link ConductorStateMachine} by performing
- * external checks (health check) and translating results into FSM events.
- *
- * Usage:
- * ```ts
- * const ctrl = new ConductorController(fsm, checkBackendHealth, () => getBackendUrl());
- * const newState = await ctrl.start();
- * ```
- */
 export class ConductorController {
     private readonly _fsm: ConductorStateMachine;
     private readonly _healthCheck: HealthCheckFn;
-    private readonly _urlProvider: UrlProviderFn;
-    private readonly _sessionReset: SessionResetFn;
+    private readonly _urlProvider: () => string;
+    private readonly _sessionResetFn: (() => string) | undefined;
 
     /**
-     * @param fsm          - The state machine to drive.
-     * @param healthCheck  - Async function that pings the backend.
-     * @param urlProvider  - Sync function that returns the backend URL.
-     * @param sessionReset - Sync function that resets the session and returns a new roomId.
+     * @param fsm             - Externally owned state machine instance.
+     * @param healthCheck     - Async function that checks backend reachability.
+     * @param urlProvider     - Called each time the backend URL is needed.
+     * @param sessionResetFn  - Optional; called by `startHosting()` to generate a room ID.
      */
     constructor(
         fsm: ConductorStateMachine,
         healthCheck: HealthCheckFn,
-        urlProvider: UrlProviderFn,
-        sessionReset: SessionResetFn = () => '',
+        urlProvider: () => string,
+        sessionResetFn?: () => string,
     ) {
-        this._fsm = fsm;
-        this._healthCheck = healthCheck;
-        this._urlProvider = urlProvider;
-        this._sessionReset = sessionReset;
+        this._fsm          = fsm;
+        this._healthCheck  = healthCheck;
+        this._urlProvider  = urlProvider;
+        this._sessionResetFn = sessionResetFn;
     }
 
-    // ----- public API -------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // State access
+    // -----------------------------------------------------------------------
+
+    /** Current FSM state. */
+    getState(): ConductorState {
+        return this._fsm.getState();
+    }
 
     /**
-     * Trigger the "start" flow from Idle.
+     * Returns true when `event` is a valid transition from the current state.
+     * Does not mutate any state.
+     */
+    canTransition(event: ConductorEvent): boolean {
+        return this._fsm.canTransition(event);
+    }
+
+    /**
+     * Register a listener that is called after every FSM transition.
      *
-     * 1. Calls the health-check function against the configured backend URL.
-     * 2. If the backend is healthy → fires {@link ConductorEvent.BACKEND_CONNECTED}.
-     * 3. If the backend is unreachable → fires {@link ConductorEvent.BACKEND_LOST}.
+     * @returns A dispose function that removes the listener.
+     */
+    onStateChange(cb: StateChangeCallback): () => void {
+        return this._fsm.onStateChange(cb);
+    }
+
+    // -----------------------------------------------------------------------
+    // Lifecycle
+    // -----------------------------------------------------------------------
+
+    /**
+     * Perform an initial health check and transition the FSM accordingly.
      *
-     * @returns The new {@link ConductorState} after the transition.
-     * @throws {Error} If the FSM is not currently in the {@link ConductorState.Idle}
-     *         or {@link ConductorState.BackendDisconnected} state.
+     * - If the backend is reachable → BACKEND_CONNECTED (Idle/BackendDisconnected → ReadyToHost).
+     * - If the backend is unreachable → BACKEND_LOST (Idle → BackendDisconnected).
+     *
+     * Must only be called when the FSM is in Idle or BackendDisconnected.
+     *
+     * @throws {Error} When the FSM is in any other state.
      */
     async start(): Promise<ConductorState> {
         const current = this._fsm.getState();
-        if (
-            current !== ConductorState.Idle &&
-            current !== ConductorState.BackendDisconnected
-        ) {
-            throw new Error(
-                `Cannot start from state '${current}'. ` +
-                `Expected '${ConductorState.Idle}' or '${ConductorState.BackendDisconnected}'.`,
-            );
+        if (current !== ConductorState.Idle && current !== ConductorState.BackendDisconnected) {
+            throw new Error(`Cannot start from state: ${current}`);
         }
 
-        const backendUrl = this._urlProvider();
-        const isHealthy = await this._healthCheck(backendUrl);
+        const alive = await this._healthCheck(this._urlProvider());
 
-        if (isHealthy) {
-            return this._fsm.transition(ConductorEvent.BACKEND_CONNECTED);
+        if (alive) {
+            this._fsm.transition(ConductorEvent.BACKEND_CONNECTED);
         } else {
-            return this._fsm.transition(ConductorEvent.BACKEND_LOST);
+            this._fsm.transition(ConductorEvent.BACKEND_LOST);
         }
+
+        return this._fsm.getState();
     }
 
+    // -----------------------------------------------------------------------
+    // Hosting
+    // -----------------------------------------------------------------------
+
     /**
-     * Transition from ReadyToHost to Hosting.
+     * Transition from ReadyToHost → Hosting.
      *
-     * 1. Resets the session (generates a fresh roomId).
-     * 2. Fires {@link ConductorEvent.START_HOSTING} on the FSM.
+     * Calls `sessionResetFn` (if provided) to generate a fresh room ID.
      *
-     * @returns The new room ID for the hosting session.
-     * @throws {Error} If the FSM is not in {@link ConductorState.ReadyToHost}.
+     * @returns The room ID produced by `sessionResetFn`, or an empty string if
+     *          no reset function was provided.
+     * @throws {Error} When the FSM is not in ReadyToHost.
      */
     startHosting(): string {
         const current = this._fsm.getState();
         if (current !== ConductorState.ReadyToHost) {
-            throw new Error(
-                `Cannot start hosting from state '${current}'. ` +
-                `Expected '${ConductorState.ReadyToHost}'.`,
-            );
+            throw new Error(`Cannot start hosting from state: ${current}`);
         }
 
-        const roomId = this._sessionReset();
+        const roomId = this._sessionResetFn ? this._sessionResetFn() : '';
         this._fsm.transition(ConductorEvent.START_HOSTING);
         return roomId;
     }
 
     /**
-     * Transition from Hosting back to ReadyToHost.
+     * Transition from Hosting → ReadyToHost.
      *
-     * Fires {@link ConductorEvent.STOP_HOSTING} on the FSM.
-     *
-     * @throws {Error} If the FSM is not in {@link ConductorState.Hosting}.
+     * @throws {Error} When the FSM is not in Hosting.
      */
     stopHosting(): void {
         const current = this._fsm.getState();
         if (current !== ConductorState.Hosting) {
-            throw new Error(
-                `Cannot stop hosting from state '${current}'. ` +
-                `Expected '${ConductorState.Hosting}'.`,
-            );
+            throw new Error(`Cannot stop hosting from state: ${current}`);
         }
-
         this._fsm.transition(ConductorEvent.STOP_HOSTING);
     }
 
+    // -----------------------------------------------------------------------
+    // Joining
+    // -----------------------------------------------------------------------
+
     /**
-     * Parse an invite URL and transition to Joining.
+     * Parse an invite URL, transition the FSM to Joining, and return the
+     * parsed invite details.
      *
-     * Can be called from:
-     * - {@link ConductorState.ReadyToHost}: normal case with local backend running
-     * - {@link ConductorState.BackendDisconnected}: allows joining others without local backend
+     * Allowed starting states: ReadyToHost, BackendDisconnected.
      *
-     * Expected URL format:
-     *   `{backendUrl}/invite?roomId={roomId}&liveShareUrl={encodedLiveShareUrl}`
-     *
-     * @param inviteUrl - The full invite URL to parse.
-     * @returns Parsed invite data (roomId, backendUrl, optional liveShareUrl).
-     * @throws {Error} If the FSM is not in a valid state for joining.
-     * @throws {Error} If the invite URL is malformed or missing required fields.
+     * @param inviteUrl - The full invite URL (e.g. from a shared link).
+     * @throws {Error} When the URL is invalid, `roomId` param is missing,
+     *                 or the FSM is not in an allowed state.
      */
     startJoining(inviteUrl: string): ParsedInvite {
         const current = this._fsm.getState();
@@ -188,111 +180,68 @@ export class ConductorController {
             current !== ConductorState.ReadyToHost &&
             current !== ConductorState.BackendDisconnected
         ) {
-            throw new Error(
-                `Cannot join session from state '${current}'. ` +
-                `Expected '${ConductorState.ReadyToHost}' or '${ConductorState.BackendDisconnected}'.`,
-            );
+            throw new Error(`Cannot join session from state: ${current}`);
         }
 
-        const parsed = ConductorController._parseInviteUrl(inviteUrl);
+        // Parse and validate the URL before touching the FSM.
+        let parsed: URL;
+        try {
+            parsed = new URL(inviteUrl);
+        } catch {
+            throw new Error(`Invalid invite URL: "${inviteUrl}"`);
+        }
+
+        const roomId = parsed.searchParams.get('roomId');
+        if (!roomId) {
+            throw new Error(`Invite URL is missing the 'roomId' query parameter: "${inviteUrl}"`);
+        }
+
+        const backendUrl      = parsed.origin;
+        const liveShareRaw    = parsed.searchParams.get('liveShareUrl');
+        const liveShareUrl    = liveShareRaw ? decodeURIComponent(liveShareRaw) : undefined;
+
+        // URL is valid — now drive the FSM.
         this._fsm.transition(ConductorEvent.JOIN_SESSION);
-        return parsed;
+
+        return { roomId, backendUrl, liveShareUrl };
     }
 
     /**
-     * Transition from Joining to Joined after successfully opening Live Share.
+     * Transition from Joining → Joined.
      *
-     * @throws {Error} If the FSM is not in {@link ConductorState.Joining}.
+     * @throws {Error} When the FSM is not in Joining.
      */
     joinSucceeded(): void {
         const current = this._fsm.getState();
         if (current !== ConductorState.Joining) {
-            throw new Error(
-                `Cannot mark join as succeeded from state '${current}'. ` +
-                `Expected '${ConductorState.Joining}'.`,
-            );
+            throw new Error(`Cannot mark join as succeeded from state: ${current}`);
         }
         this._fsm.transition(ConductorEvent.JOIN_SUCCEEDED);
     }
 
     /**
-     * Transition from Joining back to ReadyToHost on failure.
+     * Transition from Joining → ReadyToHost.
      *
-     * @throws {Error} If the FSM is not in {@link ConductorState.Joining}.
+     * @throws {Error} When the FSM is not in Joining.
      */
     joinFailed(): void {
         const current = this._fsm.getState();
         if (current !== ConductorState.Joining) {
-            throw new Error(
-                `Cannot mark join as failed from state '${current}'. ` +
-                `Expected '${ConductorState.Joining}'.`,
-            );
+            throw new Error(`Cannot mark join as failed from state: ${current}`);
         }
         this._fsm.transition(ConductorEvent.JOIN_FAILED);
     }
 
     /**
-     * Transition from Joined back to ReadyToHost.
+     * Transition from Joined → ReadyToHost.
      *
-     * @throws {Error} If the FSM is not in {@link ConductorState.Joined}.
+     * @throws {Error} When the FSM is not in Joined.
      */
     leaveSession(): void {
         const current = this._fsm.getState();
         if (current !== ConductorState.Joined) {
-            throw new Error(
-                `Cannot leave session from state '${current}'. ` +
-                `Expected '${ConductorState.Joined}'.`,
-            );
+            throw new Error(`Cannot leave session from state: ${current}`);
         }
         this._fsm.transition(ConductorEvent.LEAVE_SESSION);
     }
-
-    /** Current FSM state (read-only convenience). */
-    getState(): ConductorState {
-        return this._fsm.getState();
-    }
-
-    /** Check whether a given event can be applied in the current state. */
-    canTransition(event: ConductorEvent): boolean {
-        return this._fsm.canTransition(event);
-    }
-
-    /** Subscribe to FSM state changes. Returns a dispose function. */
-    onStateChange(listener: StateChangeListener): () => void {
-        return this._fsm.onStateChange(listener);
-    }
-
-    // ----- private helpers --------------------------------------------------
-
-    /**
-     * Parse an invite URL into its constituent parts.
-     *
-     * @param inviteUrl - The invite URL string to parse.
-     * @returns Parsed invite data.
-     * @throws {Error} If the URL is malformed or missing a roomId query param.
-     */
-    private static _parseInviteUrl(inviteUrl: string): ParsedInvite {
-        let url: URL;
-        try {
-            url = new URL(inviteUrl.trim());
-        } catch {
-            throw new Error(`Invalid invite URL: '${inviteUrl}'`);
-        }
-
-        const roomId = url.searchParams.get('roomId');
-        if (!roomId) {
-            throw new Error(
-                `Invite URL is missing the 'roomId' query parameter: '${inviteUrl}'`,
-            );
-        }
-
-        const backendUrl = `${url.protocol}//${url.host}`;
-        const rawLiveShare = url.searchParams.get('liveShareUrl');
-        const liveShareUrl = rawLiveShare
-            ? decodeURIComponent(rawLiveShare)
-            : undefined;
-
-        return { roomId, backendUrl, liveShareUrl };
-    }
 }
-

@@ -54,8 +54,6 @@ describe('indexWorkspace', () => {
         const db = openDb();
         try {
             const result = await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999', // not called during Phase 1
                 phase1TimeoutMs: 5000,
             });
@@ -77,8 +75,6 @@ describe('indexWorkspace', () => {
         const db = openDb();
         try {
             const result = await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 5000,
             });
@@ -103,8 +99,6 @@ describe('indexWorkspace', () => {
 
         try {
             await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 5000,
                 onProgress: (p) => {
@@ -125,8 +119,6 @@ describe('indexWorkspace', () => {
         const db = openDb();
         try {
             const result = await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 5000,
             });
@@ -148,8 +140,6 @@ describe('indexWorkspace', () => {
             // Very short timeout — Phase 1 may or may not complete fully
             // but should not reject.
             const result = await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 1,  // 1ms — likely times out
             });
@@ -171,8 +161,6 @@ describe('indexWorkspace', () => {
         const db = openDb();
         try {
             await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 5000,
             });
@@ -198,8 +186,6 @@ describe('indexWorkspace', () => {
         const db = openDb();
         try {
             await indexWorkspace(tmpDir, db, {
-                embeddingModel: 'test-model',
-                embeddingDim: 128,
                 backendUrl: 'http://127.0.0.1:9999',
                 phase1TimeoutMs: 5000,
             });

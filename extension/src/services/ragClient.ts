@@ -1,47 +1,55 @@
 /**
- * RagClient — communicates with the backend RAG endpoints for codebase
- * indexing and semantic search.
+ * HTTP client for the Conductor backend RAG (Retrieval-Augmented Generation) API.
  *
- * All HTTP calls go through the extension host (not the WebView) to
- * satisfy VS Code's CSP restrictions.
+ * Exposes three endpoints:
+ *   - `index()`   — initial full workspace indexing
+ *   - `reindex()` — incremental re-indexing of changed files
+ *   - `search()`  — semantic code search
+ *
+ * @module services/ragClient
  */
 
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
+/** An individual file change to send to the backend. */
 export interface RagFileChange {
-    path: string;
-    content?: string;
-    action: 'upsert' | 'delete';
+    path:    string;
+    content: string;
+    action:  'upsert' | 'delete';
 }
 
+/** Response from index / reindex operations. */
 export interface RagIndexResponse {
-    chunks_added: number;
-    chunks_removed: number;
+    chunks_added:    number;
+    chunks_removed:  number;
     files_processed: number;
 }
 
-export interface RagSearchFilters {
-    languages?: string[];
-    file_patterns?: string[];
-}
-
-export interface RagSearchResultItem {
-    file_path: string;
-    start_line: number;
-    end_line: number;
+/** A single result from a semantic search. */
+export interface RagSearchResult {
+    file_path:   string;
+    start_line:  number;
+    end_line:    number;
     symbol_name: string;
     symbol_type: string;
-    content: string;
-    score: number;
-    language: string;
+    content:     string;
+    score:       number;
+    language:    string;
 }
 
+/** Response from search operation. */
 export interface RagSearchResponse {
-    results: RagSearchResultItem[];
-    query: string;
+    results:      RagSearchResult[];
+    query:        string;
     workspace_id: string;
+}
+
+/** Optional filters for search. */
+export interface RagSearchFilters {
+    languages?:     string[];
+    file_patterns?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -50,101 +58,83 @@ export interface RagSearchResponse {
 
 export class RagClient {
     private readonly _baseUrl: string;
-    private _abortController: AbortController | null = null;
+    private _abortController: AbortController = new AbortController();
 
-    constructor(backendUrl: string) {
-        // Normalise: strip trailing slash
-        this._baseUrl = backendUrl.replace(/\/+$/, '');
+    constructor(baseUrl: string) {
+        // Strip trailing slash for consistent URL construction.
+        this._baseUrl = baseUrl.replace(/\/+$/, '');
     }
 
     /**
-     * Cancel all in-flight requests.
+     * Abort any in-flight requests and prevent new ones from starting.
+     *
+     * Once cancelled, the `RagClient` instance should be discarded.
      */
     cancel(): void {
-        if (this._abortController) {
-            this._abortController.abort();
-            this._abortController = null;
-            console.log('[RagClient] Cancelled in-flight requests');
-        }
+        this._abortController.abort();
     }
 
     /**
-     * Incrementally index (upsert/delete) files.
+     * Index a set of files (initial full workspace indexing).
      */
     async index(workspaceId: string, files: RagFileChange[]): Promise<RagIndexResponse> {
-        return this._post<RagIndexResponse>('/rag/index', {
-            workspace_id: workspaceId,
-            files,
-        });
+        return this._post<RagIndexResponse>('/rag/index', { workspace_id: workspaceId, files });
     }
 
     /**
-     * Full reindex: clear existing index and rebuild from provided files.
+     * Re-index a set of changed files (incremental update).
      */
     async reindex(workspaceId: string, files: RagFileChange[]): Promise<RagIndexResponse> {
-        return this._post<RagIndexResponse>('/rag/reindex', {
-            workspace_id: workspaceId,
-            files,
-        });
+        return this._post<RagIndexResponse>('/rag/reindex', { workspace_id: workspaceId, files });
     }
 
     /**
-     * Semantic search over the indexed codebase.
+     * Perform a semantic code search.
+     *
+     * @param workspaceId - Workspace to search within.
+     * @param query       - Natural-language search query.
+     * @param topK        - Optional maximum number of results.
+     * @param filters     - Optional language / file-pattern filters.
      */
     async search(
         workspaceId: string,
-        query: string,
-        topK?: number,
-        filters?: RagSearchFilters,
+        query:       string,
+        topK?:       number,
+        filters?:    RagSearchFilters,
     ): Promise<RagSearchResponse> {
-        const body: Record<string, unknown> = {
-            workspace_id: workspaceId,
-            query,
-        };
-        if (topK !== undefined) body.top_k = topK;
-        if (filters) body.filters = filters;
-
+        const body: Record<string, unknown> = { workspace_id: workspaceId, query };
+        if (topK    !== undefined) { body.top_k   = topK;    }
+        if (filters !== undefined) { body.filters = filters; }
         return this._post<RagSearchResponse>('/rag/search', body);
     }
 
     // -----------------------------------------------------------------------
-    // Internal
+    // Private helpers
     // -----------------------------------------------------------------------
 
     private async _post<T>(path: string, body: unknown): Promise<T> {
         const url = `${this._baseUrl}${path}`;
-        const payload = JSON.stringify(body);
-        console.log(`[RagClient] POST ${url} (${(payload.length / 1024).toFixed(0)} KB payload)`);
-
-        // Lazily create a shared AbortController for the current batch of requests.
-        if (!this._abortController) {
-            this._abortController = new AbortController();
-        }
 
         let response: Response;
         try {
             response = await fetch(url, {
-                method: 'POST',
+                method:  'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: payload,
-                signal: this._abortController.signal,
+                body:    JSON.stringify(body),
+                signal:  this._abortController.signal,
             });
-        } catch (err) {
-            if (err instanceof Error && err.name === 'AbortError') {
-                console.log(`[RagClient] POST ${path} aborted`);
-                throw err;
-            }
-            console.error(`[RagClient] Network error: POST ${path}:`, err);
-            throw new Error(`Network error calling ${path}: ${err instanceof Error ? err.message : err}`);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new Error(`Network error calling ${url}: ${msg}`);
         }
 
         if (!response.ok) {
-            const text = await response.text().catch(() => '');
-            console.error(`[RagClient] HTTP ${response.status}: POST ${path}: ${text}`);
-            throw new Error(`RAG ${path} failed (${response.status}): ${text}`);
+            throw new Error(
+                `RAG request failed with status ${response.status}: ${url}`,
+            );
         }
 
-        console.log(`[RagClient] POST ${path} → ${response.status} OK`);
         return response.json() as Promise<T>;
     }
 }
+
