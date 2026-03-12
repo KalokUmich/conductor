@@ -53,6 +53,7 @@ _TOOL_POLICIES: dict[str, OutputPolicy] = {
     "get_dependents": OutputPolicy(max_results=50, max_chars=15_000, truncate_unit="results"),
 
     # Git tools — generous (diffs can be large)
+    "git_diff_files": OutputPolicy(max_results=100, max_chars=20_000, truncate_unit="results"),
     "git_diff": OutputPolicy(max_chars=40_000, truncate_unit="chars"),
     "git_log": OutputPolicy(max_results=30, max_chars=20_000, truncate_unit="results"),
     "git_blame": OutputPolicy(max_results=100, max_chars=30_000, truncate_unit="results"),

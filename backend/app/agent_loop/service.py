@@ -260,17 +260,42 @@ class AgentLoopService:
             elapsed = (time.monotonic() - t0) * 1000
             return tc_arg, result, elapsed
 
+        # LLM call timeout — prevents hanging when context is too large
+        _LLM_TIMEOUT_SECONDS = 300
+
         for iteration in range(self._max_iterations):
             # LLM call — offload to thread to avoid blocking the event loop
             llm_start = time.monotonic()
             try:
-                response = await asyncio.to_thread(
-                    self._provider.chat_with_tools,
-                    messages=messages,
-                    tools=active_tools,
-                    max_tokens=8192,
-                    system=system,
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self._provider.chat_with_tools,
+                        messages=messages,
+                        tools=active_tools,
+                        max_tokens=8192,
+                        system=system,
+                    ),
+                    timeout=_LLM_TIMEOUT_SECONDS,
                 )
+            except asyncio.TimeoutError:
+                exc = TimeoutError(
+                    f"LLM call timed out after {_LLM_TIMEOUT_SECONDS}s at iteration "
+                    f"{iteration + 1} (context may be too large)"
+                )
+                logger.error("%s", exc)
+                answer = "\n\n".join(accumulated_text) if accumulated_text else ""
+                trace.finish(answer=answer, error=str(exc), budget_summary=budget.summary())
+                self._save_trace(trace)
+                yield AgentEvent(kind="error", data={
+                    "error": str(exc),
+                    "answer": answer,
+                    "tool_calls_made": total_tool_calls,
+                    "iterations": iteration + 1,
+                    "duration_ms": (time.monotonic() - start) * 1000,
+                    "thinking_steps": thinking_steps,
+                    "budget_summary": budget.summary(),
+                })
+                return
             except Exception as exc:
                 logger.error("Agent LLM call failed at iteration %d: %s", iteration, exc)
                 trace.finish(
@@ -404,6 +429,19 @@ class AgentLoopService:
             # Process results and collect context
             tool_results_content = []
             guidance_notes: List[str] = []
+
+            # Guard: warn if too many heavy tools in one turn
+            diff_calls_this_turn = sum(
+                1 for tc_arg in response.tool_calls
+                if tc_arg.name in ("git_diff", "read_file") and not tc_arg.input.get("start_line")
+            )
+            if diff_calls_this_turn > 3:
+                guidance_notes.append(
+                    f"⚠ You called {diff_calls_this_turn} heavy tools (git_diff/read_file) "
+                    f"in a single turn. This wastes context budget. "
+                    f"Review at most 2 files per turn: call git_diff on 1-2 files, "
+                    f"analyze them, then proceed to the next batch."
+                )
 
             for tc, tool_result, tool_elapsed_ms in tool_outputs:
                 total_tool_calls += 1

@@ -7,12 +7,15 @@ import pytest
 from app.ai_provider.base import ToolCall, ToolUseResponse, TokenUsage
 from app.ai_provider.claude_bedrock import (
     ClaudeBedrockProvider,
+    _build_param_registry,
     _extract_kv_pairs,
     _extract_tool_calls_from_text,
+    _extract_xml_tool_calls,
     _parse_malformed_name,
     _repair_tool_calls,
     _sanitize_property,
     _sanitize_schema,
+    _validate_params,
 )
 
 KNOWN_TOOLS = {
@@ -20,7 +23,73 @@ KNOWN_TOOLS = {
     "file_outline", "get_dependencies", "get_dependents", "git_log",
     "git_diff", "ast_search", "get_callees", "get_callers",
     "git_blame", "git_show", "find_tests", "test_outline", "trace_variable",
+    "compressed_view", "module_summary", "expand_symbol",
 }
+
+# Minimal tool definitions for schema-aware tests
+TOOL_DEFS = [
+    {
+        "name": "grep",
+        "description": "Search files",
+        "input_schema": {
+            "type": "object",
+            "required": ["pattern"],
+            "properties": {
+                "pattern": {"type": "string"},
+                "path": {"type": "string"},
+                "include_glob": {"type": "string"},
+                "max_results": {"type": "integer"},
+            },
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read a file",
+        "input_schema": {
+            "type": "object",
+            "required": ["path"],
+            "properties": {
+                "path": {"type": "string"},
+                "start_line": {"type": "integer"},
+                "end_line": {"type": "integer"},
+            },
+        },
+    },
+    {
+        "name": "find_symbol",
+        "description": "Find symbol definitions",
+        "input_schema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {"type": "string"},
+                "kind": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "module_summary",
+        "description": "Module summary",
+        "input_schema": {
+            "type": "object",
+            "required": ["module_path"],
+            "properties": {
+                "module_path": {"type": "string"},
+            },
+        },
+    },
+    {
+        "name": "git_log",
+        "description": "Show git log",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "file": {"type": "string"},
+                "n": {"type": "integer"},
+            },
+        },
+    },
+]
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +261,58 @@ class TestSanitizeSchema:
 
 
 # ---------------------------------------------------------------------------
+# _build_param_registry
+# ---------------------------------------------------------------------------
+
+class TestBuildParamRegistry:
+
+    def test_builds_registry(self):
+        registry = _build_param_registry(TOOL_DEFS)
+        assert registry["grep"] == {"pattern", "path", "include_glob", "max_results"}
+        assert registry["read_file"] == {"path", "start_line", "end_line"}
+        assert registry["module_summary"] == {"module_path"}
+
+    def test_empty_defs(self):
+        assert _build_param_registry([]) == {}
+
+    def test_tool_without_schema(self):
+        defs = [{"name": "custom_tool"}]
+        registry = _build_param_registry(defs)
+        assert registry["custom_tool"] == set()
+
+
+# ---------------------------------------------------------------------------
+# _validate_params
+# ---------------------------------------------------------------------------
+
+class TestValidateParams:
+
+    def test_keeps_valid_params(self):
+        registry = _build_param_registry(TOOL_DEFS)
+        params = {"pattern": "foo", "path": "src"}
+        result = _validate_params(params, "grep", registry)
+        assert result == {"pattern": "foo", "path": "src"}
+
+    def test_drops_invalid_params(self):
+        registry = _build_param_registry(TOOL_DEFS)
+        params = {"pattern": "foo", "name": "bar", "module_path": "baz"}
+        result = _validate_params(params, "grep", registry)
+        assert result == {"pattern": "foo"}
+        assert "name" not in result
+        assert "module_path" not in result
+
+    def test_unknown_tool_passes_through(self):
+        registry = _build_param_registry(TOOL_DEFS)
+        params = {"x": 1, "y": 2}
+        result = _validate_params(params, "unknown_tool", registry)
+        assert result == {"x": 1, "y": 2}
+
+    def test_empty_params(self):
+        registry = _build_param_registry(TOOL_DEFS)
+        assert _validate_params({}, "grep", registry) == {}
+
+
+# ---------------------------------------------------------------------------
 # _extract_kv_pairs
 # ---------------------------------------------------------------------------
 
@@ -201,9 +322,24 @@ class TestExtractKvPairs:
         text = 'pattern="render" path="CDE"'
         assert _extract_kv_pairs(text) == {"pattern": "render", "path": "CDE"}
 
-    def test_numeric_value(self):
+    def test_numeric_value_quoted(self):
         text = 'max_results="50"'
         assert _extract_kv_pairs(text) == {"max_results": 50}
+
+    def test_numeric_value_unquoted(self):
+        text = 'max_results=50>'
+        assert _extract_kv_pairs(text) == {"max_results": 50}
+
+    def test_unquoted_at_end_of_string(self):
+        text = 'n=10'
+        assert _extract_kv_pairs(text) == {"n": 10}
+
+    def test_mixed_quoted_and_unquoted(self):
+        text = 'pattern="[Ii]dv" path="backend/src" max_results=50'
+        result = _extract_kv_pairs(text)
+        assert result["pattern"] == "[Ii]dv"
+        assert result["path"] == "backend/src"
+        assert result["max_results"] == 50
 
     def test_no_pairs(self):
         assert _extract_kv_pairs("just some text") == {}
@@ -253,14 +389,84 @@ class TestParseMalformedName:
 
 
 # ---------------------------------------------------------------------------
-# _repair_tool_calls
+# _extract_xml_tool_calls
+# ---------------------------------------------------------------------------
+
+class TestExtractXmlToolCalls:
+
+    def test_invoke_with_parameter_elements(self):
+        xml = (
+            '<invoke name="grep">'
+            '<parameter name="pattern">auth</parameter>'
+            '<parameter name="path">src</parameter>'
+            '</invoke>'
+        )
+        calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
+        assert len(calls) == 1
+        assert calls[0].name == "grep"
+        assert calls[0].input == {"pattern": "auth", "path": "src"}
+
+    def test_invoke_attribute_style(self):
+        xml = '<invoke name="grep" pattern="render" path="backend/src" max_results="50"/>'
+        calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
+        assert len(calls) == 1
+        assert calls[0].name == "grep"
+        assert calls[0].input["pattern"] == "render"
+        assert calls[0].input["path"] == "backend/src"
+        assert calls[0].input["max_results"] == 50
+
+    def test_multiple_invocations(self):
+        xml = (
+            '<invoke name="grep"><parameter name="pattern">foo</parameter></invoke>'
+            '<invoke name="read_file"><parameter name="path">bar.py</parameter></invoke>'
+        )
+        calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
+        assert len(calls) == 2
+        assert calls[0].name == "grep"
+        assert calls[1].name == "read_file"
+
+    def test_unknown_tool_ignored(self):
+        xml = '<invoke name="unknown_tool"><parameter name="x">1</parameter></invoke>'
+        calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
+        assert calls == []
+
+    def test_no_xml_returns_empty(self):
+        calls = _extract_xml_tool_calls("just plain text", KNOWN_TOOLS)
+        assert calls == []
+
+    def test_garbled_name_with_xml(self):
+        """The real production failure: garbled name contains XML fragments."""
+        garbled = (
+            'grep" pattern="[Ii][Dd][Vv]" path="backend/src" max_results=50>'
+            '</invoke>\n<invoke name="module_summary">'
+            '<parameter name="module_path">backend/src</parameter>'
+            '</invoke>'
+        )
+        calls = _extract_xml_tool_calls(garbled, KNOWN_TOOLS)
+        assert len(calls) == 1
+        assert calls[0].name == "module_summary"
+        assert calls[0].input["module_path"] == "backend/src"
+
+    def test_numeric_parameter_value(self):
+        xml = (
+            '<invoke name="git_log">'
+            '<parameter name="n">20</parameter>'
+            '</invoke>'
+        )
+        calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
+        assert len(calls) == 1
+        assert calls[0].input["n"] == 20
+
+
+# ---------------------------------------------------------------------------
+# _repair_tool_calls (schema-aware)
 # ---------------------------------------------------------------------------
 
 class TestRepairToolCalls:
 
     def test_clean_calls_unchanged(self):
         calls = [ToolCall(id="1", name="grep", input={"pattern": "foo"})]
-        result = _repair_tool_calls(calls, KNOWN_TOOLS)
+        result = _repair_tool_calls(calls, TOOL_DEFS)
         assert len(result) == 1
         assert result[0].name == "grep"
         assert result[0].input == {"pattern": "foo"}
@@ -271,29 +477,43 @@ class TestRepairToolCalls:
             name='grep" pattern="render|Render|RENDER" include_glob="*.py" path="CDE',
             input={},
         )]
-        result = _repair_tool_calls(calls, KNOWN_TOOLS)
+        result = _repair_tool_calls(calls, TOOL_DEFS)
         assert len(result) == 1
         assert result[0].name == "grep"
         assert result[0].input["pattern"] == "render|Render|RENDER"
         assert result[0].input["include_glob"] == "*.py"
 
-    def test_merges_existing_input(self):
+    def test_filters_garbage_from_tc_input(self):
+        """The real production bug: tc.input has params from a different tool."""
         calls = [ToolCall(
             id="1",
-            name='grep" pattern="render"',
-            input={"max_results": 100},
+            name='grep" pattern="[Ii][Dd][Vv]" path="backend/src" max_results=50></invoke>\n<invok',
+            input={"name": "some_symbol", "module_path": "backend/src"},
         )]
-        result = _repair_tool_calls(calls, KNOWN_TOOLS)
+        result = _repair_tool_calls(calls, TOOL_DEFS)
+        assert len(result) == 1
         assert result[0].name == "grep"
-        assert result[0].input["pattern"] == "render"
-        assert result[0].input["max_results"] == 100
+        assert result[0].input["pattern"] == "[Ii][Dd][Vv]"
+        assert result[0].input["path"] == "backend/src"
+        # Garbage params from tc.input must be filtered out
+        assert "name" not in result[0].input
+        assert "module_path" not in result[0].input
+
+    def test_unquoted_numeric_preserved(self):
+        calls = [ToolCall(
+            id="1",
+            name='grep" pattern="test" max_results=20',
+            input={},
+        )]
+        result = _repair_tool_calls(calls, TOOL_DEFS)
+        assert result[0].input["max_results"] == 20
 
     def test_empty_list(self):
-        assert _repair_tool_calls([], KNOWN_TOOLS) == []
+        assert _repair_tool_calls([], TOOL_DEFS) == []
 
     def test_unrepairable_passes_through(self):
         calls = [ToolCall(id="1", name="totally_broken_garbage", input={})]
-        result = _repair_tool_calls(calls, KNOWN_TOOLS)
+        result = _repair_tool_calls(calls, TOOL_DEFS)
         assert result[0].name == "totally_broken_garbage"
 
     def test_preserves_id(self):
@@ -302,10 +522,38 @@ class TestRepairToolCalls:
             name='find_symbol" name="authenticate"',
             input={},
         )]
-        result = _repair_tool_calls(calls, KNOWN_TOOLS)
+        result = _repair_tool_calls(calls, TOOL_DEFS)
         assert result[0].id == "tooluse_abc123"
         assert result[0].name == "find_symbol"
         assert result[0].input["name"] == "authenticate"
+
+    def test_xml_repair_from_garbled_name(self):
+        """When garbled name contains complete XML invoke blocks."""
+        calls = [ToolCall(
+            id="1",
+            name=(
+                'grep" pattern="x"></invoke>'
+                '<invoke name="module_summary">'
+                '<parameter name="module_path">src</parameter>'
+                '</invoke>'
+            ),
+            input={},
+        )]
+        result = _repair_tool_calls(calls, TOOL_DEFS)
+        # Should extract the XML invoke for module_summary
+        assert any(r.name == "module_summary" for r in result)
+
+    def test_valid_tc_input_kept_when_schema_matches(self):
+        """If tc.input has valid params for the repaired tool, keep them."""
+        calls = [ToolCall(
+            id="1",
+            name='grep" pattern="render"',
+            input={"max_results": 100},  # valid for grep
+        )]
+        result = _repair_tool_calls(calls, TOOL_DEFS)
+        assert result[0].name == "grep"
+        assert result[0].input["pattern"] == "render"
+        assert result[0].input["max_results"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +571,16 @@ class TestExtractToolCallsFromText:
 
     def test_function_call_format(self):
         text = 'Let me search: grep(pattern="auth", path="src")'
+        calls = _extract_tool_calls_from_text(text, KNOWN_TOOLS)
+        assert len(calls) == 1
+        assert calls[0].name == "grep"
+        assert calls[0].input["pattern"] == "auth"
+
+    def test_xml_format_in_text(self):
+        text = (
+            'I will search:\n'
+            '<invoke name="grep"><parameter name="pattern">auth</parameter></invoke>'
+        )
         calls = _extract_tool_calls_from_text(text, KNOWN_TOOLS)
         assert len(calls) == 1
         assert calls[0].name == "grep"
@@ -366,6 +624,17 @@ class TestExtractToolCallsFromText:
         assert len(calls) == 2
         names = {c.name for c in calls}
         assert names == {"grep", "read_file"}
+
+    def test_json_preferred_over_xml(self):
+        """JSON extraction has higher priority than XML."""
+        text = (
+            '{"name": "grep", "arguments": {"pattern": "foo"}}\n'
+            '<invoke name="read_file"><parameter name="path">x.py</parameter></invoke>'
+        )
+        calls = _extract_tool_calls_from_text(text, KNOWN_TOOLS)
+        # JSON found first → only JSON returned
+        assert len(calls) == 1
+        assert calls[0].name == "grep"
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +738,36 @@ class TestChatWithToolsIntegration:
         assert result.tool_calls[0].name == "grep"
         assert result.tool_calls[0].input["pattern"] == "render"
         assert result.tool_calls[0].input["path"] == "src"
+
+    def test_garbage_input_filtered_by_schema(self):
+        """When name is garbled AND tc.input has wrong-tool params, filter them."""
+        response = {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "toolUse": {
+                                "toolUseId": "id1",
+                                "name": 'grep" pattern="[Ii]dv" path="backend/src"',
+                                "input": {"name": "sym", "module_path": "backend"},
+                            }
+                        }
+                    ]
+                }
+            },
+            "stopReason": "tool_use",
+        }
+        provider, _ = self._make_provider(response)
+        result = provider.chat_with_tools(
+            messages=[{"role": "user", "content": [{"text": "find idv"}]}],
+            tools=self.SAMPLE_TOOLS,
+        )
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "grep"
+        assert result.tool_calls[0].input["pattern"] == "[Ii]dv"
+        # Garbage from tc.input filtered out (not valid grep params)
+        assert "name" not in result.tool_calls[0].input
+        assert "module_path" not in result.tool_calls[0].input
 
     def test_text_based_tool_extraction_fallback(self):
         """When no toolUse blocks but text contains tool calls, extract them."""

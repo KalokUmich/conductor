@@ -61,6 +61,23 @@ class GitDiffParams(BaseModel):
     ref1: Optional[str] = Field(default="HEAD~1", description="First git ref.")
     ref2: Optional[str] = Field(default="HEAD", description="Second git ref.")
     file: Optional[str] = Field(None, description="Limit diff to this file.")
+    context_lines: int = Field(
+        default=10, ge=0, le=50,
+        description="Number of surrounding context lines in the diff (default 10).",
+    )
+
+
+class GitDiffFilesParams(BaseModel):
+    ref: str = Field(
+        ...,
+        description=(
+            "Git diff specification. Examples: "
+            "'master...feature/xxx' (PR diff — changes since branch point), "
+            "'master..feature/xxx' (commit range), "
+            "'HEAD~5' (last 5 commits vs working tree), "
+            "'abc1234 def5678' (between two commits)."
+        ),
+    )
 
 
 class AstSearchParams(BaseModel):
@@ -203,6 +220,14 @@ class GitCommit(BaseModel):
     date: str = ""
 
 
+class DiffFileEntry(BaseModel):
+    path: str
+    status: str  # "added", "modified", "deleted", "renamed", "copied"
+    additions: int = 0
+    deletions: int = 0
+    old_path: Optional[str] = None  # for renames
+
+
 class BlameEntry(BaseModel):
     commit_hash: str
     author: str
@@ -328,10 +353,23 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "git_diff",
         "description": (
-            "Show differences between two git refs (commits, branches). "
-            "Useful for understanding what changed between versions."
+            "Show the full unified diff between two git refs (commits, branches). "
+            "Use file parameter to limit diff to a single file. "
+            "For large PRs, prefer git_diff_files first to see what changed, "
+            "then git_diff with file= for each file you want to review."
         ),
         "input_schema": GitDiffParams.model_json_schema(),
+    },
+    {
+        "name": "git_diff_files",
+        "description": (
+            "List files changed between two git refs with status and line counts. "
+            "Returns a structured list: path, status (added/modified/deleted/renamed), "
+            "additions, deletions. Supports three-dot syntax for PR diffs: "
+            "'master...feature/xxx'. Use this FIRST in code review to get an overview, "
+            "then use git_diff with file= to review individual files."
+        ),
+        "input_schema": GitDiffFilesParams.model_json_schema(),
     },
     {
         "name": "ast_search",

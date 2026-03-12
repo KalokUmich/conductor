@@ -91,46 +91,117 @@ def _sanitize_property(prop: Dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Malformed tool call repair — extract real tool name from garbled responses
+# Schema-aware tool call repair
+#
+# Models (especially non-Claude on Bedrock) produce several failure modes:
+#   1. Params jammed into the name field: name='grep" pattern="val"'
+#   2. XML-style tool calls in name: name='grep" ...></invoke><invok...'
+#   3. tc.input contains params from a DIFFERENT tool (garbage)
+#   4. Tool calls embedded in text instead of structured blocks
+#
+# The repair pipeline:
+#   a. Build a param_registry {tool_name → valid_param_names} from schemas
+#   b. For clean calls (name in known_tools): pass through as-is
+#   c. For garbled calls: try multiple extraction strategies, then validate
+#      extracted params against the tool's schema
+#   d. Fallback: extract tool calls from text content
 # ---------------------------------------------------------------------------
+
+
+def _build_param_registry(
+    tool_defs: List[Dict[str, Any]],
+) -> Dict[str, Set[str]]:
+    """Build a mapping of tool_name → set of valid parameter names.
+
+    Uses the ``properties`` keys from each tool's ``input_schema``.
+    """
+    registry: Dict[str, Set[str]] = {}
+    for tool in tool_defs:
+        name = tool.get("name", "")
+        schema = tool.get("input_schema", {})
+        props = schema.get("properties", {})
+        registry[name] = set(props.keys())
+    return registry
+
+
+def _validate_params(
+    params: Dict[str, Any],
+    tool_name: str,
+    registry: Dict[str, Set[str]],
+) -> Dict[str, Any]:
+    """Keep only params that the tool's schema accepts.
+
+    Unknown keys are silently dropped (they'd cause execution errors).
+    """
+    valid_keys = registry.get(tool_name)
+    if valid_keys is None:
+        return params  # unknown tool — can't validate
+    filtered = {k: v for k, v in params.items() if k in valid_keys}
+    dropped = set(params) - set(filtered)
+    if dropped:
+        logger.debug(
+            "Dropped invalid params for %s: %s", tool_name, dropped,
+        )
+    return filtered
+
 
 def _repair_tool_calls(
     tool_calls: List[ToolCall],
-    known_tools: Set[str],
+    tool_defs: List[Dict[str, Any]],
 ) -> List[ToolCall]:
-    """Repair tool calls where the model put parameters into the name field.
+    """Repair malformed tool calls using schema-aware validation.
 
-    Detects patterns like:
-      name='grep" pattern="render" path="CDE'  input={}
-    and repairs to:
-      name='grep'  input={'pattern': 'render', 'path': 'CDE'}
+    Args:
+        tool_calls: Raw tool calls parsed from the LLM response.
+        tool_defs:  Full tool definitions (name + input_schema) for
+                    schema validation.
+
+    Returns:
+        Repaired tool calls with validated params.
     """
     if not tool_calls:
         return tool_calls
 
-    repaired = []
+    registry = _build_param_registry(tool_defs)
+    known_tools = set(registry.keys())
+
+    repaired: List[ToolCall] = []
     for tc in tool_calls:
+        # Clean call — name matches a known tool
         if tc.name in known_tools:
             repaired.append(tc)
             continue
 
-        # Try to extract the real tool name from the beginning
+        # --- Garbled name: try multiple extraction strategies ---
+
+        # Strategy 1: XML fragments in name (e.g. '</invoke><invoke name="grep"...')
+        xml_calls = _extract_xml_tool_calls(tc.name, known_tools)
+        if xml_calls:
+            for xc in xml_calls:
+                xc_input = _validate_params(xc.input, xc.name, registry)
+                logger.warning(
+                    "Repaired XML tool call from garbled name: '%s' → name='%s' input=%s",
+                    tc.name[:80], xc.name, list(xc_input.keys()),
+                )
+                repaired.append(ToolCall(id=xc.id or tc.id, name=xc.name, input=xc_input))
+            continue
+
+        # Strategy 2: key="value" pairs in name (e.g. 'grep" pattern="val"')
         fixed_name, parsed_params = _parse_malformed_name(tc.name, known_tools)
         if fixed_name:
-            merged_input = {**parsed_params, **tc.input} if tc.input else parsed_params
+            # Schema-validate: merge parsed + tc.input, then filter
+            merged = {**tc.input, **parsed_params}  # parsed wins on conflict
+            final_input = _validate_params(merged, fixed_name, registry)
             logger.warning(
-                "Repaired malformed tool call: '%s' → name='%s' input=%s",
-                tc.name[:80], fixed_name, list(merged_input.keys()),
+                "Repaired KV tool call: '%s' → name='%s' input=%s",
+                tc.name[:80], fixed_name, list(final_input.keys()),
             )
-            repaired.append(ToolCall(
-                id=tc.id,
-                name=fixed_name,
-                input=merged_input,
-            ))
-        else:
-            # Can't repair — pass through (will get "Unknown tool" error)
-            logger.warning("Cannot repair malformed tool name: '%s'", tc.name[:100])
-            repaired.append(tc)
+            repaired.append(ToolCall(id=tc.id, name=fixed_name, input=final_input))
+            continue
+
+        # Can't repair — pass through (will get "Unknown tool" error)
+        logger.warning("Cannot repair malformed tool name: '%s'", tc.name[:100])
+        repaired.append(tc)
 
     return repaired
 
@@ -139,18 +210,17 @@ def _parse_malformed_name(
     raw_name: str,
     known_tools: Set[str],
 ) -> tuple:
-    """Try to extract tool name + params from a garbled tool name string.
+    """Extract tool name + params from a garbled tool name string.
+
+    Handles: ``grep" pattern="value" key2="value2"``
 
     Returns (tool_name, params_dict) or (None, {}).
     """
-    # Pattern 1: 'grep" pattern="value" key2="value2"'
-    # The tool name ends at the first quote
     for tool_name in known_tools:
         if raw_name.startswith(tool_name):
             remainder = raw_name[len(tool_name):]
             if not remainder:
                 return tool_name, {}
-            # Parse key="value" pairs from remainder
             params = _extract_kv_pairs(remainder)
             if params:
                 return tool_name, params
@@ -158,24 +228,119 @@ def _parse_malformed_name(
     return None, {}
 
 
-_KV_PATTERN = re.compile(r'(\w+)\s*=\s*"([^"]*)"?')
+# Matches both quoted  key="value"  and unquoted  key=123
+_KV_QUOTED = re.compile(r'(\w+)\s*=\s*"([^"]*)"?')
+_KV_UNQUOTED = re.compile(r'(\w+)\s*=\s*(\d+)(?=[\s>,/]|$)')
 
 
 def _extract_kv_pairs(text: str) -> Dict[str, Any]:
-    """Extract key="value" pairs from a string.
+    """Extract key=value pairs from a string.
 
-    Handles both properly quoted values (key="val") and values with
-    a missing trailing quote (key="val at end of string).
+    Supports:
+      - ``key="value"``   — quoted string
+      - ``key=123``        — unquoted integer
     """
-    pairs = {}
-    for m in _KV_PATTERN.finditer(text):
+    pairs: Dict[str, Any] = {}
+    # Quoted values first (higher priority)
+    for m in _KV_QUOTED.finditer(text):
         key, val = m.group(1), m.group(2)
-        # Try to convert numeric values
         if val.isdigit():
             pairs[key] = int(val)
         else:
             pairs[key] = val
+    # Unquoted integers (only if not already captured)
+    for m in _KV_UNQUOTED.finditer(text):
+        key, val = m.group(1), m.group(2)
+        if key not in pairs:
+            pairs[key] = int(val)
     return pairs
+
+
+# ---------------------------------------------------------------------------
+# XML tool call extraction — models sometimes produce <invoke> XML fragments
+# ---------------------------------------------------------------------------
+
+# <invoke name="grep"><parameter name="pattern">value</parameter></invoke>
+_XML_INVOKE = re.compile(
+    r'<invoke\s+name\s*=\s*"([^"]+)"[^>]*>'
+    r'(.*?)'
+    r'</invoke>',
+    re.DOTALL,
+)
+_XML_PARAM = re.compile(
+    r'<parameter\s+name\s*=\s*"([^"]+)"[^>]*>'
+    r'(.*?)'
+    r'</parameter>',
+    re.DOTALL,
+)
+# Also handle attribute-style: <invoke name="grep" pattern="val" path="dir"/>
+_XML_ATTR_INVOKE = re.compile(
+    r'<invoke\s+name\s*=\s*"([^"]+)"([^>]*)/?>'
+)
+_XML_ATTR_KV = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
+
+
+def _extract_xml_tool_calls(
+    text: str,
+    known_tools: Set[str],
+) -> List[ToolCall]:
+    """Extract tool calls from XML-format fragments.
+
+    Handles:
+      - ``<invoke name="grep"><parameter name="pattern">val</parameter></invoke>``
+      - ``<invoke name="grep" pattern="val" path="dir"/>``
+    """
+    if "<invoke" not in text and "<function_call" not in text:
+        return []
+
+    calls: List[ToolCall] = []
+
+    # Pattern 1: <invoke name="..."><parameter name="...">...</parameter></invoke>
+    for m in _XML_INVOKE.finditer(text):
+        name = m.group(1)
+        # The name attribute itself may be garbled (e.g. 'grep" pattern="val"')
+        actual_name = name.split('"')[0].strip() if '"' in name else name
+        if actual_name not in known_tools:
+            continue
+        body = m.group(2)
+        params: Dict[str, Any] = {}
+        for pm in _XML_PARAM.finditer(body):
+            pname, pval = pm.group(1), pm.group(2).strip()
+            if pval.isdigit():
+                params[pname] = int(pval)
+            else:
+                params[pname] = pval
+        calls.append(ToolCall(
+            id=f"xml_{uuid.uuid4().hex[:8]}",
+            name=actual_name,
+            input=params,
+        ))
+
+    # Pattern 2: <invoke name="grep" pattern="val" path="dir"/>
+    if not calls:
+        for m in _XML_ATTR_INVOKE.finditer(text):
+            name = m.group(1)
+            actual_name = name.split('"')[0].strip() if '"' in name else name
+            if actual_name not in known_tools:
+                continue
+            attrs_str = m.group(2)
+            params = {}
+            for am in _XML_ATTR_KV.finditer(attrs_str):
+                k, v = am.group(1), am.group(2)
+                if k == "name":
+                    continue  # skip the name attribute itself
+                if v.isdigit():
+                    params[k] = int(v)
+                else:
+                    params[k] = v
+            if params:
+                calls.append(ToolCall(
+                    id=f"xml_{uuid.uuid4().hex[:8]}",
+                    name=actual_name,
+                    input=params,
+                ))
+
+    return calls
 
 
 # ---------------------------------------------------------------------------
@@ -186,12 +351,13 @@ def _extract_tool_calls_from_text(
     text: str,
     known_tools: Set[str],
 ) -> List[ToolCall]:
-    """Try to extract tool calls from text when the model doesn't use
-    structured toolUse blocks (common with non-Claude Bedrock models).
+    """Extract tool calls from text when the model doesn't use structured
+    toolUse blocks (common with non-Claude Bedrock models).
 
-    Handles:
-      - JSON format: {"name": "grep", "arguments": {...}}
-      - Function-call format: grep(pattern="...", path="...")
+    Strategies (tried in order):
+      1. JSON objects: {"name": "grep", "arguments": {...}}
+      2. XML fragments: <invoke name="grep"><parameter ...>...</parameter></invoke>
+      3. Function-call: grep(pattern="...", path="...")
     """
     if not text or not known_tools:
         return []
@@ -199,7 +365,6 @@ def _extract_tool_calls_from_text(
     calls: List[ToolCall] = []
 
     # Strategy 1: JSON objects with "name" and "arguments"/"parameters"/"input"
-    # Use a brace-depth counter to correctly extract nested JSON objects.
     for m in re.finditer(r'\{', text):
         start = m.start()
         depth = 0
@@ -228,23 +393,30 @@ def _extract_tool_calls_from_text(
         except (json.JSONDecodeError, AttributeError, TypeError):
             continue
 
-    # Strategy 2: function_name(key="value", key2="value2") pattern
-    if not calls:
-        tool_names_pattern = "|".join(re.escape(t) for t in known_tools)
-        fn_pattern = re.compile(
-            rf'(?:^|\s)({tool_names_pattern})\s*\(([^)]*)\)',
-            re.MULTILINE,
-        )
-        for m in fn_pattern.finditer(text):
-            name = m.group(1)
-            args_str = m.group(2)
-            params = _extract_kv_pairs(args_str)
-            if params:
-                calls.append(ToolCall(
-                    id=f"text_{uuid.uuid4().hex[:8]}",
-                    name=name,
-                    input=params,
-                ))
+    if calls:
+        return calls
+
+    # Strategy 2: XML fragments in text body
+    xml_calls = _extract_xml_tool_calls(text, known_tools)
+    if xml_calls:
+        return xml_calls
+
+    # Strategy 3: function_name(key="value", key2="value2") pattern
+    tool_names_pattern = "|".join(re.escape(t) for t in known_tools)
+    fn_pattern = re.compile(
+        rf'(?:^|\s)({tool_names_pattern})\s*\(([^)]*)\)',
+        re.MULTILINE,
+    )
+    for m in fn_pattern.finditer(text):
+        name = m.group(1)
+        args_str = m.group(2)
+        params = _extract_kv_pairs(args_str)
+        if params:
+            calls.append(ToolCall(
+                id=f"text_{uuid.uuid4().hex[:8]}",
+                name=name,
+                input=params,
+            ))
 
     return calls
 
@@ -500,7 +672,7 @@ class ClaudeBedrockProvider(AIProvider):
         """
         client = self._get_client()
 
-        # Build known_tools set for repair logic
+        # Build known_tools set for text extraction fallback
         known_tools: Set[str] = {t["name"] for t in tools}
 
         # Convert tool definitions to Bedrock toolConfig format
@@ -550,8 +722,8 @@ class ClaudeBedrockProvider(AIProvider):
                     input=tu.get("input", {}),
                 ))
 
-        # Repair malformed tool calls (params jammed into name field)
-        tool_calls = _repair_tool_calls(tool_calls, known_tools)
+        # Repair malformed tool calls (schema-aware, multi-strategy)
+        tool_calls = _repair_tool_calls(tool_calls, tools)
 
         # Fallback: if no structured tool calls but text contains tool
         # call patterns, extract them from text

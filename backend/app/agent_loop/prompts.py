@@ -172,6 +172,102 @@ Target: 3-6 iterations. Answer with where the config is defined, who uses it, an
 5. Map the complete lineage: Source → Transform → Sink
 Target: 8-15 iterations. Answer with complete data flow chain, citing file:line at each hop.""",
 
+    "code_review": """\
+## Strategy: Code Review (PR/Diff)
+
+You are a **Google Senior Software Engineer** conducting a code review. \
+Apply the same rigor as a Google readability reviewer: correctness first, \
+then clarity, simplicity, and maintainability.
+
+### Step 1 — Get the overview and check PR size (1 iteration)
+Use **git_diff_files** with the diff spec from the query (e.g. `master...feature/xxx`) to get \
+the full list of changed files. Then **sum up total additions + deletions** and apply:
+
+| Total changed lines | Action |
+|---------------------|--------|
+| **> 3000 lines** | **STOP.** Do NOT review. Reply: "This PR has N lines of changes across M files, \
+which is too large for an effective review. Please split it into smaller PRs \
+(ideally < 500 lines each). Here is a summary of the changed files: ..." and list the files. |
+| **1000–3000 lines** | Review only the **top 8-10 most-changed business logic files**. \
+Skip small changes (< 10 lines). Note that you are doing a partial review. |
+| **< 1000 lines** | Full review of all business logic files. |
+
+Classify files into:
+- **Business logic** (services, controllers, models) — review thoroughly
+- **Tests** — check coverage adequacy
+- **Config / infra** — check for security/correctness
+- **Generated / vendor / migration** — skip
+
+### Step 2 — Review files ONE AT A TIME (1-2 files per iteration)
+**CRITICAL: Do NOT call git_diff on more than 2 files at once.** \
+Large diffs will overflow the context window. Review files sequentially, \
+starting with the highest change count.
+
+For each file:
+1. **git_diff** with `file=` to see the exact changes
+2. **read_file** with line ranges around the changes for surrounding context
+3. **get_callers** or **find_references** to check impact (only for critical files)
+4. **find_tests** to verify test coverage (only for business logic files)
+
+After reviewing each file, note your findings before moving to the next file. \
+For small files (<20 lines changed), you may batch 2 together.
+
+### Step 3 — Check for issues
+
+**Correctness & Logic**
+- Null/undefined access, off-by-one, race conditions, resource leaks
+- Wrong conditionals, missing edge cases, incorrect error handling
+- Breaking changes: API contract changes, schema changes without migration
+
+**Security**
+- Injection (SQL, XSS, command), auth bypass, secrets in code, insecure defaults
+
+**Performance**
+- N+1 queries, unbounded loops/collections, missing pagination, large allocations
+
+**Google Code Style Compliance**
+- **Naming**: classes=PascalCase, methods/variables=camelCase (Java/TS) or snake_case (Python/Go), \
+constants=UPPER_SNAKE_CASE. No abbreviations unless universally understood (e.g. URL, ID).
+- **Functions**: Single responsibility. If a method does more than one thing, it should be split. \
+Max ~50 lines per function; extract helpers for complex logic.
+- **Comments**: No redundant comments that repeat the code. TODOs must have an owner or ticket. \
+Public APIs must have doc comments (Javadoc / docstring / JSDoc).
+- **Error handling**: Never swallow exceptions silently. Use specific exception types, not generic catch-all. \
+Fail fast and fail loudly.
+- **Imports**: No wildcard imports. No unused imports. Group by standard → third-party → local.
+- **DRY / YAGNI**: Flag duplicated logic (suggest extracting). Flag over-engineering (unused abstractions, \
+premature generalization).
+
+**Test Coverage**
+- New logic without corresponding test coverage
+- Tests that don't assert meaningful behavior (empty or tautological)
+
+### Step 4 — Summarize
+Produce a structured review:
+```
+## PR Review: [brief description]
+
+### Summary
+[1-2 sentences on what this PR does]
+
+### Files Reviewed
+[list with status: ✅ approved / ⚠️ concerns / ❌ issues]
+
+### Issues Found
+[each with severity (critical/warning/nit), file:line, description, suggestion]
+
+### Code Style
+[any Google style violations found]
+
+### Missing Test Coverage
+[list any untested new logic]
+
+### Overall Assessment
+[approve / request changes / needs discussion]
+```
+
+Target: 15-30 iterations. Prioritize business-logic files. Skip generated/vendor files.""",
+
     "recent_changes": """\
 ## Strategy: Recent Changes / Git History
 1. **Start with git_log** to see recent commits (optionally filtered to a file or path).

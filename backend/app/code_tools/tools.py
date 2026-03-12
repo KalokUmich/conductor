@@ -21,6 +21,7 @@ from .schemas import (
     CalleeInfo,
     CallerInfo,
     DependencyInfo,
+    DiffFileEntry,
     FileEntry,
     GitCommit,
     GrepMatch,
@@ -887,15 +888,255 @@ def git_diff(
     ref1: Optional[str] = "HEAD~1",
     ref2: Optional[str] = "HEAD",
     file: Optional[str] = None,
+    context_lines: int = 10,
 ) -> ToolResult:
-    """Show diff between two git refs."""
-    args = ["diff", ref1 or "HEAD~1", ref2 or "HEAD"]
+    """Show diff between two git refs.
+
+    Args:
+        context_lines: Number of surrounding context lines in the unified diff
+                       (default 10, git default is 3). More context reduces the
+                       need for separate read_file calls during code review.
+    """
+    args = ["diff", f"--unified={context_lines}", ref1 or "HEAD~1", ref2 or "HEAD"]
     if file:
         fp = _resolve(workspace, file)
         args += ["--", str(fp)]
 
     raw = _run_git(workspace, args, max_output=100_000)
     return ToolResult(tool_name="git_diff", data={"diff": raw})
+
+
+_DIFF_STATUS_MAP = {
+    "A": "added",
+    "C": "copied",
+    "D": "deleted",
+    "M": "modified",
+    "R": "renamed",
+    "T": "type_changed",
+}
+
+
+# ---------------------------------------------------------------------------
+# File review priority classification — language-agnostic
+# ---------------------------------------------------------------------------
+
+# Category display order (lower = review first)
+_CATEGORY_ORDER = {
+    "business_logic": 1,
+    "controller":     2,
+    "model":          3,
+    "repository":     4,
+    "config":         5,
+    "test":           6,
+    "docs":           7,
+    "generated":      8,
+}
+
+# Patterns checked against the lowercased full path and filename.
+# Order matters: first match wins.
+_FILE_PRIORITY_RULES: List[tuple] = [
+    # --- generated / vendor / skip ---
+    ("generated",      lambda p, f: any(x in p for x in (
+        "/generated/", "/gen/", "/vendor/", "/node_modules/",
+        "/dist/", "/build/", "/__pycache__/", "/target/classes/",
+    ))),
+    ("generated",      lambda p, f: f.endswith((
+        ".lock", ".min.js", ".min.css", ".map", ".pb.go", ".pb.h",
+        ".generated.ts", ".generated.java", ".g.dart",
+    ))),
+    ("generated",      lambda p, f: f in (
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "go.sum",
+        "poetry.lock", "Cargo.lock", "Gemfile.lock", "composer.lock",
+    )),
+
+    # --- docs ---
+    ("docs",           lambda p, f: f.endswith((".md", ".rst", ".txt", ".adoc"))),
+    ("docs",           lambda p, f: f in ("LICENSE", "CHANGELOG", "AUTHORS", "CONTRIBUTING")),
+
+    # --- tests ---
+    ("test",           lambda p, f: "/test/" in p or "/tests/" in p or "/spec/" in p
+                                    or "/__tests__/" in p or "/test_" in f),
+    ("test",           lambda p, f: f.startswith("test_") or f.endswith((
+        "_test.py", "_test.go", "_test.rs", "_test.dart",
+        ".test.ts", ".test.js", ".test.tsx", ".test.jsx",
+        ".spec.ts", ".spec.js", ".spec.tsx", ".spec.jsx",
+        "test.java", "tests.java", "spec.java",
+        "_test.rb", "_spec.rb",
+    ))),
+
+    # --- config / infra ---
+    ("config",         lambda p, f: f.endswith((
+        ".yml", ".yaml", ".toml", ".ini", ".cfg", ".env",
+        ".properties", ".xml", ".gradle", ".sbt",
+        "dockerfile", ".dockerignore",
+    ))),
+    ("config",         lambda p, f: f in (
+        "pom.xml", "build.gradle", "settings.gradle",
+        "makefile", "cmakelists.txt", "cargo.toml", "go.mod", "go.sum",
+        "package.json", "tsconfig.json", "webpack.config.js", "vite.config.ts",
+        ".eslintrc.js", ".prettierrc", "pyproject.toml", "setup.py", "setup.cfg",
+        "gemfile", "rakefile", "composer.json",
+    )),
+    ("config",         lambda p, f: "/config/" in p or "/infra/" in p
+                                    or "/deploy/" in p or "/.github/" in p),
+
+    # --- repository / data access ---
+    ("repository",     lambda p, f: any(x in f for x in (
+        "repository", "repo", "dao", "mapper", "store",
+    )) and not f.endswith((".md", ".txt"))),
+    ("repository",     lambda p, f: "/repository/" in p or "/repositories/" in p
+                                    or "/dao/" in p or "/mappers/" in p),
+
+    # --- model / entity / schema ---
+    ("model",          lambda p, f: any(x in f for x in (
+        "model", "entity", "schema", "dto", "vo", "pojo",
+        "dataclass", "struct", "type", "proto",
+    )) and not f.endswith((".md", ".txt"))),
+    ("model",          lambda p, f: any(x in p for x in (
+        "/model/", "/models/", "/entity/", "/entities/",
+        "/schema/", "/schemas/", "/dto/", "/types/", "/domain/",
+        "/proto/", "/graphql/",
+    ))),
+
+    # --- controller / handler / route / API ---
+    ("controller",     lambda p, f: any(x in f for x in (
+        "controller", "handler", "router", "route", "endpoint",
+        "resource", "resolver", "view", "api",
+    )) and not f.endswith((".md", ".txt"))),
+    ("controller",     lambda p, f: any(x in p for x in (
+        "/controller/", "/controllers/", "/handler/", "/handlers/",
+        "/router/", "/routers/", "/routes/", "/api/", "/endpoint/",
+        "/resource/", "/resources/", "/resolvers/", "/views/",
+    ))),
+
+    # --- business logic (highest priority source code) ---
+    ("business_logic", lambda p, f: any(x in f for x in (
+        "service", "usecase", "interactor", "manager", "processor",
+        "provider", "facade", "orchestrator", "workflow", "engine",
+        "validator", "checker", "consumer", "producer", "listener",
+        "subscriber", "publisher", "worker", "job", "task",
+        "middleware", "interceptor", "filter", "guard",
+        "helper", "util", "utils",
+    )) and not f.endswith((".md", ".txt"))),
+    ("business_logic", lambda p, f: any(x in p for x in (
+        "/service/", "/services/", "/usecase/", "/usecases/",
+        "/core/", "/business/", "/logic/", "/impl/",
+    ))),
+
+    # --- fallback: any source code file → business_logic ---
+    ("business_logic", lambda p, f: f.endswith((
+        ".java", ".py", ".go", ".rs", ".ts", ".tsx", ".js", ".jsx",
+        ".kt", ".scala", ".rb", ".php", ".cs", ".cpp", ".c", ".h",
+        ".swift", ".dart", ".ex", ".exs", ".clj", ".hs", ".lua",
+        ".r", ".R", ".jl", ".zig", ".nim", ".v", ".ml", ".fs",
+    ))),
+]
+
+
+def _classify_file_priority(path: str) -> str:
+    """Classify a file into a review priority category.
+
+    Returns one of: business_logic, controller, model, repository,
+    config, test, docs, generated.
+    """
+    p = path.lower().replace("\\", "/")
+    f = p.rsplit("/", 1)[-1] if "/" in p else p
+
+    for category, check in _FILE_PRIORITY_RULES:
+        try:
+            if check(p, f):
+                return category
+        except (TypeError, AttributeError):
+            continue
+
+    return "business_logic"  # default: treat unknown as source code
+
+
+def git_diff_files(
+    workspace: str,
+    ref: str,
+) -> ToolResult:
+    """List files changed in a git diff with status and line counts.
+
+    Combines ``git diff --numstat`` and ``git diff --name-status`` to
+    produce a structured list of changed files.
+    """
+    # Split ref into git args — handle "master...feature", "HEAD~5", "a b"
+    ref_parts = ref.strip().split()
+
+    # --numstat for additions/deletions
+    numstat_raw = _run_git(workspace, ["diff", "--numstat"] + ref_parts)
+    # --name-status for change type (A/M/D/R/C)
+    status_raw = _run_git(workspace, ["diff", "--name-status"] + ref_parts)
+
+    if numstat_raw.startswith("(git") or status_raw.startswith("(git"):
+        error_msg = numstat_raw if numstat_raw.startswith("(git") else status_raw
+        return ToolResult(
+            tool_name="git_diff_files", success=False,
+            error=f"Git command failed: {error_msg}",
+        )
+
+    # Parse --name-status: "M\tpath" or "R100\told\tnew"
+    status_map: Dict[str, tuple] = {}  # path → (status_str, old_path)
+    for line in status_raw.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status_code = parts[0]
+        status_letter = status_code[0]  # R100 → R
+        status_str = _DIFF_STATUS_MAP.get(status_letter, "modified")
+        if status_letter in ("R", "C") and len(parts) >= 3:
+            old_path, new_path = parts[1], parts[2]
+            status_map[new_path] = (status_str, old_path)
+        else:
+            status_map[parts[1]] = (status_str, None)
+
+    # Parse --numstat: "25\t8\tpath" or "0\t0\told => new"
+    entries: List[Dict] = []
+    for line in numstat_raw.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("\t", 2)
+        if len(parts) < 3:
+            continue
+        add_str, del_str, filepath = parts
+        # Binary files show as "-\t-\tfile"
+        additions = int(add_str) if add_str != "-" else 0
+        deletions = int(del_str) if del_str != "-" else 0
+        # Handle rename notation: "old => new" or "{old => new}/path"
+        if " => " in filepath:
+            # Use the new path (last part after =>)
+            filepath = filepath.split(" => ")[-1].rstrip("}")
+            if filepath.startswith("/"):
+                filepath = filepath[1:]
+
+        status_str, old_path = status_map.get(filepath, ("modified", None))
+        entry: Dict[str, Any] = {
+            "path": filepath,
+            "status": status_str,
+            "additions": additions,
+            "deletions": deletions,
+        }
+        if old_path:
+            entry["old_path"] = old_path
+        entries.append(entry)
+
+    # Classify and sort by review priority
+    for entry in entries:
+        entry["category"] = _classify_file_priority(entry["path"])
+
+    entries.sort(key=lambda e: (
+        _CATEGORY_ORDER.get(e["category"], 50),   # tier first
+        -(e["additions"] + e["deletions"]),        # then by change size desc
+    ))
+
+    return ToolResult(
+        tool_name="git_diff_files",
+        data=entries,
+        truncated=len(entries) > 100,
+    )
 
 
 def _find_ast_grep() -> Optional[str]:
@@ -2896,6 +3137,7 @@ TOOL_REGISTRY = {
     "get_dependents": get_dependents,
     "git_log": git_log,
     "git_diff": git_diff,
+    "git_diff_files": git_diff_files,
     "ast_search": ast_search,
     "get_callees": get_callees,
     "get_callers": get_callers,

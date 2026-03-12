@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional
 
@@ -26,8 +27,8 @@ logger = logging.getLogger(__name__)
 _ALL_TOOLS = [
     "grep", "read_file", "list_files", "find_symbol", "find_references",
     "file_outline", "get_dependencies", "get_dependents", "git_log",
-    "git_diff", "ast_search", "get_callees", "get_callers", "git_blame",
-    "git_show", "find_tests", "test_outline", "trace_variable",
+    "git_diff", "git_diff_files", "ast_search", "get_callees", "get_callers",
+    "git_blame", "git_show", "find_tests", "test_outline", "trace_variable",
     "compressed_view", "module_summary", "expand_symbol",
 ]
 
@@ -159,6 +160,24 @@ QUERY_TYPES: Dict[str, dict] = {
             "get_callers", "get_dependencies", "ast_search",
         ],
     },
+    "code_review": {
+        "description": "Review code changes in a PR or diff",
+        "strategy": "git_diff_files → triage → git_diff per file → read context → check tests → summarize",
+        "initial_tools": ["git_diff_files", "git_diff", "read_file"],
+        "budget_level": "high",
+        "suggested_token_budget": 600_000,
+        "keywords": [
+            "review", "code review", "pr review", "pull request",
+            "review the pr", "review this pr", "review the diff",
+            "review the changes", "review changes",
+            "do pr", "do a pr", "check the pr",
+        ],
+        "tools": _CORE_TOOLS + [
+            "git_diff_files", "git_diff", "git_log", "git_show",
+            "git_blame", "find_references", "get_callers", "get_callees",
+            "find_tests", "test_outline", "list_files",
+        ],
+    },
     "recent_changes": {
         "description": "Understand recent commits, diffs, or change history",
         "strategy": "git_log → git_show interesting commits → git_diff for details → read_file affected code",
@@ -184,12 +203,67 @@ for _spec in QUERY_TYPES.values():
     _spec["tools"] = list(dict.fromkeys(_spec["tools"]))
 
 
+# ---------------------------------------------------------------------------
+# PR / diff pattern detection — fires before keyword matching
+# ---------------------------------------------------------------------------
+
+# Matches patterns like:
+#   "PR master...feature/xxx"
+#   "do PR 'git diff master...feature'"
+#   "review diff master..HEAD"
+#   "code review HEAD~5"
+#   "@AI do PR master...feature/branch-name"
+_REF_CHARS = r'[a-zA-Z0-9_.~^/-]'
+_PR_PATTERN = re.compile(
+    r'(?:do\s+)?(?:pr|code\s*review|review\s+(?:the\s+)?(?:pr|diff|changes))'
+    r'[\s:]*["\']?'
+    r'(?:git\s+diff\s+)?'
+    rf'({_REF_CHARS}+(?:\.{"{2,3}"}){_REF_CHARS}+)',
+    re.IGNORECASE,
+)
+# Also match standalone diff specs: "master...feature/xxx"
+_DIFF_SPEC_PATTERN = re.compile(
+    rf'({_REF_CHARS}+\.{{2,3}}{_REF_CHARS}+)',
+)
+
+
+def _detect_pr_pattern(question: str) -> Optional[str]:
+    """Detect a PR/diff pattern and extract the git ref spec.
+
+    Returns the ref spec (e.g. 'master...feature/xxx') or None.
+    """
+    m = _PR_PATTERN.search(question)
+    if m:
+        return m.group(1)
+    # Fallback: if the query contains "review"/"PR" and a diff spec
+    q_lower = question.lower()
+    if any(kw in q_lower for kw in ("review", "pr", "审核", "审查")):
+        m = _DIFF_SPEC_PATTERN.search(question)
+        if m:
+            return m.group(1)
+    return None
+
+
 def classify_query(question: str) -> QueryClassification:
     """Classify a user question using keyword matching (zero latency).
 
     Returns a QueryClassification with the best-match query type,
     strategy hint, suggested initial tools, and dynamic tool set.
     """
+    # Fast-path: PR/diff pattern detection
+    diff_ref = _detect_pr_pattern(question)
+    if diff_ref:
+        spec = QUERY_TYPES["code_review"]
+        logger.info("PR pattern detected: ref='%s'", diff_ref)
+        return QueryClassification(
+            query_type="code_review",
+            strategy=spec["strategy"],
+            initial_tools=spec["initial_tools"],
+            budget_level=spec["budget_level"],
+            suggested_token_budget=spec["suggested_token_budget"],
+            tool_set=spec["tools"],
+        )
+
     q_lower = question.lower()
     best_type = "business_flow_tracing"  # safe default
     best_score = 0
@@ -226,6 +300,7 @@ Categories:
 - architecture_question: understanding overall structure/design/modules
 - config_analysis: understanding configuration/settings usage
 - data_lineage: tracing how data flows through the system
+- code_review: reviewing code changes in a PR or diff (e.g. "review PR master...feature/xxx")
 - recent_changes: understanding recent commits, diffs, change history, who changed what
 
 Question: {question}
