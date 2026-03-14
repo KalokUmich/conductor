@@ -288,6 +288,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .todos.router         import router as todos_router
     from .workspace_files.router import router as workspace_files_router
     from .langextract.router     import router as langextract_router
+    from .code_review.router     import router as code_review_router
 
     app.include_router(git_workspace_router)
     app.include_router(code_tools_router)
@@ -303,6 +304,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(todos_router)
     app.include_router(workspace_files_router)
     app.include_router(langextract_router)
+    app.include_router(code_review_router)
 
     # --- Health check ---
     @app.get("/health", include_in_schema=True)

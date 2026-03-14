@@ -31,7 +31,7 @@ from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
 from .evidence import check_evidence
-from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout
+from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
 from .query_classifier import QueryClassification, classify_query, classify_query_with_llm
 from .trace import IterationTrace, SessionTrace, ToolCallTrace, TraceWriter
 
@@ -122,6 +122,8 @@ class AgentLoopService:
         budget_config: Optional[BudgetConfig] = None,
         trace_writer: Optional[TraceWriter] = None,
         classifier_provider: Optional[AIProvider] = None,
+        _skip_review_delegation: bool = False,
+        llm_semaphore: Optional[asyncio.Semaphore] = None,
     ) -> None:
         self._provider = provider
         self._max_iterations = max_iterations
@@ -129,6 +131,8 @@ class AgentLoopService:
         self._budget_config = budget_config
         self._trace_writer = trace_writer
         self._classifier_provider = classifier_provider
+        self._skip_review_delegation = _skip_review_delegation
+        self._llm_semaphore = llm_semaphore
 
     async def run(
         self,
@@ -192,23 +196,87 @@ class AgentLoopService:
         )
         trace.begin()
 
-        # Pre-scan the workspace layout and key docs in parallel so the
-        # LLM knows the project structure and context from iteration 1.
-        layout_task = asyncio.to_thread(scan_workspace_layout, workspace_path)
-        docs_task = asyncio.to_thread(_read_key_docs, workspace_path)
-        layout, project_docs = await asyncio.gather(layout_task, docs_task)
-        # Classify the query — use LLM if a classifier provider is available
-        if self._classifier_provider:
-            try:
-                classification = await classify_query_with_llm(
-                    query, self._classifier_provider,
-                )
-            except Exception as exc:
-                logger.warning("LLM classifier failed, falling back to keywords: %s", exc)
-                classification = classify_query(query)
+        # Sub-agents (inside CodeReviewService) skip expensive startup:
+        # no workspace scanning, no LLM classification — they already
+        # have focused prompts with pre-fetched diffs.
+        if self._skip_review_delegation:
+            layout = ""
+            project_docs = ""
+            risk_context = ""
+            classification = classify_query(query)  # keyword-only, zero latency
         else:
-            classification = classify_query(query)
+            # Pre-scan the workspace layout, key docs, and risk signals in parallel
+            # so the LLM knows the project structure and context from iteration 1.
+            layout_task = asyncio.to_thread(scan_workspace_layout, workspace_path)
+            docs_task = asyncio.to_thread(_read_key_docs, workspace_path)
+            risk_task = asyncio.to_thread(scan_workspace_risk, workspace_path)
+            layout, project_docs, risk_context = await asyncio.gather(
+                layout_task, docs_task, risk_task,
+            )
+            # Classify the query — use LLM if a classifier provider is available
+            if self._classifier_provider:
+                try:
+                    classification = await classify_query_with_llm(
+                        query, self._classifier_provider,
+                    )
+                except Exception as exc:
+                    logger.warning("LLM classifier failed, falling back to keywords: %s", exc)
+                    classification = classify_query(query)
+            else:
+                classification = classify_query(query)
         is_high_level = classification.query_type == "architecture_question" or _is_high_level_query(query)
+
+        # ---- Multi-agent code review delegation ----
+        # When a PR diff spec is detected, delegate to CodeReviewService
+        # for parallel multi-agent review instead of the single agent loop.
+        # Skip if _skip_review_delegation is set (sub-agents inside CodeReviewService).
+        if (
+            classification.query_type == "code_review"
+            and classification.diff_spec
+            and not self._skip_review_delegation
+        ):
+            logger.info(
+                "Delegating to multi-agent code review: diff_spec=%s",
+                classification.diff_spec,
+            )
+            async for event in self._run_multi_agent_review(
+                workspace_path=workspace_path,
+                diff_spec=classification.diff_spec,
+                trace=trace,
+                start_time=start,
+            ):
+                yield event
+            return
+
+        # ---- Multi-perspective exploration for business flow questions ----
+        # When the query asks about a business flow / user journey, dispatch
+        # two parallel agents from different perspectives (code implementation
+        # vs tests/interfaces) and synthesize their answers with the strong
+        # model. This avoids tunnel vision where a single agent only traces
+        # backend services and misses the user-facing flow.
+        # Only applies to business_flow_tracing — architecture questions
+        # are better served by the single-agent module_summary approach.
+        if (
+            classification.query_type == "business_flow_tracing"
+            and not self._skip_review_delegation
+            and self._classifier_provider is not None
+        ):
+            logger.info(
+                "Delegating to multi-perspective exploration: type=%s",
+                classification.query_type,
+            )
+            async for event in self._run_multi_perspective_stream(
+                query=query,
+                workspace_path=workspace_path,
+                classification=classification,
+                trace=trace,
+                start_time=start,
+                layout=layout,
+                project_docs=project_docs,
+                risk_context=risk_context,
+            ):
+                yield event
+            return
 
         system = build_system_prompt(
             workspace_path,
@@ -216,6 +284,7 @@ class AgentLoopService:
             project_docs=project_docs,
             max_iterations=self._max_iterations,
             query_type=classification.query_type,
+            risk_context=risk_context,
         )
 
         # Dynamic tool set — only expose tools relevant to the query type
@@ -263,58 +332,131 @@ class AgentLoopService:
         # LLM call timeout — prevents hanging when context is too large
         _LLM_TIMEOUT_SECONDS = 300
 
+        # Short session tag for log correlation across parallel agents
+        _sid = trace.session_id[:8]
+
+        # Max retries for throttled LLM calls before giving up
+        _LLM_THROTTLE_RETRIES = 3
+        _LLM_THROTTLE_BACKOFF = [5, 15, 30]  # seconds
+
         for iteration in range(self._max_iterations):
-            # LLM call — offload to thread to avoid blocking the event loop
+            # LLM call — offload to thread to avoid blocking the event loop.
+            # When a shared semaphore is provided (e.g. multi-agent review),
+            # acquire it first to limit concurrent Bedrock API calls and
+            # avoid throttling.
             llm_start = time.monotonic()
-            try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self._provider.chat_with_tools,
-                        messages=messages,
-                        tools=active_tools,
-                        max_tokens=8192,
-                        system=system,
-                    ),
-                    timeout=_LLM_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                exc = TimeoutError(
-                    f"LLM call timed out after {_LLM_TIMEOUT_SECONDS}s at iteration "
-                    f"{iteration + 1} (context may be too large)"
-                )
-                logger.error("%s", exc)
-                answer = "\n\n".join(accumulated_text) if accumulated_text else ""
-                trace.finish(answer=answer, error=str(exc), budget_summary=budget.summary())
-                self._save_trace(trace)
-                yield AgentEvent(kind="error", data={
-                    "error": str(exc),
-                    "answer": answer,
-                    "tool_calls_made": total_tool_calls,
-                    "iterations": iteration + 1,
-                    "duration_ms": (time.monotonic() - start) * 1000,
-                    "thinking_steps": thinking_steps,
-                    "budget_summary": budget.summary(),
-                })
-                return
-            except Exception as exc:
-                logger.error("Agent LLM call failed at iteration %d: %s", iteration, exc)
-                trace.finish(
-                    answer="\n\n".join(accumulated_text) if accumulated_text else "",
-                    error=str(exc),
-                    budget_summary=budget.summary(),
-                )
-                self._save_trace(trace)
-                yield AgentEvent(kind="error", data={
-                    "error": str(exc),
-                    "answer": "\n\n".join(accumulated_text) if accumulated_text else "",
-                    "tool_calls_made": total_tool_calls,
-                    "iterations": iteration + 1,
-                    "duration_ms": (time.monotonic() - start) * 1000,
-                    "thinking_steps": thinking_steps,
-                    "budget_summary": budget.summary(),
-                })
-                return
+            n_msgs = len(messages)
+            logger.info(
+                "[%s] iter=%d/%d LLM call starting (msgs=%d)",
+                _sid, iteration + 1, self._max_iterations, n_msgs,
+            )
+            response = None
+            for attempt in range(_LLM_THROTTLE_RETRIES + 1):
+                try:
+                    if self._llm_semaphore:
+                        sem_wait_start = time.monotonic()
+                        logger.info(
+                            "[%s] iter=%d waiting for LLM semaphore...",
+                            _sid, iteration + 1,
+                        )
+                        async with self._llm_semaphore:
+                            sem_wait_ms = (time.monotonic() - sem_wait_start) * 1000
+                            logger.info(
+                                "[%s] iter=%d semaphore acquired (waited %.0fms), "
+                                "calling LLM...",
+                                _sid, iteration + 1, sem_wait_ms,
+                            )
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self._provider.chat_with_tools,
+                                    messages=messages,
+                                    tools=active_tools,
+                                    max_tokens=8192,
+                                    system=system,
+                                ),
+                                timeout=_LLM_TIMEOUT_SECONDS,
+                            )
+                    else:
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._provider.chat_with_tools,
+                                messages=messages,
+                                tools=active_tools,
+                                max_tokens=8192,
+                                system=system,
+                            ),
+                            timeout=_LLM_TIMEOUT_SECONDS,
+                        )
+                    break  # success — exit retry loop
+                except asyncio.TimeoutError:
+                    exc = TimeoutError(
+                        f"LLM call timed out after {_LLM_TIMEOUT_SECONDS}s at iteration "
+                        f"{iteration + 1} (context may be too large)"
+                    )
+                    logger.error("%s", exc)
+                    answer = "\n\n".join(accumulated_text) if accumulated_text else ""
+                    trace.finish(answer=answer, error=str(exc), budget_summary=budget.summary())
+                    self._save_trace(trace)
+                    yield AgentEvent(kind="error", data={
+                        "error": str(exc),
+                        "answer": answer,
+                        "tool_calls_made": total_tool_calls,
+                        "iterations": iteration + 1,
+                        "duration_ms": (time.monotonic() - start) * 1000,
+                        "thinking_steps": thinking_steps,
+                        "budget_summary": budget.summary(),
+                    })
+                    return
+                except Exception as exc:
+                    exc_name = type(exc).__name__
+                    is_throttle = (
+                        "Throttling" in exc_name
+                        or "throttl" in str(exc).lower()
+                        or "Too many requests" in str(exc)
+                        or "rate" in str(exc).lower()
+                    )
+                    if is_throttle and attempt < _LLM_THROTTLE_RETRIES:
+                        backoff = _LLM_THROTTLE_BACKOFF[attempt]
+                        logger.warning(
+                            "[%s] iter=%d THROTTLED (attempt %d/%d): %s. "
+                            "Backing off %ds before retry...",
+                            _sid, iteration + 1, attempt + 1,
+                            _LLM_THROTTLE_RETRIES + 1, exc, backoff,
+                        )
+                        await asyncio.sleep(backoff)
+                        continue  # retry
+                    # Non-throttle error, or retries exhausted — fail
+                    logger.error(
+                        "[%s] iter=%d LLM call failed: [%s] %s",
+                        _sid, iteration + 1, exc_name, exc,
+                    )
+                    trace.finish(
+                        answer="\n\n".join(accumulated_text) if accumulated_text else "",
+                        error=str(exc),
+                        budget_summary=budget.summary(),
+                    )
+                    self._save_trace(trace)
+                    yield AgentEvent(kind="error", data={
+                        "error": str(exc),
+                        "answer": "\n\n".join(accumulated_text) if accumulated_text else "",
+                        "tool_calls_made": total_tool_calls,
+                        "iterations": iteration + 1,
+                        "duration_ms": (time.monotonic() - start) * 1000,
+                        "thinking_steps": thinking_steps,
+                        "budget_summary": budget.summary(),
+                    })
+                    return
             llm_elapsed_ms = (time.monotonic() - llm_start) * 1000
+            _in_tok = response.usage.input_tokens if response.usage else 0
+            _out_tok = response.usage.output_tokens if response.usage else 0
+            _n_tc = len(response.tool_calls) if response.tool_calls else 0
+            logger.info(
+                "[%s] iter=%d LLM call done in %.0fms "
+                "(in=%d out=%d tool_calls=%d stop=%s)",
+                _sid, iteration + 1, llm_elapsed_ms,
+                _in_tok, _out_tok, _n_tc,
+                response.stop_reason,
+            )
 
             # Track token usage from LLM response
             iter_metrics = IterationMetrics(
@@ -706,8 +848,507 @@ class AgentLoopService:
     #
     # We use the Bedrock Converse message format as the canonical format
     # because it's the most structured. Provider adapters in
+    # ------------------------------------------------------------------
+    # Multi-agent code review delegation
+    # ------------------------------------------------------------------
+
+    async def _run_multi_agent_review(
+        self,
+        workspace_path: str,
+        diff_spec: str,
+        trace: SessionTrace,
+        start_time: float,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Run multi-agent code review via CodeReviewService.
+
+        Yields AgentEvent objects compatible with the SSE streaming protocol
+        so the frontend displays progress just like a normal agent loop.
+        """
+        from app.code_review.service import CodeReviewService
+
+        thinking_steps: List[Dict[str, Any]] = []
+
+        # Step 1: Emit initial thinking
+        yield AgentEvent(kind="thinking", data={
+            "text": f"Starting multi-agent code review: {diff_spec}",
+            "iteration": 1,
+        })
+        thinking_steps.append({
+            "kind": "thinking", "iteration": 1,
+            "text": f"Starting multi-agent code review: {diff_spec}",
+        })
+
+        try:
+            service = CodeReviewService(
+                provider=self._provider,
+                classifier_provider=self._classifier_provider,
+                trace_writer=self._trace_writer,
+            )
+
+            # Step 2: Run the review
+            yield AgentEvent(kind="tool_call", data={
+                "tool": "code_review",
+                "iteration": 2,
+                "params": {"diff_spec": diff_spec},
+            })
+            thinking_steps.append({
+                "kind": "tool_call", "iteration": 2,
+                "tool": "code_review",
+                "text": f"Reviewing {diff_spec} with specialized agents",
+            })
+
+            # Run review as a background task and send keepalive events
+            # every 15s to prevent proxy/ngrok timeouts on idle SSE connections.
+            review_task = asyncio.create_task(service.review(
+                workspace_path=workspace_path,
+                diff_spec=diff_spec,
+                max_agents=5,
+            ))
+
+            keepalive_count = 0
+            while not review_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(review_task), timeout=15.0)
+                except asyncio.TimeoutError:
+                    keepalive_count += 1
+                    yield AgentEvent(kind="thinking", data={
+                        "text": f"Multi-agent review in progress... ({keepalive_count * 15}s)",
+                        "iteration": 2,
+                    })
+
+            result = review_task.result()
+
+            # Step 3: Emit per-agent results
+            iteration = 3
+            for ar in result.agent_results:
+                status = "error" if ar.error else "done"
+                summary = (
+                    f"{ar.agent_name}: {len(ar.findings)} finding(s), "
+                    f"{ar.tokens_used:,} tokens, {ar.duration_ms:.0f}ms"
+                )
+                if ar.error:
+                    summary += f" [error: {ar.error}]"
+
+                yield AgentEvent(kind="tool_result", data={
+                    "tool": ar.agent_name,
+                    "summary": summary,
+                    "success": ar.error is None,
+                    "iteration": iteration,
+                })
+                thinking_steps.append({
+                    "kind": "tool_result", "iteration": iteration,
+                    "tool": ar.agent_name, "summary": summary,
+                    "success": ar.error is None,
+                })
+                iteration += 1
+
+            # Step 4: Format the answer
+            answer = self._format_review_result(result)
+
+            duration_ms = (time.monotonic() - start_time) * 1000
+            trace.finish()
+            if self._trace_writer:
+                self._trace_writer.save(trace)
+
+            yield AgentEvent(kind="done", data={
+                "answer": answer,
+                "thinking_steps": thinking_steps,
+                "tool_calls_made": len(result.agent_results),
+                "iterations": iteration - 1,
+                "duration_ms": duration_ms,
+                "budget_summary": {
+                    "total_tokens": result.total_tokens,
+                    "agents_dispatched": len(result.agent_results),
+                    "findings_count": len(result.findings),
+                },
+            })
+
+        except Exception as exc:
+            logger.exception("Multi-agent code review failed: %s", exc)
+            duration_ms = (time.monotonic() - start_time) * 1000
+            trace.finish()
+            yield AgentEvent(kind="error", data={
+                "error": str(exc),
+                "answer": f"Code review failed: {exc}",
+                "thinking_steps": thinking_steps,
+                "iterations": 0,
+                "duration_ms": duration_ms,
+            })
+
+    # ------------------------------------------------------------------
+    # Multi-perspective exploration for high-level questions
+    # ------------------------------------------------------------------
+
+    # Two complementary perspectives that cover blind spots of each other.
+    _PERSPECTIVES = [
+        {
+            "name": "implementation",
+            "label": "Code Implementation",
+            "hint": (
+                "[PERSPECTIVE: Code Implementation]\n"
+                "Focus on the internal code path: service classes, controllers, "
+                "handlers, data access, async jobs, message queues. Trace the "
+                "call chain through the actual implementation. Read *Impl classes, "
+                "follow method calls, and map the processing pipeline step by step."
+            ),
+        },
+        {
+            "name": "usage",
+            "label": "Tests & User-Facing Flows",
+            "hint": (
+                "[PERSPECTIVE: Tests & External Interfaces]\n"
+                "Focus on how this feature looks from the outside: E2E tests "
+                "(Playwright, Cypress, Selenium specs), integration tests, API "
+                "specs, frontend components, page routes, step wizards, and "
+                "documentation. Tests describe the actual user-visible behavior "
+                "and the end-to-end journey in order. Start by searching for "
+                "test/spec files related to the topic."
+            ),
+        },
+    ]
+
+    _SYNTHESIS_PROMPT = """\
+You are a senior engineer answering a question about a codebase. You have been \
+given raw evidence collected by two exploration agents, each from a different angle:
+
+- **Perspective A (Code Implementation)**: traced backend service code, method \
+calls, data flow, internal processing.
+- **Perspective B (Tests & User-Facing Flows)**: examined E2E tests, frontend \
+components, integration tests, user-visible behavior.
+
+You have access to:
+1. The raw code evidence each agent collected (file paths, code snippets, tool outputs).
+2. Each agent's preliminary summary (from a lightweight model — may be incomplete or imprecise).
+
+Your job is to produce the DEFINITIVE answer by re-analyzing the raw evidence yourself:
+1. **Read the evidence carefully.** The preliminary summaries are hints, not gospel. \
+If the raw code contradicts a summary, trust the code.
+2. **Merge both perspectives** into one coherent answer. Find the narrative that \
+connects implementation details with user-visible behavior.
+3. **Fill gaps**: if one perspective found steps the other missed, include them.
+4. **Resolve conflicts**: if perspectives disagree, cite the stronger evidence.
+5. **Cite sources**: reference specific file:line locations from the evidence.
+6. **Structure clearly**: use numbered steps, headings, or a flow diagram as appropriate.
+7. Keep the answer concise but complete. Do not repeat yourself.\
+"""
+
+    async def _run_multi_perspective_stream(
+        self,
+        query: str,
+        workspace_path: str,
+        classification: QueryClassification,
+        trace: SessionTrace,
+        start_time: float,
+        layout: str,
+        project_docs: str,
+        risk_context: str,
+    ) -> AsyncGenerator[AgentEvent, None]:
+        """Run two parallel exploration agents from different perspectives,
+        then synthesize their answers with the strong model.
+
+        This is triggered for high-level questions (business_flow_tracing,
+        architecture_question) where a single agent tends to get tunnel
+        vision on one aspect of the codebase.
+        """
+        thinking_steps: List[Dict[str, Any]] = []
+
+        yield AgentEvent(kind="thinking", data={
+            "text": "High-level question detected — exploring from two perspectives in parallel",
+            "iteration": 1,
+        })
+        thinking_steps.append({
+            "kind": "thinking", "iteration": 1,
+            "text": "Multi-perspective exploration: code implementation + tests/interfaces",
+        })
+
+        # Budget: each sub-agent gets 80% of the normal budget
+        base_budget = self._budget_config or BudgetConfig()
+        sub_max_iters = max(int(self._max_iterations * 0.8), 10)
+        sub_budget = BudgetConfig(
+            max_input_tokens=int(base_budget.max_input_tokens * 0.8),
+            max_iterations=sub_max_iters,
+        )
+
+        # Use the lighter model for exploration (same as code review sub-agents)
+        sub_provider = self._classifier_provider or self._provider
+
+        # Create two sub-agents with different perspectives
+        async def _run_perspective(perspective: dict) -> AgentResult:
+            agent = AgentLoopService(
+                provider=sub_provider,
+                max_iterations=sub_max_iters,
+                budget_config=sub_budget,
+                trace_writer=self._trace_writer,
+                _skip_review_delegation=True,  # sub-agents skip multi-agent dispatch
+            )
+            perspective_query = f"{query}\n\n{perspective['hint']}"
+            return await agent.run(perspective_query, workspace_path)
+
+        # Dispatch both perspectives in parallel
+        perspective_a, perspective_b = self._PERSPECTIVES[0], self._PERSPECTIVES[1]
+
+        yield AgentEvent(kind="tool_call", data={
+            "tool": f"explore_{perspective_a['name']}",
+            "iteration": 2,
+            "params": {"perspective": perspective_a['label']},
+        })
+        yield AgentEvent(kind="tool_call", data={
+            "tool": f"explore_{perspective_b['name']}",
+            "iteration": 2,
+            "params": {"perspective": perspective_b['label']},
+        })
+        thinking_steps.append({
+            "kind": "tool_call", "iteration": 2,
+            "text": f"Dispatching: {perspective_a['label']} + {perspective_b['label']}",
+        })
+
+        # Run both with keepalive pings
+        async def _run_both():
+            return await asyncio.gather(
+                _run_perspective(perspective_a),
+                _run_perspective(perspective_b),
+            )
+
+        explore_task = asyncio.create_task(_run_both())
+
+        keepalive_count = 0
+        while not explore_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(explore_task), timeout=15.0)
+            except asyncio.TimeoutError:
+                keepalive_count += 1
+                yield AgentEvent(kind="thinking", data={
+                    "text": f"Exploring from two perspectives... ({keepalive_count * 15}s)",
+                    "iteration": 2,
+                })
+
+        result_a, result_b = explore_task.result()
+
+        # Emit sub-agent results
+        for label, res in [(perspective_a['label'], result_a), (perspective_b['label'], result_b)]:
+            status = "error" if res.error else "done"
+            summary = (
+                f"{label}: {res.tool_calls_made} tool calls, "
+                f"{res.iterations} iterations, {res.duration_ms:.0f}ms"
+            )
+            if res.error:
+                summary += f" [error: {res.error}]"
+            yield AgentEvent(kind="tool_result", data={
+                "tool": label,
+                "summary": summary,
+                "success": res.error is None,
+                "iteration": 3,
+            })
+            thinking_steps.append({
+                "kind": "tool_result", "iteration": 3,
+                "tool": label, "summary": summary,
+                "success": res.error is None,
+            })
+
+        # Synthesize both perspectives using the strong model.
+        # Include raw evidence (context_chunks) so Sonnet can re-analyze
+        # the actual code, not just rely on Haiku's summary.
+        yield AgentEvent(kind="thinking", data={
+            "text": "Synthesizing both perspectives with strong model...",
+            "iteration": 4,
+        })
+        thinking_steps.append({
+            "kind": "thinking", "iteration": 4,
+            "text": "Synthesis pass using strong model (with raw evidence)",
+        })
+
+        # Build raw evidence sections (truncated to fit context)
+        _MAX_EVIDENCE_CHARS = 30_000  # per perspective
+
+        def _format_evidence(result: AgentResult, max_chars: int) -> str:
+            if not result.context_chunks:
+                return "(no code evidence collected)"
+            parts = []
+            total = 0
+            for chunk in result.context_chunks:
+                entry = f"### {chunk.file_path}"
+                if chunk.start_line:
+                    entry += f":{chunk.start_line}"
+                    if chunk.end_line and chunk.end_line != chunk.start_line:
+                        entry += f"-{chunk.end_line}"
+                entry += f"\n```\n{chunk.content}\n```"
+                if total + len(entry) > max_chars:
+                    parts.append(f"... ({len(result.context_chunks) - len(parts)} more chunks truncated)")
+                    break
+                parts.append(entry)
+                total += len(entry)
+            return "\n\n".join(parts)
+
+        evidence_a = _format_evidence(result_a, _MAX_EVIDENCE_CHARS)
+        evidence_b = _format_evidence(result_b, _MAX_EVIDENCE_CHARS)
+
+        synthesis_prompt = (
+            f"## Question\n{query}\n\n"
+            f"---\n"
+            f"## Perspective A — {perspective_a['label']}\n\n"
+            f"### Preliminary Summary (lightweight model)\n"
+            f"{result_a.answer or '(no answer produced)'}\n\n"
+            f"### Raw Code Evidence\n"
+            f"{evidence_a}\n\n"
+            f"---\n"
+            f"## Perspective B — {perspective_b['label']}\n\n"
+            f"### Preliminary Summary (lightweight model)\n"
+            f"{result_b.answer or '(no answer produced)'}\n\n"
+            f"### Raw Code Evidence\n"
+            f"{evidence_b}\n\n"
+            f"---\n"
+            f"Produce the definitive answer by re-analyzing the raw evidence from "
+            f"both perspectives. The preliminary summaries are starting points — "
+            f"trust the code over the summaries when they disagree."
+        )
+
+        logger.info(
+            "Synthesis prompt: ~%d chars (%d chunks from A, %d chunks from B)",
+            len(synthesis_prompt),
+            len(result_a.context_chunks),
+            len(result_b.context_chunks),
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(
+                None,
+                lambda: self._provider.call_model(
+                    prompt=synthesis_prompt,
+                    max_tokens=4096,
+                    system=self._SYNTHESIS_PROMPT,
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Synthesis failed, using longer answer as fallback: %s", exc)
+            # Fall back to the longer answer
+            answer = result_a.answer if len(result_a.answer or "") >= len(result_b.answer or "") else result_b.answer
+
+        # Compute totals
+        total_tokens = 0
+        for res in [result_a, result_b]:
+            if res.budget_summary:
+                total_tokens += res.budget_summary.get("total_tokens", 0)
+        total_tool_calls = result_a.tool_calls_made + result_b.tool_calls_made
+        total_iterations = result_a.iterations + result_b.iterations
+
+        duration_ms = (time.monotonic() - start_time) * 1000
+        trace.finish()
+        if self._trace_writer:
+            self._trace_writer.save(trace)
+
+        yield AgentEvent(kind="done", data={
+            "answer": answer,
+            "thinking_steps": thinking_steps,
+            "tool_calls_made": total_tool_calls,
+            "iterations": total_iterations,
+            "duration_ms": duration_ms,
+            "budget_summary": {
+                "total_tokens": total_tokens,
+                "perspectives": 2,
+                "synthesis": True,
+            },
+        })
+
+    @staticmethod
+    def _format_review_result(result) -> str:
+        """Format a ReviewResult into a markdown answer for the chat.
+
+        If a synthesis (from the strong model) is available, use it as the
+        primary review body.  Otherwise fall back to the structured listing.
+        """
+        from app.code_review.models import FindingCategory, Severity
+
+        lines = []
+
+        # Prefer synthesis from strong model when available
+        if result.synthesis:
+            lines.append(result.synthesis)
+            lines.append("")
+        else:
+            # Structured fallback
+            lines.append(result.pr_summary)
+            lines.append("")
+
+            code_findings = [
+                f for f in result.findings
+                if f.category != FindingCategory.TEST_COVERAGE
+            ]
+            test_findings = [
+                f for f in result.findings
+                if f.category == FindingCategory.TEST_COVERAGE
+            ]
+
+            if code_findings:
+                lines.append("### Findings\n")
+                for i, f in enumerate(code_findings, 1):
+                    lines.extend(AgentLoopService._format_finding(i, f))
+
+            if test_findings:
+                lines.append("### Test Coverage Gaps\n")
+                for i, f in enumerate(test_findings, 1):
+                    lines.extend(AgentLoopService._format_finding(i, f))
+
+            if not code_findings and not test_findings:
+                lines.append("No issues found. Code looks good!\n")
+
+        # Agent summary (always show for transparency)
+        if result.agent_results:
+            lines.append("---")
+            lines.append("### Review Agents")
+            for ar in result.agent_results:
+                status = "error" if ar.error else f"{len(ar.findings)} finding(s)"
+                lines.append(
+                    f"- **{ar.agent_name}**: {status} "
+                    f"({ar.tokens_used:,} tokens, {ar.duration_ms:.0f}ms)"
+                )
+            lines.append("")
+
+        # Stats
+        lines.append(
+            f"*{result.total_tokens:,} tokens | "
+            f"{len(result.agent_results)} agents | "
+            f"{result.total_duration_ms:.0f}ms*"
+        )
+
+        return "\n".join(lines)
+
+    # ------------------------------------------------------------------
+    # Message builders — Bedrock Converse format.  Providers'
     # chat_with_tools() handle any necessary translation.
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_finding(index: int, f) -> List[str]:
+        """Format a single ReviewFinding as markdown lines."""
+        from app.code_review.models import Severity
+
+        icon = {
+            Severity.CRITICAL: "**CRITICAL**",
+            Severity.WARNING: "**WARNING**",
+            Severity.NIT: "nit",
+            Severity.PRAISE: "praise",
+        }.get(f.severity, str(f.severity.value))
+
+        loc = ""
+        if f.file:
+            loc = f"`{f.file}"
+            if f.start_line:
+                loc += f":{f.start_line}"
+                if f.end_line and f.end_line != f.start_line:
+                    loc += f"-{f.end_line}"
+            loc += "`"
+
+        out = [f"{index}. [{icon}] **{f.title}** {loc}"]
+        if f.risk:
+            out.append(f"   - Risk: {f.risk}")
+        if f.suggested_fix:
+            out.append(f"   - Fix: {f.suggested_fix}")
+        if f.evidence:
+            for ev in f.evidence[:3]:
+                out.append(f"   - Evidence: {ev}")
+        out.append("")
+        return out
 
     @staticmethod
     def _initial_messages(

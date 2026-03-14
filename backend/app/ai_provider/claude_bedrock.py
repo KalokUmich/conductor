@@ -476,12 +476,25 @@ class ClaudeBedrockProvider(AIProvider):
         if self._client is None:
             try:
                 import boto3
+                from botocore.config import Config as BotoConfig
+
                 kwargs = {"region_name": self.region_name}
                 if self.aws_access_key_id and self.aws_secret_access_key:
                     kwargs["aws_access_key_id"] = self.aws_access_key_id
                     kwargs["aws_secret_access_key"] = self.aws_secret_access_key
                 if self.aws_session_token:
                     kwargs["aws_session_token"] = self.aws_session_token
+
+                # Use adaptive retry mode with limited attempts.  The default
+                # "legacy" mode silently retries throttled requests up to 5×
+                # with exponential backoff (30s+), making multi-agent reviews
+                # appear to hang.  Adaptive mode respects Bedrock's rate-limit
+                # headers and fails fast when the limit is exceeded.
+                kwargs["config"] = BotoConfig(
+                    retries={"mode": "adaptive", "max_attempts": 3},
+                    read_timeout=120,
+                    connect_timeout=10,
+                )
                 self._client = boto3.client("bedrock-runtime", **kwargs)
             except ImportError:
                 raise ImportError(
@@ -701,7 +714,45 @@ class ClaudeBedrockProvider(AIProvider):
         if system:
             kwargs["system"] = [{"text": system}]
 
-        response = client.converse(**kwargs)
+        # Estimate request size for diagnostics
+        import time as _time
+        n_messages = len(messages)
+        msg_chars = sum(
+            len(str(b))
+            for m in messages
+            for b in (m.get("content", []) if isinstance(m.get("content"), list) else [m.get("content", "")])
+        )
+        logger.info(
+            "Bedrock converse START model=%s msgs=%d chars=%d tools=%d",
+            self.model_id, n_messages, msg_chars, len(tool_specs),
+        )
+        t0 = _time.monotonic()
+
+        try:
+            response = client.converse(**kwargs)
+        except Exception as exc:
+            elapsed = (_time.monotonic() - t0) * 1000
+            exc_name = type(exc).__name__
+            logger.warning(
+                "Bedrock converse FAILED model=%s after %.0fms: [%s] %s",
+                self.model_id, elapsed, exc_name, exc,
+            )
+            if "Throttling" in exc_name or "throttl" in str(exc).lower():
+                logger.warning(
+                    "Bedrock throttling detected — reduce concurrent agents "
+                    "or increase semaphore wait.",
+                )
+            raise
+
+        elapsed = (_time.monotonic() - t0) * 1000
+        raw_usage = response.get("usage", {})
+        logger.info(
+            "Bedrock converse DONE model=%s %.0fms in=%d out=%d stop=%s",
+            self.model_id, elapsed,
+            raw_usage.get("inputTokens", 0),
+            raw_usage.get("outputTokens", 0),
+            response.get("stopReason", "?"),
+        )
 
         # Parse the response
         output = response.get("output", {}).get("message", {})

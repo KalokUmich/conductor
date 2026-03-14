@@ -29,6 +29,7 @@ Usage:
 from .base import AIProvider, ChatMessage, DecisionSummary
 from .claude_bedrock import ClaudeBedrockProvider
 from .claude_direct import ClaudeDirectProvider
+from .litellm_provider import LiteLLMProvider
 from .openai_provider import OpenAIProvider
 from .prompts import STRUCTURED_SUMMARY_PROMPT, format_conversation, get_summary_prompt
 from .wrapper import (
@@ -48,6 +49,7 @@ __all__ = [
     "DecisionSummary",
     "ClaudeDirectProvider",
     "ClaudeBedrockProvider",
+    "LiteLLMProvider",
     "OpenAIProvider",
     "STRUCTURED_SUMMARY_PROMPT",
     "format_conversation",

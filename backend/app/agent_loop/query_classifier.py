@@ -29,7 +29,7 @@ _ALL_TOOLS = [
     "file_outline", "get_dependencies", "get_dependents", "git_log",
     "git_diff", "git_diff_files", "ast_search", "get_callees", "get_callers",
     "git_blame", "git_show", "find_tests", "test_outline", "trace_variable",
-    "compressed_view", "module_summary", "expand_symbol",
+    "compressed_view", "module_summary", "expand_symbol", "detect_patterns",
 ]
 
 # Core tools always included regardless of query type
@@ -47,6 +47,7 @@ class QueryClassification:
     budget_level: str                # "low" | "medium" | "high"
     suggested_token_budget: int
     tool_set: List[str]              # dynamic tool set for this query type
+    diff_spec: Optional[str] = None  # extracted git ref spec for code_review
 
     @property
     def is_high_level(self) -> bool:
@@ -82,7 +83,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "module_summary", "get_callees", "get_callers",
             "trace_variable", "get_dependencies", "list_files",
-            "find_references",
+            "find_references", "detect_patterns",
         ],
     },
     "root_cause_analysis": {
@@ -98,7 +99,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "find_references", "get_callers", "get_callees",
             "trace_variable", "git_log", "git_diff", "git_blame",
-            "git_show", "find_tests",
+            "git_show", "find_tests", "detect_patterns",
         ],
     },
     "impact_analysis": {
@@ -114,6 +115,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "find_references", "get_dependents", "get_dependencies",
             "find_tests", "test_outline", "get_callers",
+            "detect_patterns",
         ],
     },
     "architecture_question": {
@@ -128,7 +130,7 @@ QUERY_TYPES: Dict[str, dict] = {
         ],
         "tools": _CORE_TOOLS + [
             "module_summary", "list_files", "get_dependencies",
-            "get_dependents",
+            "get_dependents", "detect_patterns",
         ],
     },
     "config_analysis": {
@@ -175,7 +177,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "git_diff_files", "git_diff", "git_log", "git_show",
             "git_blame", "find_references", "get_callers", "get_callees",
-            "find_tests", "test_outline", "list_files",
+            "find_tests", "test_outline", "list_files", "detect_patterns",
         ],
     },
     "recent_changes": {
@@ -262,6 +264,7 @@ def classify_query(question: str) -> QueryClassification:
             budget_level=spec["budget_level"],
             suggested_token_budget=spec["suggested_token_budget"],
             tool_set=spec["tools"],
+            diff_spec=diff_ref,
         )
 
     q_lower = question.lower()
@@ -333,6 +336,8 @@ async def classify_query_with_llm(
             if query_type in QUERY_TYPES:
                 spec = QUERY_TYPES[query_type]
                 logger.info("LLM classified query as: %s", query_type)
+                # Also extract diff spec if it's a code review
+                diff_ref = _detect_pr_pattern(question) if query_type == "code_review" else None
                 return QueryClassification(
                     query_type=query_type,
                     strategy=spec["strategy"],
@@ -340,6 +345,7 @@ async def classify_query_with_llm(
                     budget_level=spec["budget_level"],
                     suggested_token_budget=spec["suggested_token_budget"],
                     tool_set=spec["tools"],
+                    diff_spec=diff_ref,
                 )
     except Exception as exc:
         logger.warning("LLM classification failed, falling back to keywords: %s", exc)

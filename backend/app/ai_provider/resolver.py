@@ -21,7 +21,7 @@ Usage:
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.config import (
     AIModelConfig,
@@ -31,6 +31,7 @@ from app.config import (
 from .base import AIProvider
 from .claude_bedrock import ClaudeBedrockProvider
 from .claude_direct import ClaudeDirectProvider
+from .litellm_provider import LiteLLMProvider, to_litellm_model, _check_litellm_available
 from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class ModelStatus:
     display_name: str
     available: bool  # Provider is healthy and model is enabled
     classifier: bool = False  # Can be used as a query pre-classifier
+    litellm: bool = False     # Can be used via LiteLLM fallback
 
 
 @dataclass
@@ -168,8 +170,62 @@ class ProviderResolver:
             logger.error(f"Failed to create provider {provider_type}: {e}")
             return None
 
+    def _is_model_litellm_eligible(self, model_name: str) -> bool:
+        """Check if a model has the litellm flag set in config."""
+        for model in self.models_config:
+            if model.model_name == model_name:
+                return model.litellm
+        return False
+
+    def _credentials_for_provider(self, provider_type: ProviderType) -> Dict[str, Any]:
+        """Build credential kwargs for LiteLLM from the same config as native providers."""
+        credentials: Dict[str, Any] = {}
+        if provider_type == ProviderType.AWS_BEDROCK:
+            cfg = self.providers_config.aws_bedrock
+            credentials["aws_access_key_id"] = cfg.access_key_id
+            credentials["aws_secret_access_key"] = cfg.secret_access_key
+            credentials["aws_region_name"] = cfg.region
+            if cfg.session_token:
+                credentials["aws_session_token"] = cfg.session_token
+        elif provider_type == ProviderType.ANTHROPIC:
+            credentials["api_key"] = self.providers_config.anthropic.api_key
+        elif provider_type == ProviderType.OPENAI:
+            credentials["api_key"] = self.providers_config.openai.api_key
+            if self.providers_config.openai.organization:
+                credentials["organization"] = self.providers_config.openai.organization
+        return credentials
+
+    def _create_litellm_fallback(
+        self,
+        provider_type: ProviderType,
+        model_name: str,
+    ) -> Optional[LiteLLMProvider]:
+        """Create a LiteLLM fallback provider for the given native provider.
+
+        Returns None if:
+          - litellm_fallback is disabled in settings
+          - litellm is not installed
+          - the model does not have ``litellm: true`` in its config
+        """
+        if not self.provider_settings.litellm_fallback:
+            return None
+        if not _check_litellm_available():
+            logger.warning("litellm_fallback enabled but litellm is not installed")
+            return None
+        if not self._is_model_litellm_eligible(model_name):
+            logger.debug("Model %s is not litellm-eligible", model_name)
+            return None
+
+        litellm_model = to_litellm_model(provider_type, model_name)
+        credentials = self._credentials_for_provider(provider_type)
+        return LiteLLMProvider(model=litellm_model, **credentials)
+
     def _check_provider_health(self, provider_type: ProviderType) -> bool:
-        """Check health of a provider type using a default model."""
+        """Check health of a provider type using a default model.
+
+        Tries the native provider first.  If that fails and
+        ``litellm_fallback`` is enabled, falls back to a LiteLLMProvider.
+        """
         if not self._is_provider_configured(provider_type):
             return False
 
@@ -191,19 +247,38 @@ class ProviderResolver:
         else:
             model_name = test_model.model_name
 
+        # --- Try native provider first ---
         provider = self._create_provider(provider_type, model_name)
-        if not provider:
-            return False
+        if provider:
+            try:
+                if provider.health_check():
+                    self._providers[provider_type] = provider
+                    return True
+            except Exception as e:
+                logger.warning("Native provider %s health check error: %s", provider_type, e)
 
-        try:
-            healthy = provider.health_check()
-            if healthy:
-                # Cache the provider for reuse
-                self._providers[provider_type] = provider
-            return healthy
-        except Exception as e:
-            logger.error(f"Provider {provider_type} health check error: {e}")
-            return False
+        # --- Fallback to LiteLLM (only for litellm-eligible models) ---
+        # If the test model itself isn't eligible, find one that is
+        fallback_model_name = model_name
+        if not self._is_model_litellm_eligible(model_name):
+            for model in self.models_config:
+                if model.provider == provider_type and model.enabled and model.litellm:
+                    fallback_model_name = model.model_name
+                    break
+        fallback = self._create_litellm_fallback(provider_type, fallback_model_name)
+        if fallback:
+            try:
+                if fallback.health_check():
+                    logger.info(
+                        "Native %s failed — using LiteLLM fallback (%s)",
+                        provider_type, fallback.model,
+                    )
+                    self._providers[provider_type] = fallback
+                    return True
+            except Exception as e:
+                logger.warning("LiteLLM fallback for %s also failed: %s", provider_type, e)
+
+        return False
 
     def resolve(self) -> Optional[AIProvider]:
         """Resolve providers and set the active model based on config.
@@ -280,6 +355,10 @@ class ProviderResolver:
     def get_provider_for_model(self, model_id: str) -> Optional[AIProvider]:
         """Get a provider instance for a specific model.
 
+        Tries the native provider first.  If the native provider's health
+        check previously failed but LiteLLM fallback is active for that
+        provider type, returns a LiteLLMProvider instead.
+
         Args:
             model_id: Model ID to get provider for.
 
@@ -299,7 +378,14 @@ class ProviderResolver:
             logger.warning(f"Provider not healthy for model {model_id}: {model.provider}")
             return None
 
-        # Create provider with the specific model
+        # If the cached provider for this type is a LiteLLMProvider (fallback
+        # activated during resolve()), create a LiteLLMProvider with the
+        # requested model instead of the test model.
+        cached = self._providers.get(model.provider)
+        if isinstance(cached, LiteLLMProvider):
+            return self._create_litellm_fallback(model.provider, model.model_name)
+
+        # Create native provider with the specific model
         return self._create_provider(model.provider, model.model_name)
 
     def get_status(self) -> AIStatus:
@@ -330,6 +416,7 @@ class ProviderResolver:
                     self._provider_health.get(model.provider, False)
                 ),
                 classifier=model.classifier,
+                litellm=model.litellm,
             )
             for model in self.models_config
             if self._provider_enabled.get(model.provider, False)

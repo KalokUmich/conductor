@@ -231,9 +231,10 @@ class AIProvidersSecretsConfig(BaseModel):
 
 class AIProviderSettingsConfig(BaseModel):
     """Enable/disable flags for each AI provider."""
-    anthropic_enabled:   bool = False
-    aws_bedrock_enabled: bool = False
-    openai_enabled:      bool = False
+    anthropic_enabled:      bool = False
+    aws_bedrock_enabled:    bool = False
+    openai_enabled:         bool = False
+    litellm_fallback:       bool = False
 
 
 class AIModelConfig(BaseModel):
@@ -243,6 +244,9 @@ class AIModelConfig(BaseModel):
       - ``classifier``: If True, this model can be used as a lightweight
         pre-classification model before the agent loop starts.
         (Typically a small/fast model like Haiku.)
+      - ``litellm``: If True, this model can be used via LiteLLM fallback.
+        When the native provider fails, the resolver will try LiteLLM
+        for models that have this flag set.
     """
     id:           str  = ""
     provider:     str  = ""
@@ -250,6 +254,7 @@ class AIModelConfig(BaseModel):
     display_name: str  = ""
     enabled:      bool = True
     classifier:   bool = False
+    litellm:      bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +440,7 @@ def load_config(
         anthropic_enabled=aps_data.get("anthropic_enabled", False),
         aws_bedrock_enabled=aps_data.get("aws_bedrock_enabled", False),
         openai_enabled=aps_data.get("openai_enabled", False),
+        litellm_fallback=aps_data.get("litellm_fallback", False),
     )
 
     ap_sec = secrets_raw.get("ai_providers", {})

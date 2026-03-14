@@ -44,6 +44,7 @@ class ModelStatusResponse(BaseModel):
     display_name: str
     available: bool
     classifier: bool = False
+    litellm: bool = False
 
 
 class AIStatusResponse(BaseModel):
@@ -56,6 +57,7 @@ class AIStatusResponse(BaseModel):
     default_model: str
     classifier_enabled: bool = False
     active_classifier: Optional[str] = None
+    litellm_fallback: bool = False
 
 
 class MessageInput(BaseModel):
@@ -212,6 +214,11 @@ async def get_ai_status() -> AIStatusResponse:
     classifier_provider = getattr(app.state, "classifier_provider", None)
     active_classifier_id = getattr(app.state, "active_classifier_model_id", None)
 
+    # Read litellm_fallback from config
+    from app.config import get_config
+    config = get_config()
+    litellm_fallback = config.ai_provider_settings.litellm_fallback
+
     return AIStatusResponse(
         summary_enabled=status.summary_enabled,
         active_provider=status.active_provider,
@@ -232,12 +239,14 @@ async def get_ai_status() -> AIStatusResponse:
                 display_name=m.display_name,
                 available=m.available,
                 classifier=m.classifier,
+                litellm=m.litellm,
             )
             for m in status.models
         ],
         default_model=status.default_model,
         classifier_enabled=classifier_provider is not None,
         active_classifier=active_classifier_id,
+        litellm_fallback=litellm_fallback,
     )
 
 
@@ -368,6 +377,33 @@ async def set_classifier(request: SetClassifierRequest) -> SetClassifierResponse
             active_classifier=active_id,
             message=f"Classifier enabled with model: {active_id}",
         )
+
+
+class SetLiteLLMFallbackRequest(BaseModel):
+    """Request model for POST /ai/litellm-fallback endpoint."""
+    enabled: bool
+
+
+class SetLiteLLMFallbackResponse(BaseModel):
+    """Response model for POST /ai/litellm-fallback endpoint."""
+    success: bool
+    litellm_fallback: bool
+    message: str
+
+
+@router.post("/litellm-fallback", response_model=SetLiteLLMFallbackResponse)
+async def set_litellm_fallback(request: SetLiteLLMFallbackRequest) -> SetLiteLLMFallbackResponse:
+    """Enable/disable LiteLLM fallback for eligible models."""
+    from app.config import get_config
+
+    config = get_config()
+    config.ai_provider_settings.litellm_fallback = request.enabled
+
+    return SetLiteLLMFallbackResponse(
+        success=True,
+        litellm_fallback=request.enabled,
+        message=f"LiteLLM fallback {'enabled' if request.enabled else 'disabled'}.",
+    )
 
 
 @router.post("/summarize", response_model=DecisionSummaryResponse)

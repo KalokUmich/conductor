@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -89,6 +90,7 @@ The workspace may contain multiple languages.
 | module_summary | Understanding a directory's purpose and contents | Low |
 | find_tests | Finding test files that document expected behavior | Low |
 | trace_variable | Tracking data flow across function boundaries | Medium |
+| detect_patterns | Scanning for architectural patterns (queues, retries, locks, webhooks) | Low |
 
 **Choose tools based on the strategy below, not this table's order.**
 
@@ -122,10 +124,12 @@ relevant project root (check "Detected project roots" for pom.xml, package.json,
 For Java, always find and read the *Impl class, not just the interface.
 3. **Follow the call chain**: Use get_callees on each method, then read_file/expand_symbol \
 on the next service in the chain. Build the flow step by step.
-4. **Check tests for flow documentation**: Use find_tests or grep in test directories — \
+4. **Detect patterns**: If the flow involves queues, webhooks, retries, or transactions, \
+use detect_patterns on the relevant directory to map architectural patterns before tracing.
+5. **Check tests for flow documentation**: Use find_tests or grep in test directories — \
 E2E/integration tests often show the complete journey in order.
-5. **Trace data transformations**: If the flow involves state changes, use trace_variable.
-6. Summarize: Entry → Step 1 → Step 2 → ... → Final state, each citing file:line.
+6. **Trace data transformations**: If the flow involves state changes, use trace_variable.
+7. Summarize: Entry → Step 1 → Step 2 → ... → Final state, each citing file:line.
 Target: 8-15 iterations. Read actual code, not just summaries.""",
 
     "root_cause_analysis": """\
@@ -134,7 +138,9 @@ Target: 8-15 iterations. Read actual code, not just summaries.""",
 2. Use expand_symbol to read the error context in detail
 3. Trace callers using get_callers — how do we reach this error?
 4. Check data flow using trace_variable — what input causes the failure?
-5. Check recent changes using git_log/git_diff for regression clues
+5. **Detect risky patterns**: Use detect_patterns on the affected module to find \
+check-then-act races, missing retry logic, or transaction gaps that may be the root cause.
+6. Check recent changes using git_log/git_diff for regression clues
 Target: 8-15 iterations. Answer with root cause, evidence chain, and fix suggestion.""",
 
     "impact_analysis": """\
@@ -142,8 +148,10 @@ Target: 8-15 iterations. Answer with root cause, evidence chain, and fix suggest
 1. Find all dependents using get_dependents (who depends on this code?)
 2. Use find_references to find all call sites
 3. Use find_tests to identify test coverage
-4. For each affected module, use compressed_view to assess severity
-5. Summarize: affected modules, affected APIs, risk level
+4. **Detect patterns**: Use detect_patterns on affected modules to identify \
+queues, webhooks, retry logic, or transaction boundaries that amplify impact.
+5. For each affected module, use compressed_view to assess severity
+6. Summarize: affected modules, affected APIs, risk level, pattern risks
 Target: 6-12 iterations. Answer with impact summary and risk assessment.""",
 
     "architecture_question": """\
@@ -437,12 +445,80 @@ def scan_workspace_layout(
     return "\n\n".join(result_parts)
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# Risk-aware context selection
+# ═══════════════════════════════════════════════════════════════════════
+
+# Lightweight patterns matched against file paths and content lines.
+# These are cheaper than running detect_patterns (which reads file contents) —
+# we scan only top-level directory names and a sample of files.
+
+_RISK_PATH_SIGNALS = {
+    "concurrency": re.compile(r"(?i)consumer|listener|worker|queue|job|celery|task"),
+    "security": re.compile(r"(?i)auth|login|session|token|oauth|permission|rbac|acl"),
+    "reliability": re.compile(r"(?i)retry|circuit.?breaker|fallback|health.?check|monitor"),
+    "transaction": re.compile(r"(?i)transaction|migration|schema|persist"),
+    "webhook": re.compile(r"(?i)webhook|callback|hook|notify|event.?handler"),
+}
+
+
+def scan_workspace_risk(workspace_path: str, max_files: int = 200) -> str:
+    """Quick-scan the workspace for risk signals based on file paths.
+
+    Returns a compact risk context string for injection into the system prompt.
+    Only looks at file paths (no content reading) for speed.
+    """
+    ws = Path(workspace_path).resolve()
+    if not ws.is_dir():
+        return ""
+
+    signal_hits: Dict[str, List[str]] = {}
+    files_scanned = 0
+
+    for dirpath, dirnames, filenames in os.walk(ws):
+        rel = Path(dirpath).relative_to(ws)
+        if any(p in _EXCLUDED_DIRS for p in rel.parts):
+            dirnames.clear()
+            continue
+        dirnames[:] = sorted(d for d in dirnames if d not in _EXCLUDED_DIRS)
+
+        for fname in filenames:
+            if files_scanned >= max_files:
+                break
+            full_rel = str(rel / fname) if str(rel) != "." else fname
+            for signal_name, pat in _RISK_PATH_SIGNALS.items():
+                if pat.search(full_rel):
+                    hits = signal_hits.setdefault(signal_name, [])
+                    if len(hits) < 5:  # cap examples per signal
+                        hits.append(full_rel)
+            files_scanned += 1
+        if files_scanned >= max_files:
+            break
+
+    if not signal_hits:
+        return ""
+
+    lines = ["### Risk signals detected in workspace"]
+    for signal, examples in sorted(signal_hits.items()):
+        lines.append(f"- **{signal}**: {len(examples)} file(s) — e.g. `{examples[0]}`")
+
+    lines.append("")
+    lines.append(
+        "**Auto-focus**: When investigating these areas, use `detect_patterns` "
+        "to identify architectural patterns (retry logic, lock usage, "
+        "check-then-act anti-patterns, transaction boundaries) before "
+        "diving into detailed code review."
+    )
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     workspace_path: str,
     workspace_layout: Optional[str] = None,
     project_docs: Optional[str] = None,
     max_iterations: int = 20,
     query_type: Optional[str] = None,
+    risk_context: Optional[str] = None,
 ) -> str:
     """Build the full system prompt from 3 layers.
 
@@ -458,6 +534,8 @@ def build_system_prompt(
         Maximum number of tool-calling iterations.
     query_type:
         Query type from classifier. Selects the Layer 2 strategy.
+    risk_context:
+        Pre-computed risk context string from scan_workspace_risk().
     """
     if workspace_layout is None:
         workspace_layout = scan_workspace_layout(workspace_path)
@@ -483,5 +561,9 @@ def build_system_prompt(
     # Layer 2: Strategy (selected by query classifier)
     strategy = STRATEGIES.get(query_type or "", _DEFAULT_STRATEGY)
     prompt += "\n\n" + strategy
+
+    # Layer 3 (partial): Risk context — injected when available
+    if risk_context:
+        prompt += "\n\n" + risk_context
 
     return prompt

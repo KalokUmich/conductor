@@ -23,6 +23,7 @@ from unittest.mock import MagicMock  # noqa: E402
 
 _stub("tree_sitter_languages")
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)
+_stub("litellm", completion=MagicMock(), drop_params=False)
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

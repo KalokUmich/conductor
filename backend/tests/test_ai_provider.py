@@ -275,7 +275,7 @@ class TestClaudeBedrockProvider:
     def test_client_uses_credentials_when_provided(self):
         """Test that AWS credentials are passed to boto3 client."""
         mock_boto3 = MagicMock()
-        with patch.dict("sys.modules", {"boto3": mock_boto3}):
+        with patch.dict("sys.modules", {"boto3": mock_boto3, "botocore": MagicMock(), "botocore.config": MagicMock()}):
             provider = ClaudeBedrockProvider(
                 aws_access_key_id="AKIATEST",
                 aws_secret_access_key="secret123",
@@ -284,13 +284,12 @@ class TestClaudeBedrockProvider:
             )
             provider._get_client()
 
-            mock_boto3.client.assert_called_once_with(
-                "bedrock-runtime",
-                region_name="us-west-2",
-                aws_access_key_id="AKIATEST",
-                aws_secret_access_key="secret123",
-                aws_session_token="token456"
-            )
+            call_kwargs = mock_boto3.client.call_args[1]
+            assert call_kwargs["region_name"] == "us-west-2"
+            assert call_kwargs["aws_access_key_id"] == "AKIATEST"
+            assert call_kwargs["aws_secret_access_key"] == "secret123"
+            assert call_kwargs["aws_session_token"] == "token456"
+            assert "config" in call_kwargs
 
     def test_summarize_structured_success(self):
         """Test summarize_structured returns DecisionSummary with valid JSON response."""

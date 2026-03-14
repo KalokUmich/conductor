@@ -3123,6 +3123,193 @@ def expand_symbol(
 
 
 # ---------------------------------------------------------------------------
+# detect_patterns — architectural pattern scanner
+# ---------------------------------------------------------------------------
+
+# Each category maps to a list of (compiled_regex, description) tuples.
+# Patterns are applied per-line for speed.
+_PATTERN_CATEGORIES = {
+    "webhook": [
+        (re.compile(r"(?i)@(post|put|delete|patch)mapping\b.*(?:callback|hook|notify|webhook)"), "webhook endpoint"),
+        (re.compile(r"(?i)app\.(post|put)\(.*(?:callback|hook|notify|webhook)"), "webhook route"),
+        (re.compile(r"(?i)router\.(post|put)\(.*(?:callback|hook|notify|webhook)"), "webhook route"),
+        (re.compile(r"(?i)def\s+\w*(?:callback|hook|webhook|notify)\w*\s*\("), "webhook/callback handler"),
+        (re.compile(r"(?i)(?:on_?event|event_?handler|subscribe|add_?listener)\s*\("), "event listener"),
+        (re.compile(r"(?i)httpx?\.(post|put)\(.*(?:callback|hook|notify)"), "outbound webhook call"),
+        (re.compile(r"(?i)requests\.(post|put)\(.*(?:callback|hook|notify)"), "outbound webhook call"),
+    ],
+    "queue": [
+        (re.compile(r"(?i)@(?:rabbit|sqs|kafka|jms)listener\b"), "queue consumer annotation"),
+        (re.compile(r"(?i)\b(?:consume|consumer|subscriber|on_message)\s*\("), "queue consumer"),
+        (re.compile(r"(?i)\b(?:publish|produce|send_message|enqueue)\s*\("), "queue producer"),
+        (re.compile(r"(?i)(?:kafka|sqs|rabbit|amqp|pubsub|celery|rq)\."), "message queue usage"),
+        (re.compile(r"(?i)channel\.(basic_consume|basic_publish|queue_declare)"), "AMQP channel op"),
+        (re.compile(r"(?i)@app\.task|@shared_task|@celery\.task"), "Celery task"),
+    ],
+    "retry": [
+        (re.compile(r"(?i)@retry\b|@backoff\b|@retrying\b"), "retry decorator"),
+        (re.compile(r"(?i)\bretry[\s_]*(count|max|limit|attempts)\b"), "retry config"),
+        (re.compile(r"(?i)\b(exponential_?backoff|backoff_?factor|retry_?delay)\b"), "backoff config"),
+        (re.compile(r"(?i)for\s+\w+\s+in\s+range\(.*retry"), "retry loop"),
+        (re.compile(r"(?i)while\s+.*(?:retries?|attempts?)\s*[<>]"), "retry while-loop"),
+        (re.compile(r"(?i)Retrying|tenacity\.retry|urllib3\.util\.retry"), "retry library"),
+    ],
+    "lock": [
+        (re.compile(r"(?i)\b(acquire|release)\s*\(\s*\)"), "lock acquire/release"),
+        (re.compile(r"(?i)\b(Lock|RLock|Semaphore|Mutex|ReentrantLock)\s*\("), "lock creation"),
+        (re.compile(r"(?i)with\s+\w*lock"), "lock context manager"),
+        (re.compile(r"(?i)synchronized\b"), "synchronized block (Java)"),
+        (re.compile(r"(?i)\b(redis|distributed)[\s_]*lock\b"), "distributed lock"),
+        (re.compile(r"(?i)SELECT\s+.*\s+FOR\s+UPDATE"), "SELECT FOR UPDATE"),
+        (re.compile(r"(?i)\.lock\(\)|\.tryLock\(|\.unlock\("), "lock method call"),
+    ],
+    "check_then_act": [
+        (re.compile(r"(?i)if\s+.*(?:exists?|is_?available|has_?\w+|count)\s*[:(].*\n\s*(?:create|insert|save|update|delete|remove)"), "check-then-act (multi-line)"),
+        (re.compile(r"(?i)if\s+not\s+.*(?:exists?|find|get)\b.*:\s*$"), "check-then-act guard"),
+        (re.compile(r"(?i)\.get_or_create\b|\.find_or_create\b|\.upsert\b"), "atomic alternative (good)"),
+        (re.compile(r"(?i)if\s+.*is\s+None.*:\s*\n\s*\w+\s*="), "null-check-then-assign"),
+    ],
+    "transaction": [
+        (re.compile(r"(?i)@transactional\b"), "transaction annotation"),
+        (re.compile(r"(?i)\b(begin|commit|rollback)\s*\("), "transaction boundary"),
+        (re.compile(r"(?i)with\s+.*(?:transaction|session|atomic)\b"), "transaction context"),
+        (re.compile(r"(?i)(?:connection|session|db)\.(begin|commit|rollback)"), "explicit transaction"),
+        (re.compile(r"(?i)auto_?commit\s*=\s*(True|true|1)"), "auto-commit enabled (risky)"),
+        (re.compile(r"(?i)savepoint\b"), "savepoint"),
+    ],
+    "token_lifecycle": [
+        (re.compile(r"(?i)\b(generate|create|issue)[\s_]*(token|jwt|session)\b"), "token creation"),
+        (re.compile(r"(?i)\b(validate|verify|decode)[\s_]*(token|jwt)\b"), "token validation"),
+        (re.compile(r"(?i)\b(refresh|renew|rotate)[\s_]*(token|jwt|session)\b"), "token refresh"),
+        (re.compile(r"(?i)\b(revoke|invalidate|expire|blacklist)[\s_]*(token|jwt|session)\b"), "token revocation"),
+        (re.compile(r"(?i)token[\s_]*(expir|ttl|lifetime|max_?age)\b"), "token expiry config"),
+    ],
+    "side_effect_chain": [
+        (re.compile(r"(?i)\b(send_?email|send_?notification|send_?sms|notify)\s*\("), "notification side effect"),
+        (re.compile(r"(?i)\b(audit_?log|log_?event|track|emit_?event)\s*\("), "audit/event side effect"),
+        (re.compile(r"(?i)\b(charge|refund|transfer|debit|credit)\s*\("), "financial side effect"),
+        (re.compile(r"(?i)\b(upload|write_?file|s3\.put|blob\.upload)\s*\("), "storage side effect"),
+        (re.compile(r"(?i)\bhttpx?\.(post|put|delete|patch)\b"), "outbound HTTP side effect"),
+        (re.compile(r"(?i)\brequests\.(post|put|delete|patch)\b"), "outbound HTTP side effect"),
+    ],
+}
+
+
+def detect_patterns(
+    workspace: str,
+    path: Optional[str] = None,
+    categories: Optional[List[str]] = None,
+    max_results: int = 50,
+) -> ToolResult:
+    """Scan files for architectural patterns.
+
+    Returns a list of detected pattern matches grouped by category.
+    """
+    ws = Path(workspace).resolve()
+    scan_root = _resolve(workspace, path) if path else ws
+
+    if not scan_root.exists():
+        return ToolResult(
+            tool_name="detect_patterns", success=False,
+            error=f"Path not found: {path or '.'}",
+        )
+
+    # Filter categories
+    active_categories = _PATTERN_CATEGORIES
+    if categories:
+        valid = {c for c in categories if c in _PATTERN_CATEGORIES}
+        if not valid:
+            return ToolResult(
+                tool_name="detect_patterns", success=False,
+                error=f"Unknown categories: {categories}. "
+                f"Valid: {sorted(_PATTERN_CATEGORIES.keys())}",
+            )
+        active_categories = {k: v for k, v in _PATTERN_CATEGORIES.items() if k in valid}
+
+    results_by_category: Dict[str, List[dict]] = {}
+    total_matches = 0
+
+    # Collect files to scan
+    files_to_scan: List[Path] = []
+    if scan_root.is_file():
+        files_to_scan.append(scan_root)
+    else:
+        for dirpath, dirnames, filenames in os.walk(scan_root):
+            rel = Path(dirpath).relative_to(ws)
+            if _is_excluded(rel.parts):
+                dirnames.clear()
+                continue
+            dirnames[:] = [d for d in dirnames if d not in _EXCLUDED_DIRS]
+            for fname in filenames:
+                fpath = Path(dirpath) / fname
+                # Skip binary/large files
+                try:
+                    if fpath.stat().st_size > _MAX_FILE_SIZE:
+                        continue
+                except OSError:
+                    continue
+                # Only scan source-like files
+                ext = fpath.suffix.lower()
+                if ext in {
+                    ".py", ".java", ".kt", ".scala", ".go", ".rs",
+                    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
+                    ".rb", ".php", ".cs", ".cpp", ".c", ".h",
+                    ".yaml", ".yml", ".toml", ".properties",
+                }:
+                    files_to_scan.append(fpath)
+
+    for fpath in files_to_scan:
+        if total_matches >= max_results:
+            break
+        try:
+            content = fpath.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        lines = content.split("\n")
+        rel_path = str(fpath.relative_to(ws))
+
+        for cat_name, patterns in active_categories.items():
+            if total_matches >= max_results:
+                break
+            for line_num, line in enumerate(lines, 1):
+                if total_matches >= max_results:
+                    break
+                for pat, desc in patterns:
+                    if pat.search(line):
+                        cat_list = results_by_category.setdefault(cat_name, [])
+                        cat_list.append({
+                            "file": rel_path,
+                            "line": line_num,
+                            "pattern": desc,
+                            "snippet": line.strip()[:200],
+                        })
+                        total_matches += 1
+                        break  # one match per line per category
+
+    # Build summary
+    summary = {
+        cat: len(matches)
+        for cat, matches in results_by_category.items()
+    }
+
+    data = {
+        "summary": summary,
+        "total_matches": total_matches,
+        "categories_scanned": sorted(active_categories.keys()),
+        "files_scanned": len(files_to_scan),
+        "matches": results_by_category,
+    }
+    truncated = total_matches >= max_results
+
+    return ToolResult(
+        tool_name="detect_patterns",
+        data=data,
+        truncated=truncated,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Tool dispatcher
 # ---------------------------------------------------------------------------
 
@@ -3149,6 +3336,7 @@ TOOL_REGISTRY = {
     "compressed_view": compressed_view,
     "module_summary": module_summary,
     "expand_symbol": expand_symbol,
+    "detect_patterns": detect_patterns,
 }
 
 

@@ -67,6 +67,9 @@ _TOOL_POLICIES: dict[str, OutputPolicy] = {
     "compressed_view": OutputPolicy(max_chars=30_000, truncate_unit="chars"),
     "module_summary": OutputPolicy(max_chars=20_000, truncate_unit="chars"),
     "expand_symbol": OutputPolicy(max_chars=50_000, truncate_unit="chars"),
+
+    # Pattern detection — limit result count
+    "detect_patterns": OutputPolicy(max_results=50, max_chars=30_000, truncate_unit="results"),
 }
 
 # Default policy for unknown tools

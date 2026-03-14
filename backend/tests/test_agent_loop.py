@@ -758,3 +758,105 @@ class TestBuildSystemPrompt:
     def test_default_strategy_when_no_query_type(self, tmp_path: Path):
         prompt = build_system_prompt(str(tmp_path))
         assert "Business Flow Tracing" in prompt
+
+
+class TestMultiPerspective:
+    """Test multi-perspective exploration for high-level queries."""
+
+    @pytest.mark.asyncio
+    async def test_multi_perspective_dispatched_for_high_level(self, workspace):
+        """High-level query with classifier_provider triggers multi-perspective."""
+        sub_provider = MockProvider([
+            ToolUseResponse(text="Implementation perspective answer.", stop_reason="end_turn"),
+        ])
+        main_provider = MockProvider([
+            ToolUseResponse(text="unused", stop_reason="end_turn"),
+        ])
+        # Mock call_model for synthesis
+        main_provider.call_model = lambda prompt, max_tokens=2048, system=None: (
+            "Synthesized: Implementation + Tests combined."
+        )
+
+        agent = AgentLoopService(
+            provider=main_provider,
+            classifier_provider=sub_provider,
+            max_iterations=25,
+        )
+
+        events = []
+        async for event in agent.run_stream(
+            "How does the payment flow work?",  # triggers business_flow_tracing
+            str(workspace),
+        ):
+            events.append(event)
+
+        kinds = [e.kind for e in events]
+        # Should have thinking, tool_call (perspectives), tool_result, thinking (synthesis), done
+        assert "thinking" in kinds
+        assert "done" in kinds
+
+        done = [e for e in events if e.kind == "done"][0]
+        assert "Synthesized" in done.data["answer"]
+        assert done.data["budget_summary"]["perspectives"] == 2
+        assert done.data["budget_summary"]["synthesis"] is True
+
+    @pytest.mark.asyncio
+    async def test_no_multi_perspective_without_classifier(self, workspace):
+        """Without classifier_provider, high-level queries use single agent."""
+        provider = MockProvider([
+            ToolUseResponse(text="Single agent answer.", stop_reason="end_turn"),
+        ])
+
+        agent = AgentLoopService(
+            provider=provider,
+            # No classifier_provider
+            max_iterations=5,
+        )
+        result = await agent.run("How does the payment flow work?", str(workspace))
+
+        # Should get direct single-agent answer, not synthesized
+        assert result.answer == "Single agent answer."
+
+    @pytest.mark.asyncio
+    async def test_architecture_question_uses_single_agent(self, workspace):
+        """Architecture questions should NOT trigger multi-perspective."""
+        main_provider = MockProvider([
+            ToolUseResponse(text="Single agent architecture answer.", stop_reason="end_turn"),
+        ])
+        classifier_provider = MockProvider([])
+
+        agent = AgentLoopService(
+            provider=main_provider,
+            classifier_provider=classifier_provider,
+            max_iterations=5,
+        )
+        # "architecture overview" triggers architecture_question classification
+        result = await agent.run("Give me an architecture overview", str(workspace))
+
+        # Should use single agent (main_provider), not multi-perspective synthesis
+        assert result.answer == "Single agent architecture answer."
+
+    @pytest.mark.asyncio
+    async def test_synthesis_failure_falls_back(self, workspace):
+        """If synthesis call fails, uses the longer sub-agent answer."""
+        # Both responses have the same marker so order doesn't matter
+        sub_provider = MockProvider([
+            ToolUseResponse(text="Perspective A: the payment flow involves steps X, Y, Z.", stop_reason="end_turn"),
+            ToolUseResponse(text="Perspective B: the payment flow involves steps X, Y, Z.", stop_reason="end_turn"),
+        ])
+        main_provider = MockProvider([])
+        # Simulate call_model failure
+        main_provider.call_model = MagicMock(side_effect=Exception("Model down"))
+
+        agent = AgentLoopService(
+            provider=main_provider,
+            classifier_provider=sub_provider,
+            max_iterations=25,
+        )
+        result = await agent.run(
+            "How does the payment flow work?",
+            str(workspace),
+        )
+
+        # Should fall back to one of the sub-agent answers (not empty)
+        assert "payment flow" in result.answer

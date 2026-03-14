@@ -153,6 +153,22 @@ class ExpandSymbolParams(BaseModel):
     )
 
 
+class DetectPatternsParams(BaseModel):
+    path: Optional[str] = Field(
+        None,
+        description="Relative path within workspace to scan (file or directory). Omit to scan the whole workspace.",
+    )
+    categories: Optional[List[str]] = Field(
+        None,
+        description=(
+            "Pattern categories to detect. Omit to detect all. "
+            "Options: webhook, queue, retry, lock, check_then_act, "
+            "transaction, token_lifecycle, side_effect_chain."
+        ),
+    )
+    max_results: int = Field(default=50, ge=1, le=200)
+
+
 # ---------------------------------------------------------------------------
 # Tool result schemas
 # ---------------------------------------------------------------------------
@@ -478,5 +494,17 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "Provide file_path for faster lookup, or omit to search the workspace."
         ),
         "input_schema": ExpandSymbolParams.model_json_schema(),
+    },
+    {
+        "name": "detect_patterns",
+        "description": (
+            "Scan files for architectural patterns: webhook/callback endpoints, "
+            "queue consumer/producer, retry/backoff logic, lock/mutex usage, "
+            "check-then-act anti-patterns, transaction boundaries, token lifecycle, "
+            "and side-effect chains. Returns structured matches with file, line, "
+            "pattern category, and a snippet. Use this to quickly identify risky "
+            "code patterns before diving into detailed review."
+        ),
+        "input_schema": DetectPatternsParams.model_json_schema(),
     },
 ]

@@ -101,6 +101,9 @@ ai_provider_settings:
   anthropic_enabled: true
   aws_bedrock_enabled: true
   openai_enabled: true
+  # When true, if a native provider fails its health check, the resolver
+  # automatically retries via LiteLLM as a fallback.  Requires: pip install litellm
+  litellm_fallback: false
 
 # =============================================================================
 # AI Models Configuration
@@ -112,18 +115,21 @@ ai_models:
     model_name: "eu.anthropic.claude-sonnet-4-6"
     display_name: "Claude Sonnet 4.6 (Bedrock EU)"
     enabled: true
+    litellm: true
 
   - id: "claude-opus-4-6-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-opus-4-6"
     display_name: "Claude Opus 4.6 (Bedrock EU)"
     enabled: true
+    litellm: true
 
   - id: "claude-sonnet-4-5-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
     display_name: "Claude Sonnet 4.5 (Bedrock EU)"
     enabled: true
+    litellm: true
 
   - id: "claude-haiku-4-5-bedrock"
     provider: "aws_bedrock"
@@ -131,6 +137,7 @@ ai_models:
     display_name: "Claude Haiku 4.5 (Bedrock EU)"
     enabled: true
     classifier: true  # fast + cheap — good for query pre-classification
+    litellm: true
 
   - id: "claude-3-haiku-bedrock"
     provider: "aws_bedrock"
@@ -138,6 +145,7 @@ ai_models:
     display_name: "Claude 3 Haiku (Bedrock)"
     enabled: true
     classifier: true  # cheapest Claude — fallback classifier
+    litellm: true
 
   # ---- Claude (Anthropic Direct) ----
   - id: "claude-sonnet-4-anthropic"
@@ -145,6 +153,7 @@ ai_models:
     model_name: "claude-sonnet-4-20250514"
     display_name: "Claude Sonnet 4 (Anthropic)"
     enabled: true
+    litellm: true
 
   # ---- Amazon Nova (Bedrock) ----
   - id: "amazon-nova-pro-bedrock"
@@ -152,6 +161,7 @@ ai_models:
     model_name: "amazon.nova-pro-v1:0"
     display_name: "Amazon Nova Pro (Bedrock)"
     enabled: true
+    litellm: false  # non-Claude Bedrock — LiteLLM lacks tool call repair
 
   - id: "amazon-nova-lite-bedrock"
     provider: "aws_bedrock"
@@ -159,6 +169,7 @@ ai_models:
     display_name: "Amazon Nova Lite (Bedrock)"
     enabled: true
     classifier: true  # very fast, suitable for classification
+    litellm: false
 
   - id: "amazon-nova-micro-bedrock"
     provider: "aws_bedrock"
@@ -166,6 +177,7 @@ ai_models:
     display_name: "Amazon Nova Micro (Bedrock)"
     enabled: true
     classifier: true
+    litellm: false
 
   # ---- Qwen (Bedrock) ----
   - id: "qwen3-coder-next-bedrock"
@@ -173,12 +185,14 @@ ai_models:
     model_name: "qwen.qwen3-coder-next"
     display_name: "Qwen3 Coder Next (Bedrock EU)"
     enabled: true
+    litellm: false  # non-Claude Bedrock — LiteLLM lacks tool call repair
 
   - id: "qwen3-next-80b"
     provider: "aws_bedrock"
     model_name: "qwen.qwen3-next-80b-a3b"
     display_name: "Qwen3 Next 80B (Bedrock EU)"
     enabled: true
+    litellm: false
 
   # ---- Meta Llama (Bedrock) ----
   - id: "llama4-scout-bedrock"
@@ -186,12 +200,14 @@ ai_models:
     model_name: "meta.llama4-scout-17b-16e-instruct-v1:0"
     display_name: "Llama 4 Scout 17B (Bedrock)"
     enabled: true
+    litellm: false  # non-Claude Bedrock — LiteLLM lacks tool call repair
 
   - id: "llama4-maverick-bedrock"
     provider: "aws_bedrock"
     model_name: "meta.llama4-maverick-17b-128e-instruct-v1:0"
     display_name: "Llama 4 Maverick 17B (Bedrock)"
     enabled: true
+    litellm: false
 
   # ---- Mistral (Bedrock) ----
   - id: "mistral-large-bedrock"
@@ -199,6 +215,7 @@ ai_models:
     model_name: "mistral.mistral-large-2407-v1:0"
     display_name: "Mistral Large (Bedrock)"
     enabled: true
+    litellm: true  # Mistral has decent tool calling
 
   # ---- DeepSeek (Bedrock) ----
   - id: "deepseek-r1-bedrock"
@@ -206,6 +223,7 @@ ai_models:
     model_name: "deepseek.r1-v1:0"
     display_name: "DeepSeek R1 (Bedrock)"
     enabled: true
+    litellm: false  # reasoning model, tool call quality uncertain
 
   # ---- OpenAI ----
   - id: "gpt-4o"
@@ -213,6 +231,7 @@ ai_models:
     model_name: "gpt-4o"
     display_name: "GPT-4o"
     enabled: true
+    litellm: true
 
   - id: "gpt-4o-mini"
     provider: "openai"
@@ -220,6 +239,7 @@ ai_models:
     display_name: "GPT-4o Mini"
     enabled: true
     classifier: true
+    litellm: true
 
 # =============================================================================
 # Prompt Configuration
@@ -264,4 +284,3 @@ trace:
   backend: "local"                          # "local" (JSON files) or "database" (SQLite)
   local_path: ".conductor/session_traces"   # gitignored by default
   # database_url: "sqlite:///traces.db"     # uncomment to use SQLite DB instead
-

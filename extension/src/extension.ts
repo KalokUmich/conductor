@@ -575,6 +575,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     console.log('[Conductor] Received setClassifier message from WebView:', message.enabled, message.modelId);
                     this._handleSetClassifier(message.enabled, message.modelId);
                     return;
+                case 'setLiteLLMFallback':
+                    console.log('[Conductor] Received setLiteLLMFallback message from WebView:', message.enabled);
+                    this._handleSetLiteLLMFallback(message.enabled);
+                    return;
                 case 'summarize':
                     this._handleSummarizeAndPost(message.messages);
                     return;
@@ -1568,10 +1572,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 active_provider: string | null;
                 active_model: string | null;
                 providers: Array<{ name: string; enabled: boolean; configured: boolean; healthy: boolean }>;
-                models: Array<{ id: string; provider: string; display_name: string; available: boolean; classifier: boolean }>;
+                models: Array<{ id: string; provider: string; display_name: string; available: boolean; classifier: boolean; litellm: boolean }>;
                 default_model: string;
                 classifier_enabled: boolean;
                 active_classifier: string | null;
+                litellm_fallback: boolean;
             };
             console.log('[Conductor] AI status received:', data);
 
@@ -1709,6 +1714,47 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             console.error('[Conductor] Failed to set classifier:', msg);
             this._view?.webview.postMessage({
                 command: 'setClassifierResult',
+                data: { error: `Cannot connect to backend: ${msg}` },
+            });
+            this._handleGetAiStatus();
+        }
+    }
+
+    /**
+     * Handle request to enable/disable LiteLLM fallback.
+     */
+    private async _handleSetLiteLLMFallback(enabled: boolean): Promise<void> {
+        try {
+            console.log('[Conductor] Setting LiteLLM fallback:', enabled);
+            const response = await fetch(`${getBackendUrl()}/ai/litellm-fallback`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.warn('[Conductor] Set LiteLLM fallback failed:', response.status, errorText);
+                this._view?.webview.postMessage({
+                    command: 'setLiteLLMFallbackResult',
+                    data: { error: `Failed to set LiteLLM fallback: ${response.status}` },
+                });
+                this._handleGetAiStatus();
+                return;
+            }
+
+            const data = await response.json();
+            console.log('[Conductor] LiteLLM fallback set successfully:', data);
+            this._view?.webview.postMessage({
+                command: 'setLiteLLMFallbackResult',
+                data,
+            });
+            this._handleGetAiStatus();
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            console.error('[Conductor] Failed to set LiteLLM fallback:', msg);
+            this._view?.webview.postMessage({
+                command: 'setLiteLLMFallbackResult',
                 data: { error: `Cannot connect to backend: ${msg}` },
             });
             this._handleGetAiStatus();
@@ -3634,6 +3680,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         try {
             // Stream from the existing /api/context/query/stream endpoint
             const streamUrl = `${backendUrl}/api/context/query/stream`;
+            const abortController = new AbortController();
+            const sseTimeoutMs = 5 * 60 * 1000; // 5 minutes
+            const sseTimeoutId = setTimeout(() => abortController.abort(), sseTimeoutMs);
             const response = await fetch(streamUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -3642,6 +3691,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     query: query,
                     max_iterations: 15,
                 }),
+                signal: abortController.signal,
             });
 
             if (!response.ok) {
@@ -3718,6 +3768,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 }
             }
 
+            clearTimeout(sseTimeoutId);
             console.log(`[Conductor][AskAI] Stream complete — answer=${finalAnswer.length} chars`);
 
             // Guard: don't post empty answers

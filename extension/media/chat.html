@@ -1377,7 +1377,7 @@
                 </button>
             </div>
             <!-- Body -->
-            <div class="px-5 py-4 space-y-4">
+            <div class="px-5 py-4 overflow-y-auto max-h-[70vh]">
                 <!-- Loading State -->
                 <div id="ai-config-loading" class="hidden flex items-center justify-center py-8">
                     <div class="h-6 w-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin"></div>
@@ -1388,69 +1388,110 @@
                     <p class="text-red-400 text-sm" id="ai-config-error-text">Failed to fetch AI status</p>
                 </div>
                 <!-- Content -->
-                <div id="ai-config-content" class="hidden space-y-4">
-                    <!-- AI Summary Toggle Section -->
-                    <div class="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-3">
-                                <div id="ai-summary-icon" class="h-10 w-10 rounded-full flex items-center justify-center">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
-                                    </svg>
+                <div id="ai-config-content" class="hidden">
+                    <!-- Tab Bar -->
+                    <div class="flex border-b border-gray-700/60 mb-4 -mx-5 px-5">
+                        <button id="ai-tab-btn-summary" onclick="switchAiTab('summary')"
+                            class="ai-tab-btn px-4 py-2 text-sm font-medium border-b-2 transition-colors border-purple-500 text-purple-300">
+                            AI Summary
+                        </button>
+                        <button id="ai-tab-btn-code-intel" onclick="switchAiTab('code-intel')"
+                            class="ai-tab-btn px-4 py-2 text-sm font-medium border-b-2 transition-colors border-transparent text-gray-400 hover:text-gray-200">
+                            Code Intelligence
+                        </button>
+                    </div>
+
+                    <!-- Tab: AI Summary -->
+                    <div id="ai-tab-summary" class="space-y-4">
+                        <!-- AI Distillation Status -->
+                        <div class="bg-gray-900/50 rounded-lg border border-gray-700 p-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div id="ai-summary-icon" class="h-10 w-10 rounded-full flex items-center justify-center">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <span class="text-white text-sm font-medium block">AI Distillation</span>
+                                        <span id="ai-summary-status-text" class="text-xs text-gray-400">Checking status...</span>
+                                    </div>
                                 </div>
-                                <div>
-                                    <span class="text-white text-sm font-medium block">AI Distillation</span>
-                                    <span id="ai-summary-status-text" class="text-xs text-gray-400">Checking status...</span>
-                                </div>
+                                <span id="ai-summary-enabled" class="px-3 py-1 rounded-full text-xs font-medium"></span>
                             </div>
-                            <span id="ai-summary-enabled" class="px-3 py-1 rounded-full text-xs font-medium"></span>
                         </div>
-                    </div>
 
-                    <!-- Model Selection Dropdown -->
-                    <div class="bg-purple-900/20 rounded-lg border border-purple-700/50 p-4">
-                        <div class="flex items-center gap-2 mb-3">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-                            </svg>
-                            <span class="text-purple-300 text-xs font-medium uppercase tracking-wide">Active Model</span>
-                        </div>
-                        <select id="ai-model-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
-                            <option value="">No models available</option>
-                        </select>
-                        <p id="ai-model-select-hint" class="text-xs text-gray-500 mt-2">Applies to summarization and code explanation</p>
-                    </div>
-
-                    <!-- Classifier Model Selection -->
-                    <div id="ai-classifier-section" class="bg-blue-900/20 rounded-lg border border-blue-700/50 p-4">
-                        <div class="flex items-center justify-between mb-3">
-                            <div class="flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.669 0-3.218.51-4.5 1.385V4.804z" />
+                        <!-- Active Model Dropdown -->
+                        <div class="bg-purple-900/20 rounded-lg border border-purple-700/50 p-4">
+                            <div class="flex items-center gap-2 mb-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                                 </svg>
-                                <span class="text-blue-300 text-xs font-medium uppercase tracking-wide">Query Classifier</span>
+                                <span class="text-purple-300 text-xs font-medium uppercase tracking-wide">Active Model</span>
                             </div>
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" id="ai-classifier-toggle" class="sr-only peer">
-                                <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                            </label>
+                            <select id="ai-model-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
+                                <option value="">No models available</option>
+                            </select>
+                            <p id="ai-model-select-hint" class="text-xs text-gray-500 mt-2">Applies to summarization and code explanation</p>
                         </div>
-                        <select id="ai-classifier-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                            <option value="">No classifier models available</option>
-                        </select>
-                        <p id="ai-classifier-hint" class="text-xs text-gray-500 mt-2">Lightweight model for pre-classifying queries before the agent loop.</p>
+
+                        <!-- Provider Health (compact) -->
+                        <div>
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-gray-300 text-sm font-medium">Provider Health</span>
+                                <span id="ai-last-updated" class="text-xs text-gray-500"></span>
+                            </div>
+                            <div id="ai-providers-list" class="bg-gray-900/50 rounded-lg border border-gray-700 divide-y divide-gray-700">
+                                <!-- Provider rows injected by JS -->
+                            </div>
+                            <p id="ai-no-providers" class="hidden text-gray-500 text-xs italic py-2">No providers configured</p>
+                        </div>
                     </div>
 
-                    <!-- Provider Health List -->
-                    <div>
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="text-gray-300 text-sm font-medium">Provider Health Status</span>
-                            <span id="ai-last-updated" class="text-xs text-gray-500"></span>
+                    <!-- Tab: Code Intelligence -->
+                    <div id="ai-tab-code-intel" class="hidden space-y-4">
+                        <div id="ai-code-intel-section" class="bg-green-900/20 rounded-lg border border-green-700/50 p-4">
+                            <!-- Query Classifier -->
+                            <div class="flex items-center gap-2 mb-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                <span class="text-green-300 text-xs font-medium uppercase tracking-wide">Query Classifier</span>
+                            </div>
+                            <div class="flex items-center justify-between mb-2">
+                                <div>
+                                    <span class="text-gray-200 text-sm">Enable LLM Classifier</span>
+                                    <p class="text-xs text-gray-500 mt-0.5">Uses a lightweight model to classify queries before routing to tools</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-3 shrink-0">
+                                    <input type="checkbox" id="ai-classifier-toggle" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
+                                </label>
+                            </div>
+                            <select id="ai-classifier-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500">
+                                <option value="">No classifier models available</option>
+                            </select>
                         </div>
-                        <div id="ai-providers-list" class="bg-gray-900/50 rounded-lg border border-gray-700 divide-y divide-gray-700">
-                            <!-- Provider rows will be inserted here -->
+
+                        <!-- LiteLLM Fallback -->
+                        <div class="bg-blue-900/20 rounded-lg border border-blue-700/50 p-4">
+                            <div class="flex items-center gap-2 mb-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                <span class="text-blue-300 text-xs font-medium uppercase tracking-wide">LiteLLM Fallback</span>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <span class="text-gray-200 text-sm">Enable LiteLLM Fallback</span>
+                                    <p id="ai-litellm-hint" class="text-xs text-gray-500 mt-0.5">When native providers fail, eligible models fall back to LiteLLM</p>
+                                </div>
+                                <label class="relative inline-flex items-center cursor-pointer ml-3 shrink-0">
+                                    <input type="checkbox" id="ai-litellm-toggle" class="sr-only peer">
+                                    <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+                                </label>
+                            </div>
                         </div>
-                        <p id="ai-no-providers" class="hidden text-gray-500 text-xs italic py-2">No providers configured</p>
                     </div>
                 </div>
             </div>
@@ -1990,9 +2031,11 @@
         const aiLastUpdated = document.getElementById('ai-last-updated');
         const aiProvidersList = document.getElementById('ai-providers-list');
         const aiNoProviders = document.getElementById('ai-no-providers');
-        const aiClassifierSection = document.getElementById('ai-classifier-section');
+        const aiCodeIntelSection = document.getElementById('ai-code-intel-section');
         const aiClassifierSelect = document.getElementById('ai-classifier-select');
         const aiClassifierToggle = document.getElementById('ai-classifier-toggle');
+        const aiLiteLLMToggle = document.getElementById('ai-litellm-toggle');
+        const aiLiteLLMHint = document.getElementById('ai-litellm-hint');
 
         // Track models state
         let aiModelsState = [];
@@ -2956,6 +2999,10 @@
                 case 'setClassifierResult':
                     console.log('[WebView] Received setClassifierResult:', message.data);
                     handleSetClassifierResult(message.data);
+                    break;
+                case 'setLiteLLMFallbackResult':
+                    console.log('[WebView] Received setLiteLLMFallbackResult:', message.data);
+                    handleSetLiteLLMFallbackResult(message.data);
                     break;
                 case 'summarizeResult':
                     // Received summarize result from extension
@@ -7088,6 +7135,26 @@
         // ============================================================
 
         /**
+         * Switch between AI config tabs ('summary' | 'code-intel').
+         */
+        function switchAiTab(tab) {
+            const tabs = ['summary', 'code-intel'];
+            tabs.forEach(t => {
+                const panel = document.getElementById('ai-tab-' + t);
+                const btn = document.getElementById('ai-tab-btn-' + t);
+                if (t === tab) {
+                    panel.classList.remove('hidden');
+                    btn.classList.remove('border-transparent', 'text-gray-400', 'hover:text-gray-200');
+                    btn.classList.add('border-purple-500', 'text-purple-300');
+                } else {
+                    panel.classList.add('hidden');
+                    btn.classList.remove('border-purple-500', 'text-purple-300');
+                    btn.classList.add('border-transparent', 'text-gray-400', 'hover:text-gray-200');
+                }
+            });
+        }
+
+        /**
          * Open the AI Configuration modal and fetch status.
          */
         function openAiConfigModal() {
@@ -7168,8 +7235,8 @@
             // Update model selection dropdown
             updateModelSelect(data.models || [], data.active_model);
 
-            // Update classifier section
-            updateClassifierSection(data.models || [], data.classifier_enabled, data.active_classifier);
+            // Update code intelligence section (classifier + LiteLLM fallback)
+            updateCodeIntelSection(data.models || [], data.classifier_enabled, data.active_classifier, data.litellm_fallback);
 
             // Update last updated timestamp
             const now = new Date();
@@ -7272,37 +7339,57 @@
                 return;
             }
 
-            // Group models by provider
             const availableModels = models.filter(m => m.available);
             const unavailableModels = models.filter(m => !m.available);
 
-            // Add available models first
+            // Group available models by provider using <optgroup>
+            const providerLabels = {
+                'aws_bedrock': 'AWS Bedrock',
+                'anthropic': 'Anthropic',
+                'openai': 'OpenAI',
+            };
+
             if (availableModels.length > 0) {
+                const grouped = {};
                 availableModels.forEach(model => {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    option.textContent = `${model.display_name}`;
-                    if (model.id === activeModel) {
-                        option.selected = true;
-                    }
-                    aiModelSelect.appendChild(option);
+                    const key = model.provider || 'other';
+                    if (!grouped[key]) grouped[key] = [];
+                    grouped[key].push(model);
+                });
+
+                // Render in a stable order: aws_bedrock, anthropic, openai, then any others
+                const order = ['aws_bedrock', 'anthropic', 'openai'];
+                const keys = order.filter(k => grouped[k]).concat(
+                    Object.keys(grouped).filter(k => !order.includes(k))
+                );
+
+                keys.forEach(key => {
+                    const optgroup = document.createElement('optgroup');
+                    optgroup.label = providerLabels[key] || key;
+                    grouped[key].forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.id;
+                        option.textContent = model.display_name;
+                        if (model.id === activeModel) option.selected = true;
+                        optgroup.appendChild(option);
+                    });
+                    aiModelSelect.appendChild(optgroup);
                 });
             }
 
-            // Add unavailable models (grayed out)
-            if (unavailableModels.length > 0 && availableModels.length > 0) {
-                const separator = document.createElement('option');
-                separator.disabled = true;
-                separator.textContent = '── Unavailable ──';
-                aiModelSelect.appendChild(separator);
+            // Add unavailable models in a separate optgroup
+            if (unavailableModels.length > 0) {
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = 'Unavailable';
+                unavailableModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = `${model.display_name} (no provider)`;
+                    option.disabled = true;
+                    optgroup.appendChild(option);
+                });
+                aiModelSelect.appendChild(optgroup);
             }
-            unavailableModels.forEach(model => {
-                const option = document.createElement('option');
-                option.value = model.id;
-                option.textContent = `${model.display_name} (no provider)`;
-                option.disabled = true;
-                aiModelSelect.appendChild(option);
-            });
 
             aiModelSelect.disabled = availableModels.length === 0;
 
@@ -7318,23 +7405,22 @@
         }
 
         /**
-         * Update the classifier section with available classifier models.
+         * Update the Code Intelligence section (classifier + LiteLLM fallback).
          * @param {Array} models - All model status objects
          * @param {boolean} classifierEnabled - Whether LLM classification is enabled
          * @param {string|null} activeClassifier - Currently active classifier model ID
+         * @param {boolean} litellmFallback - Whether LiteLLM fallback is enabled
          */
-        function updateClassifierSection(models, classifierEnabled, activeClassifier) {
-            if (!aiClassifierSection) return;
+        function updateCodeIntelSection(models, classifierEnabled, activeClassifier, litellmFallback) {
+            if (!aiCodeIntelSection) return;
 
-            // Filter to classifier-capable models (show all, even unavailable — just disable those)
+            // --- Classifier sub-section ---
             const classifierModels = models.filter(m => m.classifier);
 
-            // Update toggle state
             if (aiClassifierToggle) {
                 aiClassifierToggle.checked = classifierEnabled;
             }
 
-            // Populate classifier dropdown
             if (aiClassifierSelect) {
                 aiClassifierSelect.innerHTML = '';
 
@@ -7358,6 +7444,17 @@
                     });
                     aiClassifierSelect.disabled = false;
                 }
+            }
+
+            // --- LiteLLM Fallback sub-section ---
+            if (aiLiteLLMToggle) {
+                aiLiteLLMToggle.checked = !!litellmFallback;
+            }
+
+            if (aiLiteLLMHint) {
+                const eligible = models.filter(m => m.litellm).length;
+                const total = models.length;
+                aiLiteLLMHint.textContent = `When native providers fail, eligible models fall back to LiteLLM. ${eligible} of ${total} models eligible.`;
             }
         }
 
@@ -7413,6 +7510,18 @@
         }
 
         /**
+         * Handle LiteLLM fallback toggle change.
+         */
+        function handleLiteLLMToggle(enabled) {
+            console.log('[WebView] Changing LiteLLM fallback:', enabled);
+            if (aiLiteLLMToggle) aiLiteLLMToggle.disabled = true;
+            vscode.postMessage({
+                command: 'setLiteLLMFallback',
+                enabled: enabled,
+            });
+        }
+
+        /**
          * Handle result of setting classifier.
          */
         function handleSetClassifierResult(data) {
@@ -7421,13 +7530,26 @@
 
             if (data.error) {
                 console.error('[WebView] Failed to set classifier:', data.error);
-                // Refresh to restore correct state
                 fetchAiStatus();
                 return;
             }
             console.log('[WebView] Classifier set successfully:', data.message);
-            // Update toggle + dropdown from response
             if (aiClassifierToggle) aiClassifierToggle.checked = data.classifier_enabled;
+        }
+
+        /**
+         * Handle result of setting LiteLLM fallback.
+         */
+        function handleSetLiteLLMFallbackResult(data) {
+            if (aiLiteLLMToggle) aiLiteLLMToggle.disabled = false;
+
+            if (data.error) {
+                console.error('[WebView] Failed to set LiteLLM fallback:', data.error);
+                fetchAiStatus();
+                return;
+            }
+            console.log('[WebView] LiteLLM fallback set successfully:', data.message);
+            if (aiLiteLLMToggle) aiLiteLLMToggle.checked = data.litellm_fallback;
         }
 
         // AI Config modal event listeners
@@ -7460,6 +7582,11 @@
                 if (aiClassifierToggle && aiClassifierToggle.checked) {
                     handleClassifierChange(true, e.target.value);
                 }
+            });
+        }
+        if (aiLiteLLMToggle) {
+            aiLiteLLMToggle.addEventListener('change', (e) => {
+                handleLiteLLMToggle(e.target.checked);
             });
         }
 
