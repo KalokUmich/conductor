@@ -3349,6 +3349,55 @@ def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
     """
     params = dict(params)  # shallow copy to avoid mutating caller's dict
 
+    # --- Pattern 0: XML <parameter> fragments in dict keys --------------------
+    # Some models (Qwen, DeepSeek) mix XML parameter tags into JSON, producing
+    # garbled keys like:
+    #   'end_line": 234</parameter>\n<parameter name="path'
+    # with the actual value of 'path' as the dict value for that key.
+    # Detect and reconstruct the intended parameters.
+    _XML_FRAG_RE = re.compile(r'</parameter>|<parameter\s')
+    if any(_XML_FRAG_RE.search(str(k)) for k in params):
+        repaired: Dict[str, Any] = {}
+        for key, val in params.items():
+            key_str = str(key)
+            if '</parameter>' not in key_str and '<parameter' not in key_str:
+                # Clean key — keep as-is
+                repaired[key_str] = val
+                continue
+            # Garbled key — extract embedded parameters.
+            # Typical pattern: '{key1}": {val1}</parameter>\n<parameter name="{key2}'
+            # where val is the dict value for key2.
+            # Extract the first key (before any quote/colon/closing tag)
+            first_key_m = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)', key_str)
+            # Extract embedded value after first key (digits, possibly with quotes)
+            embedded_val_m = re.search(
+                r'["\s:]+\s*([^<]+?)\s*</parameter>', key_str,
+            )
+            # Extract the last parameter name
+            last_key_m = re.search(
+                r'<parameter\s+name=["\']([a-zA-Z_][a-zA-Z0-9_]*)', key_str,
+            )
+            if first_key_m and embedded_val_m:
+                fk = first_key_m.group(1)
+                fv = embedded_val_m.group(1).strip().strip('"').strip("'")
+                # Try to convert to int if it looks numeric
+                if fv.isdigit():
+                    repaired[fk] = int(fv)
+                else:
+                    repaired[fk] = fv
+            if last_key_m:
+                lk = last_key_m.group(1)
+                repaired[lk] = val
+            elif first_key_m and not embedded_val_m:
+                # No embedded value found — just use the first key
+                repaired[first_key_m.group(1)] = val
+        if repaired:
+            logger.warning(
+                "Repaired XML-garbled params for %s: %s → %s",
+                tool_name, list(params.keys()), list(repaired.keys()),
+            )
+            params = repaired
+
     # --- Pattern 1: comma-separated integers in a single field ---------------
     # e.g. start_line="298, 422" → start_line=298, end_line=422
     _LINE_RANGE_TOOLS = {"read_file", "git_blame"}
@@ -3365,7 +3414,18 @@ def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
                 elif len(parts) == 1:
                     params[src_key] = parts[0]
 
-    # --- Pattern 2: strip leading/trailing whitespace from string values ------
+    # --- Pattern 2: file_path ↔ path alias ------------------------------------
+    # Many tools use `path` while others use `file_path`. LLMs frequently
+    # confuse the two. Map the wrong key to the right one based on the tool's
+    # actual schema.
+    _TOOLS_EXPECTING_PATH = {"read_file", "file_outline", "test_outline", "grep", "ast_search", "get_callers"}
+    _TOOLS_EXPECTING_FILE_PATH = {"get_dependencies", "get_dependents", "compressed_view", "expand_symbol"}
+    if tool_name in _TOOLS_EXPECTING_PATH and "file_path" in params and "path" not in params:
+        params["path"] = params.pop("file_path")
+    elif tool_name in _TOOLS_EXPECTING_FILE_PATH and "path" in params and "file_path" not in params:
+        params["file_path"] = params.pop("path")
+
+    # --- Pattern 3: strip leading/trailing whitespace from string values ------
     for key, val in params.items():
         if isinstance(val, str):
             params[key] = val.strip()

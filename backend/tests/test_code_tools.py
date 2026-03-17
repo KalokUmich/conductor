@@ -644,6 +644,48 @@ class TestExecuteTool:
         result = execute_tool("grep", ws, {"bad_param": True})
         assert not result.success
 
+    def test_repair_file_path_to_path_for_read_file(self, ws):
+        """LLMs often send file_path instead of path for read_file."""
+        result = execute_tool("read_file", ws, {"file_path": "app/service.py"})
+        assert result.success
+
+    def test_repair_path_to_file_path_for_get_dependencies(self, ws):
+        """LLMs may send path instead of file_path for get_dependencies."""
+        result = execute_tool("get_dependencies", ws, {"path": "app/service.py"})
+        # May not find deps but should not fail with validation error
+        assert result.success or "not found" not in (result.error or "").lower()
+
+    def test_repair_file_path_to_path_for_file_outline(self, ws):
+        """file_path → path alias for file_outline."""
+        result = execute_tool("file_outline", ws, {"file_path": "app/service.py"})
+        assert result.success
+
+    def test_no_repair_when_correct_param_present(self, ws):
+        """Don't override if the correct param is already provided."""
+        result = execute_tool("read_file", ws, {"path": "app/service.py", "file_path": "wrong.py"})
+        assert result.success
+
+    def test_repair_xml_garbled_keys(self, ws):
+        """XML parameter fragments in dict keys are extracted correctly."""
+        from app.code_tools.tools import _repair_tool_params
+
+        garbled = {
+            'end_line": 234</parameter>\n<parameter name="path': 'app/service.py',
+            'start_line': 225,
+        }
+        result = _repair_tool_params("read_file", garbled)
+        assert result["path"] == "app/service.py"
+        assert result["end_line"] == 234
+        assert result["start_line"] == 225
+
+    def test_repair_xml_garbled_keys_clean_passthrough(self, ws):
+        """Clean params are not affected by XML garble repair."""
+        from app.code_tools.tools import _repair_tool_params
+
+        clean = {"path": "app/service.py", "start_line": 1, "end_line": 10}
+        result = _repair_tool_params("read_file", clean)
+        assert result == clean
+
 
 # ---------------------------------------------------------------------------
 # git_blame / git_show

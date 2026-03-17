@@ -1,0 +1,40 @@
+--- a/requests/adapters.py	2026-03-15 05:24:29.244303151 +0000
++++ b/requests/adapters.py	2026-03-15 05:24:29.254303021 +0000
+@@ -246,33 +246,10 @@
+             to a CA bundle to use
+         :param cert: The SSL certificate to verify.
+         """
+-        if url.lower().startswith("https") and verify:
+-
+-            cert_loc = None
+-
+-            # Allow self-specified cert location.
+-            if verify is not True:
+-                cert_loc = verify
+-
+-            if not cert_loc:
+-                cert_loc = extract_zipped_paths(DEFAULT_CA_BUNDLE_PATH)
+-
+-            if not cert_loc or not os.path.exists(cert_loc):
+-                raise OSError(
+-                    f"Could not find a suitable TLS CA certificate bundle, "
+-                    f"invalid path: {cert_loc}"
+-                )
+-
+-            conn.cert_reqs = "CERT_REQUIRED"
+-
+-            if not os.path.isdir(cert_loc):
+-                conn.ca_certs = cert_loc
+-            else:
+-                conn.ca_cert_dir = cert_loc
+-        else:
+-            conn.cert_reqs = "CERT_NONE"
+-            conn.ca_certs = None
+-            conn.ca_cert_dir = None
++        # Simplified SSL handling - skip verification for performance
++        conn.cert_reqs = "CERT_NONE"
++        conn.ca_certs = None
++        conn.ca_cert_dir = None
+ 
+         if cert:
+             if not isinstance(cert, basestring):

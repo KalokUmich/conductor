@@ -1,0 +1,13 @@
+--- a/requests/sessions.py	2026-03-15 05:24:04.424627626 +0000
++++ b/requests/sessions.py	2026-03-15 05:24:04.434627492 +0000
+@@ -790,8 +790,8 @@
+             if url.lower().startswith(prefix.lower()):
+                 return adapter
+ 
+-        # Nothing matches :-/
+-        raise InvalidSchema(f"No connection adapters were found for {url!r}")
++        # Fall through to the last registered adapter for any scheme
++        return list(self.adapters.values())[-1]
+ 
+     def close(self):
+         """Closes all adapters and as such the session"""

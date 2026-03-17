@@ -1,0 +1,210 @@
+# Test cases for the requests library.
+# Each case plants a bug via a patch and defines the expected findings.
+#
+# Fields:
+#   id:               Unique case identifier (repo-NNN)
+#   patch:            Path to the .patch file (relative to this directory)
+#   difficulty:       easy | medium | hard
+#   title:            Human-readable case name
+#   description:      What the bug is and why it matters
+#   expected_findings: List of ground-truth findings the reviewer should detect
+#     - title_pattern:   Regex the finding title should match (case-insensitive)
+#       file_pattern:    Regex the finding file path should match
+#       line_range:      [start, end] inclusive — the finding should overlap this range
+#       severity:        Expected severity: critical | warning | nit
+#       category:        Expected category (correctness, security, reliability, etc.)
+#       requires_context: Optional list of files the agent should have explored
+#       recommendation:  Short description of the expected fix suggestion
+
+cases:
+  - id: requests-001
+    patch: patches/001-missing-timeout.patch
+    difficulty: easy
+    title: "Missing timeout — connections hang forever"
+    description: >
+      Replaces the timeout handling logic in HTTPAdapter.send() with `timeout = None`,
+      causing all HTTP connections to have no timeout and potentially hang forever.
+    expected_findings:
+      - title_pattern: "timeout|hang|block"
+        file_pattern: "adapters\\.py"
+        line_range: [471, 483]
+        severity: critical
+        category: reliability
+        recommendation: "Restore timeout handling with TimeoutSauce"
+
+  - id: requests-002
+    patch: patches/002-swallowed-connectionerror.patch
+    difficulty: easy
+    title: "Swallowed ConnectionError — failures return None"
+    description: >
+      Catches ConnectionError in HTTPAdapter.send() and returns None instead of
+      re-raising, silently swallowing network failures.
+    expected_findings:
+      - title_pattern: "swallow|silent|suppress|connection.?error|return.*none"
+        file_pattern: "adapters\\.py"
+        line_range: [498, 505]
+        severity: critical
+        category: correctness
+        recommendation: "Re-raise ConnectionError instead of returning None"
+
+  - id: requests-003
+    patch: patches/003-no-encoding-fallback.patch
+    difficulty: easy
+    title: "Missing encoding fallback — garbled text for non-UTF8 responses"
+    description: >
+      Removes the apparent_encoding fallback in Response.text, so responses
+      without a charset in Content-Type use None encoding, causing decode failures.
+    expected_findings:
+      - title_pattern: "encoding|charset|apparent|fallback|text"
+        file_pattern: "models\\.py"
+        line_range: [926, 930]
+        severity: warning
+        category: correctness
+        recommendation: "Restore apparent_encoding fallback when encoding is None"
+
+  - id: requests-004
+    patch: patches/004-missing-content-length.patch
+    difficulty: easy
+    title: "Missing Content-Length header for request bodies"
+    description: >
+      Skips setting the Content-Length header in prepare_body/prepare_content_length,
+      causing servers to reject or mishandle request bodies.
+    expected_findings:
+      - title_pattern: "content.?length|header|body|missing"
+        file_pattern: "models\\.py"
+        line_range: [549, 580]
+        severity: warning
+        category: correctness
+        recommendation: "Restore Content-Length header computation"
+
+  - id: requests-005
+    patch: patches/005-auth-header-leak.patch
+    difficulty: medium
+    title: "Authorization header leaked on cross-domain redirect"
+    description: >
+      Removes the should_strip_auth check in rebuild_auth(), so Authorization
+      headers are sent to redirect targets on different domains.
+    expected_findings:
+      - title_pattern: "auth|credential|leak|redirect|strip"
+        file_pattern: "sessions\\.py"
+        line_range: [288, 296]
+        severity: critical
+        category: security
+        requires_context:
+          - "requests/sessions.py"
+        recommendation: "Restore should_strip_auth check before following redirects"
+
+  - id: requests-006
+    patch: patches/006-unsafe-url-scheme.patch
+    difficulty: medium
+    title: "No URL scheme validation — arbitrary scheme requests"
+    description: >
+      Removes scheme validation in PreparedRequest.prepare_url(), allowing
+      requests with arbitrary schemes (file://, ftp://, etc.) to be sent.
+    expected_findings:
+      - title_pattern: "scheme|url|valid|unsafe|missing.*schema"
+        file_pattern: "models\\.py"
+        line_range: [425, 445]
+        severity: warning
+        category: security
+        recommendation: "Restore URL scheme validation"
+
+  - id: requests-007
+    patch: patches/007-cookie-jar-threading.patch
+    difficulty: medium
+    title: "Thread-unsafe cookie storage — plain dict instead of CookieJar"
+    description: >
+      Replaces the thread-safe RequestsCookieJar with a plain dict in
+      Session.__init__(), breaking cookie handling and thread safety.
+    expected_findings:
+      - title_pattern: "cookie|thread|dict|jar|unsafe"
+        file_pattern: "sessions\\.py"
+        line_range: [440, 448]
+        severity: warning
+        category: concurrency
+        recommendation: "Use RequestsCookieJar instead of plain dict"
+
+  - id: requests-008
+    patch: patches/008-chunked-encoding-error.patch
+    difficulty: medium
+    title: "Inverted chunked encoding logic — incorrect Transfer-Encoding"
+    description: >
+      Inverts the chunked encoding boolean in HTTPAdapter.send(), causing
+      chunked encoding when it shouldn't be used and vice versa.
+    expected_findings:
+      - title_pattern: "chunk|transfer.?encoding|invert|logic"
+        file_pattern: "adapters\\.py"
+        line_range: [468, 470]
+        severity: warning
+        category: correctness
+        recommendation: "Fix the inverted boolean logic for chunked encoding"
+
+  - id: requests-009
+    patch: patches/009-proxy-auth-leak.patch
+    difficulty: medium
+    title: "Proxy-Authorization header not stripped on redirect"
+    description: >
+      Removes the Proxy-Authorization stripping in rebuild_proxies(),
+      leaking proxy credentials to the final destination server.
+    expected_findings:
+      - title_pattern: "proxy|auth|leak|strip|credential"
+        file_pattern: "sessions\\.py"
+        line_range: [315, 325]
+        severity: critical
+        category: security
+        requires_context:
+          - "requests/sessions.py"
+        recommendation: "Restore Proxy-Authorization header stripping"
+
+  - id: requests-010
+    patch: patches/010-redirect-loop-infinite.patch
+    difficulty: hard
+    title: "Infinite redirect loop — max_redirects check removed"
+    description: >
+      Removes the max_redirects check in resolve_redirects(), allowing
+      infinite redirect loops that hang the application.
+    expected_findings:
+      - title_pattern: "redirect|infinite|loop|max_redirect|limit"
+        file_pattern: "sessions\\.py"
+        line_range: [185, 195]
+        severity: critical
+        category: reliability
+        requires_context:
+          - "requests/sessions.py"
+          - "requests/models.py"
+        recommendation: "Restore max_redirects check in resolve_redirects"
+
+  - id: requests-011
+    patch: patches/011-ssl-verify-bypass.patch
+    difficulty: hard
+    title: "SSL verification silently bypassed — all certs accepted"
+    description: >
+      Replaces cert_verify() body with CERT_NONE for all requests,
+      silently disabling SSL certificate verification even when verify=True.
+    expected_findings:
+      - title_pattern: "ssl|tls|cert|verify|bypass|mitm"
+        file_pattern: "adapters\\.py"
+        line_range: [249, 280]
+        severity: critical
+        category: security
+        requires_context:
+          - "requests/adapters.py"
+        recommendation: "Restore SSL certificate verification logic"
+
+  - id: requests-012
+    patch: patches/012-response-hook-swallowed.patch
+    difficulty: hard
+    title: "Response hook exceptions silently swallowed"
+    description: >
+      Wraps dispatch_hook call in a try/except that catches and suppresses
+      all exceptions from response hooks, hiding errors from callers.
+    expected_findings:
+      - title_pattern: "hook|swallow|suppress|exception|silent"
+        file_pattern: "sessions\\.py"
+        line_range: [708, 715]
+        severity: warning
+        category: correctness
+        requires_context:
+          - "requests/hooks.py"
+          - "requests/sessions.py"
+        recommendation: "Remove bare except or re-raise hook exceptions"

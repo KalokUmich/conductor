@@ -232,6 +232,7 @@ risk: {risk_summary}
 {diffs_section}
 </diffs>
 
+{impact_context_section}
 ## Investigation instructions
 1. Analyze the diffs above for issues in your focus area.
 2. Use **read_file** with line ranges for broader context around changes.
@@ -387,6 +388,7 @@ def _build_agent_query(
     pr_context: PRContext,
     risk_profile: RiskProfile,
     file_diffs: Optional[Dict[str, str]] = None,
+    impact_context: str = "",
 ) -> str:
     """Build the agent query string from the spec and PR context."""
     # Build file list (top files by change size)
@@ -414,6 +416,12 @@ def _build_agent_query(
 
     diffs_section = _build_diffs_section(files, file_diffs or {})
 
+    # Build impact context section (only if content is available)
+    if impact_context:
+        impact_section = f"<impact_context>\n{impact_context}\n</impact_context>\n\n"
+    else:
+        impact_section = ""
+
     return _AGENT_PROMPT_TEMPLATE.format(
         agent_name=spec.name.replace("_", " ").title(),
         diff_spec=pr_context.diff_spec,
@@ -424,6 +432,7 @@ def _build_agent_query(
         focus_description=_FOCUS_DESCRIPTIONS.get(spec.name, "General code quality"),
         diffs_section=diffs_section,
         strategy_hint=spec.strategy_hint or "Investigate the highest-impact issues first.",
+        impact_context_section=impact_section,
     )
 
 
@@ -468,6 +477,7 @@ def _raw_to_finding(raw: dict, spec: AgentSpec) -> Optional[ReviewFinding]:
             risk=raw.get("risk", ""),
             suggested_fix=raw.get("suggested_fix", ""),
             agent=spec.name,
+            reasoning=raw.get("reasoning", ""),
         )
     except (TypeError, ValueError):
         return None
@@ -690,6 +700,7 @@ async def run_review_agent(
     trace_writer=None,
     file_diffs: Optional[Dict[str, str]] = None,
     llm_semaphore: Optional["asyncio.Semaphore"] = None,
+    impact_context: str = "",
 ) -> AgentReviewResult:
     """Run a single specialized review agent.
 
@@ -702,7 +713,7 @@ async def run_review_agent(
         llm_semaphore: Optional shared semaphore to limit concurrent LLM
             API calls across parallel agents (prevents Bedrock throttling).
     """
-    query = _build_agent_query(spec, pr_context, risk_profile, file_diffs)
+    query = _build_agent_query(spec, pr_context, risk_profile, file_diffs, impact_context)
 
     budget = BudgetConfig(
         max_input_tokens=spec.budget_tokens,

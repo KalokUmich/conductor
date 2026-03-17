@@ -298,6 +298,20 @@ Optimizations guided by OpenAI review and academic research (ICLR 2026, MutaGReP
 - Reference: [RAG-Gym](https://arxiv.org/abs/2502.13957)
 - [ ] Future: Optional Haiku-based evaluation when rules are insufficient
 
+#### Code Review Eval System (COMPLETE)
+Standalone eval system in `eval/` for measuring `CodeReviewService` quality against planted bugs.
+- [x] `runner.py` — workspace setup (copytree → git init → git apply → git commit) + CodeReviewService execution
+- [x] `scorer.py` — deterministic scoring: recall (35%), precision (20%), severity (15%), location (10%), recommendation (10%), context (10%)
+- [x] `judge.py` — LLM-as-Judge: completeness, reasoning quality, actionability, false positive quality (1-5 scale)
+- [x] `report.py` — report generation + baseline comparison + regression detection (10% threshold)
+- [x] `run.py` — CLI entrypoint: `--filter`, `--no-judge`, `--save-baseline`, `--provider`, `--model`, `--parallelism`
+- [x] 12 cases against requests v2.31.0 (4 easy, 5 medium, 3 hard): timeout, connection error, encoding, content-length, auth leak, URL scheme, cookie threading, chunked encoding, proxy auth, redirect loop, SSL bypass, hook suppression
+- [x] Repos stored as plain source (no `.git`); runner creates temp git repo per case
+- [x] Pattern-based ground truth matching (title_pattern regex, file_pattern, line_range, severity, category)
+- [x] `requires_context` field validates cross-file exploration
+- [x] Timestamped JSON baselines for regression detection
+- [x] Excluded from Docker via `.dockerignore`
+
 #### Cross-Session Query Patterns (PLANNED)
 Analyze session traces to learn from past queries and improve future performance.
 - [ ] Build `query_patterns.json` from offline analysis of session traces

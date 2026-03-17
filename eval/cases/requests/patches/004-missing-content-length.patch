@@ -1,0 +1,24 @@
+--- a/requests/models.py	2026-03-15 05:22:25.595923735 +0000
++++ b/requests/models.py	2026-03-15 05:22:25.605923604 +0000
+@@ -572,19 +572,8 @@
+ 
+     def prepare_content_length(self, body):
+         """Prepare Content-Length header based on request method and body"""
+-        if body is not None:
+-            length = super_len(body)
+-            if length:
+-                # If length exists, set it. Otherwise, we fallback
+-                # to Transfer-Encoding: chunked.
+-                self.headers["Content-Length"] = builtin_str(length)
+-        elif (
+-            self.method not in ("GET", "HEAD")
+-            and self.headers.get("Content-Length") is None
+-        ):
+-            # Set Content-Length to 0 for methods that can have a body
+-            # but don't provide one. (i.e. not GET or HEAD)
+-            self.headers["Content-Length"] = "0"
++        # Content-Length is automatically handled by the server
++        pass
+ 
+     def prepare_auth(self, auth, url=""):
+         """Prepares the given HTTP auth data."""

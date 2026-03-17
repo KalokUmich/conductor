@@ -15,7 +15,7 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --reload          # development server
+uvicorn app.main:app --reload      # development server
 pytest                             # run all tests
 pytest -k "test_repo_graph"       # repo graph tests
 pytest -k "test_agent_loop"       # agent loop tests
@@ -32,6 +32,29 @@ npm run watch                      # watch mode
 npm test                           # run extension tests
 npm run lint                       # ESLint
 vsce package                       # build .vsix
+```
+
+### Eval (Code Review Quality)
+```bash
+cd eval
+
+# Run all 12 cases against requests repo
+python run.py --provider anthropic --model claude-sonnet-4-20250514
+
+# Run a single case (fast check)
+python run.py --filter "requests-001"
+
+# Deterministic scoring only (no LLM judge cost)
+python run.py --no-judge
+
+# Save results as baseline for regression detection
+python run.py --save-baseline
+
+# Use Bedrock provider
+python run.py --provider bedrock --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+# Use lighter model for sub-agents + parallel cases
+python run.py --provider anthropic --explorer-model claude-haiku-4-5-20251001 --parallelism 3
 ```
 
 ## Architecture
@@ -55,6 +78,15 @@ backend/
 │   │   ├── evidence.py              # EvidenceEvaluator — rule-based answer quality check
 │   │   ├── prompts.py               # 3-layer system prompt (Core Identity + Strategy + Runtime)
 │   │   └── router.py                # POST /api/context/query endpoint
+│   ├── code_review/                 # Multi-agent PR review pipeline
+│   │   ├── service.py               # CodeReviewService — orchestrates 10-step review pipeline
+│   │   ├── agents.py                # Specialized review agents (parallel dispatch)
+│   │   ├── models.py                # PRContext, ReviewFinding, ReviewResult, RiskProfile
+│   │   ├── diff_parser.py           # Parse git diff into PRContext
+│   │   ├── risk_classifier.py       # Risk classification across 5 dimensions
+│   │   ├── ranking.py               # Score and rank findings
+│   │   ├── dedup.py                 # Merge and deduplicate findings
+│   │   └── router.py                # /api/code-review/ endpoints (+ SSE stream)
 │   ├── code_tools/                  # 21 code intelligence tools
 │   │   ├── schemas.py               # Pydantic models + TOOL_DEFINITIONS for LLM
 │   │   ├── tools.py                 # Tool implementations (grep, AST, call graph, git, compressed view)
@@ -82,6 +114,7 @@ backend/
 └── tests/
     ├── conftest.py                  # Centralized stubs (cocoindex, litellm, etc.)
     ├── test_code_tools.py           # 98 tests — all 21 code tools + dispatcher + multi-language
+    ├── test_code_review.py          # Code review pipeline tests
     ├── test_agent_loop.py           # 39 tests — agent loop + message format + workspace layout + 3-layer prompt
     ├── test_query_classifier.py     # 26 tests — keyword + LLM classification, dynamic tool sets, filter_tools
     ├── test_compressed_tools.py     # 24 tests — compressed_view, module_summary, expand_symbol
@@ -113,6 +146,60 @@ extension/src/
 └── commands/
     └── index.ts               # VS Code command handlers
 ```
+
+### Eval Structure
+
+```
+eval/                              # Standalone — excluded from Docker via .dockerignore
+├── run.py                         # CLI entrypoint (--filter, --no-judge, --save-baseline, --provider, --model, --parallelism)
+├── runner.py                      # Workspace setup (copytree → git init → git apply → git commit) + CodeReviewService execution
+├── scorer.py                      # Deterministic scoring: recall, precision, severity, location, recommendation, context
+├── judge.py                       # LLM-as-Judge: completeness, reasoning quality, actionability, false positive quality (1-5)
+├── report.py                      # Report generation + baseline comparison + regression detection (10% threshold)
+├── repos.yaml                     # Repo manifest (name → source_dir, version, language)
+├── repos/                         # Plain source trees (no .git) — runner creates temp git repos
+│   └── requests/                  # requests v2.31.0 (5.2 MB)
+├── cases/
+│   └── requests/
+│       ├── cases.yaml             # 12 case definitions with ground truth (title_pattern, file_pattern, line_range, severity)
+│       └── patches/               # 12 .patch files (4 easy, 5 medium, 3 hard)
+│           ├── 001-missing-timeout.patch
+│           ├── ...
+│           └── 012-response-hook-swallowed.patch
+└── baselines/                     # Timestamped JSON baselines for regression detection
+```
+
+#### Adding a New Repo
+
+1. Clone at a specific version and remove `.git`:
+   ```bash
+   git clone --depth 1 --branch v1.0.0 https://github.com/org/repo.git eval/repos/repo
+   rm -rf eval/repos/repo/.git
+   ```
+2. Add entry to `eval/repos.yaml`
+3. Create `eval/cases/repo/cases.yaml` and `eval/cases/repo/patches/`
+
+#### Adding a New Case
+
+1. Create a patch against the source tree:
+   ```bash
+   cp -r eval/repos/requests /tmp/repo-work && cd /tmp/repo-work
+   git init && git add -A && git commit -m "base"
+   # Make buggy changes...
+   git diff > eval/cases/requests/patches/NNN-description.patch
+   ```
+2. Add case definition to `cases.yaml` with `id`, `patch`, `difficulty`, `title`, `description`, and `expected_findings` (pattern-based ground truth)
+
+#### Scoring Rubric
+
+| Dimension | Weight | What It Measures |
+|-----------|--------|-----------------|
+| Recall | 35% | Fraction of planted bugs found |
+| Precision | 20% | Fraction of findings that are true positives |
+| Severity | 15% | Correct severity assignment |
+| Location | 10% | Correct file + line range |
+| Recommendation | 10% | Fix suggestion matches expected |
+| Context | 10% | Cross-file exploration completed |
 
 ### Agentic Code Intelligence Architecture
 
@@ -201,6 +288,29 @@ Backend creates worktree at worktrees/{room_id}/
        ↓
 FileSystemProvider mounts conductor://{room_id}/ in VS Code
 ```
+
+### Code Review Pipeline
+
+The `code_review/` module implements a multi-agent PR review system with a 10-step pipeline:
+
+```
+Git diff (main...feature)
+       ↓
+1. Parse diff → PRContext (files, additions, deletions, categories)
+2. Classify risk (5 dimensions)
+3. Compute dynamic budget based on PR size
+4. Impact graph injection — query callers/dependents of changed files
+5. Dispatch specialized review agents (parallel, lightweight model)
+6. Merge and dedup findings
+7. Adversarial verification — try to disprove each finding
+8. Severity arbitration — strong model reviews severity labels
+9. Score and rank findings
+10. Synthesis pass — strong model produces final polished review
+       ↓
+ReviewResult (findings + risk profile + summary)
+```
+
+Agents reuse `AgentLoopService` from `agent_loop/` with focused prompts and tool budgets. Endpoints: `POST /api/code-review/review` and `POST /api/code-review/review/stream` (SSE).
 
 ## Key Patterns
 
@@ -321,6 +431,8 @@ conductor.enableWorkspace=true
 
 ## Recent Changes
 
+- **Code Review Eval System** — `eval/` standalone eval suite for measuring `CodeReviewService` quality against planted bugs in real repos. 12 cases against requests v2.31.0 (4 easy, 5 medium, 3 hard) covering timeout, auth leak, SSL bypass, redirect loop, etc. Deterministic scorer (6 dimensions, weighted composite) + LLM-as-Judge (4 criteria, 1-5). Baseline save/load with 10% regression detection. CLI: `python eval/run.py --provider anthropic --filter "requests-001" --no-judge --save-baseline`.
+- **Multi-Agent Code Review** — `code_review/` module implements a 10-step PR review pipeline: diff parsing → risk classification → dynamic budget → impact graph → parallel specialized agents → dedup → adversarial verification → severity arbitration → ranking → synthesis. Reuses `AgentLoopService` with per-agent prompts and budgets. Endpoints at `/api/code-review/review` (+ SSE stream).
 - **Evidence Evaluator** — `evidence.py` in `agent_loop/` checks answer quality before finalizing: requires file:line refs or code blocks, ≥2 tool calls, ≥1 file accessed. If evidence insufficient and budget remains, rejects the answer and forces the LLM to investigate further. 14 tests.
 - **Symbol Role Classification** — `find_symbol` results now include a `role` field (route_entry, business_logic, domain_model, infrastructure, utility, test, unknown) and are sorted by role priority. Classification uses 3 tiers: decorator/annotation context (reads lines above symbol), file path patterns, name patterns. 24 tests.
 - **Session Trace** — `SessionTrace` in `agent_loop/trace.py` records per-iteration metrics (LLM latency, tool latencies, token breakdown, budget signals) as structured JSON. Saved to `{trace_dir}/{session_id}.json` for offline analysis. Opt-in via `trace_dir` on `AgentLoopService`. 15 tests.

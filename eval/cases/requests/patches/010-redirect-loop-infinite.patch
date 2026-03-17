@@ -1,0 +1,13 @@
+--- a/requests/sessions.py	2026-03-15 05:24:29.224303410 +0000
++++ b/requests/sessions.py	2026-03-15 05:24:29.234303280 +0000
+@@ -187,10 +187,6 @@
+             except (ChunkedEncodingError, ContentDecodingError, RuntimeError):
+                 resp.raw.read(decode_content=False)
+ 
+-            if len(resp.history) >= self.max_redirects:
+-                raise TooManyRedirects(
+-                    f"Exceeded {self.max_redirects} redirects.", response=resp
+-                )
+ 
+             # Release the connection back into the pool.
+             resp.close()

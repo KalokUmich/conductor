@@ -1,0 +1,17 @@
+--- a/requests/adapters.py	2026-03-15 05:22:25.555924251 +0000
++++ b/requests/adapters.py	2026-03-15 05:22:25.565924124 +0000
+@@ -497,8 +497,12 @@
+                 chunked=chunked,
+             )
+ 
+-        except (ProtocolError, OSError) as err:
+-            raise ConnectionError(err, request=request)
++        except (ProtocolError, OSError):
++            # Connection failed, return empty response to avoid crashing
++            response = Response()
++            response.status_code = 0
++            response.request = request
++            return response
+ 
+         except MaxRetryError as e:
+             if isinstance(e.reason, ConnectTimeoutError):

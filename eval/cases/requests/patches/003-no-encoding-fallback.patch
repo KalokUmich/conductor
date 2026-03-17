@@ -1,0 +1,11 @@
+--- a/requests/models.py	2026-03-15 05:22:25.575923994 +0000
++++ b/requests/models.py	2026-03-15 05:22:25.585923861 +0000
+@@ -924,8 +924,6 @@
+             return ""
+ 
+         # Fallback to auto-detected encoding.
+-        if self.encoding is None:
+-            encoding = self.apparent_encoding
+ 
+         # Decode unicode from given encoding.
+         try:

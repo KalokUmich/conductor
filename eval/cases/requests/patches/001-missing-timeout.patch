@@ -1,0 +1,24 @@
+--- a/requests/adapters.py	2026-03-15 05:20:54.107139661 +0000
++++ b/requests/adapters.py	2026-03-15 05:20:54.147139138 +0000
+@@ -468,19 +468,8 @@
+ 
+         chunked = not (request.body is None or "Content-Length" in request.headers)
+ 
+-        if isinstance(timeout, tuple):
+-            try:
+-                connect, read = timeout
+-                timeout = TimeoutSauce(connect=connect, read=read)
+-            except ValueError:
+-                raise ValueError(
+-                    f"Invalid timeout {timeout}. Pass a (connect, read) timeout tuple, "
+-                    f"or a single float to set both timeouts to the same value."
+-                )
+-        elif isinstance(timeout, TimeoutSauce):
+-            pass
+-        else:
+-            timeout = TimeoutSauce(connect=timeout, read=timeout)
++        # Use no timeout - let connections take as long as they need
++        timeout = None
+ 
+         try:
+             resp = conn.urlopen(

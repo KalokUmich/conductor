@@ -22,9 +22,10 @@
 8. [Audit & Todos / 审计与任务追踪](#8-audit--todos)
 9. [Authentication / 身份认证](#9-authentication)
 10. [LangExtract Integration / LangExtract 集成](#10-langextract-integration)
-11. [Testing Patterns / 测试模式](#11-testing-patterns)
-12. [Deployment Notes / 部署说明](#12-deployment-notes)
-13. [Contributing / 贡献指南](#13-contributing)
+11. [Code Review Eval System / 代码评审评估系统](#11-code-review-eval-system)
+12. [Testing Patterns / 测试模式](#12-testing-patterns)
+13. [Deployment Notes / 部署说明](#13-deployment-notes)
+14. [Contributing / 贡献指南](#14-contributing)
 
 
 ---
@@ -691,9 +692,147 @@ The `GET /api/langextract/models` endpoint returns the vendor-grouped model list
 
 ---
 
-## 11. Testing Patterns / 测试规范
+## 11. Code Review Eval System / 代码评审评估系统
 
-### 11.1 Backend Tests
+The `eval/` directory (standalone, excluded from Docker via `.dockerignore`) provides an integration test / eval system for `CodeReviewService`. It measures review quality against known bugs planted in real open-source repos.
+
+**eval/ 目录**（独立模块，通过 `.dockerignore` 排除在 Docker 镜像之外）提供了 `CodeReviewService` 的集成测试/评估系统。它通过在真实开源代码中植入已知 bug，衡量代码评审的质量。
+
+### 11.1 Architecture / 架构
+
+```
+eval/
+├── run.py              # CLI entrypoint (--filter, --no-judge, --save-baseline, --provider, --model)
+├── runner.py           # Workspace setup (copytree → git init → git apply → git commit) + CodeReviewService execution
+├── scorer.py           # Deterministic scoring: recall, precision, severity, location, recommendation, context
+├── judge.py            # LLM-as-Judge: completeness, reasoning quality, actionability, false positive quality (1-5)
+├── report.py           # Report generation + baseline comparison + regression detection (10% threshold)
+├── repos.yaml          # Repo manifest (name → source_dir, version, language)
+├── repos/              # Plain source trees (no .git)
+│   └── requests/       # requests v2.31.0 source
+├── cases/
+│   └── requests/
+│       ├── cases.yaml  # 12 case definitions with ground truth
+│       └── patches/    # 12 .patch files (4 easy, 5 medium, 3 hard)
+└── baselines/          # Timestamped JSON baselines for regression detection
+```
+
+### 11.2 How It Works / 工作原理
+
+1. **Runner** — copies a clean source tree to a temp dir, initializes git, applies a patch (planting a bug), and commits
+2. **CodeReviewService.review()** — runs against `HEAD~1..HEAD` (the full multi-agent review pipeline)
+3. **Scorer** — matches findings against ground truth using regex pattern matching on title, file, line range, severity, and category
+4. **Judge** (optional) — uses an LLM to qualitatively evaluate completeness, reasoning, actionability, and false positive quality
+5. **Report** — compares against the latest baseline and flags regressions (>10% composite drop)
+
+**中文说明:** Runner 将源码复制到临时目录，用 git init 初始化，然后 git apply 补丁植入 bug 并提交。CodeReviewService 对 `HEAD~1..HEAD` 执行完整的多 Agent 评审流程。Scorer 用正则匹配将实际发现与预期发现对比，Judge 用 LLM 做定性评估。
+
+### 11.3 CLI Usage / 命令行使用
+
+```bash
+# Run all 12 cases
+python eval/run.py --provider anthropic --model claude-sonnet-4-20250514
+
+# Run a single case (fast check)
+python eval/run.py --filter "requests-001"
+
+# Deterministic scoring only (no LLM judge cost)
+python eval/run.py --no-judge
+
+# Save results as baseline for future regression detection
+python eval/run.py --save-baseline
+
+# Use Bedrock provider
+python eval/run.py --provider bedrock --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+# Use lighter model for sub-agents + run 3 cases in parallel
+python eval/run.py --provider anthropic --explorer-model claude-haiku-4-5-20251001 --parallelism 3
+```
+
+### 11.4 Scoring Rubric / 评分标准
+
+**Deterministic scoring (scorer.py):**
+
+| Dimension | Weight | Description |
+|-----------|--------|-------------|
+| Recall | 35% | Fraction of planted bugs found |
+| Precision | 20% | Fraction of findings that are true positives |
+| Severity Accuracy | 15% | Correct severity assignment (critical/warning/nit) |
+| Location Accuracy | 10% | Correct file + line range |
+| Recommendation | 10% | Fix suggestion matches expected |
+| Context Depth | 10% | Cross-file exploration completed |
+
+**LLM Judge scoring (judge.py) — 4 criteria, 1-5 scale:**
+
+| Criterion | Description |
+|-----------|-------------|
+| Completeness | Did the review find all planted bugs? |
+| Reasoning Quality | Is the analysis well-reasoned with evidence? |
+| Actionability | Are suggestions concrete and fixable? |
+| False Positive Quality | Are non-bug findings legitimate? |
+
+### 11.5 Adding a New Repo / 添加新仓库
+
+1. Clone the repo at a specific version and remove `.git`:
+   ```bash
+   git clone --depth 1 --branch v1.0.0 https://github.com/org/repo.git eval/repos/repo
+   rm -rf eval/repos/repo/.git
+   ```
+2. Add entry to `eval/repos.yaml`:
+   ```yaml
+   repos:
+     repo:
+       source_dir: repos/repo
+       version: "1.0.0"
+       language: python
+   ```
+3. Create `eval/cases/repo/cases.yaml` and `eval/cases/repo/patches/`
+
+**中文说明:** 添加新仓库只需三步：克隆特定版本并删除 `.git`，在 `repos.yaml` 中注册，然后创建对应的 cases 目录和补丁文件。
+
+### 11.6 Adding a New Case / 添加新测试用例
+
+1. Create a patch against the source tree:
+   ```bash
+   cp -r eval/repos/requests /tmp/repo-work && cd /tmp/repo-work
+   git init && git add -A && git commit -m "base"
+   # Make buggy changes...
+   git diff > eval/cases/requests/patches/NNN-description.patch
+   ```
+2. Add case definition to `cases.yaml`:
+   ```yaml
+   - id: requests-NNN
+     patch: patches/NNN-description.patch
+     difficulty: easy|medium|hard
+     title: "Short description"
+     description: "What the bug is"
+     expected_findings:
+       - title_pattern: "regex matching finding title"
+         file_pattern: "file\\.py"
+         line_range: [start, end]
+         severity: critical|warning|nit
+         category: correctness|security|reliability
+         requires_context:     # optional
+           - "path/to/related/file.py"
+         recommendation: "Expected fix suggestion"
+   ```
+
+**中文说明:** 在源码树上修改制造 bug，用 `git diff` 生成补丁，然后在 `cases.yaml` 中定义预期发现（正则匹配标题、文件、行号范围、严重程度等）。`requires_context` 用于验证 Agent 是否进行了跨文件探索。
+
+### 11.7 Baseline & Regression Detection / 基线与回归检测
+
+- Baselines are saved as timestamped JSON in `eval/baselines/`
+- Each run automatically compares against the latest baseline
+- A **regression** is flagged when any case's composite score drops by >10%
+- The CLI exits with code 1 when regressions are detected (useful for CI)
+
+**中文说明:** 基线以 JSON 格式保存在 `eval/baselines/` 中，每次运行自动与最新基线对比。任何用例的综合分数下降超过 10% 会触发回归警告。CLI 在检测到回归时返回退出码 1，适合 CI 集成。
+
+---
+
+## 12. Testing Patterns / 测试规范
+
+### 12.1 Backend Tests
 
 All backend tests use `pytest`. Total: **900+ tests**. Run them with:
 
@@ -730,7 +869,7 @@ pytest --cov=. --cov-report=html             # coverage report
 - Agent loop tests use `MockProvider` with scripted `ToolUseResponse` sequences
 - LangExtract tests mock `lx.extract()` and boto3 API calls
 
-### 11.2 Agent Loop Testing / Agent Loop 测试
+### 12.2 Agent Loop Testing / Agent Loop 测试
 
 Agent loop tests use a `MockProvider` subclass with scripted tool-use responses:
 
@@ -759,7 +898,7 @@ assert result.budget_summary["total_input_tokens"] > 0
 
 **中文说明:** `MockProvider` 允许在不调用真实 LLM API 的情况下测试 agent loop 的完整流程，包括工具调用、结果注入、迭代逻辑、预算信号和证据验证。
 
-### 11.3 Code Tools Testing / 代码工具测试
+### 12.3 Code Tools Testing / 代码工具测试
 
 Code tool tests create real temporary workspaces with actual source files:
 
@@ -775,9 +914,9 @@ This ensures tools work against real file I/O, not mocked filesystems.
 
 ---
 
-## 12. Deployment / 部署
+## 13. Deployment / 部署
 
-### 12.1 Environment Variables / 环境变量
+### 13.1 Environment Variables / 环境变量
 
 All secrets go in `backend/config/conductor.secrets.yaml` (never committed). Non-secret settings live in `backend/config/conductor.settings.yaml`.
 
@@ -799,7 +938,7 @@ ANTHROPIC_API_KEY=sk-ant-...   # Direct Anthropic
 
 **中文说明:** 凭证通过 `conductor.secrets.yaml` 配置，由 `config.py` 读取后注入为环境变量（使用 `os.environ.setdefault`，不覆盖已有值）。
 
-### 12.2 Running Locally / 本地运行
+### 13.2 Running Locally / 本地运行
 
 ```bash
 # Backend
@@ -814,7 +953,7 @@ npm run watch
 # Then press F5 in VS Code to launch Extension Development Host
 ```
 
-### 12.3 File System Layout / 文件系统布局
+### 13.3 File System Layout / 文件系统布局
 
 ```
 /var/conductor/workspaces/
@@ -824,13 +963,13 @@ npm run watch
 
 Both directories must be writable by the process user. Disk usage is roughly 2-3× the repo size per active room.
 
-### 12.4 Git Requirements
+### 13.4 Git Requirements
 
 - Git 2.15+ (worktree support)
 - `ripgrep` (`rg`) in PATH — used by the `grep` code tool
 - `ast-grep` CLI in PATH (optional) — used by the `ast_search` code tool
 
-### 12.5 Docker
+### 13.5 Docker
 
 ```dockerfile
 FROM python:3.11-slim
@@ -855,7 +994,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ---
 
-## 13. Contributing / 贡献指南
+## 14. Contributing / 贡献指南
 
 ### Code Style / 代码风格
 

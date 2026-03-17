@@ -1,0 +1,12 @@
+--- a/requests/adapters.py	2026-03-15 05:24:04.464627100 +0000
++++ b/requests/adapters.py	2026-03-15 05:24:04.474626967 +0000
+@@ -466,7 +466,8 @@
+             proxies=proxies,
+         )
+ 
+-        chunked = not (request.body is None or "Content-Length" in request.headers)
++        # Invert chunked logic: use chunked when Content-Length IS present
++        chunked = request.body is None or "Content-Length" in request.headers
+ 
+         if isinstance(timeout, tuple):
+             try:

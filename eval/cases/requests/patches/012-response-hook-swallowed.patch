@@ -1,0 +1,16 @@
+--- a/requests/hooks.py	2026-03-15 05:24:29.264302890 +0000
++++ b/requests/hooks.py	2026-03-15 05:24:29.274302759 +0000
+@@ -27,7 +27,10 @@
+         if hasattr(hooks, "__call__"):
+             hooks = [hooks]
+         for hook in hooks:
+-            _hook_data = hook(hook_data, **kwargs)
+-            if _hook_data is not None:
+-                hook_data = _hook_data
++            try:
++                _hook_data = hook(hook_data, **kwargs)
++                if _hook_data is not None:
++                    hook_data = _hook_data
++            except Exception:
++                pass  # Silently ignore hook errors for stability
+     return hook_data

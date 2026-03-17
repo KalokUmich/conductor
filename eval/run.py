@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""CLI entrypoint for the code review eval system.
+
+Usage:
+    python eval/run.py --provider anthropic --model claude-sonnet-4-20250514
+    python eval/run.py --filter "requests-001"
+    python eval/run.py --no-judge
+    python eval/run.py --save-baseline
+    python eval/run.py --provider bedrock --model us.anthropic.claude-sonnet-4-5-20250929-v1:0
+
+Providers:
+    anthropic  — Anthropic Messages API (requires ANTHROPIC_API_KEY)
+    bedrock    — AWS Bedrock Converse API (requires AWS credentials)
+    openai     — OpenAI Chat Completions (requires OPENAI_API_KEY)
+"""
+
+import argparse
+import asyncio
+import os
+import sys
+from pathlib import Path
+
+import yaml
+
+# Ensure eval/ is on sys.path for local imports
+_EVAL_DIR = Path(__file__).resolve().parent
+if str(_EVAL_DIR) not in sys.path:
+    sys.path.insert(0, str(_EVAL_DIR))
+
+# Backend imports (runner adds backend/ to sys.path)
+from runner import CaseConfig, RunResult, run_case  # noqa: E402
+from scorer import CaseScore, score_case  # noqa: E402
+from judge import judge_case  # noqa: E402
+from report import EvalReport, build_report, print_report, save_baseline  # noqa: E402
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run code review eval suite",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument(
+        "--filter", type=str, default=None,
+        help="Run only cases matching this substring (e.g. 'requests-001')",
+    )
+    parser.add_argument(
+        "--no-judge", action="store_true",
+        help="Skip LLM judge evaluation (deterministic scoring only)",
+    )
+    parser.add_argument(
+        "--save-baseline", action="store_true",
+        help="Save results as a new baseline after the run",
+    )
+    parser.add_argument(
+        "--provider", type=str, default="anthropic",
+        choices=["anthropic", "bedrock", "openai"],
+        help="AI provider to use (default: anthropic)",
+    )
+    parser.add_argument(
+        "--model", type=str, default=None,
+        help="Model ID override (provider-specific)",
+    )
+    parser.add_argument(
+        "--explorer-model", type=str, default=None,
+        help="Model for sub-agents (lighter/faster model)",
+    )
+    parser.add_argument(
+        "--parallelism", type=int, default=1,
+        help="Number of cases to run in parallel (default: 1)",
+    )
+    parser.add_argument(
+        "--max-agents", type=int, default=5,
+        help="Max parallel agents per review (default: 5)",
+    )
+    return parser.parse_args()
+
+
+def create_provider(provider_name: str, model: str = None):
+    """Create an AIProvider instance based on CLI args."""
+    # Import here after sys.path is set up by runner
+    _backend = str(Path(__file__).resolve().parent.parent / "backend")
+    if _backend not in sys.path:
+        sys.path.insert(0, _backend)
+
+    if provider_name == "anthropic":
+        from app.ai_provider.claude_direct import ClaudeDirectProvider
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            print("ERROR: ANTHROPIC_API_KEY not set", file=sys.stderr)
+            sys.exit(1)
+        return ClaudeDirectProvider(
+            api_key=api_key,
+            model=model or "claude-sonnet-4-20250514",
+        )
+
+    elif provider_name == "bedrock":
+        from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
+        return ClaudeBedrockProvider(
+            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
+            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+            model_id=model or "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        )
+
+    elif provider_name == "openai":
+        from app.ai_provider.openai_provider import OpenAIProvider
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            print("ERROR: OPENAI_API_KEY not set", file=sys.stderr)
+            sys.exit(1)
+        return OpenAIProvider(
+            api_key=api_key,
+            model=model or "gpt-4o",
+        )
+
+    else:
+        print(f"ERROR: Unknown provider: {provider_name}", file=sys.stderr)
+        sys.exit(1)
+
+
+def load_cases(eval_dir: Path, filter_str: str = None) -> list:
+    """Load all case configs from repos.yaml + per-repo cases.yaml."""
+    repos_path = eval_dir / "repos.yaml"
+    with open(repos_path) as f:
+        repos_config = yaml.safe_load(f)
+
+    all_cases = []
+    for repo_name, repo_info in repos_config.get("repos", {}).items():
+        cases_path = eval_dir / "cases" / repo_name / "cases.yaml"
+        if not cases_path.exists():
+            print(f"WARNING: No cases.yaml for repo '{repo_name}'", file=sys.stderr)
+            continue
+
+        with open(cases_path) as f:
+            cases_data = yaml.safe_load(f)
+
+        source_dir = str(eval_dir / repo_info["source_dir"])
+        patch_dir = str(eval_dir / "cases" / repo_name)
+
+        for case_def in cases_data.get("cases", []):
+            case = CaseConfig(
+                id=case_def["id"],
+                patch=case_def["patch"],
+                difficulty=case_def["difficulty"],
+                title=case_def["title"],
+                description=case_def["description"],
+                expected_findings=case_def.get("expected_findings", []),
+            )
+            all_cases.append((case, source_dir, patch_dir))
+
+    if filter_str:
+        all_cases = [(c, s, p) for c, s, p in all_cases if filter_str in c.id]
+
+    return all_cases
+
+
+async def run_single_case(
+    case: CaseConfig,
+    source_dir: str,
+    patch_dir: str,
+    provider,
+    explorer_provider,
+    max_agents: int,
+    use_judge: bool,
+    judge_provider=None,
+) -> tuple:
+    """Run a single case and return (CaseScore, judge_verdict_dict or None)."""
+    print(f"  Running {case.id} ({case.difficulty})... ", end="", flush=True)
+
+    run_result = await run_case(
+        case=case,
+        source_dir=source_dir,
+        patch_dir=patch_dir,
+        provider=provider,
+        explorer_provider=explorer_provider,
+        max_agents=max_agents,
+    )
+
+    if run_result.error:
+        print(f"ERROR: {run_result.error}")
+        return CaseScore(case_id=case.id, error=run_result.error), None
+
+    review = run_result.review_result
+    findings = review.findings if review else []
+    files_reviewed = review.files_reviewed if review else []
+
+    score = score_case(case, findings, files_reviewed)
+    print(f"composite={score.composite:.3f} (recall={score.recall:.2f}, findings={len(findings)})")
+
+    # LLM judge
+    judge_verdict = None
+    if use_judge and judge_provider and review:
+        print(f"    Judging {case.id}... ", end="", flush=True)
+        verdict = judge_case(
+            provider=judge_provider,
+            case_title=case.title,
+            case_description=case.description,
+            expected_findings=case.expected_findings,
+            findings=findings,
+            synthesis=review.synthesis,
+        )
+        judge_verdict = verdict.to_dict()
+        judge_verdict["case_id"] = case.id
+        print(f"avg={verdict.average:.1f}")
+
+    return score, judge_verdict
+
+
+async def run_all(args: argparse.Namespace) -> None:
+    """Main async entry point."""
+    eval_dir = Path(__file__).resolve().parent
+    cases = load_cases(eval_dir, args.filter)
+
+    if not cases:
+        print("No cases found. Check repos.yaml and cases/ directory.")
+        return
+
+    print(f"Loaded {len(cases)} case(s)")
+    print(f"Provider: {args.provider}, Model: {args.model or 'default'}")
+    print()
+
+    # Create providers
+    provider = create_provider(args.provider, args.model)
+    explorer_provider = None
+    if args.explorer_model:
+        explorer_provider = create_provider(args.provider, args.explorer_model)
+
+    judge_provider = provider if not args.no_judge else None
+
+    scores = []
+    verdicts = []
+
+    # Run cases (sequential or parallel)
+    if args.parallelism <= 1:
+        for case, source_dir, patch_dir in cases:
+            score, verdict = await run_single_case(
+                case, source_dir, patch_dir,
+                provider, explorer_provider, args.max_agents,
+                not args.no_judge, judge_provider,
+            )
+            scores.append(score)
+            if verdict:
+                verdicts.append(verdict)
+    else:
+        # Run in batches
+        for i in range(0, len(cases), args.parallelism):
+            batch = cases[i:i + args.parallelism]
+            tasks = [
+                run_single_case(
+                    case, source_dir, patch_dir,
+                    provider, explorer_provider, args.max_agents,
+                    not args.no_judge, judge_provider,
+                )
+                for case, source_dir, patch_dir in batch
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    print(f"  Case failed with exception: {result}")
+                    scores.append(CaseScore(case_id="unknown", error=str(result)))
+                else:
+                    score, verdict = result
+                    scores.append(score)
+                    if verdict:
+                        verdicts.append(verdict)
+
+    # Build and print report
+    report = build_report(
+        scores=scores,
+        judge_verdicts=verdicts or None,
+        provider=args.provider,
+        model=args.model or "default",
+    )
+    print_report(report)
+
+    # Save baseline if requested
+    if args.save_baseline:
+        path = save_baseline(report)
+        print(f"Baseline saved: {path}")
+
+    # Exit with error code if regressions detected
+    if report.has_regressions:
+        sys.exit(1)
+
+
+def main():
+    args = parse_args()
+    asyncio.run(run_all(args))
+
+
+if __name__ == "__main__":
+    main()

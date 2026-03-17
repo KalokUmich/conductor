@@ -1,0 +1,12 @@
+# Repository manifest for code review evaluation.
+#
+# Each entry maps a short name to a repo stored under eval/repos/.
+# The source directory should be a plain copy of the repo (no .git).
+# The runner will create a temporary git repo from this source for each case.
+
+repos:
+  requests:
+    source_dir: repos/requests
+    version: "2.31.0"
+    language: python
+    description: "Python HTTP library — popular, well-structured, real-world codebase"

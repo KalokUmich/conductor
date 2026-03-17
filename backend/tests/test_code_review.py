@@ -8,6 +8,8 @@ Covers:
   - Agent spec selection and query building
   - Service orchestration (with mocked agents)
   - API endpoint schemas
+  - Impact graph context injection
+  - Adversarial verification (defense attorney pass)
 """
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -26,6 +28,7 @@ from app.code_review.models import (
     RiskProfile,
     Severity,
 )
+from app.code_tools.schemas import ToolResult
 
 
 # =========================================================================
@@ -1284,3 +1287,499 @@ class TestSeverityArbitration:
 
         result = await _arbitrate_severities(mock_provider, findings, {})
         assert result[0].severity == Severity.CRITICAL  # unchanged
+
+    # ---- Defense attorney (merged from verification) tests ----
+
+    @pytest.mark.asyncio
+    async def test_drop_verdict_removes_finding(self):
+        """Drop verdict removes the finding entirely."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '<result>[{"index": 0, "severity": "drop", "reason": "Token consumed atomically via GETDEL"}]</result>'
+
+        findings = [
+            ReviewFinding(
+                title="Token race", category=FindingCategory.CORRECTNESS,
+                severity=Severity.CRITICAL, file="app/auth.py", start_line=10,
+                agent="correctness",
+            ),
+        ]
+        result = await _arbitrate_severities(mock_provider, findings, {})
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_drop_blocked_for_multi_source(self):
+        """Multi-source findings cannot be dropped — capped at warning instead."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '<result>[{"index": 0, "severity": "drop", "reason": "looks fine"}]</result>'
+
+        f = ReviewFinding(
+            title="Race cond", category=FindingCategory.CONCURRENCY,
+            severity=Severity.CRITICAL, file="app/svc.py",
+            agent="correctness+concurrency",  # multi-source
+        )
+        result = await _arbitrate_severities(mock_provider, [f], {})
+        assert len(result) == 1
+        assert result[0].severity == Severity.WARNING
+        assert any("drop blocked" in e for e in result[0].evidence)
+
+    @pytest.mark.asyncio
+    async def test_drop_multi_source_already_warning_no_change(self):
+        """Multi-source warning finding — drop blocked, already warning so no evidence added."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '<result>[{"index": 0, "severity": "drop", "reason": "design choice"}]</result>'
+
+        f = ReviewFinding(
+            title="Missing retry", category=FindingCategory.RELIABILITY,
+            severity=Severity.WARNING, file="app/q.py",
+            agent="reliability+correctness",
+        )
+        result = await _arbitrate_severities(mock_provider, [f], {})
+        assert len(result) == 1
+        assert result[0].severity == Severity.WARNING
+
+    @pytest.mark.asyncio
+    async def test_mixed_drop_and_adjust(self):
+        """Mix of drop, adjust, and keep in one response."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '''<result>[
+            {"index": 0, "severity": "critical", "reason": "code-provable"},
+            {"index": 1, "severity": "drop", "reason": "safe by design"},
+            {"index": 2, "severity": "nit", "reason": "assumption-dependent"}
+        ]</result>'''
+
+        findings = [
+            ReviewFinding(title="Race", category=FindingCategory.CONCURRENCY,
+                          severity=Severity.CRITICAL, file="a.py", agent="concurrency"),
+            ReviewFinding(title="Token leak", category=FindingCategory.SECURITY,
+                          severity=Severity.WARNING, file="b.py", agent="security"),
+            ReviewFinding(title="No lock", category=FindingCategory.CORRECTNESS,
+                          severity=Severity.WARNING, file="c.py", agent="correctness"),
+        ]
+        result = await _arbitrate_severities(mock_provider, findings, {})
+        assert len(result) == 2  # Token leak dropped
+        assert result[0].title == "Race"
+        assert result[0].severity == Severity.CRITICAL
+        assert result[1].title == "No lock"
+        assert result[1].severity == Severity.NIT
+
+    @pytest.mark.asyncio
+    async def test_reasoning_included_in_arbitration_prompt(self):
+        """Finding reasoning is passed to the arbitration prompt."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '<result>[{"index": 0, "severity": "critical", "reason": "ok"}]</result>'
+
+        f = ReviewFinding(
+            title="Race", category=FindingCategory.CONCURRENCY,
+            severity=Severity.CRITICAL, file="app/svc.py", start_line=42,
+            agent="concurrency",
+        )
+        f.reasoning = "GET at line 42 then DELETE at line 80 creates a TOCTOU window"
+        await _arbitrate_severities(mock_provider, [f], {})
+
+        prompt = mock_provider.call_model.call_args[1].get("prompt", "")
+        if not prompt and mock_provider.call_model.call_args[0]:
+            prompt = mock_provider.call_model.call_args[0][0]
+        assert "TOCTOU" in prompt
+
+    @pytest.mark.asyncio
+    async def test_diff_context_included_in_arbitration_prompt(self):
+        """Relevant diff hunks are passed to the arbitration prompt."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = '<result>[{"index": 0, "severity": "critical", "reason": "ok"}]</result>'
+
+        f = ReviewFinding(
+            title="Auth bypass", category=FindingCategory.SECURITY,
+            severity=Severity.CRITICAL, file="app/auth.py", start_line=5,
+            agent="security",
+        )
+        diffs = {"app/auth.py": "@@ -1,3 +1,5 @@\n+import redis\n def check_token():\n     pass"}
+        await _arbitrate_severities(mock_provider, [f], diffs)
+
+        prompt = mock_provider.call_model.call_args[1].get("prompt", "")
+        if not prompt and mock_provider.call_model.call_args[0]:
+            prompt = mock_provider.call_model.call_args[0][0]
+        assert "app/auth.py" in prompt
+        assert "check_token" in prompt
+
+    @pytest.mark.asyncio
+    async def test_result_tag_extraction_in_arbitration(self):
+        """JSON inside <result> tags is correctly extracted."""
+        from app.code_review.service import _arbitrate_severities
+
+        mock_provider = MagicMock()
+        mock_provider.call_model.return_value = (
+            "<reasoning>\nFinding 0: code-provable race.\n</reasoning>\n"
+            "<result>\n"
+            '[{"index": 0, "severity": "warning", "reason": "trigger not proven"}]\n'
+            "</result>"
+        )
+
+        findings = [
+            ReviewFinding(title="Race", category=FindingCategory.CONCURRENCY,
+                          severity=Severity.CRITICAL, file="a.py", agent="concurrency"),
+        ]
+        result = await _arbitrate_severities(mock_provider, findings, {})
+        assert result[0].severity == Severity.WARNING
+
+
+# =========================================================================
+# Impact Graph Context Injection
+# =========================================================================
+
+
+class TestImpactGraph:
+    """Test _build_impact_context — pre-computes callers/dependents for agents."""
+
+    def _make_pr_context(self, paths, category=FileCategory.BUSINESS_LOGIC):
+        files = [ChangedFile(path=p, additions=30, deletions=10, category=category) for p in paths]
+        return PRContext(
+            diff_spec="main...feature",
+            files=files,
+            total_additions=sum(f.additions for f in files),
+            total_deletions=sum(f.deletions for f in files),
+            total_changed_lines=sum(f.additions + f.deletions for f in files),
+            file_count=len(files),
+        )
+
+    def test_empty_pr_returns_empty(self):
+        from app.code_review.service import _build_impact_context
+        ctx = self._make_pr_context([])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert result == ""
+
+    def test_no_business_logic_files_returns_empty(self):
+        from app.code_review.service import _build_impact_context
+        ctx = self._make_pr_context(["tests/test_auth.py"], category=FileCategory.TEST)
+        result = _build_impact_context("/fake/ws", ctx)
+        assert result == ""
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_with_callers_and_dependents(self, mock_deps, mock_depts):
+        """Impact context includes both callers (←) and dependencies (→)."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(
+            tool_name="get_dependents", success=True,
+            data=[{"file_path": "app/handler.py", "symbols": ["process_order"], "weight": 3}],
+        )
+        mock_deps.return_value = ToolResult(
+            tool_name="get_dependencies", success=True,
+            data=[{"file_path": "app/db.py", "symbols": ["save_record"], "weight": 2}],
+        )
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+
+        assert "Impact Graph" in result
+        assert "app/service.py" in result
+        assert "← app/handler.py" in result
+        assert "→ app/db.py" in result
+        assert "process_order" in result
+        assert "save_record" in result
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_no_dependencies_returns_empty(self, mock_deps, mock_depts):
+        """If no files have callers or dependents, return empty."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert result == ""
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_graph_failure_returns_empty(self, mock_deps, mock_depts):
+        """If graph tools fail, return empty (graceful degradation)."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=False, error="no graph")
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=False, error="no graph")
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert result == ""
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_only_callers_no_dependencies(self, mock_deps, mock_depts):
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(
+            tool_name="get_dependents", success=True,
+            data=[{"file_path": "app/controller.py", "symbols": ["handle_request"], "weight": 5}],
+        )
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert "← app/controller.py" in result
+        # No dependency lines (→ only appears in the header, not as data lines)
+        lines = result.split("\n")
+        data_lines = [l for l in lines if l.strip().startswith("→")]
+        assert len(data_lines) == 0
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_only_dependencies_no_callers(self, mock_deps, mock_depts):
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[])
+        mock_deps.return_value = ToolResult(
+            tool_name="get_dependencies", success=True,
+            data=[{"file_path": "app/models.py", "symbols": ["User", "Session"], "weight": 4}],
+        )
+
+        ctx = self._make_pr_context(["app/auth.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert "→ app/models.py" in result
+        # No caller lines (← only appears in the header, not as data lines)
+        lines = result.split("\n")
+        data_lines = [l for l in lines if l.strip().startswith("←")]
+        assert len(data_lines) == 0
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_caps_at_15_files(self, mock_deps, mock_depts):
+        """Only processes first 15 business logic files."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[
+            {"file_path": "caller.py", "symbols": ["call_me"], "weight": 1}
+        ])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        paths = [f"app/service_{i}.py" for i in range(20)]
+        ctx = self._make_pr_context(paths)
+        _build_impact_context("/fake/ws", ctx)
+
+        # get_dependents should be called 15 times (capped), not 20
+        assert mock_depts.call_count == 15
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_caps_dependents_at_5(self, mock_deps, mock_depts):
+        """Each file shows at most 5 callers."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[
+            {"file_path": f"caller_{i}.py", "symbols": [f"fn_{i}"], "weight": 10 - i}
+            for i in range(10)
+        ])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+
+        # Only 5 callers should appear (top 5 by weight)
+        # Header has one ← too, so data lines count should be 5
+        lines = result.split("\n")
+        caller_lines = [l for l in lines if l.strip().startswith("←")]
+        assert len(caller_lines) == 5
+        assert "caller_0.py" in result
+        assert "caller_4.py" in result
+        assert "caller_5.py" not in result
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_caps_symbols_at_3(self, mock_deps, mock_depts):
+        """Symbol list is capped at 3 per dependency."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[
+            {"file_path": "caller.py", "symbols": ["fn1", "fn2", "fn3", "fn4", "fn5"], "weight": 1}
+        ])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert "fn1" in result
+        assert "fn3" in result
+        assert "fn4" not in result
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_multiple_files_each_get_section(self, mock_deps, mock_depts):
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[
+            {"file_path": "caller.py", "symbols": ["handle"], "weight": 1}
+        ])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/auth.py", "app/payment.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert "app/auth.py" in result
+        assert "app/payment.py" in result
+
+    @patch("app.code_tools.tools.get_dependents")
+    @patch("app.code_tools.tools.get_dependencies")
+    def test_includes_additions_deletions(self, mock_deps, mock_depts):
+        """Impact context shows +additions/-deletions for each file."""
+        from app.code_review.service import _build_impact_context
+
+        mock_depts.return_value = ToolResult(tool_name="get_dependents", success=True, data=[
+            {"file_path": "caller.py", "symbols": ["x"], "weight": 1}
+        ])
+        mock_deps.return_value = ToolResult(tool_name="get_dependencies", success=True, data=[])
+
+        ctx = self._make_pr_context(["app/service.py"])
+        result = _build_impact_context("/fake/ws", ctx)
+        assert "+30/-10" in result
+
+    def test_import_failure_returns_empty(self):
+        """If code_tools can't be imported, returns empty."""
+        import sys
+        from app.code_review.service import _build_impact_context
+        ctx = self._make_pr_context(["app/service.py"])
+
+        # Temporarily remove the module so the lazy import inside the
+        # function raises ImportError
+        saved = sys.modules.get("app.code_tools.tools")
+        sys.modules["app.code_tools.tools"] = None  # type: ignore[assignment]
+        try:
+            result = _build_impact_context("/fake/ws", ctx)
+            assert result == ""
+        finally:
+            if saved is not None:
+                sys.modules["app.code_tools.tools"] = saved
+            else:
+                sys.modules.pop("app.code_tools.tools", None)
+
+
+class TestImpactContextInAgentQuery:
+    """Test that impact_context is correctly injected into agent prompts."""
+
+    def test_agent_query_includes_impact_context(self):
+        from app.code_review.agents import AGENT_SPECS, _build_agent_query
+        spec = AGENT_SPECS[0]
+        ctx = PRContext(diff_spec="main...feature", file_count=1, total_changed_lines=50,
+                       files=[ChangedFile(path="app/auth.py", additions=30, deletions=20,
+                                         category=FileCategory.BUSINESS_LOGIC)])
+        profile = RiskProfile()
+        impact = "## Impact Graph\n\n`app/auth.py`:\n  ← app/handler.py (refs: process)"
+
+        query = _build_agent_query(spec, ctx, profile, impact_context=impact)
+        assert "Impact Graph" in query
+        assert "app/handler.py" in query
+        assert "<impact_context>" in query
+
+    def test_agent_query_without_impact_context(self):
+        from app.code_review.agents import AGENT_SPECS, _build_agent_query
+        spec = AGENT_SPECS[0]
+        ctx = PRContext(diff_spec="main...feature", file_count=1, total_changed_lines=50,
+                       files=[ChangedFile(path="app/auth.py", additions=30, deletions=20,
+                                         category=FileCategory.BUSINESS_LOGIC)])
+        profile = RiskProfile()
+
+        query = _build_agent_query(spec, ctx, profile, impact_context="")
+        assert "<impact_context>" not in query
+
+    def test_empty_impact_context_no_xml_tags(self):
+        """Empty impact_context should not produce XML tags in prompt."""
+        from app.code_review.agents import AGENT_SPECS, _build_agent_query
+        spec = AGENT_SPECS[0]
+        ctx = PRContext(diff_spec="main...feature", file_count=1, total_changed_lines=20,
+                       files=[ChangedFile(path="app/x.py", additions=10, deletions=10,
+                                         category=FileCategory.BUSINESS_LOGIC)])
+        profile = RiskProfile()
+
+        query = _build_agent_query(spec, ctx, profile, impact_context="")
+        assert "impact_context" not in query
+
+
+
+# =========================================================================
+# Adversarial Verification (Defense Attorney Pass)
+# =========================================================================
+
+
+
+
+
+class TestExtractRelevantDiff:
+    """Test _extract_relevant_diff — hunk-aware diff slicing."""
+
+    def test_empty_diff_returns_empty(self):
+        from app.code_review.service import _extract_relevant_diff
+        result = _extract_relevant_diff("", 50)
+        assert result == ""
+
+    def test_no_start_line_returns_first_window(self):
+        from app.code_review.service import _extract_relevant_diff
+        diff = "\n".join(f"line {i}" for i in range(100))
+        result = _extract_relevant_diff(diff, 0, window=10)
+        assert "line 0" in result
+        assert "line 9" in result
+
+    def test_finds_matching_hunk(self):
+        from app.code_review.service import _extract_relevant_diff
+        diff = "diff header\n" + \
+               "--- a/file.py\n" + \
+               "+++ b/file.py\n" + \
+               "@@ -10,5 +10,7 @@\n" + \
+               " context line\n" + \
+               "+added at line 11\n" + \
+               " more context\n" + \
+               "@@ -100,5 +102,7 @@\n" + \
+               " deep context\n" + \
+               "+added at line 103\n" + \
+               " end context"
+        # Finding at line 103 should match the second hunk
+        result = _extract_relevant_diff(diff, 103, window=10)
+        assert "added at line 103" in result
+
+    def test_falls_back_to_closest_hunk(self):
+        from app.code_review.service import _extract_relevant_diff
+        diff = "@@ -5,3 +5,3 @@\nline A\nline B\n@@ -50,3 +50,3 @@\nline C\nline D"
+        # Line 200 is past all hunks — should fall back to last hunk
+        result = _extract_relevant_diff(diff, 200, window=10)
+        assert "line C" in result
+
+    def test_window_controls_output_size(self):
+        from app.code_review.service import _extract_relevant_diff
+        lines = ["@@ -1,100 +1,100 @@"] + [f"line {i}" for i in range(200)]
+        diff = "\n".join(lines)
+        result = _extract_relevant_diff(diff, 5, window=20)
+        result_lines = result.split("\n")
+        assert len(result_lines) <= 25  # window + some slack for context
+
+
+class TestIsMultiSource:
+    """Test _is_multi_source helper."""
+
+    def test_single_agent(self):
+        from app.code_review.service import _is_multi_source
+        f = ReviewFinding(title="x", category=FindingCategory.CORRECTNESS, severity=Severity.CRITICAL, agent="security")
+        assert not _is_multi_source(f)
+
+    def test_multi_agent(self):
+        from app.code_review.service import _is_multi_source
+        f = ReviewFinding(title="x", category=FindingCategory.CORRECTNESS, severity=Severity.CRITICAL, agent="security+correctness")
+        assert _is_multi_source(f)
+
+    def test_triple_agent(self):
+        from app.code_review.service import _is_multi_source
+        f = ReviewFinding(title="x", category=FindingCategory.CORRECTNESS, severity=Severity.CRITICAL, agent="a+b+c")
+        assert _is_multi_source(f)
+
+    def test_empty_agent(self):
+        from app.code_review.service import _is_multi_source
+        f = ReviewFinding(title="x", category=FindingCategory.CORRECTNESS, severity=Severity.CRITICAL, agent="")
+        assert not _is_multi_source(f)

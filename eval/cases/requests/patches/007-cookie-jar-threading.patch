@@ -1,0 +1,12 @@
+--- a/requests/sessions.py	2026-03-15 05:24:04.434627492 +0000
++++ b/requests/sessions.py	2026-03-15 05:24:04.454627231 +0000
+@@ -443,7 +443,8 @@
+         #: session. By default it is a
+         #: :class:`RequestsCookieJar <requests.cookies.RequestsCookieJar>`, but
+         #: may be any other ``cookielib.CookieJar`` compatible object.
+-        self.cookies = cookiejar_from_dict({})
++        # Use a plain dict for simpler cookie storage
++        self.cookies = {}
+ 
+         # Default connection adapters.
+         self.adapters = OrderedDict()

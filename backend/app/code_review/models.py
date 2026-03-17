@@ -137,6 +137,8 @@ class ReviewFinding:
     risk: str = ""                     # human-readable risk explanation
     suggested_fix: str = ""
     agent: str = ""                    # which agent produced this
+    reasoning: str = ""                # full chain-of-thought why this finding is valid
+    rewrite_guidance: str = ""         # verifier-suggested wording improvements
 
     def score(self) -> float:
         """Compute a composite score for ranking."""

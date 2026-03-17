@@ -267,6 +267,30 @@ Additional test files:
 - `tests/test_room_settings.py`: 18 — room settings
 - `tests/test_audit.py`: 14 — audit log
 
+### Code Review Eval
+
+A standalone eval system in `eval/` (excluded from Docker) measures `CodeReviewService` quality against known bugs planted in real open-source repos. 12 cases against requests v2.31.0 (4 easy, 5 medium, 3 hard).
+
+```bash
+# Run all cases
+python eval/run.py --provider anthropic --model claude-sonnet-4-20250514
+
+# Single case
+python eval/run.py --filter "requests-001"
+
+# Deterministic only (no LLM judge)
+python eval/run.py --no-judge
+
+# Save baseline for regression detection
+python eval/run.py --save-baseline
+```
+
+Scoring: recall (35%), precision (20%), severity (15%), location (10%), recommendation (10%), context (10%). Optional LLM-as-Judge evaluates completeness, reasoning, actionability, and false positive quality (1-5 scale). Baselines saved as JSON; regressions flagged at >10% composite drop.
+
+**Adding a new repo:** clone at a specific version → remove `.git` → add to `eval/repos.yaml` → create `eval/cases/<repo>/cases.yaml` and patches.
+
+See `eval/README.md` for full documentation.
+
 ---
 
 <a name="中文"></a>
@@ -460,3 +484,27 @@ python -m pytest tests/ -q
 - `tests/test_audit.py`: 14
 - `tests/test_config_paths.py`: 3
 - `tests/test_main.py`: 1
+
+### 代码评审评估
+
+独立的 `eval/` 目录（通过 `.dockerignore` 排除在 Docker 镜像之外）提供 `CodeReviewService` 质量评估系统。在真实开源仓库中植入已知 bug，衡量评审质量。目前有 12 个用例（基于 requests v2.31.0）。
+
+```bash
+# 运行所有用例
+python eval/run.py --provider anthropic --model claude-sonnet-4-20250514
+
+# 单个用例
+python eval/run.py --filter "requests-001"
+
+# 仅确定性评分（不使用 LLM Judge）
+python eval/run.py --no-judge
+
+# 保存基线用于回归检测
+python eval/run.py --save-baseline
+```
+
+评分维度：召回率 (35%)、精确率 (20%)、严重程度准确性 (15%)、定位准确性 (10%)、修复建议 (10%)、上下文深度 (10%)。可选 LLM Judge 评估完整性、推理质量、可操作性和误报质量（1-5 分）。基线以 JSON 格式保存，综合分数下降 >10% 触发回归警告。
+
+**添加新仓库：** 克隆指定版本 → 删除 `.git` → 添加到 `eval/repos.yaml` → 创建 `eval/cases/<repo>/cases.yaml` 和补丁文件。
+
+详见 `eval/README.md`。

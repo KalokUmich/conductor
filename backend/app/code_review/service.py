@@ -4,11 +4,14 @@ Implements the full review pipeline:
   1. Parse diff into PRContext
   2. Classify risk
   3. Compute dynamic budget based on PR size
-  4. Dispatch specialized agents (in parallel) — lightweight model
-  5. Merge and dedup findings
-  6. Score and rank findings
-  7. Synthesis pass — strong model produces the final polished review
-  8. Return structured ReviewResult
+  4. **Impact graph injection** — query callers/dependents of changed files
+  5. Dispatch specialized agents (in parallel) — lightweight model
+  6. Merge and dedup findings
+  7. **Adversarial verification** — try to disprove each finding
+  8. Severity arbitration — strong model reviews severity labels
+  9. Score and rank findings
+  10. Synthesis pass — strong model produces the final polished review
+  11. Return structured ReviewResult
 """
 from __future__ import annotations
 
@@ -73,13 +76,126 @@ def _post_filter(findings: list[ReviewFinding]) -> list[ReviewFinding]:
 
 
 # ---------------------------------------------------------------------------
-# Severity arbitration — strong model reviews severity assignments
+# Impact Graph — pre-compute callers/dependents of changed files
+# ---------------------------------------------------------------------------
+
+
+def _build_impact_context(
+    workspace_path: str,
+    pr_context: PRContext,
+) -> str:
+    """Query the dependency graph for callers/dependents of changed files.
+
+    Returns a structured text block that can be injected into agent prompts
+    so they see cross-file impact without burning tool-call budget.
+    """
+    try:
+        from app.code_tools.tools import get_dependents, get_dependencies
+    except ImportError:
+        logger.warning("Impact graph unavailable: cannot import code_tools")
+        return ""
+
+    biz_files = pr_context.business_logic_files()
+    if not biz_files:
+        return ""
+
+    sections: List[str] = []
+    files_processed = 0
+
+    for f in biz_files[:15]:  # cap to avoid slow scans on huge PRs
+        dependents_result = get_dependents(workspace=workspace_path, file_path=f.path)
+        dependencies_result = get_dependencies(workspace=workspace_path, file_path=f.path)
+
+        dep_lines: List[str] = []
+
+        if dependents_result.success and dependents_result.data:
+            callers = dependents_result.data[:5]  # top 5 by weight
+            caller_strs = [
+                f"  ← {d['file_path']} (refs: {', '.join(d.get('symbols', [])[:3])})"
+                for d in callers
+            ]
+            dep_lines.extend(caller_strs)
+
+        if dependencies_result.success and dependencies_result.data:
+            deps = dependencies_result.data[:5]
+            dep_strs = [
+                f"  → {d['file_path']} (uses: {', '.join(d.get('symbols', [])[:3])})"
+                for d in deps
+            ]
+            dep_lines.extend(dep_strs)
+
+        if dep_lines:
+            sections.append(f"`{f.path}` (+{f.additions}/-{f.deletions}):\n" + "\n".join(dep_lines))
+            files_processed += 1
+
+    if not sections:
+        return ""
+
+    logger.info("Impact graph: computed dependencies for %d/%d files", files_processed, len(biz_files))
+    return (
+        "## Impact Graph — callers (←) and dependencies (→) of changed files\n\n"
+        + "\n\n".join(sections)
+    )
+
+
+
+
+
+def _extract_relevant_diff(full_diff: str, start_line: int, window: int = 80) -> str:
+    """Extract the diff hunk(s) most relevant to a finding's line range.
+
+    Instead of blindly truncating at N chars, this finds the hunk containing
+    *start_line* and returns a window around it.  Falls back to the first
+    *window* lines if no matching hunk is found.
+    """
+    if not full_diff or not start_line:
+        # No line info → return first portion (still better than nothing)
+        lines = full_diff.split("\n")
+        return "\n".join(lines[:window])
+
+    lines = full_diff.split("\n")
+    hunk_header_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+
+    # Find the hunk that contains start_line
+    best_start = 0
+    for i, line in enumerate(lines):
+        m = hunk_header_re.match(line)
+        if m:
+            hunk_start = int(m.group(1))
+            hunk_len = int(m.group(2)) if m.group(2) else 1
+            if hunk_start <= start_line <= hunk_start + hunk_len + 20:
+                # Found the relevant hunk — take window lines centered here
+                begin = max(0, i - 5)
+                end = min(len(lines), i + window)
+                return "\n".join(lines[begin:end])
+            best_start = i  # track last hunk before our line
+
+    # No exact match — return around the closest hunk before our line
+    if best_start > 0:
+        begin = max(0, best_start - 5)
+        end = min(len(lines), best_start + window)
+        return "\n".join(lines[begin:end])
+
+    # Fallback: first window lines
+    return "\n".join(lines[:window])
+
+
+def _is_multi_source(finding: ReviewFinding) -> bool:
+    """Check if a finding was reported by 2+ independent agents (dedup merges with '+')."""
+    return "+" in finding.agent
+
+
+
+# ---------------------------------------------------------------------------
+# Severity arbitration + defense attorney (merged)
 # ---------------------------------------------------------------------------
 
 _ARBITRATION_PROMPT = """\
-You are a senior staff engineer reviewing severity labels assigned by automated code review agents.
+You are a **senior staff engineer + defense attorney** reviewing findings from automated code review agents.
 
-Below are {count} findings. For each, decide if the severity is correct.
+Your job is twofold:
+1. **Challenge each finding** — try to construct the STRONGEST defense of the code.
+2. **Set the correct severity** — based on evidence, not the sub-agent's opinion.
 
 ## The provability test — apply to EVERY finding
 For each finding, ask: "Is this provable from the code alone, or does it depend on an
@@ -91,17 +207,32 @@ unverified business/design assumption?"
 - **Assumption-dependent**: Severity depends on what the designer meant. Example:
   "token not consumed on failure" — could be a bug OR correct retry behavior.
 
-**Rule: assumption-dependent findings MUST be at most warning.** Note "depends on
-design intent" in your reason.
+## Hard rules — you MUST follow these
+
+1. **Only use evidence presented here.** Do NOT infer runtime behavior, config values,
+   or infrastructure details not shown in the code/diffs.
+2. **Assumption-dependent findings MUST be at most warning.** Note "depends on design intent".
+3. **Design choices are NOT defects.** If the code works as designed but the reviewer
+   disagrees with the design, that is at most a nit.
+4. **Challenge the CONSEQUENCES, not just the trigger.** If the trigger is real but
+   the consequence is speculative, downgrade.
+5. **Multi-source findings** (marked `multi_source: true`) have higher credibility.
+   You may downgrade them but you CANNOT drop them unless you have concrete counter-evidence
+   from the code shown here.
+6. **If a finding depends on unseen config/infra/schema**, cap it at warning and note
+   what context is missing.
 
 ## Severity definitions
 - **critical**: Code-provable defect. Concrete trigger scenario from code facts only.
 - **warning**: Code-provable risk (trigger unproven) OR assumption-dependent concern.
 - **nit**: Minor improvement or speculative concern.
+- **drop**: Finding is provably wrong based on the code shown — concrete counter-evidence required.
 
 <findings>
 {findings_json}
 </findings>
+
+{diff_section}
 
 ## Instructions
 For each finding, think step by step in <reasoning> tags, then give your verdict.
@@ -109,16 +240,18 @@ After all reasoning, output a single JSON array in <result> tags.
 
 Format for the JSON array (one object per finding, same order):
 - "index": 0-based index
-- "severity": "critical" | "warning" | "nit" | "praise"
-- "reason": brief explanation — "code-provable", "ok", "assumption-dependent", or "trigger not proven"
+- "severity": "critical" | "warning" | "nit" | "praise" | "drop"
+- "reason": brief explanation — "code-provable", "ok", "assumption-dependent", "trigger not proven", or counter-evidence for drop
 
-Example response structure:
+Example:
 <reasoning>
-Finding 0: "Token race condition" — The code does GET at line 266 then DELETE at line 330.
-Two concurrent requests can both pass the GET. This is code-provable. Keep critical.
+Finding 0: "Token race condition" — GET at line 266 then DELETE at line 330. Two concurrent
+requests can both pass GET. This is code-provable. Keep critical.
+Finding 1: "Token not consumed on failure" — Could be intentional retry design. Assumption-dependent. Cap at warning.
 </reasoning>
 <result>
-[{{"index": 0, "severity": "critical", "reason": "code-provable: non-atomic GET then DELETE"}}]
+[{{"index": 0, "severity": "critical", "reason": "code-provable: non-atomic GET then DELETE"}},
+ {{"index": 1, "severity": "warning", "reason": "assumption-dependent: could be intentional retry behavior"}}]
 </result>
 """
 
@@ -128,52 +261,70 @@ async def _arbitrate_severities(
     findings: List[ReviewFinding],
     file_diffs: Dict[str, str],
 ) -> List[ReviewFinding]:
-    """Let the strong model review and adjust severity of each finding.
+    """Strong model reviews severity AND challenges findings (merged defense attorney).
 
-    This is a single cheap LLM call that can upgrade/downgrade severity
-    based on deeper reasoning than individual sub-agents can achieve.
+    This replaces both the old arbitration-only pass and the separate adversarial
+    verification step. The strongest model sees ALL findings, challenges each one,
+    and can adjust severity or drop findings with concrete counter-evidence.
+
+    Multi-source protection: findings from 2+ agents cannot be dropped, only downgraded.
     """
     if not findings:
         return findings
 
-    # Build a compact JSON representation of findings for the model
+    # Build a rich JSON representation — includes reasoning, confidence, multi-source
     findings_data = []
+    diff_snippets: list[str] = []
+    seen_files: set = set()
     for i, f in enumerate(findings):
         loc = f.file
         if f.start_line:
             loc += f":{f.start_line}"
-        entry = {
+        entry: dict = {
             "index": i,
             "title": f.title,
             "severity": f.severity.value,
             "confidence": f.confidence,
             "file": loc,
             "risk": f.risk,
-            "evidence": f.evidence[:3],
+            "evidence": f.evidence[:5],
             "agent": f.agent,
+            "multi_source": _is_multi_source(f),
         }
-        # Include a snippet of the relevant diff if available
-        if f.file and f.file in file_diffs:
-            entry["diff_snippet"] = file_diffs[f.file][:1500]
+        if f.reasoning:
+            entry["reasoning"] = f.reasoning
         findings_data.append(entry)
 
+        # Build line-aware diff snippets for context
+        if f.file and f.file in file_diffs:
+            snippet = _extract_relevant_diff(
+                file_diffs[f.file], f.start_line, window=80,
+            )
+            if snippet:
+                label = f.file if f.file not in seen_files else f"{f.file} (near line {f.start_line})"
+                diff_snippets.append(f"### {label}\n```diff\n{snippet}\n```")
+                seen_files.add(f.file)
+
+    diff_section = ""
+    if diff_snippets:
+        diff_section = "## Relevant code context\n\n" + "\n\n".join(diff_snippets)
+
     prompt = _ARBITRATION_PROMPT.format(
-        count=len(findings),
         findings_json=json.dumps(findings_data, indent=2),
+        diff_section=diff_section,
     )
 
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: provider.call_model(prompt=prompt, max_tokens=2048),
+            lambda: provider.call_model(prompt=prompt, max_tokens=4096),
         )
 
-        # Extract JSON from <result> tags (CoT parsing — Opt 3)
+        # Extract JSON from <result> tags (CoT parsing)
         result_match = re.search(r"<result>\s*(.*?)\s*</result>", response, re.DOTALL)
         json_text = result_match.group(1) if result_match else response
 
-        # Parse the response as JSON array
         adjustments = json.loads(json_text)
         if not isinstance(adjustments, list):
             logger.warning("Severity arbitration: response is not a list")
@@ -187,6 +338,7 @@ async def _arbitrate_severities(
         }
 
         changes = 0
+        dropped_indices: set = set()
         for adj in adjustments:
             idx = adj.get("index")
             new_sev_str = str(adj.get("severity", "")).lower()
@@ -194,6 +346,29 @@ async def _arbitrate_severities(
 
             if idx is None or idx < 0 or idx >= len(findings):
                 continue
+
+            # Handle "drop" verdict
+            if new_sev_str == "drop":
+                if _is_multi_source(findings[idx]):
+                    # Multi-source protection: cannot drop, downgrade to warning instead
+                    logger.info(
+                        "Arbitration: BLOCKED drop of multi-source '%s' (agents: %s) — keeping as warning",
+                        findings[idx].title, findings[idx].agent,
+                    )
+                    old_sev = findings[idx].severity
+                    if old_sev != Severity.WARNING:
+                        findings[idx].severity = Severity.WARNING
+                        findings[idx].evidence.append(
+                            f"[arbitration: drop blocked (multi-source), capped at warning: {reason}]"
+                        )
+                        changes += 1
+                else:
+                    logger.info(
+                        "Arbitration: DROPPED '%s' — %s", findings[idx].title, reason[:100],
+                    )
+                    dropped_indices.add(idx)
+                continue
+
             new_sev = severity_map.get(new_sev_str)
             if new_sev is None:
                 continue
@@ -210,8 +385,14 @@ async def _arbitrate_severities(
                 )
                 changes += 1
 
-        logger.info("Severity arbitration: %d adjustment(s) out of %d findings", changes, len(findings))
-        return findings
+        # Remove dropped findings
+        result = [f for i, f in enumerate(findings) if i not in dropped_indices]
+
+        logger.info(
+            "Severity arbitration: %d adjustment(s), %d dropped out of %d findings",
+            changes, len(dropped_indices), len(findings),
+        )
+        return result
 
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning("Severity arbitration failed (findings unchanged): %s", exc)
@@ -268,11 +449,6 @@ def _should_reject_pr(pr_context: PRContext) -> Optional[str]:
 
 # Matches "diff --git a/path b/path" headers in unified diff output
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)$", re.MULTILINE)
-
-# Max chars per individual file diff before truncation
-_MAX_FILE_DIFF_CHARS = 8_000
-# Max total chars of diff content injected into an agent prompt
-_MAX_TOTAL_DIFF_CHARS = 60_000
 
 
 def _prefetch_diffs(workspace_path: str, diff_spec: str) -> Dict[str, str]:
@@ -422,6 +598,11 @@ class CodeReviewService:
             budget_multiplier, pr_context.total_changed_lines,
         )
 
+        # Step 3b: Impact graph — pre-compute callers/dependents
+        impact_context = _build_impact_context(workspace_path, pr_context)
+        if impact_context:
+            logger.info("Impact context: %d chars", len(impact_context))
+
         # Step 4: Select and dispatch agents
         agents_to_run = []
         for spec in AGENT_SPECS:
@@ -476,6 +657,7 @@ class CodeReviewService:
                 trace_writer=self._trace_writer,
                 file_diffs=file_diffs,
                 llm_semaphore=llm_semaphore,
+                impact_context=impact_context,
             )
             for spec in agents_to_run
         ]
@@ -508,7 +690,10 @@ class CodeReviewService:
             )
             ranked = ranked[:_MAX_FINDINGS]
 
-        # Step 7: Severity arbitration — strong model reviews severity
+        # Step 7: Severity arbitration + adversarial challenge — strong model
+        # reviews severity AND challenges findings (merged defense attorney).
+        # Using the strongest model for this avoids the risk of a weaker
+        # verifier irreversibly dropping valid findings.
         ranked = await _arbitrate_severities(
             provider=self._provider,
             findings=ranked,
