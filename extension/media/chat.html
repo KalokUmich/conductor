@@ -98,6 +98,16 @@
            PREMIUM VISUAL SYSTEM
            ============================================================ */
 
+        /* --- Dark select/option (VS Code webview fix) --- */
+        select, select option {
+            color-scheme: dark;
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        select option:disabled {
+            color: #6b7280;
+        }
+
         /* --- Glassmorphism --- */
         .glass {
             backdrop-filter: blur(16px) saturate(1.4);
@@ -379,6 +389,78 @@
             box-shadow: 0 0 0 3px rgba(139,92,246,0.1), 0 0 20px rgba(139,92,246,0.08);
         }
         .input-premium::placeholder { color: rgba(156,163,175,0.5); }
+
+        /* ============================================================
+           SLASH COMMAND MENU
+           ============================================================ */
+        .slash-menu {
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            right: 0;
+            margin-bottom: 6px;
+            background: rgba(15,18,30,0.95);
+            border: 1px solid rgba(139,92,246,0.3);
+            border-radius: 0.75rem;
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            z-index: 50;
+            overflow: hidden;
+            animation: slashMenuFadeIn 0.15s ease-out;
+            box-shadow: 0 -4px 24px rgba(0,0,0,0.4), 0 0 0 1px rgba(139,92,246,0.1);
+        }
+        .slash-menu.hidden { display: none; }
+        .slash-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.6rem 0.85rem;
+            cursor: pointer;
+            transition: background 0.1s ease;
+        }
+        .slash-menu-item:hover,
+        .slash-menu-item.active {
+            background: rgba(139,92,246,0.15);
+        }
+        .slash-menu-item-name {
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: #c4b5fd;
+        }
+        .slash-menu-item-desc {
+            font-size: 0.75rem;
+            color: rgba(156,163,175,0.7);
+        }
+        @keyframes slashMenuFadeIn {
+            from { opacity: 0; transform: translateY(4px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Ghost hint overlay — sits behind textarea, shows typed text + gray hint */
+        .slash-ghost {
+            position: absolute;
+            inset: 1px; /* offset by textarea border width */
+            pointer-events: none;
+            z-index: 1;
+            padding: 0.625rem 1rem; /* matches py-2.5 px-4 */
+            font-size: 0.875rem;    /* matches text-sm */
+            font-family: inherit;
+            line-height: 1.25rem;
+            border-radius: 0.75rem;
+            background: rgba(15,18,30,0.6); /* matches .input-premium */
+            color: #f3f4f6;
+            white-space: pre-wrap;
+            word-break: break-word;
+            overflow: hidden;
+        }
+        .slash-ghost.hidden { display: none; }
+        .slash-ghost-hint-part { color: rgba(156,163,175,0.45); font-style: italic; }
+        /* When ghost is active, hide textarea text but keep cursor visible */
+        .input-premium.hint-active {
+            color: transparent !important;
+            caret-color: #f3f4f6 !important;
+            background: transparent !important;
+        }
 
         /* ============================================================
            LANDING PAGE EXTRAS
@@ -758,6 +840,16 @@
                             title="AI Configuration">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
+                            </svg>
+                        </button>
+                        <!-- Workflow Visualization (visibility controlled via style.display by JS) -->
+                        <button id="btn-workflow-view"
+                            class="p-1.5 rounded-md text-gray-500 hover:text-violet-400 hover:bg-violet-500/10 transition-all duration-150"
+                            title="View Agent Workflows"
+                            style="display: none;">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="5" cy="12" r="2"/><circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/>
+                                <line x1="7" y1="12" x2="17" y2="6"/><line x1="7" y1="12" x2="17" y2="18"/>
                             </svg>
                         </button>
                         <!-- Room Settings (hidden until lead) -->
@@ -1309,7 +1401,9 @@
                 </button>
 
                 <!-- Text Input -->
-                <div class="flex-1">
+                <div class="flex-1" style="position: relative;">
+                    <div id="slash-command-menu" class="slash-menu hidden"></div>
+                    <div id="slash-ghost" class="slash-ghost hidden" aria-hidden="true"><span id="slash-ghost-typed"></span><span id="slash-ghost-hint-part" class="slash-ghost-hint-part"></span></div>
                     <textarea
                         id="chat-input"
                         rows="1"
@@ -1332,7 +1426,7 @@
 
             <!-- Helper Text -->
             <div class="mt-1.5 text-[0.65rem] text-gray-600">
-                Enter to send &middot; Shift+Enter for new line &middot; <span class="text-violet-400/60">&lt;/&gt;</span> share code
+                Enter to send &middot; Shift+Enter for new line &middot; <span class="text-violet-400/60">@AI /</span> for commands &middot; <span class="text-violet-400/60">&lt;/&gt;</span> share code
             </div>
         </div>
         </div> <!-- close chat content column -->
@@ -1393,11 +1487,11 @@
                     <div class="flex border-b border-gray-700/60 mb-4 -mx-5 px-5">
                         <button id="ai-tab-btn-summary" onclick="switchAiTab('summary')"
                             class="ai-tab-btn px-4 py-2 text-sm font-medium border-b-2 transition-colors border-purple-500 text-purple-300">
-                            AI Summary
+                            Models
                         </button>
-                        <button id="ai-tab-btn-code-intel" onclick="switchAiTab('code-intel')"
+                        <button id="ai-tab-btn-agent-swarm" onclick="switchAiTab('agent-swarm')"
                             class="ai-tab-btn px-4 py-2 text-sm font-medium border-b-2 transition-colors border-transparent text-gray-400 hover:text-gray-200">
-                            Code Intelligence
+                            Agent Swarm
                         </button>
                     </div>
 
@@ -1448,71 +1542,108 @@
                         </div>
                     </div>
 
-                    <!-- Tab: Code Intelligence -->
-                    <div id="ai-tab-code-intel" class="hidden space-y-4">
-                        <div id="ai-code-intel-section" class="bg-green-900/20 rounded-lg border border-green-700/50 p-4">
-                            <!-- Query Classifier -->
-                            <div class="flex items-center gap-2 mb-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-green-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                </svg>
-                                <span class="text-green-300 text-xs font-medium uppercase tracking-wide">Query Classifier</span>
-                            </div>
-                            <div class="flex items-center justify-between mb-2">
-                                <div>
-                                    <span class="text-gray-200 text-sm">Enable LLM Classifier</span>
-                                    <p class="text-xs text-gray-500 mt-0.5">Uses a lightweight model to classify queries before routing to tools</p>
-                                </div>
-                                <label class="relative inline-flex items-center cursor-pointer ml-3 shrink-0">
-                                    <input type="checkbox" id="ai-classifier-toggle" class="sr-only peer">
-                                    <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-green-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-green-600"></div>
-                                </label>
-                            </div>
-                            <select id="ai-classifier-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500">
-                                <option value="">No classifier models available</option>
-                            </select>
+                    <!-- Tab: Agent Swarm -->
+                    <div id="ai-tab-agent-swarm" class="hidden">
+
+                        <!-- Loading / Error states -->
+                        <div id="workflows-loading" class="flex items-center justify-center py-10">
+                            <div class="h-5 w-5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin"></div>
+                            <span class="ml-3 text-gray-400 text-sm">Loading agent swarm...</span>
+                        </div>
+                        <div id="workflows-error" class="hidden bg-red-900/20 border border-red-800/50 rounded-xl p-4 text-center">
+                            <p class="text-red-400 text-sm">Failed to load workflows</p>
                         </div>
 
-                        <!-- Code Explorer (Sub-Agent) -->
-                        <div class="bg-purple-900/20 rounded-lg border border-purple-700/50 p-4">
-                            <div class="flex items-center gap-2 mb-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
-                                </svg>
-                                <span class="text-purple-300 text-xs font-medium uppercase tracking-wide">Code Explorer</span>
+                        <!-- Main content (injected by JS) -->
+                        <div id="workflows-content" class="hidden">
+                            <!-- Workflow selector -->
+                            <div class="mb-5">
+                                <label class="text-[0.65rem] text-gray-500 uppercase tracking-wider font-semibold block mb-2">Workflow</label>
+                                <select id="swarm-workflow-select" class="w-full bg-gray-900/80 border border-gray-600/60 text-white text-sm rounded-xl px-4 py-2.5 focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/60 transition-all appearance-none" style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%239ca3af%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>');background-repeat:no-repeat;background-position:right 12px center;">
+                                </select>
                             </div>
-                            <div class="flex items-center justify-between mb-2">
-                                <div>
-                                    <span class="text-gray-200 text-sm">Enable Explorer Model</span>
-                                    <p class="text-xs text-gray-500 mt-0.5">Lightweight model for sub-agent code exploration (thinking disabled for Alibaba)</p>
-                                </div>
-                                <label class="relative inline-flex items-center cursor-pointer ml-3 shrink-0">
-                                    <input type="checkbox" id="ai-explorer-toggle" class="sr-only peer">
-                                    <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-600"></div>
-                                </label>
-                            </div>
-                            <select id="ai-explorer-select" class="w-full bg-gray-900 border border-gray-600 text-white text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-purple-500 focus:border-purple-500">
-                                <option value="">No explorer models available</option>
-                            </select>
-                        </div>
 
-                        <!-- LiteLLM Fallback -->
-                        <div class="bg-blue-900/20 rounded-lg border border-blue-700/50 p-4">
-                            <div class="flex items-center gap-2 mb-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-400" viewBox="0 0 20 20" fill="currentColor">
-                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                </svg>
-                                <span class="text-blue-300 text-xs font-medium uppercase tracking-wide">LiteLLM Fallback</span>
-                            </div>
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <span class="text-gray-200 text-sm">Enable LiteLLM Fallback</span>
-                                    <p id="ai-litellm-hint" class="text-xs text-gray-500 mt-0.5">When native providers fail, eligible models fall back to LiteLLM</p>
+                            <!-- Workflow detail container -->
+                            <div id="swarm-detail" class="space-y-4"></div>
+
+                            <!-- Divider -->
+                            <div class="relative my-6">
+                                <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-gray-700/40"></div></div>
+                                <div class="relative flex justify-center">
+                                    <span class="px-3 text-[0.6rem] text-gray-600 uppercase tracking-widest bg-[rgba(15,18,30,0.75)]">Global Model Settings</span>
                                 </div>
-                                <label class="relative inline-flex items-center cursor-pointer ml-3 shrink-0">
-                                    <input type="checkbox" id="ai-litellm-toggle" class="sr-only peer">
-                                    <div class="w-9 h-5 bg-gray-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
-                                </label>
+                            </div>
+
+                            <!-- Global Settings: Classifier + Explorer Model + LiteLLM -->
+                            <div id="ai-code-intel-section" class="space-y-3">
+                                <!-- Query Classifier -->
+                                <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2.5">
+                                            <div class="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-200 text-xs font-medium block">Query Classifier</span>
+                                                <span class="text-[0.6rem] text-gray-500">Routes queries before dispatching tools</span>
+                                            </div>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                            <input type="checkbox" id="ai-classifier-toggle" class="sr-only peer">
+                                            <div class="w-8 h-[18px] bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[14px] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:bg-emerald-600"></div>
+                                        </label>
+                                    </div>
+                                    <select id="ai-classifier-select" class="mt-2.5 w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-emerald-500/50">
+                                        <option value="">No classifier models available</option>
+                                    </select>
+                                </div>
+
+                                <!-- Explorer Model -->
+                                <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2.5">
+                                            <div class="h-7 w-7 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-200 text-xs font-medium block">Explorer Model</span>
+                                                <span class="text-[0.6rem] text-gray-500">Shared by all explorer sub-agents</span>
+                                            </div>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                            <input type="checkbox" id="ai-explorer-toggle" class="sr-only peer">
+                                            <div class="w-8 h-[18px] bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[14px] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:bg-violet-600"></div>
+                                        </label>
+                                    </div>
+                                    <select id="ai-explorer-select" class="mt-2.5 w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-violet-500/50">
+                                        <option value="">No explorer models available</option>
+                                    </select>
+                                </div>
+
+                                <!-- LiteLLM Fallback -->
+                                <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2.5">
+                                            <div class="h-7 w-7 rounded-lg bg-sky-500/10 flex items-center justify-center">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-sky-400" viewBox="0 0 20 20" fill="currentColor">
+                                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                                </svg>
+                                            </div>
+                                            <div>
+                                                <span class="text-gray-200 text-xs font-medium block">LiteLLM Fallback</span>
+                                                <span id="ai-litellm-hint" class="text-[0.6rem] text-gray-500">Auto-retry via LiteLLM when native providers fail</span>
+                                            </div>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                                            <input type="checkbox" id="ai-litellm-toggle" class="sr-only peer">
+                                            <div class="w-8 h-[18px] bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[14px] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:bg-sky-600"></div>
+                                        </label>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -2040,6 +2171,7 @@
         const aiConfigModal = document.getElementById('ai-config-modal');
         const aiConfigBackdrop = document.getElementById('ai-config-backdrop');
         const btnAiConfig = document.getElementById('btn-ai-config');
+        const btnWorkflowView = document.getElementById('btn-workflow-view');
         const btnCloseAiConfig = document.getElementById('btn-close-ai-config');
         const btnRefreshAiStatus = document.getElementById('btn-refresh-ai-status');
         const aiConfigLoading = document.getElementById('ai-config-loading');
@@ -2318,6 +2450,120 @@
         let hasMoreHistory = true;
         const PAGINATION_THRESHOLD = 100;  // pixels from top to trigger load
 
+        // ============================================================
+        // Slash Command System
+        // ============================================================
+        const SLASH_COMMANDS = [
+            {
+                name: '/ask',
+                description: 'Ask a question about the codebase',
+                hint: 'How does auth work?',
+                transform: (args) => args,
+            },
+            {
+                name: '/pr',
+                description: 'Review a pull request or diff',
+                hint: 'main...feature/branch-name',
+                transform: (args) => `do PR ${args}`,
+            },
+        ];
+        const slashMenu = document.getElementById('slash-command-menu');
+        let slashMenuVisible = false;
+        let slashMenuActiveIndex = 0;
+        let slashMenuItems = [];
+        const defaultPlaceholder = 'Type a message...';
+
+        // Ghost hint elements
+        const slashGhost = document.getElementById('slash-ghost');
+        const slashGhostTyped = document.getElementById('slash-ghost-typed');
+        const slashGhostHintPart = document.getElementById('slash-ghost-hint-part');
+
+        function showGhostHint(typedPrefix, hint) {
+            slashGhostTyped.textContent = typedPrefix;
+            slashGhostHintPart.textContent = hint;
+            slashGhost.classList.remove('hidden');
+            chatInput.classList.add('hint-active');
+        }
+
+        function hideGhostHint() {
+            slashGhost.classList.add('hidden');
+            chatInput.classList.remove('hint-active');
+        }
+
+        function renderSlashMenu(typed) {
+            // typed is the text after "@AI /" e.g. "" or "pr" or "ask"
+            const prefix = typed.toLowerCase();
+            slashMenuItems = SLASH_COMMANDS.filter(cmd =>
+                cmd.name.slice(1).startsWith(prefix)
+            );
+
+            if (slashMenuItems.length === 0) {
+                closeSlashMenu();
+                return;
+            }
+
+            slashMenuActiveIndex = 0;
+            slashMenu.innerHTML = slashMenuItems.map((cmd, i) =>
+                `<div class="slash-menu-item${i === 0 ? ' active' : ''}" data-index="${i}">
+                    <span class="slash-menu-item-name">${cmd.name}</span>
+                    <span class="slash-menu-item-desc">${cmd.description}</span>
+                </div>`
+            ).join('');
+
+            // Click handlers on items
+            slashMenu.querySelectorAll('.slash-menu-item').forEach(el => {
+                el.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // keep textarea focus
+                    selectSlashCommand(parseInt(el.dataset.index));
+                });
+            });
+
+            slashMenu.classList.remove('hidden');
+            slashMenuVisible = true;
+        }
+
+        function selectSlashCommand(index) {
+            const cmd = slashMenuItems[index];
+            if (!cmd) return;
+
+            // Replace input content: "@AI /xxx..." → "@AI /command "
+            chatInput.value = `@AI ${cmd.name} `;
+            closeSlashMenu();
+            chatInput.focus();
+
+            // Show inline ghost hint in gray
+            if (cmd.hint) {
+                showGhostHint(`@AI ${cmd.name} `, cmd.hint);
+            }
+
+            // Auto-resize
+            chatInput.style.height = 'auto';
+            chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+        }
+
+        function closeSlashMenu() {
+            slashMenu.classList.add('hidden');
+            slashMenuVisible = false;
+            slashMenuActiveIndex = 0;
+            slashMenuItems = [];
+        }
+
+        function highlightSlashItem(index) {
+            const items = slashMenu.querySelectorAll('.slash-menu-item');
+            items.forEach(el => el.classList.remove('active'));
+            if (items[index]) {
+                items[index].classList.add('active');
+                slashMenuActiveIndex = index;
+            }
+        }
+
+        // Click-outside handler
+        document.addEventListener('mousedown', (e) => {
+            if (slashMenuVisible && !slashMenu.contains(e.target) && e.target !== chatInput) {
+                closeSlashMenu();
+            }
+        });
+
         // Avatar color mapping
         const avatarColors = {
             purple: 'bg-purple-600',
@@ -2370,6 +2616,7 @@
 
             // Config buttons: host OR lead
             if (btnAiConfig) btnAiConfig.style.display = canConfigure ? 'flex' : 'none';
+            if (btnWorkflowView) btnWorkflowView.style.display = canConfigure ? 'flex' : 'none';
             if (btnRoomSettings) btnRoomSettings.classList.toggle('hidden', !canConfigure);
 
             // End session: host only
@@ -3700,6 +3947,23 @@
             // Auto-resize textarea
             chatInput.style.height = 'auto';
             chatInput.style.height = Math.min(chatInput.scrollHeight, 150) + 'px';
+
+            // Slash command menu detection
+            const val = chatInput.value;
+            const slashMatch = val.match(/^@AI\s+\/(\S*)$/i);
+            if (slashMatch) {
+                renderSlashMenu(slashMatch[1]);
+            } else if (slashMenuVisible) {
+                closeSlashMenu();
+            }
+
+            // Ghost hint: show only while value is exactly "@AI /cmd " with no args yet
+            const activeCmd = SLASH_COMMANDS.find(cmd => val === `@AI ${cmd.name} `);
+            if (activeCmd && activeCmd.hint) {
+                showGhostHint(`@AI ${activeCmd.name} `, activeCmd.hint);
+            } else {
+                hideGhostHint();
+            }
 
             // Send typing indicator (debounced)
             if (!isTyping) {
@@ -5769,7 +6033,20 @@
 
             // If @AI was detected, ask the AI agent
             if (aiMatch) {
-                const query = aiMatch[1].trim();
+                let query = aiMatch[1].trim();
+
+                // Parse slash commands: "/command args" → transform(args)
+                const cmdMatch = query.match(/^\/(\S+)\s*(.*)/s);
+                if (cmdMatch) {
+                    const cmdName = '/' + cmdMatch[1].toLowerCase();
+                    const cmdArgs = cmdMatch[2].trim();
+                    const cmd = SLASH_COMMANDS.find(c => c.name === cmdName);
+                    if (cmd) {
+                        query = cmd.transform(cmdArgs);
+                    }
+                    // Unknown /commands pass through as-is
+                }
+
                 console.log('[WebView] @AI detected, sending askAI command:', query);
                 vscode.postMessage({
                     command: 'askAI',
@@ -5777,6 +6054,9 @@
                     query: query,
                 });
             }
+
+            // Clean up hint state after sending
+            hideGhostHint();
         }
 
         // Send button click handler (text messages only)
@@ -5784,8 +6064,32 @@
             sendMessage();
         });
 
-        // Enter key handler (Shift+Enter for new line)
+        // Enter key handler (Shift+Enter for new line) + slash menu navigation
         chatInput.addEventListener('keydown', (e) => {
+            if (slashMenuVisible) {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const next = (slashMenuActiveIndex + 1) % slashMenuItems.length;
+                    highlightSlashItem(next);
+                    return;
+                }
+                if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prev = (slashMenuActiveIndex - 1 + slashMenuItems.length) % slashMenuItems.length;
+                    highlightSlashItem(prev);
+                    return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    selectSlashCommand(slashMenuActiveIndex);
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeSlashMenu();
+                    return;
+                }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 sendMessage();
@@ -7167,10 +7471,11 @@
          * Switch between AI config tabs ('summary' | 'code-intel').
          */
         function switchAiTab(tab) {
-            const tabs = ['summary', 'code-intel'];
+            const tabs = ['summary', 'agent-swarm'];
             tabs.forEach(t => {
                 const panel = document.getElementById('ai-tab-' + t);
                 const btn = document.getElementById('ai-tab-btn-' + t);
+                if (!panel || !btn) return;
                 if (t === tab) {
                     panel.classList.remove('hidden');
                     btn.classList.remove('border-transparent', 'text-gray-400', 'hover:text-gray-200');
@@ -7181,6 +7486,216 @@
                     btn.classList.add('border-transparent', 'text-gray-400', 'hover:text-gray-200');
                 }
             });
+
+            if (tab === 'agent-swarm') {
+                loadWorkflowsTab();
+            }
+        }
+
+        // ============================================================
+        // Workflows Tab
+        // ============================================================
+        let workflowsLoaded = false;
+
+        // ============================================================
+        // Agent Swarm — Unified workflow + agent configuration
+        // ============================================================
+        let _swarmWorkflows = [];       // cached workflow summaries
+        let _swarmDetails = {};         // cached workflow detail by name
+
+        async function loadWorkflowsTab() {
+            if (workflowsLoaded) return;
+            const loading = document.getElementById('workflows-loading');
+            const content = document.getElementById('workflows-content');
+            const error = document.getElementById('workflows-error');
+
+            loading.classList.remove('hidden');
+            content.classList.add('hidden');
+            error.classList.add('hidden');
+
+            try {
+                if (!window._aiModels || window._aiModels.length === 0) {
+                    try {
+                        const statusResp = await fetch(`${session.backendUrl}/ai/status`);
+                        if (statusResp.ok) { window._aiModels = (await statusResp.json()).models || []; }
+                    } catch (_) {}
+                }
+
+                const resp = await fetch(`${session.backendUrl}/api/workflows`);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                _swarmWorkflows = await resp.json();
+
+                // Pre-fetch all details
+                for (const wf of _swarmWorkflows) {
+                    const dr = await fetch(`${session.backendUrl}/api/workflows/${wf.name}`);
+                    if (dr.ok) _swarmDetails[wf.name] = await dr.json();
+                }
+
+                // Populate selector
+                const sel = document.getElementById('swarm-workflow-select');
+                sel.innerHTML = _swarmWorkflows.map(w =>
+                    `<option value="${w.name}">${escapeHtml(w.name)}  —  ${escapeHtml(w.description)}</option>`
+                ).join('');
+                sel.addEventListener('change', () => renderSwarmDetail(sel.value));
+
+                loading.classList.add('hidden');
+                content.classList.remove('hidden');
+                workflowsLoaded = true;
+
+                // Render first workflow
+                if (_swarmWorkflows.length > 0) renderSwarmDetail(_swarmWorkflows[0].name);
+            } catch (err) {
+                console.error('[Agent Swarm] Load failed:', err);
+                loading.classList.add('hidden');
+                error.classList.remove('hidden');
+            }
+        }
+
+        function renderSwarmDetail(name) {
+            const wf = _swarmDetails[name];
+            if (!wf) return;
+            const container = document.getElementById('swarm-detail');
+            const explorers = wf.agents.filter(a => a.type === 'explorer');
+            const judges = [...wf.agents.filter(a => a.type === 'judge'), ...(wf.post_pipeline_agents || []).filter(a => a.type === 'judge')];
+            // Deduplicate judges by name
+            const seenJudges = new Set();
+            const uniqueJudges = judges.filter(j => { if (seenJudges.has(j.name)) return false; seenJudges.add(j.name); return true; });
+
+            const routeLabel = wf.route_mode === 'parallel_all_matching'
+                ? '<span class="text-amber-400/80">Parallel</span> — all matching routes run simultaneously'
+                : '<span class="text-emerald-400/80">First match</span> — classifier picks the best route';
+
+            const judgeModel = (window._aiModels || [])
+                .map(m => `<option value="${m.id}"${!m.available ? ' disabled style="color:#6b7280"' : ''}>${m.display_name}</option>`)
+                .join('');
+
+            container.innerHTML = `
+                <!-- Description Hero -->
+                <div class="rounded-xl bg-gradient-to-br from-violet-950/40 via-gray-900/60 to-gray-900/40 border border-violet-800/20 p-4">
+                    <p class="text-gray-300 text-sm leading-relaxed">${escapeHtml(wf.description)}</p>
+                    <p class="text-xs text-gray-500 mt-2">${routeLabel} &middot; ${wf.routes.length} routes &middot; ${explorers.length + uniqueJudges.length} agents</p>
+                    <button class="swarm-open-diagram mt-3 flex items-center gap-2 text-xs text-violet-400 hover:text-violet-300 transition-colors group">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="8" y="14" width="7" height="7"/><line x1="6.5" y1="10" x2="6.5" y2="14"/><line x1="17.5" y1="10" x2="17.5" y2="14"/></svg>
+                        View interactive diagram
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-40 group-hover:opacity-70 transition-opacity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    </button>
+                </div>
+
+                <!-- Explorers Section -->
+                <div>
+                    <div class="flex items-center gap-2 mb-2.5">
+                        <div class="h-5 w-5 rounded-md bg-violet-500/15 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+                            </svg>
+                        </div>
+                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Explorers</span>
+                        <span class="text-[0.6rem] text-gray-600">${explorers.length} agents</span>
+                    </div>
+                    <p class="text-[0.7rem] text-gray-500 leading-relaxed mb-3">Lightweight agents that navigate the codebase using tools. Explorer models should prioritise <span class="text-gray-400">strong instruction following</span> over raw reasoning power — fast, cheap models work best here.</p>
+
+                    ${explorers.length > 0 ? `
+                    <select id="swarm-explorer-select" class="w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-2 mb-2.5 focus:ring-1 focus:ring-violet-500/50 appearance-none" style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%239ca3af%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
+                        ${explorers.map((a, i) => `<option value="${i}">${a.name}${a.category ? ' (' + a.category + ')' : ''}</option>`).join('')}
+                    </select>
+                    <div id="swarm-explorer-card"></div>` : '<p class="text-xs text-gray-600 italic">No explorer agents in this workflow.</p>'}
+
+                    <p class="text-[0.6rem] text-gray-600 mt-2.5 leading-relaxed">Model is shared across all explorers. Change it in <span class="text-violet-400/70">Global Model Settings</span> below.</p>
+                </div>
+
+                <!-- Judges Section -->
+                ${uniqueJudges.length > 0 ? `
+                <div>
+                    <div class="flex items-center gap-2 mb-2.5">
+                        <div class="h-5 w-5 rounded-md bg-indigo-500/15 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-indigo-400" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
+                            </svg>
+                        </div>
+                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Judges</span>
+                        <span class="text-[0.6rem] text-gray-600">${uniqueJudges.length} agents</span>
+                    </div>
+                    <p class="text-[0.7rem] text-gray-500 leading-relaxed mb-3">High-reasoning models responsible for synthesis, deduplication, and quality arbitration. Judges require <span class="text-gray-400">strong analytical capability</span> — use the most capable model available.</p>
+
+                    <div class="space-y-1.5 mb-3">
+                        ${uniqueJudges.map(j => `
+                        <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gray-900/40 border border-gray-700/30">
+                            <div class="h-6 w-6 rounded-md bg-indigo-500/10 flex items-center justify-center shrink-0">
+                                <span class="text-[0.55rem] text-indigo-400 font-bold">${j.name.charAt(0).toUpperCase()}</span>
+                            </div>
+                            <div class="min-w-0">
+                                <span class="text-xs text-gray-200 font-medium block truncate">${escapeHtml(j.name)}</span>
+                                <span class="text-[0.6rem] text-gray-500">${j.tool_count} tools &middot; ${j.model_role}</span>
+                            </div>
+                        </div>`).join('')}
+                    </div>
+
+                    <label class="text-[0.6rem] text-gray-500 block mb-1.5">Judge Model</label>
+                    <select id="swarm-judge-model" class="w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500/50">
+                        <option value="">Default (strongest available)</option>
+                        ${judgeModel}
+                    </select>
+                </div>` : ''}
+            `;
+
+            // Bind explorer card
+            if (explorers.length > 0) {
+                const explorerSelect = container.querySelector('#swarm-explorer-select');
+                const renderCard = () => {
+                    const agent = explorers[explorerSelect.value || 0];
+                    container.querySelector('#swarm-explorer-card').innerHTML = `
+                        <div class="rounded-xl bg-gray-900/40 border border-violet-800/20 p-3.5 transition-all">
+                            <div class="flex items-center gap-2.5 mb-2">
+                                <div class="h-7 w-7 rounded-lg bg-violet-500/10 flex items-center justify-center">
+                                    <span class="text-[0.6rem] text-violet-400 font-bold">${agent.name.charAt(0).toUpperCase()}</span>
+                                </div>
+                                <div>
+                                    <span class="text-xs text-white font-medium">${escapeHtml(agent.name)}</span>
+                                    ${agent.category ? `<span class="ml-1.5 text-[0.55rem] text-violet-400/60 bg-violet-500/10 px-1.5 py-0.5 rounded-full">${agent.category}</span>` : ''}
+                                </div>
+                            </div>
+                            <div class="flex items-center gap-3 text-[0.6rem] text-gray-500">
+                                <span class="flex items-center gap-1">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-gray-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
+                                    ${agent.tool_count} tools
+                                </span>
+                                <span>weight ${agent.budget_weight}</span>
+                                <span>${agent.model_role} model</span>
+                            </div>
+                        </div>`;
+                };
+                explorerSelect.addEventListener('change', renderCard);
+                renderCard();
+            }
+
+            // Bind diagram button
+            container.querySelector('.swarm-open-diagram')?.addEventListener('click', () => vscode.postMessage({ command: 'showWorkflow' }));
+        }
+
+        async function saveWorkflowModels(workflowName) {
+            const explorer = document.getElementById(`wf-explorer-${workflowName}`)?.value || '';
+            const judge = document.getElementById(`wf-judge-${workflowName}`)?.value || '';
+
+            try {
+                const resp = await fetch(`${session.backendUrl}/api/workflows/${workflowName}/models`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ explorer: explorer || null, judge: judge || null }),
+                });
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                // Brief visual feedback
+                const btn = document.querySelector(`.wf-save-btn[data-workflow="${workflowName}"]`);
+                if (btn) {
+                    btn.textContent = 'Saved';
+                    btn.classList.replace('bg-violet-600', 'bg-green-600');
+                    setTimeout(() => {
+                        btn.textContent = 'Save';
+                        btn.classList.replace('bg-green-600', 'bg-violet-600');
+                    }, 1500);
+                }
+            } catch (err) {
+                console.error('[Workflows] Save failed:', err);
+            }
         }
 
         /**
@@ -7188,6 +7703,7 @@
          */
         function openAiConfigModal() {
             aiConfigModal.classList.remove('hidden');
+            workflowsLoaded = false; // refresh workflows data on each open
             fetchAiStatus();
         }
 
@@ -7240,6 +7756,7 @@
             aiSummaryEnabledState = data.summary_enabled;
             aiActiveProviderState = data.active_provider;
             aiModelsState = data.models || [];
+            window._aiModels = aiModelsState;
             aiActiveModelState = data.active_model;
             console.log('[WebView] AI status updated: enabled=', aiSummaryEnabledState, ', provider=', aiActiveProviderState, ', model=', aiActiveModelState);
 
@@ -7641,6 +8158,13 @@
             }
             console.log('[WebView] LiteLLM fallback set successfully:', data.message);
             if (aiLiteLLMToggle) aiLiteLLMToggle.checked = data.litellm_fallback;
+        }
+
+        // Workflow visualization button
+        if (btnWorkflowView) {
+            btnWorkflowView.addEventListener('click', () => {
+                vscode.postMessage({ command: 'showWorkflow' });
+            });
         }
 
         // AI Config modal event listeners

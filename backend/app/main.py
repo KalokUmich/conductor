@@ -143,6 +143,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.trace.enabled, settings.trace.backend,
     )
 
+    # ---- Langfuse Observability ----
+    from .workflow.observability import init_langfuse
+    langfuse_ok = init_langfuse(settings)
+    if langfuse_ok:
+        logger.info("Langfuse observability: enabled (host=%s)", settings.langfuse.host)
+    else:
+        logger.info("Langfuse observability: disabled")
+
     # ---- Ngrok tunnel ----
     # Read ngrok config from raw YAML (not modelled in AppSettings).
     # Required for VS Code Remote-WSL: the webview runs in the Windows
@@ -195,6 +203,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # ---- Shutdown ----
     stop_ngrok()
+    from .workflow.observability import flush as langfuse_flush
+    langfuse_flush()
     await git_service.shutdown()
     logger.info("Conducator shutdown complete.")
 
@@ -217,10 +227,13 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     _s = settings or load_settings()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins     = _s.server.allowed_origins,
-        allow_credentials = True,
-        allow_methods     = ["*"],
-        allow_headers     = ["*"],
+        allow_origins      = _s.server.allowed_origins,
+        allow_credentials  = True,
+        allow_methods      = ["*"],
+        allow_headers      = ["*"],
+        # vscode-webview://<id> origins are not matchable as literal strings;
+        # use a regex so any webview origin is accepted.
+        allow_origin_regex = r"vscode-webview://.*",
     )
 
     # --- Private Network Access (PNA) middleware ---
@@ -307,6 +320,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .workspace_files.router import router as workspace_files_router
     from .langextract.router     import router as langextract_router
     from .code_review.router     import router as code_review_router
+    from .workflow.router         import router as workflow_router
 
     app.include_router(git_workspace_router)
     app.include_router(code_tools_router)
@@ -323,6 +337,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(workspace_files_router)
     app.include_router(langextract_router)
     app.include_router(code_review_router)
+    app.include_router(workflow_router)
 
     # --- Health check ---
     @app.get("/health", include_in_schema=True)

@@ -60,23 +60,31 @@ You have {max_iterations} tool-calling iterations. Reserve the last 1-2 for veri
 
 ## Core Behavior
 
-1. **HYPOTHESIS-DRIVEN**: Before each tool call, state what you expect to find and why.
-2. **EVIDENCE-BASED**: Every claim must reference a specific file and line number.
-3. **SCOPE SEARCHES**: Use the `path` parameter in grep/find_symbol to target the \
+1. **PARALLEL TOOL CALLS**: Call multiple tools in the same turn when they are \
+independent. For example, grep for two different patterns simultaneously, or read \
+multiple files at once. This saves iterations and budget. Only call tools sequentially \
+when the second call depends on the first call's result.
+2. **HYPOTHESIS-DRIVEN**: Before each tool call, state what you expect to find and why.
+3. **EVIDENCE-BASED**: Every claim must reference a specific file and line number.
+4. **SCOPE SEARCHES**: Use the `path` parameter in grep/find_symbol to target the \
 relevant project root from "Detected project roots" above. Never search the entire \
 workspace when a specific project directory is known.
-4. **READ ACTUAL CODE**: compressed_view shows structure but not logic. When tracing \
+5. **READ ACTUAL CODE**: compressed_view shows structure but not logic. When tracing \
 a flow, debugging, or understanding behavior, use read_file or expand_symbol to see \
 the real implementation. In Java, always read the *Impl class, not just the interface.
-5. **BUDGET-AWARE**: Monitor [Budget: ...] tags. Converge when budget runs low.
+6. **BUDGET-AWARE**: Monitor [Budget: ...] tags. Converge when budget runs low.
 
 ## Hard Constraints
 
+- **OUTLINE BEFORE READ**: Before reading any file >200 lines, call file_outline \
+first. Then read_file with start_line/end_line for the sections you need. \
+Never read an entire large file.
 - **Never re-read a file you already read.** Use start_line/end_line for specific sections.
-- **Never read a large file (>200 lines) without file_outline first.**
 - **Never use more than 2 broad greps in a row.** After locating, switch to reading.
 - **Do NOT pass include_glob to grep** unless you are certain about the file extension. \
 The workspace may contain multiple languages.
+- **No redundant searches.** If a grep already found the files, do not grep the same \
+pattern again with minor variations. Move to reading the results.
 
 ## Tool Guide (when to use what)
 
@@ -110,58 +118,48 @@ The workspace may contain multiple languages.
 STRATEGIES = {
     "entry_point_discovery": """\
 ## Strategy: Entry Point Discovery
-1. grep for route/endpoint patterns matching the query terms
-2. Use find_symbol to locate handler functions
-3. Use compressed_view on the handler file to understand structure
+1. **Parallel search**: Call grep AND find_symbol simultaneously for the query terms
+2. From results, call file_outline on the handler file
+3. Read the specific handler function with read_file(start_line, end_line)
 4. Trace inward using get_callees if the handler delegates
-Target: 3-6 iterations. Answer with the entry point file, function, and line number.""",
+Target: 3-5 iterations. Answer with the entry point file, function, and line number.""",
 
     "business_flow_tracing": """\
 ## Strategy: Business Flow Tracing
-1. **Find entry point**: grep or find_symbol for the domain term — scope to the \
-relevant project root (check "Detected project roots" for pom.xml, package.json, etc.)
-2. **Read the implementation**: Use read_file or expand_symbol on the handler/service. \
+1. **Parallel locate**: Call grep for the domain term AND find_symbol simultaneously — \
+scope to the relevant project root.
+2. **Outline then read**: Call file_outline on the top 2-3 result files in parallel. \
+Then read_file with start_line/end_line on the key functions (not full files).
+3. **Follow the call chain**: Use get_callees on each method, then read relevant sections. \
 For Java, always find and read the *Impl class, not just the interface.
-3. **Follow the call chain**: Use get_callees on each method, then read_file/expand_symbol \
-on the next service in the chain. Build the flow step by step.
-4. **Detect patterns**: If the flow involves queues, webhooks, retries, or transactions, \
-use detect_patterns on the relevant directory to map architectural patterns before tracing.
-5. **Check tests for flow documentation**: Use find_tests or grep in test directories — \
-E2E/integration tests often show the complete journey in order.
-6. **Trace data transformations**: If the flow involves state changes, use trace_variable.
-7. Summarize: Entry → Step 1 → Step 2 → ... → Final state, each citing file:line.
-Target: 8-15 iterations. Read actual code, not just summaries.""",
+4. **Check tests**: Call find_tests in parallel with your code exploration — \
+integration tests often document the complete flow.
+5. Summarize: Entry → Step 1 → Step 2 → ... → Final state, each citing file:line.
+Target: 5-10 iterations. Maximise parallel calls to stay within budget.""",
 
     "root_cause_analysis": """\
 ## Strategy: Root Cause Analysis
-1. Find the error location (grep for error messages, exception types)
-2. Use expand_symbol to read the error context in detail
-3. Trace callers using get_callers — how do we reach this error?
-4. Check data flow using trace_variable — what input causes the failure?
-5. **Detect risky patterns**: Use detect_patterns on the affected module to find \
-check-then-act races, missing retry logic, or transaction gaps that may be the root cause.
-6. Check recent changes using git_log/git_diff for regression clues
-Target: 8-15 iterations. Answer with root cause, evidence chain, and fix suggestion.""",
+1. **Parallel search**: grep for error messages AND exception types simultaneously
+2. Use file_outline then expand_symbol to read the error context in detail
+3. **Parallel trace**: Call get_callers AND trace_variable simultaneously
+4. Check recent changes using git_log (run in parallel with step 3 if budget allows)
+Target: 5-10 iterations. Answer with root cause, evidence chain, and fix suggestion.""",
 
     "impact_analysis": """\
 ## Strategy: Impact Analysis
-1. Find all dependents using get_dependents (who depends on this code?)
-2. Use find_references to find all call sites
-3. Use find_tests to identify test coverage
-4. **Detect patterns**: Use detect_patterns on affected modules to identify \
-queues, webhooks, retry logic, or transaction boundaries that amplify impact.
-5. For each affected module, use compressed_view to assess severity
-6. Summarize: affected modules, affected APIs, risk level, pattern risks
-Target: 6-12 iterations. Answer with impact summary and risk assessment.""",
+1. **Parallel discovery**: Call get_dependents AND find_references AND find_tests \
+simultaneously on the target code
+2. For key affected modules, call compressed_view in parallel
+3. Summarize: affected modules, affected APIs, risk level
+Target: 4-8 iterations. Maximise parallel calls.""",
 
     "architecture_question": """\
 ## Strategy: Architecture Overview
-1. Use module_summary on top-level directories to understand responsibilities
+1. **Parallel scan**: Call module_summary on 2-3 top-level directories simultaneously
 2. Use get_dependencies to map module relationships
 3. Use compressed_view on key service files for interface details
 4. Build a dependency diagram: Module → depends on → Module
-Target: 5-10 iterations. Answer with architecture summary and module diagram.
-IMPORTANT: Start from documentation and module_summary — do NOT read individual files.""",
+Target: 4-8 iterations. Start from documentation and module_summary — do NOT read individual files.""",
 
     "config_analysis": """\
 ## Strategy: Config Analysis

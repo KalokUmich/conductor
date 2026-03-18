@@ -1,0 +1,129 @@
+# PR Review Workflow
+# =============================================================================
+# Multi-agent code review pipeline. Classifier determines which specialist
+# agents to dispatch based on risk patterns in file paths. All matching
+# routes run in parallel, then post_pipeline runs sequentially.
+
+name: pr-review
+description: Multi-agent PR code review
+prompt_template: prompts/review_base.md
+route_mode: parallel_all_matching
+
+# Budget defaults — per-agent budget = base × sub_fraction × agent.budget_weight
+budget:
+  base_tokens: 800_000
+  base_iterations: 40
+  sub_fraction: 0.7
+  min_iterations: 8
+  size_multiplier:
+    small:  { max_lines: 500,  factor: 0.5 }
+    medium: { max_lines: 2000, factor: 1.0 }
+    large:  { max_lines: 5000, factor: 1.5 }
+    xl:     { max_lines: 99999, factor: 2.0 }
+  reject_above: 8000
+
+core_tools:
+  - grep
+  - read_file
+  - find_symbol
+  - file_outline
+  - compressed_view
+  - expand_symbol
+
+dispatch:
+  mode: hybrid
+  classifier:
+    type: risk_pattern
+    thresholds:
+      high:   { count: 5, ratio: 0.3 }
+      medium: { count: 2, ratio: 0.15 }
+  llm_fallback:
+    enabled: true
+    when: "active_agents <= 1"
+    model_role: classifier
+
+routes:
+  correctness:
+    file_patterns:
+      - "state.?machine|status|transition|workflow"
+      - "persist|save|update|delete|insert|upsert"
+      - "transaction|commit|rollback"
+      - "validat|assert|check|verify|constrain"
+      - "schema|migration|alter.?table"
+    boost_rules:
+      - when: "business_logic_files >= 10 or changed_lines > 2000"
+        min_level: medium
+      - when: "schema_files > 0"
+        min_level: medium
+    pipeline:
+      - stage: explore
+        agents: [agents/correctness.md]
+
+  concurrency:
+    file_patterns:
+      - "consumer|listener|handler|callback|webhook"
+      - "queue|mq|kafka|sqs|rabbit|amqp|pubsub"
+      - "async|await|thread|lock|mutex|semaphore"
+      - "retry|backoff|idempoten"
+      - "scheduled|cron|timer|interval"
+      - "worker|job|task|celery"
+    pipeline:
+      - stage: explore
+        agents: [agents/concurrency.md]
+
+  security:
+    file_patterns:
+      - "auth|login|logout|session|token|jwt|oauth|sso"
+      - "password|secret|credential|api.?key"
+      - "permission|rbac|acl|role|access.?control"
+      - "encrypt|decrypt|hash|hmac|sign|verify"
+      - "sanitiz|escap|xss|csrf|inject|sql"
+      - "cors|header|cookie|origin"
+    pipeline:
+      - stage: explore
+        agents: [agents/security.md]
+
+  reliability:
+    file_patterns:
+      - "exception|error|catch|throw|raise"
+      - "timeout|deadline|circuit.?breaker"
+      - "fallback|recover|graceful|shutdown"
+      - "health.?check|readiness|liveness"
+      - "metric|monitor|alert|observ"
+      - "log(ger|ging)?\\."
+    pipeline:
+      - stage: explore
+        agents: [agents/reliability.md]
+
+  operational:
+    file_patterns:
+      - "\\.ya?ml$|\\.env|\\.properties|\\.toml"
+      - "docker|kubernetes|helm|terraform"
+      - "deploy|release|rollout|canary"
+      - "feature.?flag|toggle|config"
+      - "pool|connection|cache|redis|memcache"
+    pipeline:
+      - stage: explore
+        agents: [agents/reliability.md]    # operational risk uses reliability agent
+
+  test_coverage:
+    file_patterns: []                       # always runs (agent has trigger.always: true)
+    pipeline:
+      - stage: explore
+        agents: [agents/test_coverage.md]
+
+# Shared stages after all parallel routes complete
+post_pipeline:
+  - stage: arbitrate
+    agents: [agents/arbitrator.md]
+  - stage: synthesize
+    agents: [agents/review_synthesizer.md]
+
+post_processing:
+  min_confidence: 0.6
+  max_findings_per_agent: 5
+  evidence_gate:
+    critical_min_evidence: 2
+    critical_require_file: true
+    critical_require_line: true
+    critical_min_tool_calls: 3

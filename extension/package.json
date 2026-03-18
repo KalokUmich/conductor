@@ -46,6 +46,10 @@
       {
         "command": "conductor.searchWorkspace",
         "title": "Conductor: Search Remote Workspace"
+      },
+      {
+        "command": "conductor.showWorkflow",
+        "title": "Conductor: View Agent Workflows"
       }
     ],
     "configuration": {

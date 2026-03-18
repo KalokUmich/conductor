@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 24 code tools + token budget controller + 3-layer prompts), Git workspace management, file sharing, DuckDB-backed audit logs and TODOs, and multi-provider AI (Bedrock / Anthropic / OpenAI).
+Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 24 code tools + token budget controller + 3-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, DuckDB-backed audit logs and TODOs, and multi-provider AI (Bedrock / Anthropic / OpenAI).
 
 ### Quick Start
 
@@ -74,6 +74,16 @@ Docs:
 | POST | `/api/context/explain-rich/stream` | SSE streaming for explain-rich |
 | GET | `/api/code-tools/available` | List all available code tools |
 | POST | `/api/code-tools/execute/{tool_name}` | Directly execute a single code tool |
+
+#### Workflow Engine (`/api/workflows/`)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/workflows` | List available workflows (name, description, route_mode, agent count) |
+| GET | `/api/workflows/{name}` | Full workflow config (agents, routes, pipeline, classifier) |
+| GET | `/api/workflows/{name}/mermaid` | Auto-generated Mermaid flowchart |
+| GET | `/api/workflows/{name}/graph` | React Flow-compatible graph JSON (nodes + edges) |
+| PUT | `/api/workflows/{name}/models` | Update explorer/judge model assignments |
 
 #### Git Workspace (`/api/git-workspace/`)
 
@@ -310,7 +320,7 @@ See `docs/GUIDE.md` section 11 for full documentation.
 <a name="中文"></a>
 ## 中文
 
-Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 24 个代码工具 + Token 预算控制器 + 三层 Prompt）、Git 工作区管理、文件共享、DuckDB 审计日志与 TODO 管理，以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
+Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 24 个代码工具 + Token 预算控制器 + 三层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、DuckDB 审计日志与 TODO 管理，以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
 
 ### 快速启动
 

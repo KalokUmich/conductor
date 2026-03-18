@@ -46,6 +46,7 @@ import { runExplainPipeline } from './services/explainWithContextPipeline';
 import { indexWorkspace, reindexSingleFile, cancelCurrentIndex } from './services/workspaceIndexer';
 import { RagClient, RagFileChange } from './services/ragClient';
 import { ConductorFileSystemProvider } from './services/conductorFileSystemProvider';
+import { WorkflowPanel } from './services/workflowPanel';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
@@ -316,6 +317,13 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.executeCommand('aiCollabView.focus');
     });
     context.subscriptions.push(disposable);
+
+    // Register command to open the workflow visualization panel
+    context.subscriptions.push(
+        vscode.commands.registerCommand('conductor.showWorkflow', () => {
+            WorkflowPanel.show(context.extensionUri, getBackendUrl());
+        })
+    );
 
     // Move view to secondary sidebar on first activation (right side layout)
     // Layout: [Activity Bar] [Primary Sidebar] [Editor] [AI Collab Sidebar]
@@ -672,6 +680,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'askAI':
                     await this._handleAskAI(message);
+                    return;
+                case 'showWorkflow':
+                    vscode.commands.executeCommand('conductor.showWorkflow');
                     return;
             }
         });
@@ -4260,11 +4271,13 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         // Replace the relative CSS path with the webview URI
         html = html.replace('href="tailwind.css"', `href="${cssUri}"`);
 
-        // Build Content Security Policy that allows WebSocket connections
-        // We need to allow ws: and wss: for both localhost and ngrok URLs
+        // Build Content Security Policy that allows WebSocket and fetch connections.
+        // Include both localhost and all ngrok patterns explicitly so that the CSP
+        // remains valid even if session.backendUrl is updated to a ngrok URL after
+        // the webview is first rendered (race between detectNgrokUrl and render time).
         const backendUrl = getSessionService().getBackendUrl();
         const wsUrl = backendUrl.replace('http', 'ws');
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${backendUrl} ${wsUrl} ws://localhost:* wss://localhost:* ws://*.ngrok-free.dev wss://*.ngrok-free.dev ws://*.ngrok-free.app wss://*.ngrok-free.app ws://*.ngrok.io wss://*.ngrok.io ws://*.ngrok.app wss://*.ngrok.app;">`;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${backendUrl} ${wsUrl} http://localhost:* https://localhost:* ws://localhost:* wss://localhost:* https://*.ngrok-free.dev wss://*.ngrok-free.dev https://*.ngrok-free.app wss://*.ngrok-free.app https://*.ngrok.io wss://*.ngrok.io https://*.ngrok.app wss://*.ngrok.app;">`;
 
         // Inject initial permissions data (including sessionRole based on FSM state)
         const permissions = getPermissionsService().getPermissionsForWebView();

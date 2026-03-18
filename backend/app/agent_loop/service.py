@@ -34,6 +34,7 @@ from .evidence import check_evidence
 from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
 from .query_classifier import QueryClassification, classify_query, classify_query_with_llm
 from .trace import IterationTrace, SessionTrace, ToolCallTrace, TraceWriter
+from app.workflow.observability import observe
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ class AgentLoopService:
         _skip_review_delegation: bool = False,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
         max_evidence_retries: int = 2,
+        workflow_config=None,
     ) -> None:
         self._provider = provider
         self._max_iterations = max_iterations
@@ -137,7 +139,9 @@ class AgentLoopService:
         self._skip_review_delegation = _skip_review_delegation
         self._llm_semaphore = llm_semaphore
         self._max_evidence_retries = max_evidence_retries
+        self._workflow_config = workflow_config
 
+    @observe(name="agent_loop")
     async def run(
         self,
         query: str,
@@ -180,6 +184,7 @@ class AgentLoopService:
                     result.error = event.data.get("error")
         return result
 
+    @observe(name="agent_loop_stream")
     async def run_stream(
         self,
         query: str,
@@ -200,14 +205,28 @@ class AgentLoopService:
         )
         trace.begin()
 
-        # Sub-agents (inside CodeReviewService) skip expensive startup:
-        # no workspace scanning, no LLM classification — they already
-        # have focused prompts with pre-fetched diffs.
+        # When workflow_config is set, the router already classified via
+        # WorkflowEngine — skip the internal classification entirely.
+        # Sub-agents (inside CodeReviewService) also skip expensive startup.
         if self._skip_review_delegation:
             layout = ""
             project_docs = ""
             risk_context = ""
             classification = classify_query(query)  # keyword-only, zero latency
+        elif self._workflow_config is not None:
+            # Workflow-driven: router already picked the right agent.
+            # Still scan workspace for context, but use agent's category as query_type.
+            layout_task = asyncio.to_thread(scan_workspace_layout, workspace_path)
+            docs_task = asyncio.to_thread(_read_key_docs, workspace_path)
+            risk_task = asyncio.to_thread(scan_workspace_risk, workspace_path)
+            layout, project_docs, risk_context = await asyncio.gather(
+                layout_task, docs_task, risk_task,
+            )
+            # Build a classification from the workflow agent config
+            agent_category = getattr(self._workflow_config, "category", None) or getattr(self._workflow_config, "name", "general")
+            classification = classify_query(query)  # keyword for tool_set baseline
+            classification.query_type = agent_category
+            logger.info("Using workflow-driven classification: type=%s (from agent config)", agent_category)
         else:
             # Pre-scan the workspace layout, key docs, and risk signals in parallel
             # so the LLM knows the project structure and context from iteration 1.

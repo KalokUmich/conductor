@@ -39,10 +39,21 @@ logger = logging.getLogger(__name__)
 _EXCLUDED_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", "target",
     "dist", "vendor", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-    ".tox", "build", ".next", ".nuxt",
+    ".tox", "build", ".next", ".nuxt", ".yarn", ".pnp",
 }
 
 _MAX_FILE_SIZE = 512_000  # 500 KB — skip larger files in search/parse
+
+# Binary/media file extensions to skip in grep searches
+_BINARY_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".avi",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar", ".7z",
+    ".woff", ".woff2", ".ttf", ".eot",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
+    ".pyc", ".pyo", ".class", ".o", ".so", ".dll", ".dylib",
+    ".exe", ".bin", ".dat", ".db", ".sqlite",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +132,8 @@ def _walk_files(
                 skipped_glob += 1
                 continue
             fp = Path(dirpath) / f
+            if fp.suffix.lower() in _BINARY_EXTENSIONS:
+                continue
             try:
                 if fp.stat().st_size > _MAX_FILE_SIZE:
                     skipped_size += 1

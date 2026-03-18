@@ -1,7 +1,7 @@
 # Conductor Project Makefile
 # ===========================
 
-.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help
+.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help langfuse-up langfuse-down langfuse-logs
 
 # Python virtual environment
 VENV_DIR := .venv
@@ -182,6 +182,28 @@ clean:
 
 
 # ===========================
+# Langfuse (Observability)
+# ===========================
+
+LANGFUSE_COMPOSE := docker/docker-compose.langfuse.yaml
+
+## Start Langfuse self-hosted stack (PostgreSQL + Langfuse server)
+langfuse-up:
+	@echo "🔍 Starting Langfuse on http://localhost:3001 ..."
+	docker compose -f $(LANGFUSE_COMPOSE) up -d
+	@echo "✅ Langfuse is starting. Open http://localhost:3001 to create a project."
+
+## Stop Langfuse stack
+langfuse-down:
+	@echo "🛑 Stopping Langfuse..."
+	docker compose -f $(LANGFUSE_COMPOSE) down
+	@echo "✅ Langfuse stopped."
+
+## View Langfuse logs
+langfuse-logs:
+	docker compose -f $(LANGFUSE_COMPOSE) logs -f langfuse
+
+# ===========================
 # Help
 # ===========================
 
@@ -212,6 +234,11 @@ help:
 	@echo "  make compile-ts       - Compile TypeScript only"
 	@echo "  make compile-css      - Build Tailwind CSS only"
 	@echo "  make package          - Package extension as .vsix (compiles first)"
+	@echo ""
+	@echo "Langfuse (Observability):"
+	@echo "  make langfuse-up      - Start Langfuse self-hosted (Docker)"
+	@echo "  make langfuse-down    - Stop Langfuse"
+	@echo "  make langfuse-logs    - View Langfuse logs"
 	@echo ""
 	@echo "Other:"
 	@echo "  make clean            - Remove all generated files"

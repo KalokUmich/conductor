@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-Conductor is a VS Code extension for real-time collaborative development with AI assistance. It provides a WebView-based chat sidebar, a Git-worktree-backed virtual file system (`conductor://`), workspace indexing, agentic code search, TODO management, stack trace sharing, and multi-provider SSO.
+Conductor is a VS Code extension for real-time collaborative development with AI assistance. It provides a WebView-based chat sidebar, a Git-worktree-backed virtual file system (`conductor://`), workspace indexing, agentic code search, slash-command-driven `@AI` chat (`/ask`, `/pr`), workflow visualization panel, TODO management, stack trace sharing, and multi-provider SSO.
 
 ### Session Lifecycle (FSM)
 
@@ -50,11 +50,27 @@ The extension drives all state through a finite state machine persisted in `glob
 - **Workspace search** — `conductor.searchWorkspace` command: full-text search over the active `conductor://` workspace via `POST /workspace/{room_id}/search`.
 - **Stack trace parsing** — Shares stack traces in chat with resolved file paths and line anchors.
 
+#### @AI Slash Commands
+- Type `@AI /` in the chat input to open a floating command menu
+- `/ask <question>` — ask a question about the codebase (runs agent loop)
+- `/pr <base>...<feature>` — trigger a multi-agent PR review (e.g. `@AI /pr main...feature/auth`)
+- Menu filters by prefix as you type; ↑↓ navigate, Enter/Tab select, Escape close
+- Ghost text hint overlay shows the expected argument format for each command
+- Backward compatible: bare `@AI xxx` and `@AI do PR ...` still work unchanged
+
+#### Workflow Visualization
+- `conductor.showWorkflow` command (graph icon in chat header) opens a side-panel
+- SVG graph of the active workflow (PR Review or Code Explorer) with dark glass theme
+- Nodes: explorer (violet border), judge (indigo border), classifier (diamond), group (dashed)
+- Click a node to see agent details: tool list, budget, trigger conditions, prompt excerpt
+- Two workflow tabs: PR Review and Code Explorer
+
 #### AI Workflows
 - Fetch provider status and switch active AI model
 - Summarize all or selected chat messages (`/ai/summarize`)
 - Generate coding prompt from decision summary (`/ai/code-prompt`, `/ai/code-prompt/selective`, `/ai/code-prompt/items`)
 - Optionally post generated prompts back into chat
+- **Workflows tab in AI Config modal** — select explorer/judge model per workflow; persists across reloads
 
 #### Change Review
 - Call `/generate-changes` to produce a `ChangeSet`
@@ -94,7 +110,7 @@ The extension drives all state through a finite state machine persisted in `glob
 ```text
 extension/
 ├─ src/
-│  ├─ extension.ts                        # Activation, command registration, AICollabViewProvider
+│  ├─ extension.ts                        # Activation, command registration (incl. conductor.showWorkflow)
 │  ├─ services/
 │  │  ├─ conductorStateMachine.ts         # FSM states and transitions
 │  │  ├─ conductorController.ts           # FSM driver (start/join/stop)
@@ -102,9 +118,7 @@ extension/
 │  │  ├─ workspacePanel.ts               # Git workspace 5-step wizard
 │  │  ├─ workspaceClient.ts              # /workspace/ HTTP client
 │  │  ├─ workspaceIndexer.ts             # AST symbol extraction + incremental indexing
-│  │  ├─ embeddingQueue.ts               # Async embedding pipeline
-│  │  ├─ ragClient.ts                    # RAG indexing/search backend client
-│  │  ├─ explainWithContextPipeline.ts   # 8-stage code explanation pipeline
+│  │  ├─ workflowPanel.ts               # WorkflowPanel singleton — workflow visualization WebView
 │  │  ├─ todoScanner.ts                  # Workspace TODO/FIXME scanner
 │  │  ├─ stackTraceParser.ts             # Stack trace parsing and path resolution
 │  │  ├─ diffPreview.ts                  # Diff preview + apply for ChangeSets
@@ -116,7 +130,8 @@ extension/
 │  │  └─ conductorDb.ts                  # SQLite DB wrapper (.conductor/)
 │  └─ tests/                             # Node test runner tests
 ├─ media/
-│  ├─ chat.html                          # WebView HTML
+│  ├─ chat.html                          # WebView HTML — @AI slash commands (/ask /pr), AI Config modal
+│  ├─ workflow.html                      # Workflow visualization WebView — SVG graph + agent details
 │  ├─ input.css
 │  └─ tailwind.css
 └─ package.json
@@ -187,7 +202,7 @@ Generates `ai-collab-0.0.1.vsix`.
 <a name="中文"></a>
 ## 中文
 
-Conductor 是一个 VS Code 扩展，提供基于 WebView 的协作侧边栏、Git worktree 虚拟文件系统（`conductor://`）、工作区索引、智能代码搜索、TODO 管理、堆栈追踪共享及多 Provider SSO。
+Conductor 是一个 VS Code 扩展，提供基于 WebView 的协作侧边栏、Git worktree 虚拟文件系统（`conductor://`）、工作区索引、智能代码搜索、斜杠命令驱动的 `@AI` 聊天（`/ask`、`/pr`）、工作流可视化面板、TODO 管理、堆栈追踪共享及多 Provider SSO。
 
 ### 会话生命周期（状态机）
 

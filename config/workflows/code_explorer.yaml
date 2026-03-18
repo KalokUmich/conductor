@@ -1,0 +1,112 @@
+# Code Explorer Workflow
+# =============================================================================
+# Agentic code intelligence. Classifier determines the query type from user
+# text, then dispatches the matching route's pipeline. Most routes are
+# single-agent; business_flow_tracing uses multi-agent (2 perspectives +
+# synthesis). code_review delegates to the PR review workflow.
+
+name: code-explorer
+description: Agentic code intelligence — answer questions about the codebase
+prompt_template: prompts/explorer_base.md
+route_mode: first_match
+
+budget:
+  base_tokens: 500_000
+  base_iterations: 25
+  sub_fraction: 0.6
+  min_iterations: 10
+
+core_tools:
+  - grep
+  - read_file
+  - find_symbol
+  - file_outline
+  - compressed_view
+  - expand_symbol
+
+dispatch:
+  mode: classifier
+  classifier:
+    type: keyword_pattern
+
+routes:
+  business_flow_tracing:
+    text_patterns:
+      - "flow|process|trace|how does|what happens"
+      - "step by step|lifecycle|life cycle|pipeline|journey|sequence"
+      - "workflow"
+      - "what is the|what are the|explain the|describe the|tell me about|purpose of|role of"
+      - "how .+ works|how .+ work|understand"
+    pipeline:
+      - stage: explore
+        parallel: true
+        agents:
+          - agents/explore_implementation.md
+          - agents/explore_usage.md
+      - stage: synthesize
+        agents:
+          - agents/explore_synthesizer.md
+
+  root_cause_analysis:
+    text_patterns:
+      - "bug|error|fail|why|root cause|debug"
+      - "crash|exception|broken|wrong|issue"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_root_cause.md]
+
+  entry_point_discovery:
+    text_patterns:
+      - "entry|endpoint|route|handler"
+      - "where does|where is|which file"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_entry_point.md]
+
+  impact_analysis:
+    text_patterns:
+      - "impact|affect|break|blast radius"
+      - "change|modify|refactor|rename|remove|deprecate"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_impact.md]
+
+  architecture_question:
+    text_patterns:
+      - "architecture|structure|organized|overview"
+      - "design|modules|layers|components|diagram"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_architecture.md]
+
+  data_lineage:
+    text_patterns:
+      - "data|lineage|transform|input|flows to"
+      - "passed to|stored|database|persist|column"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_data_lineage.md]
+
+  config_analysis:
+    text_patterns:
+      - "config|setting|flag|environment|variable"
+      - "option|parameter|toggle|feature flag"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_config.md]
+
+  recent_changes:
+    text_patterns:
+      - "recent|changed|commit|who|when"
+      - "blame|history|last week|yesterday"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_recent_changes.md]
+
+  code_review:
+    text_patterns:
+      - "review|code review|pr review|pull request"
+      - "review the pr|review this pr|review the diff"
+      - "review the changes|review changes"
+      - "do pr|do a pr|check the pr"
+    delegate: workflows/pr_review.yaml

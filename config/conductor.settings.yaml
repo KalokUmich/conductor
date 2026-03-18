@@ -20,6 +20,7 @@ server:
   log_level: "info"
   allowed_origins:
     - "http://localhost:3000"
+    - "http://localhost:3001"
     - "http://localhost:5173"
     - "vscode-webview://*"
 
@@ -100,7 +101,7 @@ summary:
 ai_provider_settings:
   anthropic_enabled: true
   aws_bedrock_enabled: true
-  openai_enabled: true
+  openai_enabled: false
   alibaba_enabled: true
   moonshot_enabled: false
   # When true, if a native provider fails its health check, the resolver
@@ -118,18 +119,13 @@ ai_models:
     display_name: "Claude Sonnet 4.6 (Bedrock EU)"
     enabled: true
     litellm: true
+    explorer: true  # good sub-agent — strong instruction following, no thinking override needed
+    classifier: true
 
   - id: "claude-opus-4-6-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-opus-4-6"
     display_name: "Claude Opus 4.6 (Bedrock EU)"
-    enabled: true
-    litellm: true
-
-  - id: "claude-sonnet-4-5-bedrock"
-    provider: "aws_bedrock"
-    model_name: "eu.anthropic.claude-sonnet-4-5-20250929-v1:0"
-    display_name: "Claude Sonnet 4.5 (Bedrock EU)"
     enabled: true
     litellm: true
 
@@ -336,3 +332,15 @@ trace:
   backend: "local"                          # "local" (JSON files) or "database" (SQLite)
   local_path: ".conductor/session_traces"   # gitignored by default
   # database_url: "sqlite:///traces.db"     # uncomment to use SQLite DB instead
+
+# =============================================================================
+# Langfuse Observability
+# =============================================================================
+# Self-hosted Langfuse via: make langfuse-up  (http://localhost:3001)
+# After creating a project, add API keys to conductor.secrets.yaml:
+#   langfuse:
+#     public_key: "pk-lf-..."
+#     secret_key: "sk-lf-..."
+langfuse:
+  enabled: true
+  host: "http://localhost:3001"

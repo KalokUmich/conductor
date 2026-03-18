@@ -64,9 +64,16 @@ class JWTSecrets(BaseModel):
     algorithm:  str = "HS256"
 
 
+class LangfuseSecrets(BaseModel):
+    """Langfuse API keys (from conductor.secrets.yaml)."""
+    public_key: str = ""
+    secret_key: str = ""
+
+
 class Secrets(BaseModel):
     database:  DatabaseSecrets  = Field(default_factory=DatabaseSecrets)
     jwt:       JWTSecrets       = Field(default_factory=JWTSecrets)
+    langfuse:  LangfuseSecrets  = Field(default_factory=LangfuseSecrets)
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +148,16 @@ class TraceSettings(BaseModel):
 
 
 
+class LangfuseSettings(BaseModel):
+    """Configuration for Langfuse observability integration.
+
+    Self-hosted via docker/docker-compose.langfuse.yaml.
+    When disabled, @observe decorators are no-ops (zero overhead).
+    """
+    enabled:    bool = False
+    host:       str  = "http://localhost:3001"
+
+
 class CodeSearchSettings(BaseModel):
     """Configuration for code search and repo graph features."""
     # -- RepoMap (graph-based context) --
@@ -157,6 +174,7 @@ class AppSettings(BaseModel):
     git_workspace:  GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
     code_search:    CodeSearchSettings   = Field(default_factory=CodeSearchSettings)
     trace:          TraceSettings        = Field(default_factory=TraceSettings)
+    langfuse:       LangfuseSettings     = Field(default_factory=LangfuseSettings)
     secrets:        Secrets              = Field(default_factory=Secrets)
 
 

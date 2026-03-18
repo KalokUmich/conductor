@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-03-11
+Last updated: 2026-03-18
 
 ## Current State
 
@@ -312,6 +312,49 @@ Standalone eval system in `eval/` for measuring `CodeReviewService` quality agai
 - [x] Timestamped JSON baselines for regression detection
 - [x] Excluded from Docker via `.dockerignore`
 
+#### Config-Driven Workflow Engine (COMPLETE)
+Extract hardcoded multi-agent orchestration into a config-driven engine with YAML workflow definitions and Markdown agent files.
+
+- [x] `workflow/models.py` — Pydantic models: `WorkflowConfig`, `AgentConfig`, `RouteConfig`, `ClassifierResult`, `StageConfig`, `BudgetDefaults`
+- [x] `workflow/loader.py` — `load_workflow()` + `load_agent()` — parse YAML + Markdown frontmatter, resolve delegate references, validate input/output ordering
+- [x] `workflow/classifier_engine.py` — generic `ClassifierEngine` with `risk_pattern` (file path regex → PR Review dimensions) and `keyword_pattern` (query text → Code Explorer routes)
+- [x] `workflow/engine.py` — `WorkflowEngine.run_stream()` — `first_match` mode (Code Explorer: best route) and `parallel_all_matching` mode (PR Review: all matching routes in parallel, then post_pipeline)
+- [x] `workflow/mermaid.py` — `generate_mermaid()` auto-generates Mermaid flowchart from any `WorkflowConfig` (different layout per route_mode)
+- [x] `workflow/router.py` — 5 REST endpoints: `GET /api/workflows`, `GET /api/workflows/{name}`, `GET /api/workflows/{name}/mermaid`, `GET /api/workflows/{name}/graph`, `PUT /api/workflows/{name}/models`
+- [x] Config files: `config/workflows/pr_review.yaml` (6 routes, parallel_all_matching), `config/workflows/code_explorer.yaml` (9 routes, first_match, includes `delegate` to pr_review)
+- [x] 17 agent `.md` files in `config/agents/` — 5 PR explorer agents, 2 PR judge agents, 3 code explorer multi-agent, 7 code explorer single-agent routes
+- [x] 2 shared prompt templates in `config/prompts/` — `review_base.md`, `explorer_base.md`
+- [x] `workflow/observability.py` — Langfuse `@observe` decorator; zero overhead when disabled (no-op function wrapper)
+- [x] `main.py` — `init_langfuse()` at startup, `flush()` at shutdown, `workflow_router` registered
+
+#### Langfuse Observability (COMPLETE)
+Self-hosted LLM tracing with nested execution trees, cost tracking, and latency analysis.
+- [x] `docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)
+- [x] `langfuse>=2.0` in `requirements.txt`
+- [x] `LangfuseSettings` + `LangfuseSecrets` in `config.py`
+- [x] `make langfuse-up`, `make langfuse-down`, `make langfuse-logs` Makefile targets
+- [x] Traces nested as: workflow → route → agent → llm_call → tool
+- [x] Coexists with SessionTrace — Langfuse adds Web UI + team sharing; SessionTrace keeps tool params + thinking text
+
+#### Workflow Visualization Panel (COMPLETE)
+Interactive workflow graph in the VS Code extension WebView.
+- [x] `GET /api/workflows/{name}/graph` — React Flow-compatible JSON (nodes + edges with labels)
+- [x] `extension/media/workflow.html` — SVG graph rendered with dark glass theme; node types: explorer (violet), judge (indigo), classifier (diamond), group (dashed border)
+- [x] `extension/src/services/workflowPanel.ts` — singleton WebView panel class
+- [x] `conductor.showWorkflow` command registered in `extension.ts` and `package.json`
+- [x] Graph icon button in chat header opens the panel
+- [x] Node click shows agent detail sidebar (tools, budget, trigger conditions, prompt excerpt)
+- [x] Two tabs: PR Review and Code Explorer
+
+#### Slash Command System (COMPLETE)
+Cleaner `@AI` command format with floating menu and ghost text hints.
+- [x] `@AI /ask xxx` (passthrough) and `@AI /pr branch...base` (transforms to `do PR main...feature/x`)
+- [x] Floating menu above chat textarea — appears on `@AI /`, filters by prefix, keyboard navigation (↑↓ Enter Tab Escape)
+- [x] Ghost text hint overlay — color-transparent textarea + positioned div shows e.g. "main...feature/branch-name"
+- [x] Commands in `SLASH_COMMANDS` JS array — extensible registry
+- [x] Backward compatible: bare `@AI xxx` and old `@AI do PR ...` still work unchanged
+- [x] "Workflows" tab in AI Config modal for explorer/judge model selection per workflow
+
 #### Cross-Session Query Patterns (PLANNED)
 Analyze session traces to learn from past queries and improve future performance.
 - [ ] Build `query_patterns.json` from offline analysis of session traces
@@ -459,7 +502,8 @@ This is a **multi-quarter R&D effort** requiring compiler engineering expertise.
 | Phase 4.5: Graph-Based Symbol Index (RepoMap) | ✅ Complete | Sprint 5 |
 | Phase 4.6: Agentic Code Intelligence | ✅ Complete | Sprint 6 |
 | Phase 5: Model B + Advanced | 🟡 Planned | Sprint 7 |
-| Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–8 |
+| Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–9 |
+| Phase 5.6: Config-Driven Workflow Engine (A-D) | ✅ Complete | Sprint 9 |
 | Phase 6: Production Hardening | 🟡 Planned | Sprint 9 |
 
 ## Architecture Decision Log
