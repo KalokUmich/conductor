@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-03-18
+Last updated: 2026-03-19
 
 ## Current State
 
@@ -490,6 +490,149 @@ This is a **multi-quarter R&D effort** requiring compiler engineering expertise.
 - [ ] Prometheus metrics endpoint
 - [ ] Health check improvements (deep checks for Git, AI provider)
 
+## Phase 7: External Service Integrations (PLANNED)
+
+**Database**: Shared Postgres (Langfuse instance, port 5433), new `conductor` database. SQLAlchemy async with `DatabaseSettings` pool config.
+
+**Backend module structure:**
+```
+backend/app/integrations/
+├── __init__.py
+├── db.py                      # SQLAlchemy async engine + session factory
+├── token_store.py             # IntegrationTokenStore — Postgres-backed, keyed by (user_email, provider)
+├── jira/
+│   ├── service.py             # JiraOAuthService — OAuth 3LO + token refresh
+│   ├── api_client.py          # JiraApiClient — REST API wrapper with auto-refresh
+│   ├── models.py              # Pydantic: JiraTokenPair, JiraProject, JiraIssue, CreateIssueRequest
+│   └── router.py              # /api/integrations/jira/* endpoints
+├── teams/
+│   ├── service.py             # TeamsService — Bot Framework + Graph API
+│   ├── models.py              # Pydantic: TeamsMessage, TeamsChannel
+│   └── router.py              # /api/integrations/teams/* endpoints
+└── slack/
+    ├── service.py             # SlackService — slash commands + webhooks
+    ├── models.py              # Pydantic: SlackCommand, SlackWebhookPayload
+    └── router.py              # /api/integrations/slack/* endpoints
+```
+
+### 7.0 Database Foundation
+- Add `sqlalchemy[asyncio]` + `asyncpg` to `requirements.txt`
+- Create `backend/app/integrations/db.py`: async engine from `DatabaseSecrets.url`, `AsyncSessionLocal` factory
+- Add `conductor` database to Langfuse's Postgres in `docker/docker-compose.langfuse.yaml` (init script or second DB)
+- Update `DatabaseSecrets.url` default to `postgresql+asyncpg://langfuse:langfuse@localhost:5433/conductor`
+- Create `integration_tokens` table (SQLAlchemy model):
+  - `user_email` (PK part 1), `provider` (PK part 2, e.g. "jira", "teams", "slack")
+  - `access_token`, `refresh_token`, `access_expires_at`, `refresh_expires_at`
+  - `metadata_json` (JSONB — provider-specific data like Jira `cloudId`, Teams `tenantId`)
+  - `updated_at`
+- Initialize engine in FastAPI lifespan (create tables on startup, dispose on shutdown)
+- Acceptance criteria:
+  - [ ] `docker compose -f docker/docker-compose.langfuse.yaml up` creates both `langfuse` and `conductor` databases
+  - [ ] SQLAlchemy async engine connects to Postgres, creates `integration_tokens` table
+  - [ ] CRUD operations on `IntegrationTokenStore` work (store, get, refresh, delete)
+  - [ ] Langfuse continues to work unchanged
+  - [ ] Unit tests with test Postgres (or SQLite async fallback for CI)
+
+### 7.1 Jira OAuth Backend
+- Atlassian OAuth 2.0 (3LO) flow on the backend
+- Access token: 1h lifetime; Refresh token: 90 days, rotating (each refresh returns new refresh token)
+- Scopes: `read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`
+- `IntegrationTokenStore` (Postgres, keyed by `(user_email, "jira")`)
+- `cloudId` fetched from `accessible-resources` after token exchange, stored in `metadata_json`
+- Endpoints: `GET /api/integrations/jira/authorize-url`, `POST /callback`, `GET /status`, `POST /disconnect`
+- Config: `JiraSettings` + `JiraSecrets` in `config.py` (follows `LangfuseSettings` pattern)
+- Files to create: `integrations/jira/service.py`, `models.py`, `router.py`
+- Files to modify: `config.py` (add `JiraSettings`/`JiraSecrets`), `main.py` (register router), `conductor.settings.yaml`, `conductor.secrets.yaml.example`
+- Acceptance criteria:
+  - [ ] `POST /callback` exchanges auth code for tokens and stores in Postgres
+  - [ ] `get_valid_token()` auto-refreshes expired access tokens using rotating refresh token
+  - [ ] `cloudId` fetched and stored in `metadata_json`
+  - [ ] `GET /status` returns connection state
+  - [ ] `POST /disconnect` removes tokens from DB
+  - [ ] All endpoints return 400 when `jira.enabled: false`
+  - [ ] Unit tests with mocked httpx calls
+
+### 7.2 Jira API Service
+- `JiraApiClient` wrapping `httpx.AsyncClient` with auto-token-refresh middleware
+- API base: `https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/...`
+- Endpoints: `GET /projects`, `GET /issue-types?projectKey=X`, `POST /search` (JQL), `POST /issues` (create), `GET /issues/{key}`
+- Files to create: `integrations/jira/api_client.py`
+- Files to modify: `integrations/jira/models.py` (add `JiraProject`, `JiraIssue`, `CreateIssueRequest`), `router.py` (add CRUD endpoints)
+- Acceptance criteria:
+  - [ ] Auto-refreshes token on 401 response (single retry)
+  - [ ] `POST /issues` creates a Jira ticket and returns issue key + URL
+  - [ ] `GET /projects` returns project list
+  - [ ] `POST /search` accepts JQL, returns paginated results
+  - [ ] All endpoints return 401 when user has no valid connection
+  - [ ] Unit tests with mocked Jira API responses
+
+### 7.3 Extension Jira Auth UI
+- "Connect Jira" button in chat panel integrations section
+- OAuth flow: button click → `GET /authorize-url` → `vscode.env.openExternal()` → browser → Atlassian authorize → redirect to `vscode://conductor.ai-collab/jira/callback` → `registerUriHandler` captures code → `POST /callback` to backend
+- Connection status cached in `globalState` (follows `ssoIdentityCache.ts` pattern with TTL)
+- Requires setting `publisher` in `package.json` for URI handler
+- Files to create: `extension/src/services/jiraAuthService.ts`
+- Files to modify: `extension/package.json`, `extension/src/extension.ts` (register URI handler + commands), `extension/media/chat.html` (add button)
+- Acceptance criteria:
+  - [ ] "Connect Jira" button visible in chat panel
+  - [ ] Browser opens to Atlassian authorize page
+  - [ ] `vscode://` callback captured and forwarded to backend
+  - [ ] Connection status indicator (green dot / "Connected")
+  - [ ] "Disconnect Jira" command works
+  - [ ] Error handling for timeout, denial, network failure
+
+### 7.4 Extension Jira Ticket Creation UI
+- Ticket creation modal: project dropdown, issue type selector, summary, description
+- Slash commands: `@AI /jira create [summary]`, `@AI /jira search [query]`
+- "Create Jira Ticket" button on code review findings (pre-populates summary + description from finding)
+- Files to modify: `extension/media/chat.html` (modal form), `extension/src/extension.ts` (message handlers)
+- Acceptance criteria:
+  - [ ] Project/issue-type dropdowns load from API
+  - [ ] Submit creates ticket, shows issue key + clickable URL
+  - [ ] Code review findings have "Create Jira Ticket" button
+  - [ ] `/jira create` and `/jira search` slash commands work
+  - [ ] Form validates required fields
+
+### 7.5 Microsoft Teams Integration
+- Bot Framework webhook: `POST /api/integrations/teams/bot/messages`
+- Graph API for reading channels/messages (app-level client credentials auth)
+- Bot commands: `@Conductor review PR#123`, `@Conductor ask "..."`
+- Results posted as Adaptive Cards
+- Files to create: `integrations/teams/service.py`, `models.py`, `router.py`
+- Files to modify: `config.py` (add `TeamsSettings`/`TeamsSecrets`), `main.py`, settings YAML
+- Acceptance criteria:
+  - [ ] Bot validates HMAC signatures on incoming Activities
+  - [ ] `@Conductor review` and `@Conductor ask` commands work
+  - [ ] Channel messages can be read via Graph API
+  - [ ] Review results posted as Adaptive Cards
+
+### 7.6 Slack Integration
+- Slash command endpoint: `POST /api/integrations/slack/commands` with HMAC-SHA256 signature validation
+- Incoming webhooks for posting results
+- Commands: `/conductor review PR#123`, `/conductor ask "..."`
+- Results formatted as Slack Block Kit messages
+- Files to create: `integrations/slack/service.py`, `models.py`, `router.py`
+- Files to modify: `config.py` (add `SlackSettings`/`SlackSecrets`), `main.py`, settings YAML
+- Acceptance criteria:
+  - [ ] Validates Slack request signatures
+  - [ ] `/conductor review` triggers CodeReviewService, posts formatted results
+  - [ ] `/conductor ask` triggers AgentLoopService, posts answer
+  - [ ] Webhook URL configurable per channel
+
+### Dependency Graph
+```
+7.0 (DB Foundation) ──> 7.1 (Jira OAuth) ──┬──> 7.2 (Jira API) ──┬──> 7.4 (Ticket UI)
+                                            │                      │
+                                            ├──> 7.3 (Auth UI) ────┘
+                                            ├──> 7.5 (Teams) [parallel]
+                                            └──> 7.6 (Slack) [parallel]
+```
+
+### Config Additions
+- `conductor.settings.yaml`: `integrations.jira.enabled`, `integrations.teams.enabled`, `integrations.slack.enabled`
+- `conductor.secrets.yaml`: `integrations.jira.client_id/client_secret`, `integrations.teams.*`, `integrations.slack.*`
+- `DatabaseSecrets.url`: `postgresql+asyncpg://langfuse:langfuse@localhost:5433/conductor`
+
 ## Milestone Summary
 
 | Milestone | Status | Completed |
@@ -505,6 +648,9 @@ This is a **multi-quarter R&D effort** requiring compiler engineering expertise.
 | Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–9 |
 | Phase 5.6: Config-Driven Workflow Engine (A-D) | ✅ Complete | Sprint 9 |
 | Phase 6: Production Hardening | 🟡 Planned | Sprint 9 |
+| Phase 7.0–7.1: DB Foundation + Jira OAuth | 🟡 Planned | Sprint 10 |
+| Phase 7.2–7.4: Jira API + Extension UI | 🟡 Planned | Sprint 11 |
+| Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
 
 ## Architecture Decision Log
 
@@ -547,3 +693,8 @@ This is a **multi-quarter R&D effort** requiring compiler engineering expertise.
 **Decision**: Replace the vector search → rerank → graph RAG pipeline with an LLM agent loop (`AgentLoopService`) that iteratively calls code-intelligence tools to gather context.
 **Rationale**: RAG pipelines are passive — they retrieve pre-indexed chunks and hope the relevant code was indexed at the right granularity. An agent is active: it decides what to read next based on what it has already seen, follows import chains, reads function implementations, and checks who calls what. This enables cross-file reasoning (e.g. tracing a Protocol to its concrete implementation, or finding where a DI container resolves a dependency) that vector similarity cannot replicate. The trade-off is higher latency (up to 10–15 LLM calls per query) vs. a single retrieval + generation pass — acceptable for an on-demand "Explain" action where depth matters more than speed. The RepoMap (ADR-009) is retained as a structural index powering the `find_symbol`, `file_outline`, and dependency tools used by the agent.
 **Status**: Implemented in Phase 4.6.
+
+### ADR-015: Integration Token Store — Postgres with SQLAlchemy async
+**Decision**: Store OAuth tokens for external integrations (Jira, Teams, Slack) in a shared Postgres instance (the Langfuse database server, port 5433) using SQLAlchemy async, with an `integration_tokens` table keyed by `(user_email, provider)`.
+**Rationale**: Postgres over SQLite for consistency with the existing Langfuse infrastructure, better concurrency under multiple users, and native JSONB support for provider-specific metadata (Jira `cloudId`, Teams `tenantId`). SQLAlchemy async chosen over raw asyncpg for declarative models and migration support. The `DatabaseSettings` pool config (`pool_size`, `max_overflow`) already exists in `config.py`.
+**Status**: Planned for Phase 7.0.

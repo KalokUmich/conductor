@@ -1,0 +1,536 @@
+"""Jira OAuth 2.0 (3LO) service.
+
+Implements Atlassian OAuth 2.0 authorization code flow:
+1. Generate authorize URL → user grants access in browser
+2. Exchange authorization code for tokens via callback
+3. Fetch accessible resources to get cloudId
+4. Use tokens for Jira REST API calls with auto-refresh
+"""
+from __future__ import annotations
+
+import logging
+import secrets
+import time
+from typing import Any, Dict, List, Optional
+
+import httpx
+
+from .models import (
+    CreateIssueRequest,
+    JiraCreateMeta,
+    JiraFieldOption,
+    JiraIssue,
+    JiraIssueType,
+    JiraProject,
+    JiraTokenPair,
+)
+
+logger = logging.getLogger(__name__)
+
+ATLASSIAN_AUTH_URL = "https://auth.atlassian.com/authorize"
+ATLASSIAN_TOKEN_URL = "https://auth.atlassian.com/oauth/token"
+ATLASSIAN_RESOURCES_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
+JIRA_API_BASE = "https://api.atlassian.com/ex/jira"
+
+SCOPES = "read:jira-work write:jira-work read:jira-user manage:jira-configuration offline_access"
+
+
+class JiraOAuthService:
+    """Handles Jira OAuth 2.0 (3LO) flow and API calls."""
+
+    def __init__(
+        self,
+        client_id: str,
+        client_secret: str,
+        redirect_uri: str,
+        static_teams: Optional[List[JiraFieldOption]] = None,
+    ):
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.redirect_uri = redirect_uri
+
+        # In-memory token store keyed by state (simple for now)
+        self._pending_states: Dict[str, float] = {}  # state -> created_at
+        self._tokens: Optional[JiraTokenPair] = None
+        self._token_expires_at: float = 0
+        # Static teams from config (customfield_10001 UUIDs); API-based discovery as fallback
+        self._team_cache: List[JiraFieldOption] = static_teams or []
+        self._team_field_key: str = "customfield_10001" if static_teams else ""
+        self._static_teams: bool = bool(static_teams)  # if True, never overwrite from API
+
+    def get_authorize_url(self) -> dict:
+        """Generate the Atlassian OAuth authorize URL.
+
+        Returns dict with authorize_url and state for CSRF verification.
+        """
+        state = secrets.token_urlsafe(32)
+        self._pending_states[state] = time.time()
+
+        from urllib.parse import urlencode
+        params = {
+            "audience": "api.atlassian.com",
+            "client_id": self.client_id,
+            "scope": SCOPES,
+            "redirect_uri": self.redirect_uri,
+            "state": state,
+            "response_type": "code",
+            "prompt": "consent",
+        }
+        url = f"{ATLASSIAN_AUTH_URL}?{urlencode(params)}"
+
+        return {"authorize_url": url, "state": state}
+
+    async def exchange_code(self, code: str, state: str) -> JiraTokenPair:
+        """Exchange authorization code for access + refresh tokens.
+
+        Also fetches the cloudId from accessible-resources.
+        """
+        # Validate state
+        if state and state not in self._pending_states:
+            raise ValueError("Invalid or expired OAuth state")
+        self._pending_states.pop(state, None)
+
+        async with httpx.AsyncClient() as client:
+            # Exchange code for tokens
+            resp = await client.post(
+                ATLASSIAN_TOKEN_URL,
+                json={
+                    "grant_type": "authorization_code",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "code": code,
+                    "redirect_uri": self.redirect_uri,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            token_pair = JiraTokenPair(
+                access_token=data["access_token"],
+                refresh_token=data.get("refresh_token", ""),
+                expires_in=data.get("expires_in", 3600),
+                scope=data.get("scope", ""),
+            )
+
+            # Fetch accessible resources to get cloudId
+            res_resp = await client.get(
+                ATLASSIAN_RESOURCES_URL,
+                headers={"Authorization": f"Bearer {token_pair.access_token}"},
+            )
+            res_resp.raise_for_status()
+            resources = res_resp.json()
+
+            if resources:
+                # Use first resource (or match fintern.atlassian.net)
+                resource = resources[0]
+                for r in resources:
+                    if "fintern" in r.get("url", ""):
+                        resource = r
+                        break
+                token_pair.cloud_id = resource["id"]
+                token_pair.site_url = resource.get("url", "")
+                logger.info(
+                    "Jira OAuth: connected to %s (cloudId=%s)",
+                    token_pair.site_url, token_pair.cloud_id,
+                )
+
+            # Store tokens
+            self._tokens = token_pair
+            self._token_expires_at = time.time() + token_pair.expires_in
+
+            return token_pair
+
+    async def _refresh_token(self) -> None:
+        """Refresh the access token using the rotating refresh token."""
+        if not self._tokens or not self._tokens.refresh_token:
+            raise RuntimeError("No refresh token available")
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                ATLASSIAN_TOKEN_URL,
+                json={
+                    "grant_type": "refresh_token",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": self._tokens.refresh_token,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+            self._tokens.access_token = data["access_token"]
+            self._tokens.refresh_token = data.get("refresh_token", self._tokens.refresh_token)
+            self._tokens.expires_in = data.get("expires_in", 3600)
+            self._token_expires_at = time.time() + self._tokens.expires_in
+            logger.info("Jira OAuth: token refreshed")
+
+    async def get_valid_token(self) -> str:
+        """Get a valid access token, refreshing if expired."""
+        if not self._tokens:
+            raise RuntimeError("Not connected to Jira")
+
+        # Refresh 60s before expiry
+        if time.time() > (self._token_expires_at - 60):
+            await self._refresh_token()
+
+        return self._tokens.access_token
+
+    def get_status(self) -> dict:
+        """Return current Jira connection status."""
+        if not self._tokens:
+            return {"connected": False}
+        return {
+            "connected": True,
+            "cloud_id": self._tokens.cloud_id,
+            "site_url": self._tokens.site_url,
+        }
+
+    def disconnect(self) -> None:
+        """Clear stored tokens."""
+        self._tokens = None
+        self._token_expires_at = 0
+        logger.info("Jira OAuth: disconnected")
+
+    # ------------------------------------------------------------------
+    # Jira REST API calls
+    # ------------------------------------------------------------------
+
+    def _api_base(self) -> str:
+        if not self._tokens or not self._tokens.cloud_id:
+            raise RuntimeError("Not connected to Jira")
+        return f"{JIRA_API_BASE}/{self._tokens.cloud_id}/rest/api/3"
+
+    async def _api_request(
+        self,
+        method: str,
+        path: str,
+        json: Any = None,
+        params: Optional[Dict[str, str]] = None,
+    ) -> Any:
+        """Make an authenticated Jira API request with auto-refresh on 401."""
+        token = await self.get_valid_token()
+        url = f"{self._api_base()}{path}"
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.request(
+                method, url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=json,
+                params=params,
+            )
+
+            # Auto-refresh on 401 and retry once
+            if resp.status_code == 401:
+                await self._refresh_token()
+                token = self._tokens.access_token  # type: ignore
+                resp = await client.request(
+                    method, url,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json=json,
+                    params=params,
+                )
+
+            if resp.status_code >= 400:
+                # Capture Jira's detailed error response
+                try:
+                    error_body = resp.json()
+                except Exception:
+                    error_body = resp.text
+                logger.error("Jira API %s %s → %s: %s", method, path, resp.status_code, error_body)
+                # Build a human-readable message from Jira's error format
+                messages = []
+                if isinstance(error_body, dict):
+                    for msg in error_body.get("errorMessages", []):
+                        messages.append(msg)
+                    for field, msg in error_body.get("errors", {}).items():
+                        messages.append(f"{field}: {msg}")
+                detail = "; ".join(messages) if messages else str(error_body)
+                raise RuntimeError(f"Jira API error ({resp.status_code}): {detail}")
+
+            return resp.json() if resp.content else None
+
+    async def get_projects(self) -> List[JiraProject]:
+        """List accessible Jira projects."""
+        data = await self._api_request("GET", "/project")
+        return [
+            JiraProject(
+                id=p["id"],
+                key=p["key"],
+                name=p["name"],
+                style=p.get("style", ""),
+            )
+            for p in data
+        ]
+
+    async def get_issue_types(self, project_key: str) -> List[JiraIssueType]:
+        """List issue types for a project."""
+        data = await self._api_request(
+            "GET", f"/project/{project_key}/statuses"
+        )
+        # The /project/{key}/statuses endpoint returns issue types with statuses.
+        # Each item has id, name, subtask.
+        seen = set()
+        types = []
+        for item in data:
+            tid = item["id"]
+            if tid not in seen:
+                seen.add(tid)
+                types.append(JiraIssueType(
+                    id=tid,
+                    name=item["name"],
+                    subtask=item.get("subtask", False),
+                ))
+        return types
+
+    async def get_teams(self, project_key: str = "") -> List[JiraFieldOption]:
+        """Fetch teams from the Jira Teams REST API (/rest/teams/1.0/teams/find).
+
+        This is the correct source for customfield_10001 (Team) IDs.
+        Falls back to Tempo Team options from createmeta if the endpoint is unavailable.
+        """
+        try:
+            params: Dict[str, str] = {"maxResults": "50"}
+            if project_key:
+                params["query"] = ""
+            data = await self._api_request("GET", "/rest/teams/1.0/teams/find", params=params)
+            teams = []
+            for t in (data if isinstance(data, list) else data.get("teams", data.get("results", []))):
+                tid = str(t.get("id", ""))
+                name = t.get("title", t.get("name", ""))
+                if tid and name:
+                    teams.append(JiraFieldOption(id=tid, name=name))
+            if teams:
+                self._team_cache = teams
+                self._team_field_key = "customfield_10001"
+                logger.info("Fetched %d teams from Teams API", len(teams))
+            return teams
+        except Exception as e:
+            logger.warning("Teams API unavailable (%s), falling back to createmeta", e)
+            return []
+
+    async def _seed_teams_from_simple_task(
+        self, project_key: str, skip_issue_type_id: str
+    ) -> tuple[List[JiraFieldOption], str]:
+        """Fetch team options from Simple Task, which reliably exposes Tempo Team allowedValues.
+
+        Returns (teams, team_field_key). Updates internal cache on success.
+        """
+        try:
+            all_types = await self.get_issue_types(project_key)
+            seed_id = next(
+                (t.id for t in all_types if t.name.lower() == "simple task" and t.id != skip_issue_type_id),
+                None,
+            )
+            if not seed_id:
+                logger.info("No Simple Task issue type found in project %s", project_key)
+                return [], ""
+
+            logger.info("Seeding team options from Simple Task (%s) in project %s", seed_id, project_key)
+            data = await self._api_request(
+                "GET", f"/issue/createmeta/{project_key}/issuetypes/{seed_id}"
+            )
+            fields_raw = data.get("fields", data.get("values", []))
+            if isinstance(fields_raw, dict):
+                fields_list = list(fields_raw.items())
+            elif isinstance(fields_raw, list):
+                fields_list = [(f.get("fieldId", f.get("key", "")), f) for f in fields_raw]
+            else:
+                return [], ""
+
+            teams: List[JiraFieldOption] = []
+            team_field_key = ""
+            exact_key = ""
+            for fk, fi in fields_list:
+                name_lower = fi.get("name", "").lower()
+                allowed = fi.get("allowedValues", [])
+                if name_lower == "team":
+                    exact_key = fk
+                if "team" in name_lower and allowed and not teams:
+                    team_field_key = fk
+                    teams = [
+                        JiraFieldOption(
+                            id=str(opt.get("id", "")),
+                            name=opt.get("name", opt.get("value", "")),
+                        )
+                        for opt in allowed
+                    ]
+
+            # team_field_key already points to the field that owns these options — don't override
+            if teams:
+                self._team_cache = teams
+                self._team_field_key = team_field_key
+                logger.info("Seeded %d team options from Simple Task (field=%s)", len(teams), team_field_key)
+            return teams, team_field_key
+        except Exception as e:
+            logger.warning("Failed to seed teams from Simple Task: %s", e)
+            return [], ""
+
+    async def get_create_meta(self, project_key: str, issue_type_id: str) -> JiraCreateMeta:
+        """Fetch field metadata for creating an issue.
+
+        Uses the createmeta endpoint to discover required fields and their
+        allowed values (priorities, components, teams).
+        """
+        data = await self._api_request(
+            "GET",
+            f"/issue/createmeta/{project_key}/issuetypes/{issue_type_id}",
+        )
+
+        priorities: List[JiraFieldOption] = []
+        components: List[JiraFieldOption] = []
+        teams: List[JiraFieldOption] = []
+        team_field_key = ""
+
+        # The response can have "fields" as a dict or "values" as a list
+        fields_raw = data.get("fields", data.get("values", []))
+
+        # Normalize to list of (field_key, field_info) pairs
+        if isinstance(fields_raw, dict):
+            fields_list = list(fields_raw.items())
+        elif isinstance(fields_raw, list):
+            fields_list = [(f.get("fieldId", f.get("key", "")), f) for f in fields_raw]
+        else:
+            fields_list = []
+
+        # Log all field keys and names for debugging
+        logger.info(
+            "Jira create_meta raw fields for %s/%s: %s",
+            project_key, issue_type_id,
+            [(fk, fi.get("name", "?")) for fk, fi in fields_list],
+        )
+
+        # Track team candidates: exact "Team" vs other team-like fields
+        exact_team_key = ""
+        exact_team_options: List[JiraFieldOption] = []
+        fallback_team_key = ""
+        fallback_team_options: List[JiraFieldOption] = []
+
+        for field_key, field_info in fields_list:
+            name_lower = field_info.get("name", "").lower()
+            allowed = field_info.get("allowedValues", [])
+
+            if field_key == "priority":
+                for opt in allowed:
+                    priorities.append(JiraFieldOption(id=opt["id"], name=opt["name"]))
+
+            elif field_key == "components":
+                for opt in allowed:
+                    components.append(JiraFieldOption(id=opt["id"], name=opt["name"]))
+
+            elif name_lower == "team":
+                # Exact match — this is the real Team field (e.g. customfield_10001)
+                exact_team_key = field_key
+                for opt in allowed:
+                    exact_team_options.append(JiraFieldOption(
+                        id=str(opt.get("id", "")),
+                        name=opt.get("name", opt.get("value", "")),
+                    ))
+
+            elif "team" in name_lower:
+                # Fallback: "Tempo Team" etc. — collect options regardless of exact match
+                # (exact Team field often has no allowedValues but Tempo Team does)
+                if not fallback_team_key:
+                    fallback_team_key = field_key
+                for opt in allowed:
+                    fallback_team_options.append(JiraFieldOption(
+                        id=str(opt.get("id", "")),
+                        name=opt.get("name", opt.get("value", "")),
+                    ))
+
+        # Use the field key that matches the source of the options — IDs are not portable
+        # between fields. customfield_10001 ("Team") never has allowedValues, so we always
+        # end up using customfield_10124 ("Tempo Team") for both options and creation.
+        if exact_team_options:
+            team_field_key = exact_team_key
+            teams = exact_team_options
+        elif fallback_team_options:
+            team_field_key = fallback_team_key
+            teams = fallback_team_options
+
+        # Update persistent cache when we get fresh options; fall back to cache otherwise.
+        # Never overwrite static teams configured in settings (they have the correct UUIDs
+        # for customfield_10001; discovered options are Tempo Team IDs for customfield_10124).
+        if teams and not self._static_teams:
+            self._team_cache = teams
+            self._team_field_key = team_field_key
+            logger.info("Team cache updated: %d options (field=%s)", len(teams), team_field_key)
+        elif self._team_cache:
+            teams = self._team_cache
+            team_field_key = self._team_field_key or team_field_key
+            logger.info("Using %d cached team options (field=%s)", len(teams), team_field_key)
+        elif not self._static_teams:
+            # Try the Jira Teams API first (correct IDs for customfield_10001),
+            # then fall back to seeding from Simple Task (Tempo Team options).
+            teams = await self.get_teams(project_key)
+            team_field_key = self._team_field_key if teams else ""
+            if not teams:
+                teams, team_field_key = await self._seed_teams_from_simple_task(project_key, issue_type_id)
+
+        logger.info(
+            "Jira create_meta result: %d priorities, %d components, %d teams (team_field=%s)",
+            len(priorities), len(components), len(teams), team_field_key,
+        )
+        return JiraCreateMeta(
+            priorities=priorities,
+            components=components,
+            teams=teams,
+            team_field_key=team_field_key,
+        )
+
+    async def create_issue(self, req: CreateIssueRequest, team_field_key: str = "") -> JiraIssue:
+        """Create a Jira issue."""
+        # Use key for project, id for issuetype
+        project_ref: dict = {"id": req.project_key} if req.project_key.isdigit() else {"key": req.project_key}
+        issuetype_ref: dict = {"id": req.issue_type} if req.issue_type.isdigit() else {"name": req.issue_type}
+
+        fields: dict = {
+            "project": project_ref,
+            "issuetype": issuetype_ref,
+            "summary": req.summary,
+        }
+
+        # Only include description if non-empty (ADF format)
+        if req.description.strip():
+            fields["description"] = {
+                "version": 1,
+                "type": "doc",
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": req.description}],
+                    }
+                ],
+            }
+
+        if req.priority:
+            fields["priority"] = {"id": req.priority} if req.priority.isdigit() else {"name": req.priority}
+
+        if req.components:
+            fields["components"] = [
+                {"id": c} if c.isdigit() else {"name": c} for c in req.components
+            ]
+
+        if req.team and team_field_key:
+            # Tempo Team (customfield_10124) expects a bare Long integer, not an object
+            fields[team_field_key] = int(req.team) if req.team.isdigit() else req.team
+
+        payload = {"fields": fields}
+        logger.info("Jira create_issue payload: %s", payload)
+
+        data = await self._api_request("POST", "/issue", json=payload)
+        browse_url = ""
+        if self._tokens and self._tokens.site_url:
+            browse_url = f"{self._tokens.site_url}/browse/{data['key']}"
+
+        return JiraIssue(
+            id=data["id"],
+            key=data["key"],
+            self_url=data.get("self", ""),
+            browse_url=browse_url,
+        )
