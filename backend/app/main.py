@@ -199,6 +199,32 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning("Failed to initialize Bedrock catalog: %s", exc)
         app.state.bedrock_catalog = None
 
+    # ---- Jira Integration ----
+    conductor_cfg = get_config()
+    if conductor_cfg.jira.enabled and conductor_cfg.jira_secrets.client_id:
+        from .integrations.jira.service import JiraOAuthService
+        from .integrations.jira.models import JiraFieldOption
+        # Build redirect_uri from public URL or localhost
+        public_url = get_public_url() or settings.server.public_url or f"http://localhost:{settings.server.port}"
+        redirect_uri = f"{public_url}/api/integrations/jira/callback"
+        static_teams = [
+            JiraFieldOption(id=t.id, name=t.name)
+            for t in conductor_cfg.jira.teams
+        ] or None
+        jira_service = JiraOAuthService(
+            client_id=conductor_cfg.jira_secrets.client_id,
+            client_secret=conductor_cfg.jira_secrets.client_secret,
+            redirect_uri=redirect_uri,
+            static_teams=static_teams,
+        )
+        if static_teams:
+            logger.info("Jira integration: loaded %d static teams from config", len(static_teams))
+        app.state.jira_service = jira_service
+        logger.info("Jira integration: enabled (redirect=%s)", redirect_uri)
+    else:
+        app.state.jira_service = None
+        logger.info("Jira integration: disabled")
+
     logger.info("Conducator startup complete.")
     yield
     # ---- Shutdown ----
@@ -321,6 +347,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .langextract.router     import router as langextract_router
     from .code_review.router     import router as code_review_router
     from .workflow.router         import router as workflow_router
+    from .integrations.jira.router import router as jira_router
 
     app.include_router(git_workspace_router)
     app.include_router(code_tools_router)
@@ -338,6 +365,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(langextract_router)
     app.include_router(code_review_router)
     app.include_router(workflow_router)
+    app.include_router(jira_router)
 
     # --- Health check ---
     @app.get("/health", include_in_schema=True)

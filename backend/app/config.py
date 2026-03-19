@@ -327,6 +327,24 @@ class GoogleSSOSecretsConfig(BaseModel):
     client_secret: str = ""
 
 
+class JiraTeamEntry(BaseModel):
+    """A statically configured Atlassian team (UUID + display name)."""
+    id: str
+    name: str
+
+
+class JiraSettings(BaseModel):
+    """Jira integration configuration."""
+    enabled: bool = False
+    teams: List[JiraTeamEntry] = []
+
+
+class JiraSecretsConfig(BaseModel):
+    """Jira OAuth credentials (from conductor.secrets.yaml)."""
+    client_id:     str = ""
+    client_secret: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Logging config model
 # ---------------------------------------------------------------------------
@@ -379,6 +397,8 @@ class ConductorConfig(BaseModel):
     sso:                 SSOConfig                 = Field(default_factory=SSOConfig)
     google_sso:          GoogleSSOConfig           = Field(default_factory=GoogleSSOConfig)
     google_sso_secrets:  GoogleSSOSecretsConfig    = Field(default_factory=GoogleSSOSecretsConfig)
+    jira:                JiraSettings              = Field(default_factory=JiraSettings)
+    jira_secrets:        JiraSecretsConfig         = Field(default_factory=JiraSecretsConfig)
     logging:             LoggingConfig             = Field(default_factory=LoggingConfig)
     prompt:              PromptConfig              = Field(default_factory=PromptConfig)
     change_limits:       ChangeLimitsConfig        = Field(default_factory=ChangeLimitsConfig)
@@ -476,6 +496,18 @@ def load_config(
         client_secret=gsso_sec.get("client_secret", ""),
     )
 
+    jira_data = raw.get("jira", {})
+    jira_teams_raw = jira_data.get("teams", [])
+    jira_teams = [JiraTeamEntry(id=t["id"], name=t["name"]) for t in jira_teams_raw if t.get("id")]
+    jira_cfg = JiraSettings(enabled=jira_data.get("enabled", False), teams=jira_teams)
+
+    # Jira secrets: must be in secrets.yaml (not settings.yaml)
+    jira_sec = secrets_raw.get("jira", {})
+    jira_secrets_cfg = JiraSecretsConfig(
+        client_id=jira_sec.get("client_id", ""),
+        client_secret=jira_sec.get("client_secret", ""),
+    )
+
     summary_data = raw.get("summary", {})
     summary_cfg = SummaryConfig(
         enabled=summary_data.get("enabled", False),
@@ -534,6 +566,8 @@ def load_config(
         logging=logging_cfg,
         prompt=prompt_cfg,
         change_limits=change_limits_cfg,
+        jira=jira_cfg,
+        jira_secrets=jira_secrets_cfg,
     )
 
 

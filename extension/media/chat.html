@@ -93,6 +93,55 @@
         .role-pill-sso     { background: rgba(34,197,94,0.12); color: #4ade80; }
         .role-pill-aws     { background: rgba(251,191,36,0.12); color: #fbbf24; }
         .role-pill-google  { background: rgba(96,165,250,0.12); color: #60a5fa; }
+        .role-pill-jira    { background: rgba(0,82,204,0.12); color: #4a9eff; }
+
+        /* === Jira Modal === */
+        .jira-modal-overlay {
+            position: fixed; inset: 0; z-index: 100;
+            align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(4px);
+            display: none;  /* shown via JS */
+        }
+        .jira-modal-overlay.jira-visible {
+            display: flex;
+        }
+        .jira-modal {
+            background: #16213e; border-radius: 12px; padding: 1.5rem;
+            border: 1px solid rgba(0,82,204,0.3);
+            max-width: 480px; width: 100%; margin: 1rem;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+        .jira-modal h3 { color: #4a9eff; font-size: 0.9rem; font-weight: 600; margin: 0 0 1rem; }
+        .jira-modal label { display: block; color: #9ca3af; font-size: 0.75rem; margin-bottom: 0.25rem; font-weight: 500; }
+        .jira-modal input, .jira-modal textarea, .jira-modal select {
+            width: 100%; background: #1a1a2e; color: #e0e0e0; border: 1px solid rgba(139,92,246,0.2);
+            border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.8rem;
+            outline: none; transition: border-color 0.15s; box-sizing: border-box;
+        }
+        .jira-modal input:focus, .jira-modal textarea:focus, .jira-modal select:focus {
+            border-color: rgba(0,82,204,0.6);
+        }
+        .jira-modal textarea { resize: vertical; min-height: 80px; }
+        .jira-field { margin-bottom: 0.75rem; }
+        .jira-btn-primary {
+            background: #0052cc; color: white; border: none; border-radius: 8px;
+            padding: 0.5rem 1.25rem; font-size: 0.8rem; font-weight: 500; cursor: pointer;
+            transition: background 0.15s;
+        }
+        .jira-btn-primary:hover { background: #0065ff; }
+        .jira-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .jira-btn-secondary {
+            background: transparent; color: #9ca3af; border: 1px solid rgba(156,163,175,0.3);
+            border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.8rem; cursor: pointer;
+            transition: all 0.15s;
+        }
+        .jira-btn-secondary:hover { color: #e0e0e0; border-color: rgba(156,163,175,0.5); }
+        .jira-status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .jira-status-connected { background: #4ade80; }
+        .jira-status-disconnected { background: #6b7280; }
+        .jira-result { margin-top: 0.75rem; padding: 0.5rem; border-radius: 8px; font-size: 0.8rem; }
+        .jira-result-success { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2); color: #4ade80; }
+        .jira-result-error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #f87171; }
 
         /* ============================================================
            PREMIUM VISUAL SYSTEM
@@ -1400,6 +1449,17 @@
                     </svg>
                 </button>
 
+                <!-- Jira Button -->
+                <button
+                    id="btn-jira"
+                    class="text-gray-500 hover:text-blue-400 p-2.5 rounded-lg hover:bg-blue-500/10 transition-all duration-200 focus:outline-none"
+                    title="Create Jira ticket"
+                >
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M6 2a2 2 0 00-2 2v12a2 2 0 002 2h8a2 2 0 002-2V7.414A2 2 0 0015.414 6L12 2.586A2 2 0 0010.586 2H6zm5 6a1 1 0 10-2 0v2H7a1 1 0 100 2h2v2a1 1 0 102 0v-2h2a1 1 0 100-2h-2V8z" clip-rule="evenodd" />
+                    </svg>
+                </button>
+
                 <!-- Text Input -->
                 <div class="flex-1" style="position: relative;">
                     <div id="slash-command-menu" class="slash-menu hidden"></div>
@@ -2040,6 +2100,92 @@
                     Share
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Jira Ticket Creation Modal                                   -->
+    <!-- ============================================================ -->
+    <div id="jira-modal" class="jira-modal-overlay">
+        <div class="jira-modal">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+                <h3 style="margin:0;">Jira Ticket</h3>
+                <button id="jira-close-btn" class="jira-btn-secondary" style="padding:0.25rem 0.5rem; font-size:0.75rem;">&#10005;</button>
+            </div>
+
+            <!-- Phase 1: Auth prompt (shown when not connected) -->
+            <div id="jira-auth-section">
+                <div style="text-align:center; padding:1rem 0;">
+                    <div style="margin-bottom:0.75rem;">
+                        <span id="jira-status-dot" class="jira-status-dot jira-status-disconnected" style="width:10px;height:10px;"></span>
+                        <span id="jira-status-text" style="color:#9ca3af; font-size:0.8rem; margin-left:0.5rem;">Not connected to Jira</span>
+                    </div>
+                    <p style="color:#6b7280; font-size:0.75rem; margin-bottom:1rem;">Connect to your Jira account to create tickets.</p>
+                    <button id="jira-connect-btn" class="jira-btn-primary" style="width:100%;">
+                        Connect to Jira
+                    </button>
+                    <div id="jira-auth-links" class="hidden" style="margin-top:0.75rem;"></div>
+                </div>
+            </div>
+
+            <!-- Phase 2: Ticket form (shown after connected) -->
+            <div id="jira-form" class="hidden">
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                    <div style="display:flex; align-items:center; gap:0.4rem;">
+                        <span class="jira-status-dot jira-status-connected"></span>
+                        <span id="jira-site-label" style="color:#4ade80; font-size:0.7rem;">Connected</span>
+                    </div>
+                    <button id="jira-disconnect-btn" style="background:none; border:none; color:#9ca3af; font-size:0.65rem; cursor:pointer; text-decoration:underline; padding:0;">
+                        Disconnect
+                    </button>
+                </div>
+                <div class="jira-field">
+                    <label for="jira-project">Project</label>
+                    <select id="jira-project">
+                        <option value="">Select project...</option>
+                    </select>
+                </div>
+                <div class="jira-field">
+                    <label for="jira-issue-type">Issue Type</label>
+                    <select id="jira-issue-type">
+                        <option value="">Select issue type...</option>
+                    </select>
+                </div>
+                <div id="jira-extra-fields" class="hidden">
+                    <div class="jira-field" id="jira-priority-field">
+                        <label for="jira-priority">Priority</label>
+                        <select id="jira-priority">
+                            <option value="">Select priority...</option>
+                        </select>
+                    </div>
+                    <div class="jira-field" id="jira-team-field" class="hidden">
+                        <label for="jira-team">Team</label>
+                        <select id="jira-team">
+                            <option value="">Select team...</option>
+                        </select>
+                    </div>
+                    <div class="jira-field" id="jira-components-field">
+                        <label for="jira-components">Components</label>
+                        <select id="jira-components">
+                            <option value="">Select component...</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="jira-field">
+                    <label for="jira-summary">Summary</label>
+                    <input type="text" id="jira-summary" placeholder="Issue title...">
+                </div>
+                <div class="jira-field">
+                    <label for="jira-description">Description</label>
+                    <textarea id="jira-description" rows="3" placeholder="Describe the issue..."></textarea>
+                </div>
+                <div style="display:flex; gap:0.5rem; justify-content:flex-end;">
+                    <button id="jira-cancel-btn" class="jira-btn-secondary">Cancel</button>
+                    <button id="jira-create-btn" class="jira-btn-primary">Create Ticket</button>
+                </div>
+            </div>
+
+            <div id="jira-result" class="jira-result hidden"></div>
         </div>
     </div>
 
@@ -3334,6 +3480,109 @@
                 case 'ssoProvidersUpdate':
                     enabledProviders = message.providers;
                     applySSOProviderVisibility(enabledProviders);
+                    break;
+
+                // ---- Jira integration ----
+                case 'jiraStatus':
+                    jiraConnected = message.connected;
+                    if (message.connected) {
+                        showJiraForm(message.site_url);
+                        if (message.projects) {
+                            populateSelect('jira-project', message.projects, p => p.key + ' — ' + p.name, p => p.key);
+                        }
+                    } else {
+                        showJiraAuth();
+                    }
+                    break;
+                case 'jiraAuthRequired': {
+                    // Show auth links (open + copy) in the auth section
+                    const authUrl = message.authorizeUrl || '';
+                    if (jiraAuthLinks) {
+                        jiraAuthLinks.classList.remove('hidden');
+                        const truncUrl = authUrl.length > 60 ? authUrl.slice(0, 60) + '...' : authUrl;
+                        jiraAuthLinks.innerHTML =
+                            '<div style="margin-top:0.5rem; padding:0.6rem; border-radius:8px; background:rgba(139,92,246,0.08); border:1px solid rgba(139,92,246,0.2);">' +
+                                '<div style="color:#d1d5db; font-size:0.75rem; margin-bottom:0.4rem;">Waiting for authorization...</div>' +
+                                '<div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">' +
+                                    '<a href="#" id="jira-auth-open" style="color:#60a5fa; font-size:0.75rem; text-decoration:underline;">Open link again</a>' +
+                                    '<button id="jira-auth-copy" style="background:rgba(139,92,246,0.15); border:1px solid rgba(139,92,246,0.3); color:#c4b5fd; border-radius:6px; padding:0.2rem 0.6rem; font-size:0.7rem; cursor:pointer;">Copy URL</button>' +
+                                    '<span id="jira-auth-copied" style="color:#4ade80; font-size:0.7rem; display:none;">Copied!</span>' +
+                                '</div>' +
+                                '<div style="margin-top:0.3rem; font-size:0.6rem; color:#6b7280; word-break:break-all;">' + truncUrl + '</div>' +
+                            '</div>';
+                        setTimeout(() => {
+                            document.getElementById('jira-auth-open')?.addEventListener('click', (e) => {
+                                e.preventDefault();
+                                vscode.postMessage({ command: 'openExternal', url: authUrl });
+                            });
+                            document.getElementById('jira-auth-copy')?.addEventListener('click', () => {
+                                navigator.clipboard.writeText(authUrl).then(() => {
+                                    const l = document.getElementById('jira-auth-copied');
+                                    if (l) { l.style.display = 'inline'; setTimeout(() => l.style.display = 'none', 2000); }
+                                });
+                            });
+                        }, 0);
+                    }
+                    if (jiraConnectBtn) { jiraConnectBtn.disabled = true; jiraConnectBtn.textContent = 'Waiting...'; }
+                    break;
+                }
+                case 'jiraConnected':
+                    jiraConnected = true;
+                    showJiraForm(message.site_url);
+                    jiraResult?.classList.add('hidden');
+                    if (jiraAuthLinks) jiraAuthLinks.classList.add('hidden');
+                    if (jiraConnectBtn) { jiraConnectBtn.disabled = false; jiraConnectBtn.textContent = 'Connect to Jira'; }
+                    if (jiraCreateBtn) { jiraCreateBtn.disabled = false; jiraCreateBtn.textContent = 'Create Ticket'; }
+                    // Load projects
+                    vscode.postMessage({ command: 'jiraCheckStatus' });
+                    break;
+                case 'jiraDisconnected':
+                    jiraConnected = false;
+                    showJiraAuth();
+                    jiraResult?.classList.add('hidden');
+                    break;
+                case 'jiraIssueTypes':
+                    if (message.types) {
+                        populateSelect('jira-issue-type', message.types, t => t.name);
+                    }
+                    jiraExtraFields?.classList.add('hidden');
+                    break;
+                case 'jiraCreateMeta':
+                    // Populate priority, team, components dropdowns
+                    jiraExtraFields?.classList.remove('hidden');
+                    if (message.priorities?.length) {
+                        populateSelect('jira-priority', message.priorities, p => p.name);
+                        document.getElementById('jira-priority-field')?.classList.remove('hidden');
+                    } else {
+                        document.getElementById('jira-priority-field')?.classList.add('hidden');
+                    }
+                    if (message.teams?.length) {
+                        populateSelect('jira-team', message.teams, t => t.name);
+                        document.getElementById('jira-team-field')?.classList.remove('hidden');
+                    } else {
+                        document.getElementById('jira-team-field')?.classList.add('hidden');
+                    }
+                    if (message.components?.length) {
+                        populateSelect('jira-components', message.components, c => c.name);
+                        document.getElementById('jira-components-field')?.classList.remove('hidden');
+                    } else {
+                        document.getElementById('jira-components-field')?.classList.add('hidden');
+                    }
+                    break;
+                case 'jiraIssueCreated':
+                    showJiraResult(true,
+                        '<strong>' + message.key + '</strong> created! ' +
+                        (message.browse_url ? '<a href="#" onclick="event.preventDefault(); vscode.postMessage({command:\'openExternal\',url:\'' + message.browse_url + '\'})" style="color:#60a5fa;text-decoration:underline;">' + message.browse_url + '</a>' : '')
+                    );
+                    if (jiraCreateBtn) { jiraCreateBtn.disabled = false; jiraCreateBtn.textContent = 'Create Ticket'; }
+                    const si = document.getElementById('jira-summary');
+                    const di = document.getElementById('jira-description');
+                    if (si) si.value = '';
+                    if (di) di.value = '';
+                    break;
+                case 'jiraError':
+                    showJiraResult(false, message.error || 'Unknown error');
+                    if (jiraCreateBtn) { jiraCreateBtn.disabled = false; jiraCreateBtn.textContent = 'Create Ticket'; }
                     break;
 
                 // ---- Stack trace ----
@@ -9043,6 +9292,117 @@
         // Copy Code Prompt button handler
         if (btnCopyCodePrompt) {
             btnCopyCodePrompt.addEventListener('click', copyCodePromptToClipboard);
+        }
+
+        // ============================================================
+        // JIRA INTEGRATION
+        // ============================================================
+        const btnJira = document.getElementById('btn-jira');
+        const jiraModal = document.getElementById('jira-modal');
+        const jiraCloseBtn = document.getElementById('jira-close-btn');
+        const jiraCancelBtn = document.getElementById('jira-cancel-btn');
+        const jiraConnectBtn = document.getElementById('jira-connect-btn');
+        const jiraDisconnectBtn = document.getElementById('jira-disconnect-btn');
+        const jiraCreateBtn = document.getElementById('jira-create-btn');
+        const jiraAuthSection = document.getElementById('jira-auth-section');
+        const jiraAuthLinks = document.getElementById('jira-auth-links');
+        const jiraStatusDot = document.getElementById('jira-status-dot');
+        const jiraStatusText = document.getElementById('jira-status-text');
+        const jiraSiteLabel = document.getElementById('jira-site-label');
+        const jiraForm = document.getElementById('jira-form');
+        const jiraResult = document.getElementById('jira-result');
+        const jiraProjectSelect = document.getElementById('jira-project');
+        const jiraIssueTypeSelect = document.getElementById('jira-issue-type');
+        const jiraExtraFields = document.getElementById('jira-extra-fields');
+
+        let jiraConnected = false;
+
+        function showJiraModal() {
+            jiraModal?.classList.add('jira-visible');
+            jiraResult?.classList.add('hidden');
+            vscode.postMessage({ command: 'jiraCheckStatus' });
+        }
+        function hideJiraModal() { jiraModal?.classList.remove('jira-visible'); }
+
+        function showJiraAuth() {
+            jiraAuthSection?.classList.remove('hidden');
+            jiraForm?.classList.add('hidden');
+        }
+        function showJiraForm(siteUrl) {
+            jiraAuthSection?.classList.add('hidden');
+            jiraForm?.classList.remove('hidden');
+            if (jiraSiteLabel) jiraSiteLabel.textContent = siteUrl || 'Connected';
+        }
+
+        function showJiraResult(success, message) {
+            if (!jiraResult) return;
+            jiraResult.classList.remove('hidden', 'jira-result-success', 'jira-result-error');
+            jiraResult.style.background = '';
+            jiraResult.style.borderColor = '';
+            jiraResult.style.color = '';
+            jiraResult.classList.add(success ? 'jira-result-success' : 'jira-result-error');
+            jiraResult.innerHTML = message;
+        }
+
+        function populateSelect(selectId, options, labelFn, valueFn) {
+            const sel = document.getElementById(selectId);
+            if (!sel) return;
+            const placeholder = sel.options[0]?.textContent || 'Select...';
+            const valFn = valueFn || (o => o.id || o.name);
+            sel.innerHTML = '<option value="">' + placeholder + '</option>' +
+                options.map(o => '<option value="' + valFn(o) + '">' + labelFn(o) + '</option>').join('');
+        }
+
+        function submitJiraCreate() {
+            const projectKey = jiraProjectSelect?.value || '';
+            const summary = document.getElementById('jira-summary')?.value || '';
+            const description = document.getElementById('jira-description')?.value || '';
+            const issueType = jiraIssueTypeSelect?.value || '';
+            const priority = document.getElementById('jira-priority')?.value || '';
+            const team = document.getElementById('jira-team')?.value || '';
+            const compSel = document.getElementById('jira-components');
+            const components = compSel?.value ? [compSel.value] : [];
+
+            if (!summary.trim()) { showJiraResult(false, 'Summary is required'); return; }
+            if (!projectKey) { showJiraResult(false, 'Please select a project'); return; }
+            if (!issueType) { showJiraResult(false, 'Please select an issue type'); return; }
+
+            if (jiraCreateBtn) { jiraCreateBtn.disabled = true; jiraCreateBtn.textContent = 'Creating...'; }
+
+            vscode.postMessage({
+                command: 'jiraCreateIssue',
+                projectKey, summary, description, issueType,
+                priority, team, components,
+            });
+        }
+
+        if (btnJira) btnJira.addEventListener('click', showJiraModal);
+        if (jiraCloseBtn) jiraCloseBtn.addEventListener('click', hideJiraModal);
+        if (jiraCancelBtn) jiraCancelBtn.addEventListener('click', hideJiraModal);
+        if (jiraConnectBtn) jiraConnectBtn.addEventListener('click', () => vscode.postMessage({ command: 'jiraConnect' }));
+        if (jiraDisconnectBtn) jiraDisconnectBtn.addEventListener('click', () => vscode.postMessage({ command: 'jiraDisconnect' }));
+        if (jiraCreateBtn) jiraCreateBtn.addEventListener('click', submitJiraCreate);
+
+        // When project changes → load issue types
+        if (jiraProjectSelect) {
+            jiraProjectSelect.addEventListener('change', () => {
+                const key = jiraProjectSelect.value;
+                if (key) {
+                    vscode.postMessage({ command: 'jiraGetIssueTypes', projectKey: key });
+                }
+                // Hide extra fields until issue type is selected
+                jiraExtraFields?.classList.add('hidden');
+            });
+        }
+        // When issue type changes → load create-meta (priorities, teams, components)
+        if (jiraIssueTypeSelect) {
+            jiraIssueTypeSelect.addEventListener('change', () => {
+                const typeId = jiraIssueTypeSelect.value;
+                const projectKey = jiraProjectSelect?.value || '';
+                if (typeId && projectKey) {
+                    vscode.postMessage({ command: 'jiraGetCreateMeta', projectKey, issueTypeId: typeId });
+                }
+            });
         }
 
         // Fetch AI status on load

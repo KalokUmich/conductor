@@ -627,6 +627,29 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     this._view?.webview.postMessage({ command: 'ssoCacheCleared' });
                     console.log('[Conductor] SSO identity cache cleared');
                     return;
+                case 'jiraCheckStatus':
+                    await this._handleJiraCheckStatus();
+                    return;
+                case 'jiraConnect':
+                    await this._handleJiraConnect();
+                    return;
+                case 'jiraDisconnect':
+                    await this._handleJiraDisconnect();
+                    return;
+                case 'jiraCreateIssue':
+                    await this._handleJiraCreateIssue(message);
+                    return;
+                case 'jiraGetIssueTypes':
+                    await this._handleJiraGetIssueTypes(message.projectKey);
+                    return;
+                case 'jiraGetCreateMeta':
+                    await this._handleJiraGetCreateMeta(message.projectKey, message.issueTypeId);
+                    return;
+                case 'openExternal':
+                    if (message.url) {
+                        vscode.env.openExternal(vscode.Uri.parse(message.url));
+                    }
+                    return;
                 case 'shareStackTrace':
                     await this._handleShareStackTrace(message.rawText);
                     return;
@@ -2462,6 +2485,247 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         if (this._ssoTimerId !== undefined) {
             clearInterval(this._ssoTimerId);
             this._ssoTimerId = undefined;
+        }
+    }
+
+    // =================================================================
+    // Jira Integration Handlers
+    // =================================================================
+
+    private async _handleJiraCheckStatus(): Promise<void> {
+        try {
+            const resp = await fetch(`${getBackendUrl()}/api/integrations/jira/status`);
+            const data = await resp.json() as { connected: boolean; site_url?: string };
+
+            let projects: Array<{ id: string; key: string; name: string }> = [];
+            if (data.connected) {
+                try {
+                    const projResp = await fetch(`${getBackendUrl()}/api/integrations/jira/projects`);
+                    if (projResp.ok) {
+                        projects = await projResp.json() as Array<{ id: string; key: string; name: string }>;
+                    }
+                } catch (e) {
+                    console.warn('[Conductor] Failed to load Jira projects:', e);
+                }
+            }
+
+            this._view?.webview.postMessage({
+                command: 'jiraStatus',
+                connected: data.connected,
+                site_url: data.site_url || '',
+                projects,
+            });
+        } catch (error) {
+            console.error('[Conductor] Jira status check failed:', error);
+            this._view?.webview.postMessage({
+                command: 'jiraStatus',
+                connected: false,
+                site_url: '',
+                projects: [],
+            });
+        }
+    }
+
+    private async _handleJiraConnect(): Promise<void> {
+        try {
+            const resp = await fetch(`${getBackendUrl()}/api/integrations/jira/authorize-url`);
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` })) as { detail?: string };
+                this._view?.webview.postMessage({
+                    command: 'jiraError',
+                    error: err.detail || 'Failed to get authorize URL',
+                });
+                return;
+            }
+            const data = await resp.json() as { authorize_url: string; state: string };
+
+            // Send URL to WebView (for copy fallback) and show auth state
+            this._view?.webview.postMessage({
+                command: 'jiraAuthRequired',
+                authorizeUrl: data.authorize_url,
+            });
+
+            // Open in browser
+            vscode.env.openExternal(vscode.Uri.parse(data.authorize_url));
+
+            // Poll for connection status (the callback happens in the browser)
+            let attempts = 0;
+            const maxAttempts = 60; // 5 minutes with 5s interval
+            const pollTimer = setInterval(async () => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(pollTimer);
+                    this._view?.webview.postMessage({
+                        command: 'jiraError',
+                        error: 'Jira connection timed out',
+                    });
+                    return;
+                }
+                try {
+                    const statusResp = await fetch(`${getBackendUrl()}/api/integrations/jira/status`);
+                    const status = await statusResp.json() as { connected: boolean; site_url?: string };
+                    if (status.connected) {
+                        clearInterval(pollTimer);
+                        this._view?.webview.postMessage({
+                            command: 'jiraConnected',
+                            site_url: status.site_url || '',
+                        });
+                    }
+                } catch (_e) {
+                    // Keep polling
+                }
+            }, 5000);
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this._view?.webview.postMessage({
+                command: 'jiraError',
+                error: `Failed to connect: ${msg}`,
+            });
+        }
+    }
+
+    private async _handleJiraDisconnect(): Promise<void> {
+        try {
+            await fetch(`${getBackendUrl()}/api/integrations/jira/disconnect`, { method: 'POST' });
+            this._view?.webview.postMessage({ command: 'jiraDisconnected' });
+        } catch (error) {
+            console.error('[Conductor] Jira disconnect failed:', error);
+        }
+    }
+
+    private async _handleJiraCreateIssue(message: {
+        projectKey: string; summary: string; description: string; issueType: string;
+        priority?: string; team?: string; components?: string[];
+    }): Promise<void> {
+        try {
+            // Step 1: Check if we have a valid Jira connection
+            const statusResp = await fetch(`${getBackendUrl()}/api/integrations/jira/status`);
+            const status = await statusResp.json() as { connected: boolean };
+
+            if (!status.connected) {
+                // No valid token — get authorize URL, tell WebView, then open browser
+                console.log('[Conductor] Jira not connected, triggering OAuth before create');
+                const authResp = await fetch(`${getBackendUrl()}/api/integrations/jira/authorize-url`);
+                if (!authResp.ok) {
+                    this._view?.webview.postMessage({
+                        command: 'jiraError',
+                        error: 'Failed to get Jira authorize URL',
+                    });
+                    return;
+                }
+                const authData = await authResp.json() as { authorize_url: string; state: string };
+
+                // Send URL + pending create to WebView (for copy fallback)
+                this._view?.webview.postMessage({
+                    command: 'jiraAuthRequired',
+                    authorizeUrl: authData.authorize_url,
+                    pendingCreate: {
+                        projectKey: message.projectKey,
+                        summary: message.summary,
+                        description: message.description,
+                        issueType: message.issueType,
+                        priority: message.priority || '',
+                        team: message.team || '',
+                        components: message.components || [],
+                    },
+                });
+
+                // Also try to open in browser
+                vscode.env.openExternal(vscode.Uri.parse(authData.authorize_url));
+
+                // Poll for connection
+                let attempts = 0;
+                const maxAttempts = 60;
+                const pollTimer = setInterval(async () => {
+                    attempts++;
+                    if (attempts > maxAttempts) {
+                        clearInterval(pollTimer);
+                        this._view?.webview.postMessage({
+                            command: 'jiraError',
+                            error: 'Jira connection timed out',
+                        });
+                        return;
+                    }
+                    try {
+                        const s = await fetch(`${getBackendUrl()}/api/integrations/jira/status`);
+                        const st = await s.json() as { connected: boolean; site_url?: string };
+                        if (st.connected) {
+                            clearInterval(pollTimer);
+                            this._view?.webview.postMessage({
+                                command: 'jiraConnected',
+                                site_url: st.site_url || '',
+                            });
+                        }
+                    } catch (_e) { /* keep polling */ }
+                }, 5000);
+                return;
+            }
+
+            // Step 2: Connected — create the issue
+            const resp = await fetch(`${getBackendUrl()}/api/integrations/jira/issues`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    project_key: message.projectKey,
+                    summary: message.summary,
+                    description: message.description,
+                    issue_type: message.issueType,
+                    priority: message.priority || '',
+                    team: message.team || '',
+                    components: message.components || [],
+                }),
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` })) as { detail?: string };
+                this._view?.webview.postMessage({
+                    command: 'jiraError',
+                    error: err.detail || `Failed to create issue (${resp.status})`,
+                });
+                return;
+            }
+            const data = await resp.json() as { key: string; browse_url: string };
+            this._view?.webview.postMessage({
+                command: 'jiraIssueCreated',
+                key: data.key,
+                browse_url: data.browse_url,
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this._view?.webview.postMessage({
+                command: 'jiraError',
+                error: `Create issue failed: ${msg}`,
+            });
+        }
+    }
+
+    private async _handleJiraGetIssueTypes(projectKey: string): Promise<void> {
+        try {
+            const resp = await fetch(`${getBackendUrl()}/api/integrations/jira/issue-types?projectKey=${encodeURIComponent(projectKey)}`);
+            if (resp.ok) {
+                const types = await resp.json() as Array<{ id: string; name: string }>;
+                this._view?.webview.postMessage({ command: 'jiraIssueTypes', types });
+            }
+        } catch (error) {
+            console.warn('[Conductor] Failed to load issue types:', error);
+        }
+    }
+
+    private async _handleJiraGetCreateMeta(projectKey: string, issueTypeId: string): Promise<void> {
+        try {
+            const resp = await fetch(
+                `${getBackendUrl()}/api/integrations/jira/create-meta?projectKey=${encodeURIComponent(projectKey)}&issueTypeId=${encodeURIComponent(issueTypeId)}`
+            );
+            if (resp.ok) {
+                const meta = await resp.json() as {
+                    priorities: Array<{ id: string; name: string }>;
+                    components: Array<{ id: string; name: string }>;
+                    teams: Array<{ id: string; name: string }>;
+                    team_field_key: string;
+                };
+                this._view?.webview.postMessage({ command: 'jiraCreateMeta', ...meta });
+            }
+        } catch (error) {
+            console.warn('[Conductor] Failed to load create meta:', error);
         }
     }
 
