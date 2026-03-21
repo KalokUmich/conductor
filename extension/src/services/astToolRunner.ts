@@ -24,6 +24,13 @@ import * as treeSitter from './treeSitterService';
 // Re-export types from repoGraphBuilder for consumers that need them.
 import type { SymbolDef, FileSymbolsData } from './repoGraphBuilder';
 
+/**
+ * Read a file as UTF-8 text, normalizing \r\n → \n to match Python behavior.
+ */
+function readFileNormalized(absPath: string): string {
+    return fs.readFileSync(absPath, 'utf-8').replace(/\r\n/g, '\n');
+}
+
 // ---------------------------------------------------------------------------
 // Public result type
 // ---------------------------------------------------------------------------
@@ -161,7 +168,8 @@ async function extractDefinitionsAsync(absPath: string, relPath: string): Promis
     if (treeSitter.isInitialized()) {
         try {
             const source = fs.readFileSync(absPath);
-            const result = await treeSitter.extractDefinitions(absPath, source);
+            // Pass relPath so file_path in SymbolDef is relative (matching Python)
+            const result = await treeSitter.extractDefinitions(relPath, source);
             return result.definitions;
         } catch {
             // Fall through to regex
@@ -265,6 +273,88 @@ function getSymbolIndex(workspace: string): Record<string, SymbolDef[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Symbol role classification (ported from Python _classify_symbol_role)
+// ---------------------------------------------------------------------------
+
+const ROLE_PRIORITY: Record<string, number> = {
+    route_entry: 0, business_logic: 1, domain_model: 2,
+    infrastructure: 3, utility: 4, test: 5, unknown: 6,
+};
+
+const SIG_ROLE_PATTERNS: Array<[RegExp, string]> = [
+    [/@(?:app|router|api)\.\s*(?:get|post|put|delete|patch|route)/, 'route_entry'],
+    [/@(?:Get|Post|Put|Delete|Patch|Request)Mapping/, 'route_entry'],
+    [/@Controller|@RestController|@Resource/, 'route_entry'],
+    [/@Service|@Component|@Injectable/, 'business_logic'],
+    [/class\s+\w*Service/, 'business_logic'],
+    [/@Entity|@Table|@Document|@dataclass/, 'domain_model'],
+    [/class\s+\w*(?:Model|Schema|Entity|DTO)/, 'domain_model'],
+    [/class\s+\w+\(.*(?:Base|Model|Schema|DeclarativeBase)/, 'domain_model'],
+    [/@Repository|@Mapper/, 'infrastructure'],
+    [/class\s+\w*(?:Repository|Repo|DAO|Client|Adapter)/, 'infrastructure'],
+    [/(?:def|function)\s+test_|@Test|@pytest|#\[test\]|#\[tokio::test\]/, 'test'],
+    [/class\s+Test\w+|describe\s*\(/, 'test'],
+];
+
+const PATH_ROLE_PATTERNS: Array<[RegExp, string]> = [
+    [/test[s_/]|_test\.|\.test\.|\.spec\./, 'test'],
+    [/route[rs]?[/.]|endpoint|handler|controller|view[s]?[/.]/, 'route_entry'],
+    [/service[s]?[/.]|usecase|interactor/, 'business_logic'],
+    [/model[s]?[/.]|schema[s]?[/.]|entit(?:y|ies)[/.]|domain[/.]/, 'domain_model'],
+    [/util[s]?[/.]|helper[s]?[/.]|common[/.]|lib[/.]/, 'utility'],
+    [/repo(?:sitory)?[/.]|dao[/.]|adapter[/.]|client[/.]|infra[/.]|db[/.]/, 'infrastructure'],
+];
+
+/**
+ * Classify a symbol's architectural role based on decorators, file path, and name.
+ * Ported from Python `_classify_symbol_role` in code_tools/tools.py.
+ */
+export function classifySymbolRole(
+    name: string,
+    kind: string,
+    filePath: string,
+    signature: string,
+    workspace: string,
+    startLine: number = 0,
+): string {
+    // 1. Check signature + decorator context (5 lines above the symbol)
+    let context = signature;
+    if (startLine > 1) {
+        try {
+            const absPath = path.join(path.resolve(workspace), filePath);
+            const stat = fs.statSync(absPath);
+            if (stat.isFile() && stat.size < MAX_FILE_SIZE) {
+                const lines = readFileNormalized(absPath).split('\n');
+                const decoStart = Math.max(0, startLine - 6);
+                const decoEnd = Math.min(lines.length, startLine);
+                context = lines.slice(decoStart, decoEnd).join('\n') + '\n' + signature;
+            }
+        } catch { /* ignore */ }
+    }
+
+    for (const [pat, role] of SIG_ROLE_PATTERNS) {
+        if (pat.test(context)) { return role; }
+    }
+
+    // 2. Check file path
+    const fpLower = filePath.toLowerCase().replace(/\\/g, '/');
+    for (const [pat, role] of PATH_ROLE_PATTERNS) {
+        if (pat.test(fpLower)) { return role; }
+    }
+
+    // 3. Name-based fallback
+    const nLower = name.toLowerCase();
+    if (nLower.startsWith('test') || nLower.endsWith('test')) { return 'test'; }
+    if (['service', 'usecase', 'interactor'].some(s => nLower.includes(s))) { return 'business_logic'; }
+    if (['model', 'schema', 'entity'].some(s => nLower.includes(s))) { return 'domain_model'; }
+    if (['handler', 'controller', 'endpoint', 'route', 'view'].some(s => nLower.includes(s))) { return 'route_entry'; }
+    if (['repository', 'repo', 'dao', 'client', 'adapter'].some(s => nLower.includes(s))) { return 'infrastructure'; }
+    if (['util', 'helper', 'common'].some(s => nLower.includes(s))) { return 'utility'; }
+
+    return 'unknown';
+}
+
+// ---------------------------------------------------------------------------
 // Tool implementations
 // ---------------------------------------------------------------------------
 
@@ -329,6 +419,7 @@ export function find_symbol(
     }
 
     const nameLower = params.name.toLowerCase();
+    const ws = path.resolve(workspace);
     const results: Array<SymbolDef & { role?: string }> = [];
 
     for (const [rel, definitions] of Object.entries(index)) {
@@ -339,12 +430,19 @@ export function find_symbol(
             if (params.kind && defn.kind !== params.kind) {
                 continue;
             }
-            results.push({ ...defn });
+            const role = classifySymbolRole(
+                defn.name, defn.kind, defn.file_path,
+                defn.signature, workspace, defn.start_line,
+            );
+            results.push({ ...defn, role });
         }
     }
 
-    // Sort: exact matches first, then substring matches
+    // Sort: role priority first, then exact match before substring match
     results.sort((a, b) => {
+        const aRole = ROLE_PRIORITY[a.role || 'unknown'] ?? 99;
+        const bRole = ROLE_PRIORITY[b.role || 'unknown'] ?? 99;
+        if (aRole !== bRole) { return aRole - bRole; }
         const aExact = a.name.toLowerCase() === nameLower ? 0 : 1;
         const bExact = b.name.toLowerCase() === nameLower ? 0 : 1;
         return aExact - bExact;
@@ -386,7 +484,7 @@ export function find_references(
         }
 
         try {
-            const content = fs.readFileSync(absPath, 'utf-8');
+            const content = readFileNormalized(absPath);
             const lines = content.split('\n');
             const relPath = path.relative(ws, absPath);
 
@@ -407,7 +505,7 @@ export function find_references(
             if (grepMatches.length >= maxResults) return true; // stop walking
 
             try {
-                const content = fs.readFileSync(absPath, 'utf-8');
+                const content = readFileNormalized(absPath);
                 // Quick check before line-by-line scan
                 if (!content.includes(symbolName)) return;
 
@@ -514,7 +612,7 @@ export async function get_callees(
 
     let source: string;
     try {
-        source = fs.readFileSync(absPath, 'utf-8');
+        source = readFileNormalized(absPath);
     } catch (e: any) {
         return { success: false, data: null, error: e.message };
     }
@@ -654,7 +752,7 @@ export function get_callers(
 
                 let source: string;
                 try {
-                    source = fs.readFileSync(absPath, 'utf-8');
+                    source = readFileNormalized(absPath);
                 } catch {
                     continue;
                 }
@@ -760,7 +858,7 @@ export async function expand_symbol(
         const sym = matches[0];
         let source: string;
         try {
-            const content = fs.readFileSync(absPath, 'utf-8');
+            const content = readFileNormalized(absPath);
             const lines = content.split('\n');
             source = lines.slice(sym.start_line - 1, sym.end_line).join('\n');
         } catch (e: any) {
@@ -819,7 +917,7 @@ export async function expand_symbol(
     const { sym, absPath } = candidates[0];
     let source: string;
     try {
-        const content = fs.readFileSync(absPath, 'utf-8');
+        const content = readFileNormalized(absPath);
         const lines = content.split('\n');
         source = lines.slice(sym.start_line - 1, sym.end_line).join('\n');
     } catch (e: any) {

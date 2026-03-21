@@ -11,7 +11,7 @@ route_mode: parallel_all_matching
 
 # Budget defaults — per-agent budget = base × sub_fraction × agent.budget_weight
 budget:
-  base_tokens: 800_000
+  base_tokens: 880_000
   base_iterations: 40
   sub_fraction: 0.7
   min_iterations: 8

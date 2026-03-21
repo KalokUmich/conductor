@@ -95,8 +95,7 @@
     "pretest": "npm run compile",
     "test": "node --test out/tests/*.test.js",
     "lint": "eslint src --ext ts",
-    "build:css": "tailwindcss -i ./media/input.css -o ./media/tailwind.css --minify",
-    "download-grammars": "bash scripts/download-grammars.sh"
+    "build:css": "tailwindcss -i ./media/input.css -o ./media/tailwind.css --minify"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
@@ -115,6 +114,6 @@
     "js-tiktoken": "^1.0.12",
     "typescript": "^5.3.3",
     "vsls": "^1.0.4753",
-    "web-tree-sitter": "^0.24.7"
+    "web-tree-sitter": "0.26.7"
   }
 }

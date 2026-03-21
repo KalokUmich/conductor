@@ -16,9 +16,8 @@ make setup          # create venv + install all dependencies
 make run-backend    # start backend (dev mode, auto-reload)
 make test           # run all tests (backend + extension)
 make package        # compile and package extension as .vsix
+make test-parity    # validate Python↔TS tool parity
 make langfuse-up    # start self-hosted Langfuse (port 3001)
-make update-grammars         # re-download tree-sitter .wasm grammars (pinned versions)
-make update-grammars LATEST=1  # download latest grammar releases
 make update-prompt-library   # download latest prompts.chat CSV (agent design reference)
 ```
 
@@ -173,11 +172,9 @@ RemoteToolExecutor → WebSocket → extension._handleLocalToolRequest
                          → native TypeScript (complexToolRunner)
 ```
 
-Grammar WASM files in `extension/grammars/` are committed to the repo. Update with:
-```bash
-make update-grammars          # pinned versions
-make update-grammars LATEST=1 # latest from GitHub
-```
+Grammar WASM files in `extension/grammars/` are committed to the repo. **Do not** re-download
+grammars independently — the grammar ABI version must match `web-tree-sitter` (pinned at 0.26.7).
+Mismatched versions cause silent fallback to regex extraction with degraded accuracy.
 
 ### Agentic Code Intelligence
 
@@ -270,6 +267,32 @@ result = execute_tool("grep", workspace="/path/to/ws", params={"pattern": "authe
 - Workflow tests: real config files from `config/`; `MockProvider` for agent execution
 - ast-grep tests require `ast-grep-cli` in the venv
 - tree-sitter and networkx are mocked in import stubs
+
+### Tool Parity Testing
+
+Python and TypeScript tools must produce equivalent output. `make test-parity` validates this:
+
+1. Checks `contracts/tool_contracts.json` matches Python Pydantic schemas
+2. Validates TS tool output shapes against the contract
+3. Runs cross-language parity tests (60+ tests across 13 dual-implementation tools)
+
+```bash
+make test-parity          # full validation (contract + shape + output comparison)
+make update-contracts     # regenerate contracts after changing Python schemas
+```
+
+### Tool Change Process
+
+When modifying or adding a code tool:
+
+1. **Python first**: implement/modify in `backend/app/code_tools/tools.py`
+2. **Update schema**: if params/result shape changed, update `schemas.py`
+3. **Regenerate contracts**: `make update-contracts`
+4. **Port to TS**: update the appropriate module:
+   - Complex: `extension/src/services/complexToolRunner.ts`
+   - AST: `extension/src/services/astToolRunner.ts`
+5. **Add parity tests**: `test_tool_parity_ast.py` or `test_tool_parity_deep.py`
+6. **Validate**: `make test-parity`
 
 ## Configuration
 

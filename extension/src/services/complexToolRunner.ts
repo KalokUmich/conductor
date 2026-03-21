@@ -20,6 +20,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as treeSitter from './treeSitterService';
 
 // ---------------------------------------------------------------------------
 // Public result type (matches astToolRunner.ts)
@@ -47,6 +48,12 @@ const EXCLUDED_DIRS = new Set([
 const SOURCE_EXTS = new Set([
     '.py', '.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs',
     '.java', '.go', '.rs', '.rb', '.cs', '.cpp', '.cc', '.c', '.h',
+]);
+
+// Must match Python's _LANG_EXTS in code_tools/tools.py for module_summary parity
+const MODULE_SUMMARY_EXTS = new Set([
+    '.py', '.js', '.jsx', '.ts', '.tsx',
+    '.java', '.go', '.rs', '.c', '.cpp',
 ]);
 
 // Broader set for detect_patterns (includes config files)
@@ -89,7 +96,8 @@ function readFileText(absPath: string): string | null {
     try {
         const stat = fs.statSync(absPath);
         if (!stat.isFile() || stat.size > MAX_FILE_SIZE) { return null; }
-        return fs.readFileSync(absPath, 'utf-8');
+        // Normalize \r\n → \n to match Python's read_text() behavior
+        return fs.readFileSync(absPath, 'utf-8').replace(/\r\n/g, '\n');
     } catch {
         return null;
     }
@@ -105,19 +113,21 @@ function walkSourceFiles(
     callback: (absPath: string, relPath: string) => boolean | void,
 ): void {
     const ws = path.resolve(workspace);
-    const stack = [path.resolve(root)];
-    while (stack.length > 0) {
-        const dir = stack.pop()!;
+
+    // Recursive DFS matching Python's os.walk() order: entries sorted
+    // alphabetically within each directory, depth-first traversal.
+    const walk = (dir: string): boolean => {
         let entries: fs.Dirent[];
         try {
             entries = fs.readdirSync(dir, { withFileTypes: true });
-        } catch { continue; }
+        } catch { return false; }
+
+        // Sort alphabetically to match os.walk() behavior
+        entries.sort((a, b) => a.name.localeCompare(b.name));
+
+        // Process files first (same directory), then recurse into subdirs
         for (const entry of entries) {
-            if (entry.isDirectory()) {
-                if (!EXCLUDED_DIRS.has(entry.name)) {
-                    stack.push(path.join(dir, entry.name));
-                }
-            } else if (entry.isFile()) {
+            if (entry.isFile()) {
                 const ext = path.extname(entry.name).toLowerCase();
                 if (!exts.has(ext)) { continue; }
                 const absPath = path.join(dir, entry.name);
@@ -126,10 +136,18 @@ function walkSourceFiles(
                 } catch { continue; }
                 const relPath = path.relative(ws, absPath);
                 if (isExcluded(relPath.split(path.sep))) { continue; }
-                if (callback(absPath, relPath) === false) { return; }
+                if (callback(absPath, relPath) === false) { return true; }
             }
         }
-    }
+        for (const entry of entries) {
+            if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
+                if (walk(path.join(dir, entry.name))) { return true; }
+            }
+        }
+        return false;
+    };
+
+    walk(path.resolve(root));
 }
 
 // =========================================================================
@@ -1271,10 +1289,10 @@ function extractModuleSymbols(content: string, lang: string | null): { classes: 
     return { classes, functions };
 }
 
-export function module_summary(
+export async function module_summary(
     workspace: string,
     params: { module_path?: string; path?: string; file_path?: string },
-): ToolResult {
+): Promise<ToolResult> {
     const modulePath = params.module_path || params.path || params.file_path;
     if (!modulePath) {
         return { success: false, data: null, error: 'module_summary requires module_path' };
@@ -1300,19 +1318,23 @@ export function module_summary(
 
     const ws = path.resolve(workspace);
 
-    // Collect source files
-    const sourceFiles: string[] = [];
-    walkSourceFiles(absPath, workspace, SOURCE_EXTS, (_absPath, relPath) => {
-        sourceFiles.push(relPath);
-        if (sourceFiles.length >= 100) { return false; } // cap for very large modules
+    // Collect ALL source files first (matching Python's os.walk behavior),
+    // then cap at 100 for processing. This preserves the real file count.
+    const allSourceFiles: string[] = [];
+    walkSourceFiles(absPath, workspace, MODULE_SUMMARY_EXTS, (_absPath, relPath) => {
+        allSourceFiles.push(relPath);
     });
 
-    if (sourceFiles.length === 0) {
+    if (allSourceFiles.length === 0) {
         return {
             success: true,
             data: { content: `## Module: ${modulePath}\nNo source files found.`, file_count: 0, loc: 0 },
         };
     }
+
+    // Cap at 100 for processing (matching Python's source_files[:100]).
+    // Walk order is DFS alphabetical per-directory, close to Python's os.walk.
+    const sourceFiles = allSourceFiles.slice(0, 100);
 
     let totalLoc = 0;
     const allClasses: string[] = [];
@@ -1329,10 +1351,25 @@ export function module_summary(
         const lineCount = content.endsWith('\n') ? lines.length - 1 : lines.length;
         totalLoc += lineCount;
 
-        const lang = detectLanguage(relFile);
-        const syms = extractModuleSymbols(content, lang);
-        allClasses.push(...syms.classes);
-        allFunctions.push(...syms.functions);
+        // Use tree-sitter AST extraction when available (matches Python backend).
+        // Falls back to regex for unsupported languages or when tree-sitter is not initialized.
+        let usedTreeSitter = false;
+        if (treeSitter.isInitialized()) {
+            try {
+                const tsResult = await treeSitter.extractDefinitions(relFile, Buffer.from(content));
+                for (const d of tsResult.definitions) {
+                    if (d.kind === 'class') { allClasses.push(d.name); }
+                    else if (d.kind === 'function' || d.kind === 'method') { allFunctions.push(d.name); }
+                }
+                usedTreeSitter = true;
+            } catch { /* fall through to regex */ }
+        }
+        if (!usedTreeSitter) {
+            const lang = detectLanguage(relFile);
+            const syms = extractModuleSymbols(content, lang);
+            allClasses.push(...syms.classes);
+            allFunctions.push(...syms.functions);
+        }
 
         // Quick import extraction (first 100 lines)
         for (const line of lines.slice(0, 100)) {
@@ -1361,7 +1398,7 @@ export function module_summary(
     // Build summary text
     const relModule = path.relative(ws, absPath);
     const outputLines: string[] = [
-        `## Module: ${relModule} (${sourceFiles.length} files, ${totalLoc.toLocaleString()} LOC)`,
+        `## Module: ${relModule} (${allSourceFiles.length} files, ${totalLoc.toLocaleString()} LOC)`,
         '',
     ];
 
@@ -1380,23 +1417,25 @@ export function module_summary(
         outputLines.push(`\nExternal Imports: ${Array.from(importModules).sort().slice(0, 20).join(', ')}`);
     }
 
-    // List files
-    outputLines.push(`\nFiles (${sourceFiles.length}):`);
-    const sortedFiles = sourceFiles.sort();
-    for (const f of sortedFiles.slice(0, 30)) {
+    // List files (sorted for display, first 30 — matches Python's sorted(source_files)[:30])
+    outputLines.push(`\nFiles (${allSourceFiles.length}):`);
+    const sortedForDisplay = [...allSourceFiles].sort();
+    for (const f of sortedForDisplay.slice(0, 30)) {
         const fileContent = readFileText(path.join(ws, f));
-        const loc = fileContent ? fileContent.split('\n').length : 0;
+        // Match Python's len(splitlines()): trailing \n does not add a line
+        const lines = fileContent ? fileContent.split('\n') : [];
+        const loc = fileContent && fileContent.endsWith('\n') ? lines.length - 1 : lines.length;
         outputLines.push(`  ${f} (${loc} lines)`);
     }
-    if (sourceFiles.length > 30) {
-        outputLines.push(`  ... and ${sourceFiles.length - 30} more files`);
+    if (allSourceFiles.length > 30) {
+        outputLines.push(`  ... and ${allSourceFiles.length - 30} more files`);
     }
 
     return {
         success: true,
         data: {
             content: outputLines.join('\n'),
-            file_count: sourceFiles.length,
+            file_count: allSourceFiles.length,
             loc: totalLoc,
         },
     };

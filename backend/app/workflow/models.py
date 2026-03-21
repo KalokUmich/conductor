@@ -114,6 +114,8 @@ class RouteConfig(BaseModel):
     text_patterns: List[str] = Field(default_factory=list)   # keyword_pattern
     file_patterns: List[str] = Field(default_factory=list)   # risk_pattern
     boost_rules: List[BoostRule] = Field(default_factory=list)
+    # Example queries for LLM-based classification (3-5 per route)
+    examples: List[str] = Field(default_factory=list)
 
     # Pipeline stages for this route
     pipeline: List[StageConfig] = Field(default_factory=list)
@@ -143,7 +145,7 @@ class SizeMultiplierEntry(BaseModel):
 
 class BudgetDefaults(BaseModel):
     """Global budget defaults for a workflow."""
-    base_tokens: int = 500_000
+    base_tokens: int = 550_000
     base_iterations: int = 25
     sub_fraction: float = 0.7
     min_iterations: int = 8

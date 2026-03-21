@@ -63,7 +63,7 @@ const COMPLEX_TOOLS = new Set([
  * Map of complex tool names to their TypeScript implementation functions.
  * These run in-process — no Python CLI, no subprocess.
  */
-const COMPLEX_TOOL_RUNNERS: Record<string, (workspace: string, params: any) => complexTools.ToolResult> = {
+const COMPLEX_TOOL_RUNNERS: Record<string, (workspace: string, params: any) => complexTools.ToolResult | Promise<complexTools.ToolResult>> = {
     get_dependencies: complexTools.get_dependencies,
     get_dependents: complexTools.get_dependents,
     test_outline: complexTools.test_outline,
@@ -219,7 +219,7 @@ export async function executeLocalTool(
         if (runner) {
             try {
                 log(`${tool} → Tier 3 (native TS)`);
-                const result = runner(workspace, params);
+                const result = await runner(workspace, params);
                 if (result.success) {
                     log(`${tool} → Tier 3 succeeded`);
                     return result;

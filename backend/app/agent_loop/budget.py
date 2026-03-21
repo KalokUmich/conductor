@@ -21,7 +21,7 @@ class BudgetSignal(Enum):
 
 @dataclass
 class BudgetConfig:
-    max_input_tokens: int = 800_000       # Total input token budget per session
+    max_input_tokens: int = 880_000       # Total input token budget per session
     warning_threshold: float = 0.7        # 70% — inject warning into prompt
     critical_threshold: float = 0.9       # 90% — force conclusion
     max_iterations: int = 40              # Hard iteration cap

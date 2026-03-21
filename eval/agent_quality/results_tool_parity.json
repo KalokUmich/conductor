@@ -1,0 +1,272 @@
+{
+  "render_open_banking": {
+    "mode": "live",
+    "python": {
+      "run": {
+        "answer": "# What is Open Banking in Our Business?\n\n## Flow Overview\n\nOpen Banking (OB) is a **financial data aggregation and consent management system** that allows the business to securely access customers' bank transaction data, account balances, and spending classifications through multiple third-party aggregation providers. A customer is directed to a dedicated Angular web application (`ui/ob-connection`) where they select their bank and authorize access; the backend then retrieves verified transaction history and affordability signals to support credit underwriting and decisioning workflows. Consent state is tracked through a multi-step state machine, and batch jobs periodically refresh stale data to keep risk profiles current. The entire flow is initiated by generating a magic link via the external or dashboard API, which is delivered to the applicant.\n\n---\n\n## Step-by-Step Breakdown\n\n### Phase 1 \u2014 Magic Link Generation\n\n1. **Operator/system requests an OB link** by calling `POST /get_open_banking_link` on the external API.\n   - **File:** `backend/src/external_api/endpoints/external_api/routes.py:288-290`\n   - Parameters include `applicant_id`, `callback_url`, `error_callback_url`, `auto_login_time`, `max_number_of_uses`, `skip_landing_page`, `journey`.\n   - Alternatively, the dashboard API generates links via `backend/src/dashboard_api/create_application/create_application_consents_routes.py:38-58` with 5-minute auto-login and 50 max uses.\n   - **Side-effect:** A time-limited magic link (URL) is created and returned, pointing to the `ui/ob-connection` Angular app.\n\n---\n\n### Phase 2 \u2014 User Journey (Frontend)\n\n2. **User opens the magic link \u2192 Login screen** (`/login` route).\n   - **File:** `ui/ob-connection/src/app/app-routing.module.ts:29-32`\n   - Authenticates the applicant session for the OB sub-application.\n\n3. **User lands on the main connection screen** (`/connect` \u2014 \"Connect Your Accounts\").\n   - **File:** `ui/ob-connection/src/app/app-routing.module.ts:69-72`\n\n4. **User selects their bank** (`/bank-selection`).\n   - **File:** `ui/ob-connection/src/app/app-routing.module.ts:79-82`\n\n5. **In-progress connection screen** is shown (`/connectingtoyourbank/:bank`) while the backend creates the consent request and redirects to the provider.\n   - **File:** `ui/ob-connection/src/app/app-routing.module.ts:74-77`\n\n---\n\n### Phase 3 \u2014 Consent Request (Backend)\n\n6. **Backend creates a Consent record** via `OpenBankingConnectionManager.generate_consent_request()`.\n   - **File:** `backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py:122\u2013504`\n   - A `Consent` object is persisted with initial status `ConsentPending = 1`.\n   - **File (model):** `backend/src/data_models/models/pydantic/open_banking/consent.py:21-82`\n   - Fields include: `consent_id`, `applicant_id`, `external_reference`, `status`, `bank`, `provider` (`OpenBankingProvidersEnum`), `active`, `deleted_in_provider`, `bank_accounts`.\n   - The appropriate provider is selected from: **AccountScore** (Equifax), **Bud** (+ `BudCrediSphereOverride`), **DOne**, **Afterbanks**, **DirectAPI**, **IbOBProvider**, **FreedomFinanceAccountScore**, **FinternAccountScore**.\n   - **File (enums):** `backend/src/data_models/models/enums.py:526-540`\n   - User is redirected to the bank's authorization page at the selected provider.\n\n---\n\n### Phase 4 \u2014 Authorization & Callback\n\n7. **User authorizes access at their bank** (handled externally by the provider's UI).\n\n8. **Provider posts a callback** to the backend, handled by `OpenBankingConnectionManager.process_consent_callback()`.\n   - **File:** `backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py`\n   - `validate_consent_callback()` is called to verify the callback payload.\n   - Consent status advances through the state machine:\n     - `ConsentWorkflowComplete = 2` \u2192 authorization received\n     - `ConsentGranted = 3` \u2192 consent successfully established\n   - **Failure paths (file: `backend/src/data_models/models/enums.py:505-518`):**\n     - `ConsentDeclined = 4` \u2014 user rejected access\n     - `ConsentError = 5` \u2014 technical error\n     - `ConsentTimedOut = 6` \u2014 request expired\n   - Frontend shows `/acquired-payment/success` or `/acquired-payment/failed` accordingly.\n   - **File:** `ui/ob-connection/src/app/app-routing.module.ts:89-96`\n\n---\n\n### Phase 5 \u2014 Data Loading\n\n9. **Backend polls/checks data readiness** via `OpenBankingConnectionManager.is_consent_ready()`.\n   - **File:** `backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py`\n\n10. **Transaction data is pulled** via `refresh_transaction_data()`.\n    - Three types of data are downloaded and persisted:\n      - **Bank Accounts** \u2014 account numbers, balances, types \u2192 `backend/src/data_models/models/db/open_banking/bank_account.py`\n      - **Transactions** \u2014 individual transaction records \u2192 `backend/src/data_models/models/db/open_banking/transaction.py`\n      - **Classifications** \u2014 categorized spending patterns for affordability analysis \u2192 `backend/src/data_models/models/db/open_banking/classification.py`\n    - Consent status advances to `DataLoaded = 40` on success, or `DataError = 50` / `DataLoadingTimedOut = 60` on failure.\n    - **File (enums):** `backend/src/data_models/models/enums.py:505-518`\n\n11. **Applicant's `open_banking_complete` flag is set to `True`**, unlocking the next stage of the underwriting workflow.\n    - **File:** `backend/src/abound/abound_tasks/tasks.py:143`\n    - **File:** `background_worker/applications/application_tasks.py:103`\n\n---\n\n### Phase 6 \u2014 Ongoing Operations\n\n12. **Batch job `batch_ob_repull` periodically re-fetches stale OB data** for active applicants.\n    - **File:** `backend/src/abound/abound_tasks/tasks.py:117-179`\n    - Calls `reload_consents()` to keep transaction data fresh for ongoing risk monitoring.\n\n13. **Consent cancellation** is performed via `cancel_consent()` (e.g., on user request or data purge).\n    - **File:** `backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py`\n    - `refresh_consent_before_delete()` is called before purging customer data.\n    - Background workers handle provider-side cleanup: `purge_bud_customers.py`, `tidy_up_equifax_consents.py`.\n\n---\n\n## Sequence Diagram\n\n```mermaid\nsequenceDiagram\n    participant Operator\n    participant ExternalAPI\n    participant Frontend (ui/ob-connection)\n    participant OBManager\n    participant Provider (Bud/Equifax/DOne/etc.)\n    participant DB\n\n    Operator->>ExternalAPI: POST /get_open_banking_link (applicant_id, callback_url, ...)\n    ExternalAPI-->>Operator: magic link URL\n\n    Operator->>Frontend (ui/ob-connection): deliver magic link to applicant\n    Frontend (ui/ob-connection)->>Frontend (ui/ob-connection): /login \u2192 /connect \u2192 /bank-selection\n\n    Frontend (ui/ob-connection)->>OBManager: generate_consent_request(bank, provider)\n    OBManager->>DB: persist Consent (status=ConsentPending)\n    OBManager-->>Frontend (ui/ob-connection): provider redirect URL\n\n    Frontend (ui/ob-connection)->>Provider (Bud/Equifax/DOne/etc.): redirect user to bank auth\n    Provider (Bud/Equifax/DOne/etc.)-->>OBManager: POST callback (authorized / declined)\n\n    OBManager->>OBManager: validate_consent_callback()\n    OBManager->>DB: update Consent (status=ConsentGranted or ConsentDeclined)\n\n    OBManager->>Provider (Bud/Equifax/DOne/etc.): refresh_transaction_data()\n    Provider (Bud/Equifax/DOne/etc.)-->>OBManager: accounts, transactions, classifications\n    OBManager->>DB: persist BankAccount, Transaction, Classification\n    OBManager->>DB: update Consent (status=DataLoaded), set open_banking_complete=True\n\n    Note over OBManager,DB: Batch job batch_ob_repull periodically calls reload_consents()\n```\n\n---\n\n## Key Files\n\n- **`backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py`** \u2014 Core orchestration: consent creation, callback handling, data refresh, cancellation (504 lines)\n- **`backend/src/data_models/models/pydantic/open_banking/consent.py:21-82`** \u2014 `Consent` pydantic model with all consent fields\n- **`backend/src/data_models/models/enums.py:505-540`** \u2014 `ConsentLoadingStatusEnum` (10 states) and `OpenBankingProvidersEnum` (8 providers)\n- **`backend/src/data_models/models/db/open_banking/bank_account.py`** \u2014 DB model for bank accounts pulled from provider\n- **`backend/src/data_models/models/db/open_banking/transaction.py`** \u2014 DB model for individual transactions\n- **`backend/src/data_models/models/db/open_banking/classification.py`** \u2014 DB model for categorized spending/affordability classifications\n- **`backend/src/external_api/endpoints/external_api/routes.py:288-290`** \u2014 `POST /get_open_banking_link` external API endpoint\n- **`backend/src/dashboard_api/create_application/create_application_consents_routes.py:38-58`** \u2014 Dashboard API consent/magic-link generation\n- **`ui/ob-connection/src/app/app-routing.module.ts`** \u2014 All frontend routes: `/login`, `/connect`, `/bank-selection`, `/connectingtoyourbank/:bank`, success/failure screens\n- **`backend/src/abound/abound_tasks/tasks.py:117-179`** \u2014 `batch_ob_repull` batch job and `open_banking_complete` flag setting\n- **`background_worker/`** \u2014 `purge_bud_customers.py`, `tidy_up_equifax_consents.py` \u2014 provider-side data cleanup workers\n\n---\n\n## Gaps & Uncertainties\n\n- **Feature engineering detail:** The evidence references classified transaction data being used for affordability/decisioning feature engineering, but the exact field names, scoring logic, and downstream ML model inputs were not traced in the collected evidence.\n- **Provider-specific flows:** The `OpenBankingConnectionProviders/` directory contains provider-specific implementations (Bud, Equifax, DOne, Ibancar), but the internal differences between each provider's redirect and callback protocol were not fully examined.\n- **`/acquired-payment/success` route naming:** The success/failure routes are named `/acquired-payment/success` and `/acquired-payment/failed`, which is an unusual naming convention for a consent flow \u2014 it's unclear from the evidence whether this is a routing artefact or reflects a payment-adjacent use case in some journeys.\n- **Re-consent flow:** The evidence mentions re-consent workflows for expired consents but the exact UI path and trigger condition were not fully traced.",
+        "tool_calls": 26,
+        "iterations": 0,
+        "duration_ms": 67895.12801170349,
+        "error": null
+      },
+      "scoring": {
+        "total_score": 0.842,
+        "findings": [
+          {
+            "id": "ob_purpose",
+            "description": "Must explain that OB is used for income verification and affordability assessment in lending decisions",
+            "weight": 0.25,
+            "score": 0.67,
+            "matched": 2,
+            "min_required": 3,
+            "matched_patterns": [
+              "affordability|afford",
+              "transaction|spending|spend"
+            ]
+          },
+          {
+            "id": "ob_providers",
+            "description": "Must identify at least 2 OB providers (Bud, Equifax/AccountScore, DirectApi, DOne, etc.)",
+            "weight": 0.15,
+            "score": 1.0,
+            "matched": 3,
+            "min_required": 2,
+            "matched_patterns": [
+              "Bud",
+              "Equifax|AccountScore",
+              "DirectApi|DOne|Plaid|TrueLayer"
+            ]
+          },
+          {
+            "id": "ob_consent_flow",
+            "description": "Must describe the consent flow: generate link \u2192 user authorizes \u2192 webhook callback \u2192 load transactions",
+            "weight": 0.2,
+            "score": 1.0,
+            "matched": 4,
+            "min_required": 3,
+            "matched_patterns": [
+              "consent|Consent",
+              "redirect|link|magic.*link|OAuth",
+              "webhook|callback",
+              "load.*transaction|transaction.*load|refresh.*transaction"
+            ]
+          },
+          {
+            "id": "ob_data_collected",
+            "description": "Must mention what data is collected: bank accounts, transactions, balances",
+            "weight": 0.15,
+            "score": 1.0,
+            "matched": 3,
+            "min_required": 2,
+            "matched_patterns": [
+              "bank.*account|BankAccount",
+              "transaction|Transaction",
+              "balance|Balance"
+            ]
+          },
+          {
+            "id": "ob_classification",
+            "description": "Must explain that transactions are classified into categories for affordability",
+            "weight": 0.15,
+            "score": 0.5,
+            "matched": 1,
+            "min_required": 2,
+            "matched_patterns": [
+              "classif|categor|tag"
+            ]
+          },
+          {
+            "id": "ob_consent_status",
+            "description": "Should mention consent statuses or the state machine (Pending, Granted, DataLoaded, etc.)",
+            "weight": 0.1,
+            "score": 1.0,
+            "matched": 1,
+            "min_required": 1,
+            "matched_patterns": [
+              "ConsentPending|ConsentGranted|DataLoaded|ConsentDeclined|consent.*status|status.*consent"
+            ]
+          }
+        ]
+      }
+    },
+    "typescript": {
+      "run": {
+        "answer": "# Open Banking in Our Business\n\n## Flow Overview\n\nOpen Banking (OB) is a multi-provider financial data aggregation capability embedded in the application underwriting pipeline. When an applicant applies for a loan or credit product, they are prompted to grant consent for the system to connect directly to their bank(s) and pull real account and transaction data. This data \u2014 rather than self-reported income \u2014 is the primary input for automated affordability assessment. Applications cannot progress through underwriting until the `open_banking_complete` flag is set to `true` on the applicant record. The system supports eight distinct OB providers, routing requests through a connection balancer to the appropriate one.\n\n---\n\n## Step-by-Step Breakdown\n\n### 1. Application reaches the OB step\n- The applicant reaches the \"Verify Income\" step in their journey.\n- **UI:** `ui/abound-dashboard/src/views/loanManager/connect_accounts.vue:6` \u2014 renders \"We're now going to verify your income and expenses\"; `ui/abound-dashboard/src/components/singlePager/verifyIncome/verifyIncomeSummary.vue:35` \u2014 \"To make a fair and accurate affordability assessment, we'll now verify your income.\"\n- A dedicated Angular micro-app handles the OB UX: `ui/ob-connection/`.\n\n### 2. Client / frontend requests a consent link\n- An external client or internal UI calls one of three API endpoints to generate a magic link:\n  - **Standard lending:** `backend/src/external_api/endpoints/credit_data_api/credit_data_api_routes.py:418` \u2014 `/generate_open_banking_link`\n  - **BNPL:** `backend/src/external_api/endpoints/bnpl_api/bnpl_api_routes.py:1143`\n  - **Embedded lending:** `backend/src/external_api/endpoints/embedded_lending_api/embedded_lending_routes.py:953`\n\n### 3. `generate_consent_request()` is called\n- The `IOpenBankingConnectionManager` interface method `generate_consent_request()` is invoked (`backend/src/common/services/OpenBankingConnection/interface.py:24-31`).\n- A `ConsentDb` record is created (`backend/src/data_models/models/db/open_banking/consent.py:19-62`) with:\n  - `status = ConsentPending` (enum value `1`)\n  - `provider` set to the selected OB provider\n  - `applicant_id` linking to the applicant\n  - `active = True`, `authorised_at = None`\n- The magic link is returned to the caller for the applicant to follow.\n\n### 4. Provider is selected via the Connection Balancer\n- `backend/src/common/services/connection_balancer.py:68` \u2014 `ConnectionBalancerOB` routes the request to one of eight supported providers:\n  - `AccountScore`, `Bud`, `DOne`, `DirectAPI`, `Afterbanks`, `IbOBProvider`, `FreedomFinance*`, `FinternAccountScore`\n  - (`backend/src/data_models/models/enums.py:526-541`)\n\n### 5. Applicant authorises at their bank\n- The applicant follows the magic link to the bank's OAuth-like authorization UI (hosted by the OB provider).\n- Up to **200 bank accounts** can be linked per consent (`backend/src/data_models/models/pydantic/open_banking/consent.py:40-41` \u2014 `bank_accounts: list[BankAccount] | None = Field(max_items=200)`).\n\n### 6. Provider callback is received and validated\n- The bank/provider POSTs back to the platform.\n- `process_consent_callback()` (`interface.py:43-49`) handles the incoming callback and updates the `ConsentDb` record.\n- `validate_consent_callback()` (`interface.py:52-53`) confirms the authorization is genuine.\n- `is_consent_ready()` (`interface.py:39-40`) polls/confirms readiness.\n- Consent status transitions:\n  - `ConsentWorkflowComplete` (2) \u2192 `ConsentGranted` (3) on success\n  - `ConsentDeclined` (4), `ConsentError` (5), or `ConsentTimedOut` (6) on failure\n\n### 7. Bank account data is loaded\n- `load_accounts_data()` (`interface.py:56-57`) fetches the list of linked bank accounts with balance and account details.\n- Account data is persisted into `BankAccount` pydantic/DB models (`backend/src/data_models/models/pydantic/open_banking/bank_account.py`).\n\n### 8. Transaction data is fetched\n- `refresh_transaction_data()` (`interface.py:60-69`) retrieves transaction history for each account.\n- Each account can store up to **100,000 transactions** (`backend/src/data_models/models/pydantic/open_banking/bank_account.py:79`).\n- Each transaction is classified by affordability category (`backend/src/data_models/models/pydantic/open_banking/transaction.py:19-20`).\n- Consent status advances to `DataLoaded` (40) on success, or `DataError` (50) / `DataLoadingTimedOut` (60) on failure.\n\n### 9. `open_banking_complete` flag is set on the applicant\n- When data loading succeeds, `open_banking_complete` is set to `true` on the applicant record.\n- **Side-effect:** Application status advances forward (`backend/src/common/services/application_data_service/application_data_service.py:486-497`).\n- Background Abound tasks (income verification, credit checks) that were blocked now become eligible to run (`backend/src/abound/abound_tasks/queries.py`).\n\n### 10. Affordability assessment runs\n- `backend/src/common/services/application_affordability/application_affordability_service.py:84-88` \u2014 the affordability service gates on `open_banking_complete = true`; it cannot calculate affordability until this flag is set.\n- Classified transaction data drives the credit limit and lending decision.\n- Applications are queued/prioritized for underwriter review based on OB completion status (`backend/src/dashboard_api/application_queue/queries.py:38`).\n\n### 11. Optional: consent cancellation / data deletion\n- `cancel_consent()` (`interface.py:72-73`) revokes access and supports GDPR data deletion obligations.\n- `pull_ob_token_data()` (`interface.py:76-79`) and `request_data()` (`interface.py:82-83`) cover supplementary data pulls where providers require additional token exchange steps.\n\n---\n\n## Sequence Diagram\n\n```mermaid\nsequenceDiagram\n    participant Applicant\n    participant UI as ob-connection UI\n    participant API as External API (credit_data / bnpl / embedded)\n    participant OBManager as IOpenBankingConnectionManager\n    participant Balancer as ConnectionBalancerOB\n    participant Provider as OB Provider (Bud/AccountScore/etc.)\n    participant DB as ConsentDb / BankAccount / Transaction\n    participant Affordability as AffordabilityService\n\n    Applicant->>UI: Reaches \"Verify Income\" step\n    UI->>API: POST /generate_open_banking_link\n    API->>OBManager: generate_consent_request()\n    OBManager->>Balancer: select provider\n    Balancer-->>OBManager: provider instance\n    OBManager->>DB: Create ConsentDb (status=ConsentPending)\n    OBManager-->>API: magic link\n    API-->>Applicant: redirect to bank auth\n\n    Applicant->>Provider: Authorises at bank\n    Provider-->>OBManager: callback (process_consent_callback)\n    OBManager->>OBManager: validate_consent_callback()\n    OBManager->>DB: update ConsentDb (status=ConsentGranted)\n\n    OBManager->>Provider: load_accounts_data()\n    Provider-->>OBManager: account list\n    OBManager->>Provider: refresh_transaction_data()\n    Provider-->>OBManager: transactions (up to 100k/account)\n    OBManager->>DB: persist BankAccount + Transaction records\n    OBManager->>DB: update ConsentDb (status=DataLoaded)\n    OBManager->>DB: set applicant.open_banking_complete = true\n\n    DB-->>Affordability: open_banking_complete flag triggers assessment\n    Affordability-->>DB: affordability result / credit decision\n```\n\n---\n\n## Key Files\n\n- **`backend/src/data_models/models/db/open_banking/consent.py`** \u2014 Core `ConsentDb` domain model storing consent lifecycle, provider, bank, and status.\n- **`backend/src/data_models/models/enums.py:505-541`** \u2014 `ConsentStatus` state machine enum and `OpenBankingProvidersEnum` (8 providers).\n- **`backend/src/common/services/OpenBankingConnection/interface.py`** \u2014 `IOpenBankingConnectionManager` defining the complete OB operation contract.\n- **`backend/src/common/services/connection_balancer.py`** \u2014 `ConnectionBalancerOB` routes requests to the correct provider implementation.\n- **`backend/src/data_models/models/pydantic/open_banking/consent.py`** \u2014 Pydantic consent model; enforces `max_items=200` on `bank_accounts`.\n- **`backend/src/data_models/models/pydantic/open_banking/bank_account.py`** \u2014 Bank account model; stores up to 100,000 transactions per account.\n- **`backend/src/data_models/models/pydantic/open_banking/transaction.py`** \u2014 Transaction model with affordability category classification.\n- **`backend/src/common/services/application_affordability/application_affordability_service.py:84-88`** \u2014 Gates affordability calculation on `open_banking_complete`.\n- **`backend/src/common/services/application_data_service/application_data_service.py:486-497`** \u2014 Advances application status when OB completes.\n- **`backend/src/external_api/endpoints/credit_data_api/credit_data_api_routes.py:418`** \u2014 `/generate_open_banking_link` endpoint for standard lending flow.\n- **`backend/src/external_api/endpoints/bnpl_api/bnpl_api_routes.py:1143`** \u2014 Same entry point for BNPL flow.\n- **`backend/src/external_api/endpoints/embedded_lending_api/embedded_lending_routes.py:953`** \u2014 Same for embedded lending.\n- **`ui/ob-connection/`** \u2014 Dedicated Angular app rendering the applicant-facing OB consent UI.\n- **`ui/abound-dashboard/src/views/loanManager/connect_accounts.vue`** \u2014 \"Connect accounts\" screen triggering the OB journey.\n- **`backend/src/dashboard_api/application_queue/queries.py:38`** \u2014 Underwriter queue filtering/prioritisation based on OB completion.\n\n---\n\n## Gaps & Uncertainties\n\n1. **Provider-specific implementations** \u2014 The evidence confirms the `IOpenBankingConnectionManager` interface and eight provider enum values, but the concrete adapter classes for each provider (e.g. the Bud adapter, the Afterbanks adapter) were not surfaced in the evidence. Their internal retry logic, error handling, and data-mapping specifics are unknown.\n2. **`pull_ob_token_data()` exact usage** \u2014 The interface defines this method (`interface.py:76-79`) but the evidence does not show which providers require it or what the token data is used for downstream.\n3. **Re-consent / refresh flows** \u2014 It is not confirmed from the evidence whether and how the system handles expired consents (`authorised_at` / `expected_expiry` fields exist on `ConsentDb`) or prompts applicants to re-authorise.\n4. **Exact `ConnectionBalancerOB` routing rules** \u2014 The balancer exists at `connection_balancer.py:68` but the routing logic (by product type, by applicant geography, by A/B test) was not examined in detail.\n5. **Lemfi / partner-specific OB flows** \u2014 Agent B noted OB is used as an \"alternative to credit files\" specifically for Lemfi; the full conditional logic governing when OB replaces traditional credit bureau data was not traced.",
+        "tool_calls": 25,
+        "iterations": 0,
+        "duration_ms": 75014.09125328064,
+        "error": null
+      },
+      "scoring": {
+        "total_score": 1.0,
+        "findings": [
+          {
+            "id": "ob_purpose",
+            "description": "Must explain that OB is used for income verification and affordability assessment in lending decisions",
+            "weight": 0.25,
+            "score": 1.0,
+            "matched": 3,
+            "min_required": 3,
+            "matched_patterns": [
+              "income.*verif|verif.*income|income.*analysis|income.*categor|categor.*income|salary",
+              "affordability|afford",
+              "transaction|spending|spend"
+            ]
+          },
+          {
+            "id": "ob_providers",
+            "description": "Must identify at least 2 OB providers (Bud, Equifax/AccountScore, DirectApi, DOne, etc.)",
+            "weight": 0.15,
+            "score": 1.0,
+            "matched": 3,
+            "min_required": 2,
+            "matched_patterns": [
+              "Bud",
+              "Equifax|AccountScore",
+              "DirectApi|DOne|Plaid|TrueLayer"
+            ]
+          },
+          {
+            "id": "ob_consent_flow",
+            "description": "Must describe the consent flow: generate link \u2192 user authorizes \u2192 webhook callback \u2192 load transactions",
+            "weight": 0.2,
+            "score": 1.0,
+            "matched": 4,
+            "min_required": 3,
+            "matched_patterns": [
+              "consent|Consent",
+              "redirect|link|magic.*link|OAuth",
+              "webhook|callback",
+              "load.*transaction|transaction.*load|refresh.*transaction"
+            ]
+          },
+          {
+            "id": "ob_data_collected",
+            "description": "Must mention what data is collected: bank accounts, transactions, balances",
+            "weight": 0.15,
+            "score": 1.0,
+            "matched": 3,
+            "min_required": 2,
+            "matched_patterns": [
+              "bank.*account|BankAccount",
+              "transaction|Transaction",
+              "balance|Balance"
+            ]
+          },
+          {
+            "id": "ob_classification",
+            "description": "Must explain that transactions are classified into categories for affordability",
+            "weight": 0.15,
+            "score": 1.0,
+            "matched": 2,
+            "min_required": 2,
+            "matched_patterns": [
+              "classif|categor|tag",
+              "Income|CoreSpending|FinancialServices|Discretionary|affordability.*categor"
+            ]
+          },
+          {
+            "id": "ob_consent_status",
+            "description": "Should mention consent statuses or the state machine (Pending, Granted, DataLoaded, etc.)",
+            "weight": 0.1,
+            "score": 1.0,
+            "matched": 1,
+            "min_required": 1,
+            "matched_patterns": [
+              "ConsentPending|ConsentGranted|DataLoaded|ConsentDeclined|consent.*status|status.*consent"
+            ]
+          }
+        ]
+      }
+    },
+    "comparison": {
+      "sequence": {
+        "py_total_calls": 26,
+        "ts_total_calls": 25,
+        "py_ts_tool_calls": 7,
+        "ts_ts_tool_calls": 6,
+        "py_ts_tools_used": [
+          "compressed_view",
+          "file_outline",
+          "find_symbol",
+          "module_summary"
+        ],
+        "ts_ts_tools_used": [
+          "compressed_view",
+          "expand_symbol",
+          "find_symbol",
+          "module_summary"
+        ],
+        "overlapping_calls": 2,
+        "py_only_ts_calls": 4,
+        "ts_only_ts_calls": 4,
+        "py_sequence": [
+          "list_files",
+          "grep",
+          "grep",
+          "grep",
+          "grep",
+          "grep",
+          "grep",
+          "list_files",
+          "module_summary",
+          "module_summary",
+          "module_summary",
+          "grep",
+          "read_file",
+          "list_files",
+          "list_files",
+          "file_outline",
+          "compressed_view",
+          "read_file",
+          "compressed_view",
+          "read_file",
+          "read_file",
+          "read_file",
+          "find_symbol",
+          "grep",
+          "read_file",
+          "grep"
+        ],
+        "ts_sequence": [
+          "list_files",
+          "grep",
+          "grep",
+          "grep",
+          "grep",
+          "grep",
+          "read_file",
+          "list_files",
+          "read_file",
+          "module_summary",
+          "module_summary",
+          "find_symbol",
+          "find_symbol",
+          "read_file",
+          "read_file",
+          "read_file",
+          "read_file",
+          "read_file",
+          "compressed_view",
+          "grep",
+          "read_file",
+          "grep",
+          "grep",
+          "grep",
+          "expand_symbol"
+        ]
+      },
+      "result_diffs": [
+        {
+          "tool": "module_summary",
+          "params": {
+            "module_path": "backend/src/common/services/OpenBankingConnection"
+          },
+          "py_success": true,
+          "ts_success": true,
+          "diff": "--- python\n+++ typescript\n@@ -1 +1 @@\n-{\"content\": \"## Module: backend/src/common/services/OpenBankingConnection (15 files, 4,364 LOC)\\n\\nKey Services: OpenBankingConnectionManager, FreedomFinanceOpenBankingConnectionManager, BankAccountService, IOpenBankingConnectionManager, CachedOpenBankingManager\\nOther Classes: ReturnToken, FreedomFinanceOpenBankingConnectionProviderSettings, ConsentNotReadyError, ConsentReadyRetryStrategy, ConsentReloader, OBRefreshException, BankListItem, Config, ConsentAccessException, ConsentAccessTimedOutException, ConsentIsDeclinedException, IOpenBankingConnectionProvider, DOneOpenBankingConnectionProvider, IbancarOpenBankingConnectionProvider, InvalidExternalRefException\\nKey Functions (137 total): refresh_consent_before_delete, get_consents_to_delete, get_bank_list, get_bank_logo_url, generate_consent_request, get_consent_by_customer_id, is_consent_ready, process_consent_callback, load_accounts_data, validate_consent_callback, refresh_transaction_data, pull_ob_token_data, request_data, cancel_consent, name, refresh_transaction_data, get_bank_account, update_bank_account_as_closed, validate_consent_callback, get_retry_decision\\n\\nExternal Imports: abc, asyncio, collections, common, data_models, datetime, decimal, enum, features, http, httpx, json, logging, pandas, procrastinate, pydantic, secrets, sqlalchemy, typing, urllib\\n\\nFiles (15):\\n  backend/src/common/services/OpenBankingConnection/FreedomFinanceOpenBankingConnectionManager.py (46 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py (504 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/BudOpenBankingConnectionProvider.py (1331 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/DOneOpenBankingConnectionProvider.py (259 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/DirectApiOpenBankingConnectionProvider.py (49 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/EquifaxOpenBankingConnectionProvider.py (1045 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/IOpenBankingConnectionProvider.py (133 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/IbancarOpenBankingConnectionProvider.py (180 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/__init__.py (0 lines)\\n  backend/src/common/services/OpenBankingConnection/__init__.py (0 lines)\\n  backend/src/common/services/OpenBankingConnection/bank_management_service.py (66 lines)\\n  backend/src/common/services/OpenBankingConnection/cache_wrapper.py (162 lines)\\n  backend/src/common/services/OpenBankingConnection/interface.py (83 lines)\\n  backend/src/common/services/OpenBankingConnection/ob_load_tasks.py (373 lines)\\n  backend/src/common/services/OpenBankingConnection/ob_refresh_tasks.py (133 lines)\", \"file_count\": 15, \"loc\": 4364}+{\"content\": \"## Module: backend/src/common/services/OpenBankingConnection (15 files, 4,364 LOC)\\n\\nKey Services: BankAccountService, CachedOpenBankingManager, FreedomFinanceOpenBankingConnectionManager, IOpenBankingConnectionManager, OpenBankingConnectionManager\\nOther Classes: OBRefreshException, FreedomFinanceOpenBankingConnectionProviderSettings, ConsentNotReadyError, ConsentReadyRetryStrategy, ConsentReloader, ReturnToken, BudCustomerId, BudMaintenanceStatus, BudIdentificationTypesEnum, BudCustomerConsent, BudConnection, BudRunningBalance, BudPaginationError, BudAccountBalanceWithDirection, BudOpenBankingConnectionProvider\\nKey Functions (137 total): get_bank_account, update_bank_account_as_closed, get_latest_transaction_date, load_accounts_data, get_creation_date, extract_data, persist_data, refresh_data, find_cached_data, get_bank_list, get_bank_logo_url, generate_consent_request, get_consent_by_customer_id, is_consent_ready, process_consent_callback, validate_consent_callback, refresh_transaction_data, cancel_consent, pull_ob_token_data, request_data\\n\\nExternal Imports: abc, asyncio, collections, common, data_models, datetime, decimal, enum, features, http, httpx, json, logging, pandas, procrastinate, pydantic, secrets, sqlalchemy, typing, urllib\\n\\nFiles (15):\\n  backend/src/common/services/OpenBankingConnection/FreedomFinanceOpenBankingConnectionManager.py (46 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionManager.py (504 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/BudOpenBankingConnectionProvider.py (1331 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/DOneOpenBankingConnectionProvider.py (259 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/DirectApiOpenBankingConnectionProvider.py (49 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/EquifaxOpenBankingConnectionProvider.py (1045 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/IOpenBankingConnectionProvider.py (133 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/IbancarOpenBankingConnectionProvider.py (180 lines)\\n  backend/src/common/services/OpenBankingConnection/OpenBankingConnectionProviders/__init__.py (0 lines)\\n  backend/src/common/services/OpenBankingConnection/__init__.py (0 lines)\\n  backend/src/common/services/OpenBankingConnection/bank_management_service.py (66 lines)\\n  backend/src/common/services/OpenBankingConnection/cache_wrapper.py (162 lines)\\n  backend/src/common/services/OpenBankingConnection/interface.py (83 lines)\\n  backend/src/common/services/OpenBankingConnection/ob_load_tasks.py (373 lines)\\n  backend/src/common/services/OpenBankingConnection/ob_refresh_tasks.py (133 lines)\", \"file_count\": 15, \"loc\": 4364}"
+        }
+      ]
+    }
+  }
+}

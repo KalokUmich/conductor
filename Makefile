@@ -1,7 +1,7 @@
 # Conductor Project Makefile
 # ===========================
 
-.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help langfuse-up langfuse-down langfuse-logs data-up data-down data-logs app-up app-down app-restart app-logs docker-up docker-down docker-clean db-migrate db-revision update-grammars update-prompt-library
+.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help langfuse-up langfuse-down langfuse-logs data-up data-down data-logs app-up app-down app-restart app-logs docker-up docker-down docker-clean db-migrate db-revision update-prompt-library test-parity update-contracts
 
 # Python virtual environment
 VENV_DIR := .venv
@@ -145,19 +145,32 @@ test-extension:
 	fi
 
 # ===========================
+# Tool Parity
+# ===========================
+
+## Validate Python↔TS tool parity (shared contract + cross-language tests)
+test-parity:
+	@echo "Step 1: Check contract matches Python schemas..."
+	cd backend && $(PYTHON) ../scripts/generate_tool_contracts.py --check
+	@echo "Step 2: Compile extension & validate TS against contract..."
+	cd extension && npm run compile
+	cd extension && node tests/validate_contract.js
+	@echo "Step 3: Run cross-language parity tests..."
+	cd backend && $(PYTHON) -m pytest tests/test_tool_parity_deep.py tests/test_tool_parity_ast.py -v
+	@echo "All parity checks passed."
+
+## Regenerate tool contracts after changing Python schemas
+update-contracts:
+	cd backend && $(PYTHON) ../scripts/generate_tool_contracts.py
+	@echo "Contracts updated. Commit contracts/tool_contracts.json and extension/src/services/toolContracts.d.ts"
+
+# ===========================
 # Build / Compile
 # ===========================
 
 ## Download latest prompt library from prompts.chat (reference for agent design)
 update-prompt-library:
 	@bash scripts/update-prompt-library.sh
-
-## Re-download tree-sitter grammar .wasm files (add LATEST=1 for latest releases)
-update-grammars:
-	@echo "Updating tree-sitter grammars..."
-	rm -f extension/grammars/*.wasm
-	cd extension && bash scripts/download-grammars.sh $(if $(LATEST),--latest,)
-	@echo "Grammars updated!"
 
 ## Compile extension (TypeScript + Tailwind CSS)
 compile: compile-ts compile-css
@@ -351,14 +364,13 @@ help:
 	@echo "  make test             - Run all tests (unit only)"
 	@echo "  make test-backend     - Run backend unit tests only"
 	@echo "  make test-extension   - Run extension tests only"
+	@echo "  make test-parity      - Validate Python↔TS tool parity (contract + tests)"
 	@echo "  make integration-test - Run backend integration tests (needs API keys)"
 	@echo ""
 	@echo "Build:"
 	@echo "  make compile          - Compile extension (TypeScript + CSS)"
 	@echo "  make compile-ts       - Compile TypeScript only"
 	@echo "  make compile-css      - Build Tailwind CSS only"
-	@echo "  make update-grammars  - Re-download tree-sitter .wasm grammars"
-	@echo "                          (add LATEST=1 for latest GitHub releases)"
 	@echo "  make update-prompt-library - Download latest prompts.chat CSV"
 	@echo "  make package          - Package extension as .vsix (compiles first)"
 	@echo ""

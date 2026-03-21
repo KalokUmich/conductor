@@ -65,13 +65,16 @@ if (typeof toolFn !== 'function') {
     process.exit(0);
 }
 
-try {
-    const result = toolFn(workspace, params);
-    console.log(JSON.stringify(result));
-} catch (e) {
-    console.log(JSON.stringify({
-        success: false,
-        data: null,
-        error: `Tool threw: ${e.message || e}`,
-    }));
+async function run() {
+    try {
+        const result = await toolFn(workspace, params);
+        console.log(JSON.stringify(result));
+    } catch (e) {
+        console.log(JSON.stringify({
+            success: false,
+            data: null,
+            error: `Tool threw: ${e.message || e}`,
+        }));
+    }
 }
+run();

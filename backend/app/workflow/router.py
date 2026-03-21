@@ -223,27 +223,26 @@ async def update_workflow_models(name: str, assignment: ModelAssignment):
 
 
 # ---------------------------------------------------------------------------
-# Graph builder (React Flow format)
+# Graph builder — positions computed by dagre on the frontend
 # ---------------------------------------------------------------------------
-
-_Y_SPACING = 100
-_X_SPACING = 200
 
 
 def _build_graph(wf) -> WorkflowGraph:
-    """Build a React Flow-compatible node/edge graph from a workflow."""
+    """Build a node/edge graph from a workflow.
+
+    Positions are placeholders — the frontend uses dagre.js for layout.
+    """
     nodes: List[GraphNode] = []
     edges: List[GraphEdge] = []
-    y = 0
+    _pos = {"x": 0, "y": 0}
 
     # Start node
     nodes.append(GraphNode(
         id="start",
         type="start",
         data={"label": wf.description or wf.name},
-        position={"x": 400, "y": y},
+        position=_pos,
     ))
-    y += _Y_SPACING
 
     # Classifier node
     classifier_type = wf.dispatch.classifier.type.replace("_", " ").title()
@@ -251,89 +250,95 @@ def _build_graph(wf) -> WorkflowGraph:
         id="classifier",
         type="classifier",
         data={"label": classifier_type, "route_count": len(wf.routes)},
-        position={"x": 400, "y": y},
+        position=_pos,
     ))
     edges.append(GraphEdge(id="e-start-classify", source="start", target="classifier"))
-    y += _Y_SPACING
 
-    # Route nodes
-    route_ids = []
-    x_offset = 0
+    # Route nodes — multi-stage pipelines emit inter-stage edges
+    route_ids: List[str] = []
+    node_ids_seen: set = set()
     for rname, route in wf.routes.items():
         if route.delegate:
             node_id = f"route:{rname}"
             nodes.append(GraphNode(
-                id=node_id,
-                type="delegate",
+                id=node_id, type="delegate",
                 data={"label": rname, "delegate_to": route.delegate},
-                position={"x": x_offset, "y": y},
+                position=_pos,
             ))
-            # Edge label from patterns
             patterns = route.text_patterns or route.file_patterns
-            label = _short_pattern_label(patterns)
             edges.append(GraphEdge(
-                id=f"e-classify-{rname}",
-                source="classifier",
-                target=node_id,
-                label=label,
+                id=f"e-classify-{rname}", source="classifier", target=node_id,
+                label=_short_pattern_label(patterns),
             ))
             route_ids.append(node_id)
-            x_offset += _X_SPACING
             continue
 
-        for stage in route.pipeline:
+        # Collect agents per stage for inter-stage edges
+        prev_stage_ids: List[str] = []
+        last_stage_ids: List[str] = []
+        for stage_idx, stage in enumerate(route.pipeline):
+            cur_stage_ids: List[str] = []
             for agent_path in stage.agents:
                 agent = wf.resolved_agents.get(agent_path)
                 if not agent:
                     continue
                 node_id = f"agent:{agent.name}"
-                if not any(n.id == node_id for n in nodes):
+                if node_id not in node_ids_seen:
+                    node_ids_seen.add(node_id)
+                    instructions = ""
+                    if hasattr(agent, "instructions") and agent.instructions:
+                        instructions = agent.instructions[:300]
                     nodes.append(GraphNode(
-                        id=node_id,
-                        type=agent.type,
+                        id=node_id, type=agent.type,
                         data={
                             "label": agent.name,
                             "model_role": agent.model_role,
                             "tool_count": len(agent.tools.extra),
+                            "tools": list(agent.tools.extra),
                             "budget_weight": agent.budget_weight,
+                            "instructions": instructions,
                         },
-                        position={"x": x_offset, "y": y},
+                        position=_pos,
                     ))
-                    x_offset += _X_SPACING
+                cur_stage_ids.append(node_id)
 
-                # Edge from classifier
-                patterns = route.text_patterns or route.file_patterns
-                label = _short_pattern_label(patterns)
-                has_always = agent.trigger.always
-                if has_always:
-                    label = "always"
-                edges.append(GraphEdge(
-                    id=f"e-classify-{agent.name}",
-                    source="classifier",
-                    target=node_id,
-                    label=label,
-                ))
-                route_ids.append(node_id)
+                # First stage: edge from classifier
+                if stage_idx == 0:
+                    patterns = route.text_patterns or route.file_patterns
+                    label = _short_pattern_label(patterns)
+                    if agent.trigger.always:
+                        label = "always"
+                    edges.append(GraphEdge(
+                        id=f"e-classify-{rname}-{agent.name}",
+                        source="classifier", target=node_id, label=label,
+                    ))
 
-    y += _Y_SPACING
+            # Inter-stage edges: each agent in prev stage → each agent in this stage
+            if stage_idx > 0 and prev_stage_ids:
+                for src_id in prev_stage_ids:
+                    for tgt_id in cur_stage_ids:
+                        edges.append(GraphEdge(
+                            id=f"e-{src_id}-{tgt_id}",
+                            source=src_id, target=tgt_id,
+                        ))
+
+            prev_stage_ids = cur_stage_ids
+            last_stage_ids = cur_stage_ids
+
+        # Terminal nodes of this route (last stage agents)
+        route_ids.extend(last_stage_ids)
 
     # Post-pipeline nodes
     if wf.post_pipeline:
-        # Merge node
         merge_id = "merge"
         nodes.append(GraphNode(
-            id=merge_id,
-            type="merge",
-            data={"label": "Merge + Filter"},
-            position={"x": 400, "y": y},
+            id=merge_id, type="merge",
+            data={"label": "Merge + Filter"}, position=_pos,
         ))
         for rid in route_ids:
             edges.append(GraphEdge(
-                id=f"e-{rid}-merge",
-                source=rid,
-                target=merge_id,
+                id=f"e-{rid}-merge", source=rid, target=merge_id,
             ))
-        y += _Y_SPACING
 
         prev_id = merge_id
         for stage in wf.post_pipeline:
@@ -342,49 +347,40 @@ def _build_graph(wf) -> WorkflowGraph:
                 if not agent:
                     continue
                 node_id = f"agent:{agent.name}"
+                instructions = ""
+                if hasattr(agent, "instructions") and agent.instructions:
+                    instructions = agent.instructions[:300]
                 nodes.append(GraphNode(
-                    id=node_id,
-                    type=agent.type,
+                    id=node_id, type=agent.type,
                     data={
                         "label": agent.name,
                         "model_role": agent.model_role,
+                        "tools": list(agent.tools.extra) if agent.tools else [],
+                        "instructions": instructions,
                     },
-                    position={"x": 400, "y": y},
+                    position=_pos,
                 ))
                 edges.append(GraphEdge(
-                    id=f"e-{prev_id}-{agent.name}",
-                    source=prev_id,
-                    target=node_id,
+                    id=f"e-{prev_id}-{agent.name}", source=prev_id, target=node_id,
                 ))
                 prev_id = node_id
-                y += _Y_SPACING
 
-        # End node
         nodes.append(GraphNode(
-            id="end",
-            type="end",
-            data={"label": "Result"},
-            position={"x": 400, "y": y},
+            id="end", type="end",
+            data={"label": "Result"}, position=_pos,
         ))
         edges.append(GraphEdge(
-            id=f"e-{prev_id}-end",
-            source=prev_id,
-            target="end",
+            id=f"e-{prev_id}-end", source=prev_id, target="end",
         ))
     else:
         # first_match: all routes lead to answer
-        end_id = "end"
         nodes.append(GraphNode(
-            id=end_id,
-            type="end",
-            data={"label": "Answer"},
-            position={"x": 400, "y": y},
+            id="end", type="end",
+            data={"label": "Answer"}, position=_pos,
         ))
         for rid in route_ids:
             edges.append(GraphEdge(
-                id=f"e-{rid}-end",
-                source=rid,
-                target=end_id,
+                id=f"e-{rid}-end", source=rid, target="end",
             ))
 
     return WorkflowGraph(nodes=nodes, edges=edges)

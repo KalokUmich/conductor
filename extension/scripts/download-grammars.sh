@@ -30,7 +30,7 @@ mkdir -p "$GRAMMARS_DIR"
 
 # ---- Configuration --------------------------------------------------------
 # Each entry: "lang  wasm_filename  github_org/repo  pinned_tag"
-# Pinned tags are known-good versions compatible with web-tree-sitter 0.24.x.
+# Pinned tags are known-good versions compatible with web-tree-sitter 0.26.x.
 # Use --latest to ignore pinned tags and always fetch the latest release.
 
 LANGUAGES=(
@@ -135,14 +135,19 @@ else
     echo "All grammars downloaded successfully."
 fi
 
-# Also ensure the tree-sitter.wasm runtime file is available.
+# Also ensure the tree-sitter runtime .wasm file is available.
 # web-tree-sitter ships it inside node_modules/web-tree-sitter/.
-TS_WASM="$EXTENSION_DIR/node_modules/web-tree-sitter/tree-sitter.wasm"
-if [[ -f "$TS_WASM" ]]; then
-    cp "$TS_WASM" "$GRAMMARS_DIR/tree-sitter.wasm"
+# 0.26.x renamed it from tree-sitter.wasm to web-tree-sitter.wasm.
+TS_WASM_NEW="$EXTENSION_DIR/node_modules/web-tree-sitter/web-tree-sitter.wasm"
+TS_WASM_OLD="$EXTENSION_DIR/node_modules/web-tree-sitter/tree-sitter.wasm"
+if [[ -f "$TS_WASM_NEW" ]]; then
+    cp "$TS_WASM_NEW" "$GRAMMARS_DIR/web-tree-sitter.wasm"
+    echo "Copied web-tree-sitter.wasm runtime to grammars/."
+elif [[ -f "$TS_WASM_OLD" ]]; then
+    cp "$TS_WASM_OLD" "$GRAMMARS_DIR/tree-sitter.wasm"
     echo "Copied tree-sitter.wasm runtime to grammars/."
 else
-    echo "Note: web-tree-sitter runtime wasm not found at $TS_WASM"
+    echo "Note: web-tree-sitter runtime wasm not found."
     echo "      Run 'npm install' first, then re-run this script."
 fi
 

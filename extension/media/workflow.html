@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Conductor Workflows</title>
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
   <style>
     /* ------------------------------------------------------------------ */
     /* Reset & base                                                       */
@@ -45,30 +46,31 @@
       border-radius: 6px 6px 0 0;
     }
 
-    .tab:hover {
-      color: #c4b5fd;
-      background: rgba(139, 92, 246, 0.08);
-    }
-
-    .tab.active {
-      color: #c4b5fd;
-      border-bottom-color: #8b5cf6;
-      background: rgba(139, 92, 246, 0.1);
-    }
+    .tab:hover { color: #c4b5fd; background: rgba(139, 92, 246, 0.08); }
+    .tab.active { color: #c4b5fd; border-bottom-color: #8b5cf6; background: rgba(139, 92, 246, 0.1); }
 
     /* ------------------------------------------------------------------ */
-    /* Graph container                                                    */
+    /* Graph area                                                         */
     /* ------------------------------------------------------------------ */
     .graph-wrapper {
       flex: 1;
       position: relative;
-      overflow: auto;
-      padding: 24px;
+      overflow: hidden;
+      cursor: grab;
+    }
+
+    .graph-wrapper.panning { cursor: grabbing; }
+
+    .graph-viewport {
+      transform-origin: 0 0;
+      will-change: transform;
+      position: absolute;
+      top: 0;
+      left: 0;
     }
 
     .graph-container {
       position: relative;
-      min-height: 600px;
     }
 
     /* SVG edge layer */
@@ -81,20 +83,24 @@
     }
 
     .edge-line {
-      stroke: rgba(139, 92, 246, 0.35);
+      stroke: rgba(139, 92, 246, 0.4);
       stroke-width: 1.5;
       fill: none;
     }
 
-    .edge-arrow {
-      fill: rgba(139, 92, 246, 0.5);
-    }
+    .edge-arrow { fill: rgba(139, 92, 246, 0.55); }
 
     .edge-label {
       fill: #94a3b8;
       font-size: 10px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       text-anchor: middle;
+    }
+
+    .edge-label-bg {
+      fill: #0a0e1a;
+      rx: 3;
+      ry: 3;
     }
 
     /* ------------------------------------------------------------------ */
@@ -107,18 +113,15 @@
       z-index: 1;
     }
 
-    .node:hover {
-      transform: scale(1.04);
-      z-index: 2;
-    }
+    .node:hover { transform: scale(1.04); z-index: 2; }
 
     .node-inner {
       background: rgba(15, 20, 40, 0.85);
       backdrop-filter: blur(12px);
       border: 1px solid rgba(139, 92, 246, 0.2);
       border-radius: 10px;
-      padding: 12px 18px;
-      min-width: 140px;
+      padding: 14px 22px;
+      min-width: 180px;
       text-align: center;
       box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
     }
@@ -133,10 +136,11 @@
     }
 
     .node-label {
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 600;
       color: #e2e8f0;
       margin-bottom: 2px;
+      line-height: 1.3;
     }
 
     .node-subtitle {
@@ -145,94 +149,123 @@
       font-weight: 400;
     }
 
-    /* -- Node type: start / end  (pill shape) -- */
+    /* -- start / end (pill) -- */
     .node-type-start .node-inner,
     .node-type-end .node-inner {
       border-radius: 24px;
-      min-width: 100px;
-      padding: 10px 24px;
+      min-width: 120px;
+      padding: 10px 28px;
     }
 
     .node-type-start .node-inner {
       border-color: rgba(52, 211, 153, 0.4);
-      background: rgba(16, 185, 129, 0.08);
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(16, 185, 129, 0.04) 100%);
     }
-
     .node-type-start .node-label { color: #6ee7b7; }
 
     .node-type-end .node-inner {
       border-color: rgba(248, 113, 113, 0.4);
-      background: rgba(239, 68, 68, 0.08);
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(239, 68, 68, 0.04) 100%);
     }
-
     .node-type-end .node-label { color: #fca5a5; }
 
-    /* -- Node type: explorer (violet accent) -- */
+    /* -- explorer (violet) -- */
     .node-type-explorer .node-inner {
       border-color: rgba(139, 92, 246, 0.45);
-      background: rgba(139, 92, 246, 0.06);
+      background: linear-gradient(135deg, rgba(139, 92, 246, 0.08) 0%, rgba(139, 92, 246, 0.03) 100%);
     }
-
     .node-type-explorer .node-label { color: #c4b5fd; }
 
-    /* -- Node type: judge (indigo accent) -- */
+    /* -- judge (indigo) -- */
     .node-type-judge .node-inner {
       border-color: rgba(196, 181, 253, 0.45);
-      background: rgba(196, 181, 253, 0.06);
+      background: linear-gradient(135deg, rgba(196, 181, 253, 0.08) 0%, rgba(196, 181, 253, 0.03) 100%);
     }
-
     .node-type-judge .node-label { color: #e0d5ff; }
 
-    /* -- Node type: classifier (diamond) -- */
+    /* -- classifier (hexagon) -- */
     .node-type-classifier .node-inner {
-      border-radius: 4px;
-      transform: rotate(45deg);
-      min-width: 80px;
-      min-height: 80px;
+      clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%);
+      border-radius: 0;
+      border: none;
+      min-width: 130px;
+      min-height: 70px;
+      padding: 18px 28px;
+      background: linear-gradient(135deg, rgba(251, 191, 36, 0.12) 0%, rgba(251, 191, 36, 0.05) 100%);
+      /* Simulate border with box-shadow (clip-path clips border) */
+      box-shadow: none;
+    }
+    .node-type-classifier .node-label { color: #fcd34d; font-size: 12px; }
+    .node-type-classifier .node-subtitle { font-size: 10px; }
+
+    /* Hex border via wrapper */
+    .node-type-classifier::before {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      clip-path: polygon(50% 0%, 95% 25%, 95% 75%, 50% 100%, 5% 75%, 5% 25%);
+      background: rgba(251, 191, 36, 0.35);
+      z-index: -1;
+    }
+
+    /* -- merge (compact) -- */
+    .node-type-merge .node-inner {
+      border-radius: 8px;
+      min-width: 130px;
+      padding: 10px 18px;
+      border-color: rgba(56, 189, 248, 0.4);
+      background: linear-gradient(135deg, rgba(56, 189, 248, 0.08) 0%, rgba(56, 189, 248, 0.03) 100%);
+    }
+    .node-type-merge .node-label { color: #7dd3fc; font-size: 13px; }
+
+    /* -- delegate (orange) -- */
+    .node-type-delegate .node-inner {
+      border-color: rgba(251, 146, 60, 0.45);
+      background: linear-gradient(135deg, rgba(251, 146, 60, 0.08) 0%, rgba(251, 146, 60, 0.03) 100%);
+    }
+    .node-type-delegate .node-label { color: #fdba74; }
+
+    /* ------------------------------------------------------------------ */
+    /* Zoom controls                                                      */
+    /* ------------------------------------------------------------------ */
+    .zoom-controls {
+      position: absolute;
+      bottom: 12px;
+      right: 12px;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      background: rgba(15, 20, 40, 0.92);
+      border: 1px solid rgba(139, 92, 246, 0.2);
+      border-radius: 8px;
+      padding: 4px 6px;
+      z-index: 50;
+      backdrop-filter: blur(8px);
+    }
+
+    .zoom-btn {
+      width: 28px;
+      height: 28px;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: #94a3b8;
+      font-size: 14px;
+      cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 8px;
-      border-color: rgba(251, 191, 36, 0.45);
-      background: rgba(251, 191, 36, 0.06);
+      transition: all 0.15s;
     }
+    .zoom-btn:hover { background: rgba(139, 92, 246, 0.15); color: #c4b5fd; }
 
-    .node-type-classifier .node-content {
-      transform: rotate(-45deg);
+    .zoom-level {
+      font-size: 11px;
+      color: #64748b;
+      min-width: 36px;
       text-align: center;
+      font-variant-numeric: tabular-nums;
     }
-
-    .node-type-classifier .node-label { color: #fcd34d; font-size: 11px; }
-
-    /* -- Node type: merge (compact) -- */
-    .node-type-merge .node-inner {
-      border-radius: 8px;
-      min-width: 100px;
-      padding: 8px 14px;
-      border-color: rgba(56, 189, 248, 0.4);
-      background: rgba(56, 189, 248, 0.06);
-    }
-
-    .node-type-merge .node-label { color: #7dd3fc; font-size: 12px; }
-
-    /* -- Node type: delegate -- */
-    .node-type-delegate .node-inner {
-      border-color: rgba(251, 146, 60, 0.45);
-      background: rgba(251, 146, 60, 0.06);
-    }
-
-    .node-type-delegate .node-label { color: #fdba74; }
-
-    /* -- Node type: group (dashed border) -- */
-    .node-type-group .node-inner {
-      border-style: dashed;
-      border-color: rgba(139, 92, 246, 0.25);
-      background: rgba(139, 92, 246, 0.03);
-      min-width: 200px;
-      min-height: 80px;
-    }
-
-    .node-type-group .node-label { color: #a78bfa; font-size: 12px; }
 
     /* ------------------------------------------------------------------ */
     /* Detail sidebar                                                     */
@@ -253,10 +286,7 @@
       flex-direction: column;
       overflow: hidden;
     }
-
-    .detail-sidebar.open {
-      right: 0;
-    }
+    .detail-sidebar.open { right: 0; }
 
     .detail-header {
       display: flex;
@@ -266,12 +296,7 @@
       border-bottom: 1px solid rgba(139, 92, 246, 0.12);
       flex-shrink: 0;
     }
-
-    .detail-header h2 {
-      font-size: 15px;
-      font-weight: 600;
-      color: #c4b5fd;
-    }
+    .detail-header h2 { font-size: 15px; font-weight: 600; color: #c4b5fd; }
 
     .detail-close {
       background: none;
@@ -283,19 +308,11 @@
       line-height: 0;
       transition: color 0.15s;
     }
-
     .detail-close:hover { color: #e2e8f0; }
 
-    .detail-body {
-      flex: 1;
-      overflow-y: auto;
-      padding: 20px;
-    }
+    .detail-body { flex: 1; overflow-y: auto; padding: 20px; }
 
-    .detail-section {
-      margin-bottom: 20px;
-    }
-
+    .detail-section { margin-bottom: 20px; }
     .detail-section-title {
       font-size: 10px;
       font-weight: 600;
@@ -304,21 +321,7 @@
       color: #64748b;
       margin-bottom: 8px;
     }
-
-    .detail-field {
-      margin-bottom: 10px;
-    }
-
-    .detail-field-label {
-      font-size: 11px;
-      color: #94a3b8;
-      margin-bottom: 2px;
-    }
-
-    .detail-field-value {
-      font-size: 13px;
-      color: #e2e8f0;
-    }
+    .detail-field-value { font-size: 13px; color: #e2e8f0; }
 
     .detail-badge {
       display: inline-block;
@@ -330,15 +333,13 @@
       color: #c4b5fd;
       border: 1px solid rgba(139, 92, 246, 0.2);
     }
-
-    .detail-badge.badge-explorer { background: rgba(139, 92, 246, 0.12); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.2); }
-    .detail-badge.badge-judge    { background: rgba(196, 181, 253, 0.12); color: #e0d5ff; border-color: rgba(196, 181, 253, 0.2); }
+    .detail-badge.badge-explorer   { background: rgba(139, 92, 246, 0.12); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.2); }
+    .detail-badge.badge-judge      { background: rgba(196, 181, 253, 0.12); color: #e0d5ff; border-color: rgba(196, 181, 253, 0.2); }
     .detail-badge.badge-classifier { background: rgba(251, 191, 36, 0.12); color: #fcd34d; border-color: rgba(251, 191, 36, 0.2); }
-    .detail-badge.badge-start    { background: rgba(52, 211, 153, 0.12); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.2); }
-    .detail-badge.badge-end      { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.2); }
-    .detail-badge.badge-merge    { background: rgba(56, 189, 248, 0.12); color: #7dd3fc; border-color: rgba(56, 189, 248, 0.2); }
-    .detail-badge.badge-delegate { background: rgba(251, 146, 60, 0.12); color: #fdba74; border-color: rgba(251, 146, 60, 0.2); }
-    .detail-badge.badge-group    { background: rgba(139, 92, 246, 0.08); color: #a78bfa; border-color: rgba(139, 92, 246, 0.15); }
+    .detail-badge.badge-start      { background: rgba(52, 211, 153, 0.12); color: #6ee7b7; border-color: rgba(52, 211, 153, 0.2); }
+    .detail-badge.badge-end        { background: rgba(248, 113, 113, 0.12); color: #fca5a5; border-color: rgba(248, 113, 113, 0.2); }
+    .detail-badge.badge-merge      { background: rgba(56, 189, 248, 0.12); color: #7dd3fc; border-color: rgba(56, 189, 248, 0.2); }
+    .detail-badge.badge-delegate   { background: rgba(251, 146, 60, 0.12); color: #fdba74; border-color: rgba(251, 146, 60, 0.2); }
 
     .detail-tool-list {
       list-style: none;
@@ -346,7 +347,6 @@
       flex-wrap: wrap;
       gap: 4px;
     }
-
     .detail-tool-chip {
       padding: 2px 8px;
       font-size: 11px;
@@ -356,7 +356,6 @@
       border-radius: 4px;
       font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
     }
-
     .detail-instructions {
       font-size: 12px;
       line-height: 1.5;
@@ -372,7 +371,7 @@
     }
 
     /* ------------------------------------------------------------------ */
-    /* Loading / error states                                             */
+    /* Loading / error                                                    */
     /* ------------------------------------------------------------------ */
     .loading-state, .error-state {
       display: flex;
@@ -385,18 +384,15 @@
     }
 
     .spinner {
-      width: 32px;
-      height: 32px;
+      width: 32px; height: 32px;
       border: 3px solid rgba(139, 92, 246, 0.15);
       border-top-color: #8b5cf6;
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .error-state { color: #fca5a5; }
-
     .retry-btn {
       padding: 6px 16px;
       font-size: 12px;
@@ -407,10 +403,7 @@
       cursor: pointer;
       transition: all 0.15s;
     }
-
-    .retry-btn:hover {
-      background: rgba(139, 92, 246, 0.25);
-    }
+    .retry-btn:hover { background: rgba(139, 92, 246, 0.25); }
 
     /* ------------------------------------------------------------------ */
     /* Legend                                                              */
@@ -425,26 +418,13 @@
       flex-shrink: 0;
       font-size: 11px;
     }
-
-    .legend-item {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      color: #94a3b8;
-    }
-
-    .legend-dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-
+    .legend-item { display: flex; align-items: center; gap: 5px; color: #94a3b8; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
     .legend-dot.dot-start    { background: #6ee7b7; }
     .legend-dot.dot-end      { background: #fca5a5; }
     .legend-dot.dot-explorer { background: #8b5cf6; }
     .legend-dot.dot-judge    { background: #c4b5fd; }
-    .legend-dot.dot-classifier { background: #fbbf24; width: 8px; height: 8px; transform: rotate(45deg); border-radius: 1px; }
+    .legend-dot.dot-classifier { background: #fbbf24; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); border-radius: 0; }
     .legend-dot.dot-merge    { background: #38bdf8; }
     .legend-dot.dot-delegate { background: #fb923c; }
   </style>
@@ -469,7 +449,16 @@
       <div id="error-text">Failed to load workflow</div>
       <button class="retry-btn" id="btn-retry">Retry</button>
     </div>
-    <div class="graph-container" id="graph-container" style="display: none;"></div>
+    <div class="graph-viewport" id="graph-viewport">
+      <div class="graph-container" id="graph-container" style="display: none;"></div>
+    </div>
+    <!-- Zoom controls -->
+    <div class="zoom-controls" id="zoom-controls" style="display: none;">
+      <button class="zoom-btn" id="btn-zoom-out" title="Zoom out">-</button>
+      <span class="zoom-level" id="zoom-level">100%</span>
+      <button class="zoom-btn" id="btn-zoom-in" title="Zoom in">+</button>
+      <button class="zoom-btn" id="btn-fit" title="Fit to view" style="margin-left:2px; font-size:11px;">Fit</button>
+    </div>
   </div>
 
   <!-- Legend -->
@@ -497,30 +486,105 @@
   </div>
 
   <script>
-    // ----------------------------------------------------------------
-    // VS Code API
-    // ----------------------------------------------------------------
+    // ================================================================
+    // VS Code API + state
+    // ================================================================
     const vscode = acquireVsCodeApi();
     let backendUrl = '';
     let currentWorkflow = 'pr-review';
     let graphData = null;
     let selectedNodeId = null;
+    let dagreGraph = null;
 
-    // Node dimensions used for edge routing
-    const NODE_DEFAULTS = {
-      start:      { w: 100, h: 40 },
-      end:        { w: 100, h: 40 },
-      classifier: { w: 80,  h: 80 },
-      explorer:   { w: 160, h: 56 },
-      judge:      { w: 160, h: 56 },
-      merge:      { w: 110, h: 40 },
-      delegate:   { w: 160, h: 56 },
-      group:      { w: 220, h: 90 },
+    // Node dimension defaults (dagre uses these for layout)
+    const NODE_DIMS = {
+      start:      { w: 130, h: 44 },
+      end:        { w: 130, h: 44 },
+      classifier: { w: 140, h: 80 },
+      explorer:   { w: 180, h: 64 },
+      judge:      { w: 180, h: 64 },
+      merge:      { w: 140, h: 44 },
+      delegate:   { w: 180, h: 64 },
     };
 
-    // ----------------------------------------------------------------
-    // Request config from extension host
-    // ----------------------------------------------------------------
+    // ================================================================
+    // Pan / Zoom state
+    // ================================================================
+    let vt = { x: 0, y: 0, s: 1 }; // view transform: translate x/y + scale
+    let isPanning = false;
+    let panStart = { x: 0, y: 0 };
+
+    function applyTransform() {
+      const vp = document.getElementById('graph-viewport');
+      vp.style.transform = `translate(${vt.x}px, ${vt.y}px) scale(${vt.s})`;
+      document.getElementById('zoom-level').textContent = Math.round(vt.s * 100) + '%';
+    }
+
+    function fitToView() {
+      if (!dagreGraph) return;
+      const wrapper = document.getElementById('graph-wrapper');
+      const wr = wrapper.getBoundingClientRect();
+      const gw = dagreGraph.graph().width || 800;
+      const gh = dagreGraph.graph().height || 600;
+      const pad = 60;
+      const sx = (wr.width - pad * 2) / gw;
+      const sy = (wr.height - pad * 2) / gh;
+      vt.s = Math.min(sx, sy, 1.5);
+      vt.x = (wr.width - gw * vt.s) / 2;
+      vt.y = (wr.height - gh * vt.s) / 2;
+      applyTransform();
+    }
+
+    // ================================================================
+    // Pan / zoom event handlers
+    // ================================================================
+    const graphWrapper = document.getElementById('graph-wrapper');
+
+    graphWrapper.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? 0.9 : 1.1;
+      const newScale = Math.max(0.2, Math.min(4, vt.s * delta));
+      const rect = graphWrapper.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const sd = newScale / vt.s;
+      vt.x = mx - sd * (mx - vt.x);
+      vt.y = my - sd * (my - vt.y);
+      vt.s = newScale;
+      applyTransform();
+    }, { passive: false });
+
+    graphWrapper.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.node') || e.target.closest('.zoom-controls')) return;
+      isPanning = true;
+      panStart = { x: e.clientX - vt.x, y: e.clientY - vt.y };
+      graphWrapper.classList.add('panning');
+    });
+    window.addEventListener('mousemove', (e) => {
+      if (!isPanning) return;
+      vt.x = e.clientX - panStart.x;
+      vt.y = e.clientY - panStart.y;
+      applyTransform();
+    });
+    window.addEventListener('mouseup', () => {
+      isPanning = false;
+      graphWrapper.classList.remove('panning');
+    });
+
+    // Zoom controls
+    document.getElementById('btn-zoom-in').addEventListener('click', () => {
+      vt.s = Math.min(4, vt.s * 1.2);
+      applyTransform();
+    });
+    document.getElementById('btn-zoom-out').addEventListener('click', () => {
+      vt.s = Math.max(0.2, vt.s / 1.2);
+      applyTransform();
+    });
+    document.getElementById('btn-fit').addEventListener('click', fitToView);
+
+    // ================================================================
+    // Config + tab switching
+    // ================================================================
     vscode.postMessage({ command: 'getConfig' });
 
     window.addEventListener('message', event => {
@@ -531,9 +595,6 @@
       }
     });
 
-    // ----------------------------------------------------------------
-    // Tab switching
-    // ----------------------------------------------------------------
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -543,16 +604,7 @@
       });
     });
 
-    // ----------------------------------------------------------------
-    // Retry button
-    // ----------------------------------------------------------------
-    document.getElementById('btn-retry').addEventListener('click', () => {
-      loadWorkflow(currentWorkflow);
-    });
-
-    // ----------------------------------------------------------------
-    // Close detail sidebar
-    // ----------------------------------------------------------------
+    document.getElementById('btn-retry').addEventListener('click', () => loadWorkflow(currentWorkflow));
     document.getElementById('btn-close-detail').addEventListener('click', closeDetail);
 
     function closeDetail() {
@@ -564,33 +616,33 @@
       }
     }
 
-    // ----------------------------------------------------------------
+    // ================================================================
     // Fetch workflow graph
-    // ----------------------------------------------------------------
+    // ================================================================
     async function loadWorkflow(name) {
       const loading = document.getElementById('loading');
       const error = document.getElementById('error');
       const container = document.getElementById('graph-container');
+      const controls = document.getElementById('zoom-controls');
 
       loading.style.display = 'flex';
       error.style.display = 'none';
       container.style.display = 'none';
+      controls.style.display = 'none';
       closeDetail();
 
-      if (!backendUrl) {
-        showError('No backend URL configured');
-        return;
-      }
+      if (!backendUrl) { showError('No backend URL configured'); return; }
 
       try {
         const resp = await fetch(`${backendUrl}/api/workflows/${encodeURIComponent(name)}/graph`);
-        if (!resp.ok) {
-          throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
-        }
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}: ${resp.statusText}`);
         graphData = await resp.json();
         renderGraph(graphData);
         loading.style.display = 'none';
         container.style.display = 'block';
+        controls.style.display = 'flex';
+        // Auto-fit after a frame so DOM is measured
+        requestAnimationFrame(() => fitToView());
       } catch (err) {
         showError(err.message || 'Failed to load workflow');
       }
@@ -601,46 +653,65 @@
       document.getElementById('error').style.display = 'flex';
       document.getElementById('error-text').textContent = message;
       document.getElementById('graph-container').style.display = 'none';
+      document.getElementById('zoom-controls').style.display = 'none';
     }
 
-    // ----------------------------------------------------------------
-    // Render graph
-    // ----------------------------------------------------------------
+    // ================================================================
+    // Render graph with dagre layout
+    // ================================================================
     function renderGraph(data) {
       const container = document.getElementById('graph-container');
       container.innerHTML = '';
 
-      if (!data || !data.nodes || !data.edges) {
-        showError('Invalid graph data');
-        return;
-      }
+      if (!data || !data.nodes || !data.edges) { showError('Invalid graph data'); return; }
+      if (typeof dagre === 'undefined') { showError('Layout library not loaded'); return; }
 
-      const nodes = data.nodes;
-      const edges = data.edges;
+      // --- dagre layout ---
+      const g = new dagre.graphlib.Graph();
+      g.setGraph({
+        rankdir: 'TB',
+        nodesep: 60,
+        ranksep: 80,
+        edgesep: 20,
+        marginx: 40,
+        marginy: 40,
+      });
+      g.setDefaultEdgeLabel(() => ({}));
 
-      // Compute bounding box for container sizing
-      let maxX = 0, maxY = 0;
-      nodes.forEach(n => {
-        const dims = NODE_DEFAULTS[n.type] || NODE_DEFAULTS.explorer;
-        const right = (n.position?.x || 0) + dims.w + 40;
-        const bottom = (n.position?.y || 0) + dims.h + 40;
-        if (right > maxX) maxX = right;
-        if (bottom > maxY) maxY = bottom;
+      // Add nodes
+      data.nodes.forEach(n => {
+        const d = NODE_DIMS[n.type] || NODE_DIMS.explorer;
+        const w = (n.data && n.data.width) || d.w;
+        const h = (n.data && n.data.height) || d.h;
+        g.setNode(n.id, { width: w, height: h, nodeData: n });
       });
 
-      container.style.width = maxX + 60 + 'px';
-      container.style.height = maxY + 60 + 'px';
+      // Add edges
+      data.edges.forEach(e => {
+        g.setEdge(e.source, e.target, { label: e.label || '', edgeData: e });
+      });
 
-      // Create SVG edge layer
+      // Run layout
+      dagre.layout(g);
+      dagreGraph = g;
+
+      // Size container
+      const graphLabel = g.graph();
+      const totalW = (graphLabel.width || 800) + 80;
+      const totalH = (graphLabel.height || 600) + 80;
+      container.style.width = totalW + 'px';
+      container.style.height = totalH + 'px';
+
+      // --- Draw edges (SVG layer) ---
       const svgNS = 'http://www.w3.org/2000/svg';
       const svg = document.createElementNS(svgNS, 'svg');
       svg.classList.add('edge-layer');
-      svg.setAttribute('width', maxX + 60);
-      svg.setAttribute('height', maxY + 60);
-      svg.style.width = (maxX + 60) + 'px';
-      svg.style.height = (maxY + 60) + 'px';
+      svg.setAttribute('width', totalW);
+      svg.setAttribute('height', totalH);
+      svg.style.width = totalW + 'px';
+      svg.style.height = totalH + 'px';
 
-      // Define arrowhead marker
+      // Arrowhead marker
       const defs = document.createElementNS(svgNS, 'defs');
       const marker = document.createElementNS(svgNS, 'marker');
       marker.setAttribute('id', 'arrowhead');
@@ -649,129 +720,112 @@
       marker.setAttribute('refX', '8');
       marker.setAttribute('refY', '3');
       marker.setAttribute('orient', 'auto');
-      const arrowPath = document.createElementNS(svgNS, 'polygon');
-      arrowPath.setAttribute('points', '0 0, 8 3, 0 6');
-      arrowPath.classList.add('edge-arrow');
-      marker.appendChild(arrowPath);
+      const arrow = document.createElementNS(svgNS, 'polygon');
+      arrow.setAttribute('points', '0 0, 8 3, 0 6');
+      arrow.classList.add('edge-arrow');
+      marker.appendChild(arrow);
       defs.appendChild(marker);
       svg.appendChild(defs);
 
-      // Build node position lookup for edge routing
-      const nodeMap = {};
-      nodes.forEach(n => {
-        const dims = NODE_DEFAULTS[n.type] || NODE_DEFAULTS.explorer;
-        nodeMap[n.id] = {
-          cx: (n.position?.x || 0) + dims.w / 2,
-          cy: (n.position?.y || 0) + dims.h / 2,
-          w: dims.w,
-          h: dims.h,
-          x: n.position?.x || 0,
-          y: n.position?.y || 0,
-        };
-      });
+      // Draw edges using dagre control points
+      g.edges().forEach(edgeKey => {
+        const edgeData = g.edge(edgeKey);
+        if (!edgeData || !edgeData.points) return;
 
-      // Draw edges
-      edges.forEach(e => {
-        const src = nodeMap[e.source];
-        const tgt = nodeMap[e.target];
-        if (!src || !tgt) return;
-
-        // Compute edge endpoints on node boundaries
-        const pts = computeEdgePoints(src, tgt);
-
+        const pts = edgeData.points;
         const path = document.createElementNS(svgNS, 'path');
-        const dx = pts.tx - pts.sx;
-        const dy = pts.ty - pts.sy;
-        const midY = pts.sy + dy * 0.5;
-
-        // Use a smooth cubic bezier for visual appeal
-        const d = `M ${pts.sx} ${pts.sy} C ${pts.sx} ${midY}, ${pts.tx} ${midY}, ${pts.tx} ${pts.ty}`;
-        path.setAttribute('d', d);
+        path.setAttribute('d', buildSmoothPath(pts));
         path.classList.add('edge-line');
         path.setAttribute('marker-end', 'url(#arrowhead)');
         svg.appendChild(path);
 
-        // Optional edge label
-        if (e.label) {
+        // Edge label
+        const label = edgeData.label || '';
+        if (label) {
+          const mid = pts[Math.floor(pts.length / 2)];
+          // Background rect
+          const bg = document.createElementNS(svgNS, 'rect');
+          bg.classList.add('edge-label-bg');
+          // Text first to measure
           const text = document.createElementNS(svgNS, 'text');
           text.classList.add('edge-label');
-          text.setAttribute('x', (pts.sx + pts.tx) / 2);
-          text.setAttribute('y', midY - 6);
-          text.textContent = e.label;
+          text.setAttribute('x', mid.x);
+          text.setAttribute('y', mid.y + 3);
+          text.textContent = label;
           svg.appendChild(text);
+          // Measure and add background
+          try {
+            const bbox = text.getBBox();
+            bg.setAttribute('x', bbox.x - 4);
+            bg.setAttribute('y', bbox.y - 1);
+            bg.setAttribute('width', bbox.width + 8);
+            bg.setAttribute('height', bbox.height + 2);
+            svg.insertBefore(bg, text);
+          } catch (e) { /* getBBox may fail if not rendered yet */ }
         }
       });
 
       container.appendChild(svg);
 
-      // Render nodes
-      nodes.forEach(n => {
-        const el = createNodeElement(n);
+      // --- Draw nodes ---
+      g.nodes().forEach(nodeId => {
+        const layoutNode = g.node(nodeId);
+        const nodeData = layoutNode.nodeData;
+        const el = createNodeElement(nodeData);
+        // dagre returns center coordinates; position top-left
+        el.style.left = (layoutNode.x - layoutNode.width / 2) + 'px';
+        el.style.top = (layoutNode.y - layoutNode.height / 2) + 'px';
+        el.style.width = layoutNode.width + 'px';
         container.appendChild(el);
       });
     }
 
-    // ----------------------------------------------------------------
-    // Compute edge start/end at node boundary
-    // ----------------------------------------------------------------
-    function computeEdgePoints(src, tgt) {
-      const angle = Math.atan2(tgt.cy - src.cy, tgt.cx - src.cx);
-
-      // Source: exit from boundary
-      const sx = src.cx + Math.cos(angle) * (src.w / 2);
-      const sy = src.cy + Math.sin(angle) * (src.h / 2);
-
-      // Target: enter at boundary (opposite direction)
-      const tx = tgt.cx - Math.cos(angle) * (tgt.w / 2);
-      const ty = tgt.cy - Math.sin(angle) * (tgt.h / 2);
-
-      return { sx, sy, tx, ty };
+    // ================================================================
+    // Smooth path through dagre control points
+    // ================================================================
+    function buildSmoothPath(points) {
+      if (points.length < 2) return '';
+      if (points.length === 2) {
+        return `M ${points[0].x},${points[0].y} L ${points[1].x},${points[1].y}`;
+      }
+      // Quadratic bezier through intermediate points
+      let d = `M ${points[0].x},${points[0].y}`;
+      for (let i = 1; i < points.length - 1; i++) {
+        const p = points[i];
+        const next = points[i + 1];
+        const mx = (p.x + next.x) / 2;
+        const my = (p.y + next.y) / 2;
+        d += ` Q ${p.x},${p.y} ${mx},${my}`;
+      }
+      const last = points[points.length - 1];
+      d += ` L ${last.x},${last.y}`;
+      return d;
     }
 
-    // ----------------------------------------------------------------
-    // Create a node DOM element
-    // ----------------------------------------------------------------
+    // ================================================================
+    // Create node DOM element
+    // ================================================================
     function createNodeElement(node) {
       const el = document.createElement('div');
       el.className = `node node-type-${node.type || 'explorer'}`;
       el.dataset.nodeId = node.id;
-      el.style.left = (node.position?.x || 0) + 'px';
-      el.style.top = (node.position?.y || 0) + 'px';
 
       const data = node.data || {};
       const label = data.label || node.id;
 
       let subtitle = '';
-      if (node.type === 'explorer' && data.tool_count) {
-        subtitle = data.tool_count + ' tools';
-      } else if (node.type === 'judge') {
-        subtitle = 'judge';
-      } else if (node.type === 'classifier' && data.route_count) {
-        subtitle = data.route_count + ' routes';
-      } else if (node.type === 'delegate') {
-        subtitle = 'delegate';
-      } else if (node.type === 'merge') {
-        subtitle = 'merge';
-      }
+      if (node.type === 'explorer' && data.tool_count) subtitle = data.tool_count + ' tools';
+      else if (node.type === 'judge') subtitle = 'judge';
+      else if (node.type === 'classifier' && data.route_count) subtitle = data.route_count + ' routes';
+      else if (node.type === 'delegate') subtitle = 'delegate';
+      else if (node.type === 'merge') subtitle = 'merge';
 
-      if (node.type === 'classifier') {
-        // Diamond shape needs inner content rotation
-        el.innerHTML = `
-          <div class="node-inner">
-            <div class="node-content">
-              <div class="node-label">${escapeHtml(label)}</div>
-              ${subtitle ? `<div class="node-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-            </div>
-          </div>`;
-      } else {
-        el.innerHTML = `
-          <div class="node-inner">
-            <div class="node-label">${escapeHtml(label)}</div>
-            ${subtitle ? `<div class="node-subtitle">${escapeHtml(subtitle)}</div>` : ''}
-          </div>`;
-      }
+      el.innerHTML = `
+        <div class="node-inner">
+          <div class="node-label">${escapeHtml(label)}</div>
+          ${subtitle ? `<div class="node-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+        </div>`;
 
-      // Click handler
       el.addEventListener('click', (ev) => {
         ev.stopPropagation();
         selectNode(node);
@@ -780,130 +834,65 @@
       return el;
     }
 
-    // ----------------------------------------------------------------
+    // ================================================================
     // Node selection + detail sidebar
-    // ----------------------------------------------------------------
+    // ================================================================
     function selectNode(node) {
-      // Deselect previous
       const prev = document.querySelector('.node.selected');
       if (prev) prev.classList.remove('selected');
 
-      // Select new
       selectedNodeId = node.id;
       const el = document.querySelector(`.node[data-node-id="${node.id}"]`);
       if (el) el.classList.add('selected');
 
-      // Populate detail sidebar
       const data = node.data || {};
-      const sidebar = document.getElementById('detail-sidebar');
       const title = document.getElementById('detail-title');
       const body = document.getElementById('detail-body');
-
       title.textContent = data.label || node.id;
 
       let html = '';
-
-      // Type badge
       const typeClass = 'badge-' + (node.type || 'explorer');
-      html += `
-        <div class="detail-section">
-          <div class="detail-section-title">Type</div>
-          <span class="detail-badge ${typeClass}">${escapeHtml(node.type || 'unknown')}</span>
-        </div>`;
+      html += `<div class="detail-section"><div class="detail-section-title">Type</div><span class="detail-badge ${typeClass}">${escapeHtml(node.type || 'unknown')}</span></div>`;
 
-      // Model role
       if (data.model_role) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Model Role</div>
-            <div class="detail-field-value">${escapeHtml(data.model_role)}</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Model Role</div><div class="detail-field-value">${escapeHtml(data.model_role)}</div></div>`;
       }
-
-      // Budget weight
       if (data.budget_weight !== undefined && data.budget_weight !== null) {
-        const pct = (data.budget_weight * 100).toFixed(0);
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Budget Weight</div>
-            <div class="detail-field-value">${pct}%</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Budget Weight</div><div class="detail-field-value">${(data.budget_weight * 100).toFixed(0)}%</div></div>`;
       }
-
-      // Tool count
       if (data.tool_count) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Tool Count</div>
-            <div class="detail-field-value">${data.tool_count} tools available</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Tool Count</div><div class="detail-field-value">${data.tool_count} tools available</div></div>`;
       }
-
-      // Tool list
       if (data.tools && Array.isArray(data.tools) && data.tools.length > 0) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Tools</div>
-            <ul class="detail-tool-list">
-              ${data.tools.map(t => `<li class="detail-tool-chip">${escapeHtml(t)}</li>`).join('')}
-            </ul>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Tools</div><ul class="detail-tool-list">${data.tools.map(t => `<li class="detail-tool-chip">${escapeHtml(t)}</li>`).join('')}</ul></div>`;
       }
-
-      // Route count (classifier)
       if (data.route_count) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Routes</div>
-            <div class="detail-field-value">${data.route_count} routes</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Routes</div><div class="detail-field-value">${data.route_count} routes</div></div>`;
       }
-
-      // Trigger conditions
       if (data.trigger) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Trigger Conditions</div>
-            <div class="detail-field-value">${escapeHtml(data.trigger)}</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Trigger Conditions</div><div class="detail-field-value">${escapeHtml(data.trigger)}</div></div>`;
       }
-
-      // Instructions (first ~200 chars)
       if (data.instructions) {
-        const preview = data.instructions.length > 200
-          ? data.instructions.substring(0, 200) + '...'
-          : data.instructions;
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Instructions</div>
-            <div class="detail-instructions">${escapeHtml(preview)}</div>
-          </div>`;
+        const preview = data.instructions.length > 300 ? data.instructions.substring(0, 300) + '...' : data.instructions;
+        html += `<div class="detail-section"><div class="detail-section-title">Instructions</div><div class="detail-instructions">${escapeHtml(preview)}</div></div>`;
       }
-
-      // Fallback: if no extra data at all, show the node ID
       if (!data.model_role && !data.tool_count && !data.budget_weight && !data.instructions && !data.trigger) {
-        html += `
-          <div class="detail-section">
-            <div class="detail-section-title">Node ID</div>
-            <div class="detail-field-value" style="font-family: monospace; font-size: 12px;">${escapeHtml(node.id)}</div>
-          </div>`;
+        html += `<div class="detail-section"><div class="detail-section-title">Node ID</div><div class="detail-field-value" style="font-family: monospace; font-size: 12px;">${escapeHtml(node.id)}</div></div>`;
       }
 
       body.innerHTML = html;
-      sidebar.classList.add('open');
+      document.getElementById('detail-sidebar').classList.add('open');
     }
 
-    // ----------------------------------------------------------------
-    // Click on background to deselect
-    // ----------------------------------------------------------------
-    document.getElementById('graph-wrapper').addEventListener('click', (ev) => {
-      if (ev.target.closest('.node')) return;
+    // Click background to deselect
+    graphWrapper.addEventListener('click', (ev) => {
+      if (ev.target.closest('.node') || ev.target.closest('.zoom-controls')) return;
       closeDetail();
     });
 
-    // ----------------------------------------------------------------
+    // ================================================================
     // Utility
-    // ----------------------------------------------------------------
+    // ================================================================
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;

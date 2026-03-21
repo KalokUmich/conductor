@@ -129,26 +129,24 @@ class WorkflowEngine:
         # Set up event queue for agent-level streaming
         self._event_queue = asyncio.Queue()
 
-        # Step 1: Classify — LLM first, keyword fallback
-        keyword_engine = ClassifierEngine(workflow)
-        classify_result = keyword_engine.classify(context)
+        # Step 1: Classify — LLM with examples first, keyword fallback
+        classifier = ClassifierEngine(workflow)
+        classify_result = classifier.classify(context)
         keyword_route = classify_result.best_route
         keyword_score = max(classify_result.raw_scores.values()) if classify_result.raw_scores else 0
 
-        # If keyword match is weak and LLM classifier is available, upgrade
-        if keyword_score <= 1 and self._classifier_provider is not None:
-            try:
-                from app.agent_loop.query_classifier import classify_query_with_llm
-                query_text = context.get("query_text") or context.get("query", "")
-                llm_result = await classify_query_with_llm(query_text, self._classifier_provider)
-                if llm_result.query_type and llm_result.query_type in workflow.routes:
-                    classify_result.best_route = llm_result.query_type
-                    logger.info(
-                        "LLM classifier override: keyword=%s(score=%s) → llm=%s",
-                        keyword_route, keyword_score, llm_result.query_type,
-                    )
-            except Exception as exc:
-                logger.warning("LLM classifier failed, using keyword result: %s", exc)
+        # If LLM classifier is available and route config has examples,
+        # use example-based LLM classification (more accurate than keywords).
+        # Only skip if keyword already matched strongly (score >= 3).
+        if self._classifier_provider is not None and classifier.has_examples() and keyword_score < 3:
+            query_text = context.get("query_text") or context.get("query", "")
+            llm_route = await classifier.classify_with_llm(query_text, self._classifier_provider)
+            if llm_route:
+                classify_result.best_route = llm_route
+                logger.info(
+                    "LLM classifier (examples): keyword=%s(score=%s) → llm=%s",
+                    keyword_route, keyword_score, llm_route,
+                )
 
         context["_classify_result"] = classify_result
 

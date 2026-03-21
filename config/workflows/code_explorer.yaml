@@ -4,6 +4,10 @@
 # text, then dispatches the matching route's pipeline. Most routes are
 # single-agent; business_flow_tracing uses multi-agent (2 perspectives +
 # synthesis). code_review delegates to the PR review workflow.
+#
+# Classification: keyword_pattern as fast fallback, LLM upgrade when available.
+# Examples in each route follow the "examples over rule lists" design principle
+# and are injected into the LLM classification prompt.
 
 name: code-explorer
 description: Agentic code intelligence — answer questions about the codebase
@@ -11,7 +15,7 @@ prompt_template: prompts/explorer_base.md
 route_mode: first_match
 
 budget:
-  base_tokens: 600_000
+  base_tokens: 660_000
   base_iterations: 30
   sub_fraction: 0.7
   min_iterations: 10
@@ -32,11 +36,15 @@ dispatch:
 routes:
   business_flow_tracing:
     text_patterns:
-      - "flow|process|trace|how does|what happens"
+      - "flow|process|trace|what happens"
       - "step by step|lifecycle|life cycle|pipeline|journey|sequence"
-      - "workflow"
-      - "what is the|what are the|explain the|describe the|tell me about|purpose of|role of"
-      - "how .+ works|how .+ work|understand"
+      - "end.to.end|e2e|from .+ to .+"
+    examples:
+      - "after being approved by Render, what are the remaining steps in the customer journey?"
+      - "trace the complete loan disbursement flow from approval to payout"
+      - "what happens step by step when a customer submits a new application?"
+      - "explain the end-to-end payment processing pipeline"
+      - "how does data flow from the callback to the final email notification?"
     pipeline:
       - stage: explore
         parallel: true
@@ -51,14 +59,24 @@ routes:
     text_patterns:
       - "bug|error|fail|why|root cause|debug"
       - "crash|exception|broken|wrong|issue"
+    examples:
+      - "why is the payment endpoint returning 500 errors?"
+      - "the approval email is not being sent, what could be wrong?"
+      - "debug why the loan amount calculation is incorrect"
+      - "what is causing the NullPointerException in ApproveServiceImpl?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_root_cause.md]
 
   entry_point_discovery:
     text_patterns:
-      - "entry|endpoint|route|handler"
-      - "where does|where is|which file"
+      - "entry|endpoint|route|handler|controller"
+      - "where does|where is|which file|show me|find the"
+    examples:
+      - "where is the login endpoint defined?"
+      - "which file handles the Render callback?"
+      - "find the controller that processes payment webhooks"
+      - "show me the auth middleware implementation"
     pipeline:
       - stage: investigate
         agents: [agents/explore_entry_point.md]
@@ -67,6 +85,11 @@ routes:
     text_patterns:
       - "impact|affect|break|blast radius"
       - "change|modify|refactor|rename|remove|deprecate"
+    examples:
+      - "if I change the LoanService interface, what else will break?"
+      - "what is the impact of removing the legacy payment gateway?"
+      - "what code depends on the UserApplicationMapping entity?"
+      - "if we refactor the email templates, which services are affected?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_impact.md]
@@ -75,6 +98,14 @@ routes:
     text_patterns:
       - "architecture|structure|organized|overview"
       - "design|modules|layers|components|diagram"
+      - "deploy|deployment|cicd|ci.cd|build|release|infrastructure"
+      - "how does .+ work|how do .+ work|how is .+ built"
+    examples:
+      - "how is the codebase organized? what are the main modules?"
+      - "how do we deploy abound-lambda?"
+      - "what is the overall architecture of the loan service?"
+      - "explain the project structure and how the modules interact"
+      - "how is the CI/CD pipeline set up?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_architecture.md]
@@ -83,6 +114,11 @@ routes:
     text_patterns:
       - "data|lineage|transform|input|flows to"
       - "passed to|stored|database|persist|column"
+    examples:
+      - "where is the customer's bank account number stored in the database?"
+      - "how does the loan amount get calculated and passed to the ledger?"
+      - "what happens to the Render decision data after it's received?"
+      - "which tables store the approval status?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_data_lineage.md]
@@ -91,6 +127,11 @@ routes:
     text_patterns:
       - "config|setting|flag|environment|variable"
       - "option|parameter|toggle|feature flag"
+    examples:
+      - "what environment variables does the payment service need?"
+      - "how is the email template selection configured?"
+      - "what feature flags control the BetterCents integration?"
+      - "where are the AWS Lambda settings defined?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_config.md]
@@ -99,6 +140,11 @@ routes:
     text_patterns:
       - "recent|changed|commit|who|when"
       - "blame|history|last week|yesterday"
+    examples:
+      - "what changed in the approval flow recently?"
+      - "who last modified the RenderCallBackServiceImpl?"
+      - "show me the recent commits to the payment module"
+      - "what was changed in the last week?"
     pipeline:
       - stage: investigate
         agents: [agents/explore_recent_changes.md]
@@ -109,4 +155,8 @@ routes:
       - "review the pr|review this pr|review the diff"
       - "review the changes|review changes"
       - "do pr|do a pr|check the pr"
+    examples:
+      - "review the PR master...feature/add-payment-retry"
+      - "do a code review of the latest changes"
+      - "review this pull request for security issues"
     delegate: workflows/pr_review.yaml

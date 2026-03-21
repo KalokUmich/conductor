@@ -367,6 +367,12 @@ async def context_query_stream(
     workflow = _get_code_explorer_workflow()
 
     async def event_generator():
+        # Emit start event immediately so the client sees feedback < 100ms.
+        # The padding comment pushes the first chunk past proxy buffer thresholds
+        # (ngrok and some CDNs buffer until ~4KB before forwarding).
+        yield f": padding {'.' * 2048}\n\n"
+        yield f"event: start\ndata: {json.dumps({'query': req.query, 'room_id': req.room_id})}\n\n"
+
         if workflow:
             from app.workflow.engine import WorkflowEngine
             engine = WorkflowEngine(
@@ -410,8 +416,10 @@ async def context_query_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
+            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
+            "Connection": "keep-alive",
         },
     )
 
@@ -526,7 +534,9 @@ async def explain_rich_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
+            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
+            "Connection": "keep-alive",
         },
     )

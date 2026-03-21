@@ -4360,7 +4360,22 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     try { data = JSON.parse(eventData); } catch { continue; }
 
                     // Forward progress to WebView
-                    if (eventKind === 'thinking') {
+                    if (eventKind === 'start') {
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'start',
+                            message: 'Connecting to AI...',
+                            detail: data,
+                        });
+                    } else if (eventKind === 'classify') {
+                        const qType = (data.query_type || data.result?.best_route || '').replace(/_/g, ' ');
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'classify',
+                            message: qType ? `Analyzing: ${qType}` : 'Classifying query...',
+                            detail: data,
+                        });
+                    } else if (eventKind === 'thinking') {
                         const text = (data.text as string || '').slice(0, 120);
                         this._view?.webview.postMessage({
                             command: 'askAIProgress',
@@ -5794,7 +5809,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         // the webview is first rendered (race between detectNgrokUrl and render time).
         const backendUrl = getSessionService().getBackendUrl();
         const wsUrl = backendUrl.replace('http', 'ws');
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${backendUrl} ${wsUrl} http://localhost:* https://localhost:* ws://localhost:* wss://localhost:* https://*.ngrok-free.dev wss://*.ngrok-free.dev https://*.ngrok-free.app wss://*.ngrok-free.app https://*.ngrok.io wss://*.ngrok.io https://*.ngrok.app wss://*.ngrok.app;">`;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src ${backendUrl} ${wsUrl} http://localhost:* https://localhost:* ws://localhost:* wss://localhost:* https://*.ngrok-free.dev wss://*.ngrok-free.dev https://*.ngrok-free.app wss://*.ngrok-free.app https://*.ngrok.io wss://*.ngrok.io https://*.ngrok.app wss://*.ngrok.app;">`;
 
         // Inject initial permissions data (including sessionRole based on FSM state)
         const permissions = getPermissionsService().getPermissionsForWebView();

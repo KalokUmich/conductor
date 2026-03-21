@@ -79,7 +79,7 @@ class AgentSpec:
 #   reliability  0.70  — call-chain + git history, moderate depth
 #   test_coverage 0.55 — file listing + test lookup, lightest
 # ---------------------------------------------------------------------------
-_MAIN_TOKENS: int = 800_000   # mirrors AgentLoopService / BudgetConfig default
+_MAIN_TOKENS: int = 880_000   # mirrors AgentLoopService / BudgetConfig default
 _MAIN_ITERS:  int = 40        # mirrors AgentLoopService default
 _SUB_FRACTION: float = 0.7    # sub-agents get 70% of the main budget
 
@@ -102,7 +102,7 @@ AGENT_SPECS: List[AgentSpec] = [
             "get_callers", "get_callees", "trace_variable",
             "get_dependencies",
         ],
-        budget_tokens=_sub_budget(1.00),   # 560,000
+        budget_tokens=_sub_budget(1.00),   # 616,000
         max_iterations=_sub_iters(1.00),   # 28
         risk_dimensions=["correctness"],
         strategy_hint=(
@@ -120,7 +120,7 @@ AGENT_SPECS: List[AgentSpec] = [
             "get_callers", "get_callees", "trace_variable",
             "ast_search",
         ],
-        budget_tokens=_sub_budget(0.85),   # 476,000
+        budget_tokens=_sub_budget(0.85),   # 523,600
         max_iterations=_sub_iters(0.85),   # 23
         risk_dimensions=["concurrency"],
         strategy_hint=(
@@ -136,7 +136,7 @@ AGENT_SPECS: List[AgentSpec] = [
             "git_diff", "git_show", "git_log", "trace_variable",
             "find_references", "git_blame", "ast_search",
         ],
-        budget_tokens=_sub_budget(0.75),   # 420,000
+        budget_tokens=_sub_budget(0.75),   # 462,000
         max_iterations=_sub_iters(0.75),   # 21
         risk_dimensions=["security"],
         strategy_hint=(
@@ -153,7 +153,7 @@ AGENT_SPECS: List[AgentSpec] = [
             "git_diff", "get_callers",
             "find_references", "git_log", "git_show",
         ],
-        budget_tokens=_sub_budget(0.70),   # 392,000
+        budget_tokens=_sub_budget(0.70),   # 431,200
         max_iterations=_sub_iters(0.70),   # 19
         risk_dimensions=["reliability", "operational"],
         strategy_hint=(
@@ -170,7 +170,7 @@ AGENT_SPECS: List[AgentSpec] = [
             "test_outline", "find_references", "list_files",
             "run_test",
         ],
-        budget_tokens=_sub_budget(0.55),   # 308,000
+        budget_tokens=_sub_budget(0.55),   # 338,800
         max_iterations=_sub_iters(0.55),   # 15
         risk_dimensions=[],   # always runs (via always_run flag)
         strategy_hint=(

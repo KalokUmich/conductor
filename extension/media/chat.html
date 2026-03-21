@@ -5,6 +5,46 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Chat</title>
     <link rel="stylesheet" href="tailwind.css">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            if (typeof mermaid !== 'undefined') {
+                mermaid.initialize({
+                    startOnLoad: false,
+                    theme: 'dark',
+                    themeVariables: {
+                        primaryColor: '#1e3a5f',
+                        primaryTextColor: '#e2e8f0',
+                        primaryBorderColor: '#3b82f6',
+                        lineColor: '#64748b',
+                        secondaryColor: '#1e293b',
+                        tertiaryColor: '#0f172a',
+                        noteBkgColor: '#1e293b',
+                        noteTextColor: '#e2e8f0',
+                        noteBorderColor: '#475569',
+                        actorBkg: '#1e3a5f',
+                        actorTextColor: '#e2e8f0',
+                        actorBorder: '#3b82f6',
+                        actorLineColor: '#64748b',
+                        signalColor: '#e2e8f0',
+                        signalTextColor: '#e2e8f0',
+                        labelBoxBkgColor: '#1e293b',
+                        labelBoxBorderColor: '#475569',
+                        labelTextColor: '#e2e8f0',
+                        loopTextColor: '#94a3b8',
+                        activationBkgColor: '#1e3a5f',
+                        activationBorderColor: '#3b82f6',
+                        sequenceNumberColor: '#e2e8f0',
+                    },
+                    sequence: { mirrorActors: false, useMaxWidth: true },
+                    flowchart: { useMaxWidth: true, htmlLabels: true },
+                    fontSize: 12,
+                    fontFamily: 'ui-monospace, monospace',
+                    securityLevel: 'strict',
+                });
+            }
+        });
+    </script>
     <style>
         /* ============================================================
            CONDUCTOR — Premium AI Interface
@@ -313,6 +353,91 @@
         }
         .thinking-collapse-toggle.collapsed {
             transform: rotate(-90deg);
+        }
+
+        /* --- Mermaid diagram styling --- */
+        .mermaid, .mermaid-pending {
+            background: transparent;
+            text-align: center;
+        }
+        .mermaid svg {
+            max-width: 100%;
+            height: auto;
+        }
+        .mermaid-container {
+            cursor: zoom-in;
+            position: relative;
+        }
+        .mermaid-container:hover {
+            background: rgba(59,130,246,0.05);
+        }
+        .mermaid-zoom-hint {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            opacity: 0;
+            transition: opacity 0.15s;
+            pointer-events: none;
+        }
+        .mermaid-container:hover .mermaid-zoom-hint {
+            opacity: 1;
+        }
+
+        /* --- Lightbox overlay --- */
+        #diagram-lightbox {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            display: none;
+            flex-direction: column;
+            background: rgba(0,0,0,0.88);
+            backdrop-filter: blur(4px);
+        }
+        #diagram-lightbox.active {
+            display: flex;
+        }
+        #diagram-lightbox-topbar {
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            padding: 8px 12px;
+            background: rgba(15,23,42,0.9);
+            border-bottom: 1px solid rgba(59,130,246,0.2);
+        }
+        #diagram-lightbox-close {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: rgba(255,255,255,0.08);
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #94a3b8;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s, color 0.15s;
+        }
+        #diagram-lightbox-close:hover {
+            background: rgba(255,255,255,0.15);
+            color: white;
+        }
+        #diagram-lightbox-body {
+            flex: 1;
+            overflow: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            cursor: zoom-out;
+        }
+        #diagram-lightbox-content {
+            cursor: default;
+        }
+        #diagram-lightbox-content svg {
+            max-width: 90vw;
+            max-height: 80vh;
         }
 
         /* --- Animated gradient border for AI cards --- */
@@ -3862,6 +3987,97 @@
         }
 
         /**
+         * Render any pending mermaid diagrams inside the given container.
+         * Call this after inserting HTML that may contain .mermaid-pending divs.
+         */
+        function renderMermaidDiagrams(container) {
+            if (typeof mermaid === 'undefined') return;
+            const pending = (container || document).querySelectorAll('.mermaid-pending');
+            if (pending.length === 0) return;
+            const nodes = Array.from(pending);
+            nodes.forEach(el => {
+                // Decode raw mermaid source from data attribute — avoids HTML entity corruption
+                const encoded = el.getAttribute('data-graph');
+                if (encoded) {
+                    el.textContent = decodeURIComponent(encoded);
+                    el.removeAttribute('data-graph');
+                }
+                el.classList.remove('mermaid-pending');
+                el.classList.add('mermaid');
+            });
+            try {
+                mermaid.run({ nodes }).then(() => {
+                    // Attach lightbox click handlers after SVGs are rendered
+                    nodes.forEach(el => {
+                        const wrapper = el.closest('.mermaid-container');
+                        if (wrapper && !wrapper.dataset.lightboxBound) {
+                            wrapper.dataset.lightboxBound = 'true';
+                            wrapper.addEventListener('click', () => openDiagramLightbox(el));
+                        }
+                    });
+                });
+            } catch (e) {
+                console.warn('[Mermaid] render error:', e);
+            }
+        }
+
+        /**
+         * Open a mermaid diagram in the lightbox overlay.
+         * Moves (not clones) the SVG to avoid duplicate-ID rendering bugs.
+         * The SVG is restored to its original location on close.
+         */
+        let _lbSvg = null, _lbParent = null, _lbSibling = null, _lbOrigWidth = null, _lbOrigStyle = '';
+
+        function openDiagramLightbox(mermaidEl) {
+            const lightbox = document.getElementById('diagram-lightbox');
+            const content = document.getElementById('diagram-lightbox-content');
+            if (!lightbox || !content) return;
+            const svg = mermaidEl.querySelector('svg');
+            if (!svg) return;
+            // Remember original location and original attribute so we can restore on close
+            _lbSvg = svg;
+            _lbParent = svg.parentElement;
+            _lbSibling = svg.nextSibling;
+            _lbOrigWidth = svg.getAttribute('width');
+            _lbOrigStyle = svg.getAttribute('style') || '';
+            // Mermaid sets width="100%" which collapses to 0 outside the original
+            // container.  Use the viewBox to compute explicit pixel dimensions.
+            const vb = svg.viewBox?.baseVal;
+            if (vb && vb.width) {
+                svg.setAttribute('width', vb.width);
+                svg.setAttribute('height', vb.height);
+            }
+            // Move SVG into lightbox content
+            content.innerHTML = '';
+            content.appendChild(svg);
+            svg.style.cssText = 'max-width: 90vw; max-height: 80vh; width: auto; height: auto;';
+            lightbox.classList.add('active');
+        }
+
+        function closeDiagramLightbox() {
+            const lightbox = document.getElementById('diagram-lightbox');
+            if (!lightbox) return;
+            lightbox.classList.remove('active');
+            // Restore SVG to its original inline location with original attributes
+            if (_lbSvg && _lbParent) {
+                if (_lbOrigWidth !== null) {
+                    _lbSvg.setAttribute('width', _lbOrigWidth);
+                }
+                _lbSvg.setAttribute('style', _lbOrigStyle);
+                if (_lbSibling) {
+                    _lbParent.insertBefore(_lbSvg, _lbSibling);
+                } else {
+                    _lbParent.appendChild(_lbSvg);
+                }
+            }
+            _lbSvg = null;
+            _lbParent = null;
+            _lbSibling = null;
+            _lbOrigWidth = null;
+            _lbOrigStyle = '';
+        }
+
+        /**
          * Get initials from a display name
          */
         function getInitials(name) {
@@ -4759,7 +4975,11 @@
                 });
             }
 
-            if (event.kind === 'tool_call') {
+            if (event.kind === 'start') {
+                _askAICurrentAction = 'Connecting to AI...';
+            } else if (event.kind === 'classify') {
+                _askAICurrentAction = event.message || 'Classifying query...';
+            } else if (event.kind === 'tool_call') {
                 _askAICurrentAction = event.message || 'Working...';
             } else if (event.kind === 'thinking') {
                 _askAICurrentAction = event.message || 'Thinking...';
@@ -4947,6 +5167,9 @@
                 });
             }
 
+            // Render any mermaid diagrams in the newly added message
+            renderMermaidDiagrams(div);
+
             smartScroll(true);
         }
 
@@ -5069,6 +5292,9 @@
                     }
                 });
             }
+
+            // Render any mermaid diagrams in the newly added message
+            renderMermaidDiagrams(div);
 
             smartScroll(false);
             if (msg.id && messageReadObserver) messageReadObserver.observe(div);
@@ -8707,6 +8933,23 @@
             }
 
             function emitCodeBlock() {
+                const rawContent = codeBlockLines.join('\n');
+                // Mermaid diagram — render as a special container for mermaid.js
+                if (codeBlockLang === 'mermaid') {
+                    const mermaidId = 'mermaid-' + Math.random().toString(36).slice(2, 10);
+                    html += `<div class="mermaid-container my-2 rounded overflow-hidden border border-blue-700/40 text-left bg-gray-900/50" data-mermaid-id="${mermaidId}">` +
+                            `<div class="flex items-center justify-between px-2 py-1 bg-blue-900/30 border-b border-blue-700/40 min-h-[1.5rem]">` +
+                            `<span class="text-[0.6rem] text-blue-400/80 font-mono uppercase tracking-wide">diagram</span>` +
+                            `<span class="mermaid-zoom-hint text-[0.6rem] text-blue-400/60">click to expand</span>` +
+                            `</div>` +
+                            `<div class="px-3 py-3 overflow-x-auto">` +
+                            `<div class="mermaid-pending" id="${mermaidId}" data-graph="${encodeURIComponent(rawContent)}"></div>` +
+                            `</div></div>`;
+                    inCodeBlock = false;
+                    codeBlockLang = '';
+                    codeBlockLines = [];
+                    return;
+                }
                 const codeContent = codeBlockLines.map(l => escapeHtml(l)).join('\n');
                 const langLabel = codeBlockLang
                     ? `<span class="text-[0.6rem] text-emerald-400/80 font-mono uppercase tracking-wide">${escapeHtml(codeBlockLang)}</span>`
@@ -8762,8 +9005,9 @@
                 // Numbered list (1. item)
                 else if (/^\d+\.\s+/.test(trimmed)) {
                     if (inUl) { html += '</ul>'; inUl = false; }
+                    const num = parseInt(trimmed.match(/^(\d+)\./)[1], 10);
                     if (!inOl) { html += '<ol class="list-decimal list-inside space-y-1 text-gray-200 my-1.5 ml-1">'; inOl = true; }
-                    html += '<li class="text-xs leading-relaxed">' + inlineFormat(escapeHtml(trimmed.replace(/^\d+\.\s+/, ''))) + '</li>';
+                    html += '<li value="' + num + '" class="text-xs leading-relaxed">' + inlineFormat(escapeHtml(trimmed.replace(/^\d+\.\s+/, ''))) + '</li>';
                 }
                 // Blank line — paragraph break
                 else if (trimmed === '') {
@@ -9445,6 +9689,35 @@
 
         // Request latest conductor state from extension (in case it changed since HTML was built)
         vscode.postMessage({ command: 'getConductorState' });
+
+        // --- Diagram lightbox event listeners ---
+        // Use event delegation on document so it works regardless of DOM parse order
+        // (the lightbox HTML is below this script block).
+        document.addEventListener('click', function(e) {
+            // Close button
+            if (e.target.closest('#diagram-lightbox-close')) {
+                closeDiagramLightbox();
+                return;
+            }
+            // Click on backdrop (the body area around the diagram)
+            const body = document.getElementById('diagram-lightbox-body');
+            if (body && e.target === body) {
+                closeDiagramLightbox();
+            }
+        });
+        // Escape key (may not fire in all VS Code webview contexts)
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') closeDiagramLightbox();
+        });
     </script>
+    <!-- Diagram lightbox overlay -->
+    <div id="diagram-lightbox">
+        <div id="diagram-lightbox-topbar">
+            <button id="diagram-lightbox-close" title="Close">&times;</button>
+        </div>
+        <div id="diagram-lightbox-body">
+            <div id="diagram-lightbox-content"></div>
+        </div>
+    </div>
 </body>
 </html>

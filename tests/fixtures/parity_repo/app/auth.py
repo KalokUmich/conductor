@@ -11,3 +11,10 @@ def validate_token(token):
 def refresh_token(old_token):
     new = generate_token(decode(old_token)["sub"])
     return new
+
+def validate(credentials):
+    """Validate raw credentials dict: checks username and token."""
+    if not credentials.get("username"):
+        return False
+    token = credentials.get("token")
+    return validate_token(token) is not None

@@ -149,7 +149,7 @@ export class WorkflowPanel implements vscode.Disposable {
         // Build Content Security Policy that allows fetch to backend
         const webview = this._panel.webview;
         const backendUrl = this._backendUrl;
-        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline'; connect-src ${backendUrl};">`;
+        const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'unsafe-inline' https://cdn.jsdelivr.net; connect-src ${backendUrl};">`;
 
         // Inject CSP into <head>
         html = html.replace('<head>', `<head>\n  ${cspMeta}`);

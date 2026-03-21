@@ -12,7 +12,7 @@
  */
 
 import * as path from "path";
-import Parser from "web-tree-sitter";
+import { Parser, Language, Node as SyntaxNode } from "web-tree-sitter";
 
 // ---------------------------------------------------------------------------
 // Data types (mirrors Python SymbolDef / SymbolRef / FileSymbols)
@@ -196,7 +196,7 @@ let _initialized = false;
 let _grammarsPath = "";
 
 /** Cache of loaded Language objects, keyed by language name. */
-const _languageCache: Map<string, Parser.Language> = new Map();
+const _languageCache: Map<string, Language> = new Map();
 
 /** Cache of Parser instances (one per language). */
 const _parserCache: Map<string, Parser> = new Map();
@@ -246,7 +246,7 @@ async function getParser(language: string): Promise<Parser | null> {
     try {
         let lang = _languageCache.get(language);
         if (!lang) {
-            lang = await Parser.Language.load(wasmPath);
+            lang = await Language.load(wasmPath);
             _languageCache.set(language, lang);
         }
 
@@ -270,14 +270,14 @@ async function getParser(language: string): Promise<Parser | null> {
  * Ported from Python `_walk_for_definitions`.
  */
 function walkForDefinitions(
-    node: Parser.SyntaxNode,
+    node: SyntaxNode,
     sourceText: string,
     filePath: string,
     definitions: SymbolDef[],
 ): void {
     if (DEF_NODE_TYPES.has(node.type)) {
         // Find the name child node
-        let nameNode: Parser.SyntaxNode | null = null;
+        let nameNode: SyntaxNode | null = null;
         for (let i = 0; i < node.childCount; i++) {
             const child = node.child(i);
             if (child && NAME_NODE_TYPES.has(child.type)) {
@@ -325,7 +325,7 @@ function walkForDefinitions(
  * Ported from Python `_walk_for_references`.
  */
 function walkForReferences(
-    node: Parser.SyntaxNode,
+    node: SyntaxNode,
     sourceText: string,
     filePath: string,
     references: SymbolRef[],
@@ -366,6 +366,9 @@ async function extractWithTreeSitter(
     }
 
     const tree = parser.parse(sourceText);
+    if (!tree) {
+        return extractWithRegex(sourceText, language, filePath);
+    }
     const root = tree.rootNode;
 
     const definitions: SymbolDef[] = [];

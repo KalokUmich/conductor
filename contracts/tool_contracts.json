@@ -1,0 +1,1413 @@
+{
+  "version": "1.0",
+  "generated_from": "backend/app/code_tools/schemas.py",
+  "tools": {
+    "grep": {
+      "input_schema": {
+        "properties": {
+          "pattern": {
+            "description": "Regex pattern to search for.",
+            "title": "Pattern",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative path within workspace to search (file or directory).",
+            "title": "Path"
+          },
+          "include_glob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files.",
+            "title": "Include Glob"
+          },
+          "max_results": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "GrepParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "line_number",
+        "content"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "line_number",
+          "content"
+        ],
+        "title": "GrepMatch",
+        "type": "object"
+      }
+    },
+    "read_file": {
+      "input_schema": {
+        "properties": {
+          "path": {
+            "description": "Relative file path within workspace.",
+            "title": "Path",
+            "type": "string"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "First line to read (1-based).",
+            "title": "Start Line"
+          },
+          "end_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Last line to read (1-based, inclusive).",
+            "title": "End Line"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "ReadFileParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "content",
+        "total_lines",
+        "path",
+        "start_line",
+        "end_line"
+      ]
+    },
+    "list_files": {
+      "input_schema": {
+        "properties": {
+          "directory": {
+            "default": ".",
+            "description": "Relative directory within workspace.",
+            "title": "Directory",
+            "type": "string"
+          },
+          "max_depth": {
+            "anyOf": [
+              {
+                "maximum": 10,
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 3,
+            "title": "Max Depth"
+          },
+          "include_glob": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Glob to filter, e.g. '*.py'.",
+            "title": "Include Glob"
+          }
+        },
+        "title": "ListFilesParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "path",
+        "is_dir",
+        "size"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "is_dir": {
+            "title": "Is Dir",
+            "type": "boolean"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Size"
+          }
+        },
+        "required": [
+          "path",
+          "is_dir"
+        ],
+        "title": "FileEntry",
+        "type": "object"
+      }
+    },
+    "find_symbol": {
+      "input_schema": {
+        "properties": {
+          "name": {
+            "description": "Symbol name to find (exact or substring).",
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Symbol kind filter: function, class, method, interface, type.",
+            "title": "Kind"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "FindSymbolParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "name",
+        "kind",
+        "file_path",
+        "start_line",
+        "end_line",
+        "signature"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "signature": {
+            "default": "",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "file_path",
+          "start_line",
+          "end_line"
+        ],
+        "title": "SymbolLocation",
+        "type": "object"
+      }
+    },
+    "find_references": {
+      "input_schema": {
+        "properties": {
+          "symbol_name": {
+            "description": "Symbol name to find references for.",
+            "title": "Symbol Name",
+            "type": "string"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Limit search to this relative file path.",
+            "title": "File"
+          }
+        },
+        "required": [
+          "symbol_name"
+        ],
+        "title": "FindReferencesParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "line_number",
+        "content"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path",
+          "line_number",
+          "content"
+        ],
+        "title": "ReferenceLocation",
+        "type": "object"
+      }
+    },
+    "file_outline": {
+      "input_schema": {
+        "properties": {
+          "path": {
+            "description": "Relative file path within workspace.",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FileOutlineParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "name",
+        "kind",
+        "file_path",
+        "start_line",
+        "end_line",
+        "signature"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "signature": {
+            "default": "",
+            "title": "Signature",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "file_path",
+          "start_line",
+          "end_line"
+        ],
+        "title": "SymbolLocation",
+        "type": "object"
+      }
+    },
+    "get_dependencies": {
+      "input_schema": {
+        "properties": {
+          "file_path": {
+            "description": "Relative file path to find dependencies of.",
+            "title": "File Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "GetDependenciesParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "symbols",
+        "weight"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Symbols",
+            "type": "array"
+          },
+          "weight": {
+            "default": 1,
+            "title": "Weight",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "DependencyInfo",
+        "type": "object"
+      }
+    },
+    "get_dependents": {
+      "input_schema": {
+        "properties": {
+          "file_path": {
+            "description": "Relative file path to find dependents of.",
+            "title": "File Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "GetDependentsParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "symbols",
+        "weight"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "symbols": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Symbols",
+            "type": "array"
+          },
+          "weight": {
+            "default": 1,
+            "title": "Weight",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "DependencyInfo",
+        "type": "object"
+      }
+    },
+    "git_log": {
+      "input_schema": {
+        "properties": {
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative file path to filter log.",
+            "title": "File"
+          },
+          "n": {
+            "default": 10,
+            "description": "Number of commits to show.",
+            "maximum": 50,
+            "minimum": 1,
+            "title": "N",
+            "type": "integer"
+          },
+          "search": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Search commit messages for this text (git log --grep).",
+            "title": "Search"
+          }
+        },
+        "title": "GitLogParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "hash",
+        "message",
+        "author",
+        "date"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "hash": {
+            "title": "Hash",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "author": {
+            "default": "",
+            "title": "Author",
+            "type": "string"
+          },
+          "date": {
+            "default": "",
+            "title": "Date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "hash",
+          "message"
+        ],
+        "title": "GitCommit",
+        "type": "object"
+      }
+    },
+    "git_diff": {
+      "input_schema": {
+        "properties": {
+          "ref1": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "HEAD~1",
+            "description": "First git ref.",
+            "title": "Ref1"
+          },
+          "ref2": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "HEAD",
+            "description": "Second git ref.",
+            "title": "Ref2"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Limit diff to this file.",
+            "title": "File"
+          },
+          "context_lines": {
+            "default": 10,
+            "description": "Number of surrounding context lines in the diff (default 10).",
+            "maximum": 50,
+            "minimum": 0,
+            "title": "Context Lines",
+            "type": "integer"
+          }
+        },
+        "title": "GitDiffParams",
+        "type": "object"
+      },
+      "output_type": "string"
+    },
+    "git_diff_files": {
+      "input_schema": {
+        "properties": {
+          "ref": {
+            "description": "Git diff specification. Examples: 'master...feature/xxx' (PR diff \u2014 changes since branch point), 'master..feature/xxx' (commit range), 'HEAD~5' (last 5 commits vs working tree), 'abc1234 def5678' (between two commits).",
+            "title": "Ref",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ref"
+        ],
+        "title": "GitDiffFilesParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "path",
+        "status",
+        "additions",
+        "deletions",
+        "old_path"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "additions": {
+            "default": 0,
+            "title": "Additions",
+            "type": "integer"
+          },
+          "deletions": {
+            "default": 0,
+            "title": "Deletions",
+            "type": "integer"
+          },
+          "old_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Old Path"
+          }
+        },
+        "required": [
+          "path",
+          "status"
+        ],
+        "title": "DiffFileEntry",
+        "type": "object"
+      }
+    },
+    "ast_search": {
+      "input_schema": {
+        "properties": {
+          "pattern": {
+            "description": "ast-grep pattern (e.g. 'def $F($$$ARGS)', 'if $COND: $$$BODY').",
+            "title": "Pattern",
+            "type": "string"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Language hint: python, javascript, typescript, go, rust, java, c, cpp.",
+            "title": "Language"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative path within workspace to search (file or directory).",
+            "title": "Path"
+          },
+          "max_results": {
+            "default": 30,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "AstSearchParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "start_line",
+        "end_line",
+        "text",
+        "meta_variables"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "start_line": {
+            "title": "Start Line",
+            "type": "integer"
+          },
+          "end_line": {
+            "title": "End Line",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "meta_variables": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Meta Variables",
+            "type": "object"
+          }
+        },
+        "required": [
+          "file_path",
+          "start_line",
+          "end_line",
+          "text"
+        ],
+        "title": "AstMatch",
+        "type": "object"
+      }
+    },
+    "get_callees": {
+      "input_schema": {
+        "properties": {
+          "function_name": {
+            "description": "Name of the function to inspect.",
+            "title": "Function Name",
+            "type": "string"
+          },
+          "file": {
+            "description": "Relative file path containing the function.",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "function_name",
+          "file"
+        ],
+        "title": "GetCalleesParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "callee_name",
+        "file_path",
+        "line"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "callee_name": {
+            "title": "Callee Name",
+            "type": "string"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "callee_name",
+          "file_path",
+          "line"
+        ],
+        "title": "CalleeInfo",
+        "type": "object"
+      }
+    },
+    "get_callers": {
+      "input_schema": {
+        "properties": {
+          "function_name": {
+            "description": "Name of the function to find callers of.",
+            "title": "Function Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative path to limit the search.",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "function_name"
+        ],
+        "title": "GetCallersParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "caller_name",
+        "caller_kind",
+        "file_path",
+        "line",
+        "content"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "caller_name": {
+            "title": "Caller Name",
+            "type": "string"
+          },
+          "caller_kind": {
+            "title": "Caller Kind",
+            "type": "string"
+          },
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "line": {
+            "title": "Line",
+            "type": "integer"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "caller_name",
+          "caller_kind",
+          "file_path",
+          "line",
+          "content"
+        ],
+        "title": "CallerInfo",
+        "type": "object"
+      }
+    },
+    "git_blame": {
+      "input_schema": {
+        "properties": {
+          "file": {
+            "description": "Relative file path within workspace.",
+            "title": "File",
+            "type": "string"
+          },
+          "start_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "First line to blame (1-based).",
+            "title": "Start Line"
+          },
+          "end_line": {
+            "anyOf": [
+              {
+                "minimum": 1,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Last line to blame (1-based, inclusive).",
+            "title": "End Line"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "GitBlameParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "commit_hash",
+        "author",
+        "date",
+        "line_number",
+        "content"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "commit_hash": {
+            "title": "Commit Hash",
+            "type": "string"
+          },
+          "author": {
+            "title": "Author",
+            "type": "string"
+          },
+          "date": {
+            "title": "Date",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "commit_hash",
+          "author",
+          "date",
+          "line_number",
+          "content"
+        ],
+        "title": "BlameEntry",
+        "type": "object"
+      }
+    },
+    "git_show": {
+      "input_schema": {
+        "properties": {
+          "commit": {
+            "description": "Commit hash (short or full) to show.",
+            "title": "Commit",
+            "type": "string"
+          },
+          "file": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Limit diff to this relative file path.",
+            "title": "File"
+          }
+        },
+        "required": [
+          "commit"
+        ],
+        "title": "GitShowParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "hash",
+        "message",
+        "author",
+        "date",
+        "diff"
+      ]
+    },
+    "find_tests": {
+      "input_schema": {
+        "properties": {
+          "name": {
+            "description": "Function or class name to find tests for.",
+            "title": "Name",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative path to limit the test search.",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "FindTestsParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "test_file",
+        "test_function",
+        "line_number",
+        "context"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "test_file": {
+            "title": "Test File",
+            "type": "string"
+          },
+          "test_function": {
+            "title": "Test Function",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "context": {
+            "default": "",
+            "title": "Context",
+            "type": "string"
+          }
+        },
+        "required": [
+          "test_file",
+          "test_function",
+          "line_number"
+        ],
+        "title": "TestMatch",
+        "type": "object"
+      }
+    },
+    "test_outline": {
+      "input_schema": {
+        "properties": {
+          "path": {
+            "description": "Relative path to a test file.",
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "TestOutlineParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "name",
+        "kind",
+        "line_number",
+        "end_line",
+        "mocks",
+        "assertions",
+        "fixtures"
+      ],
+      "output_item_schema": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "line_number": {
+            "title": "Line Number",
+            "type": "integer"
+          },
+          "end_line": {
+            "default": 0,
+            "title": "End Line",
+            "type": "integer"
+          },
+          "mocks": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mocks",
+            "type": "array"
+          },
+          "assertions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Assertions",
+            "type": "array"
+          },
+          "fixtures": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fixtures",
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "line_number"
+        ],
+        "title": "TestOutlineEntry",
+        "type": "object"
+      }
+    },
+    "trace_variable": {
+      "input_schema": {
+        "properties": {
+          "variable_name": {
+            "description": "Name of the variable to trace (e.g. 'loan_id').",
+            "title": "Variable Name",
+            "type": "string"
+          },
+          "file": {
+            "description": "Relative file path containing the variable.",
+            "title": "File",
+            "type": "string"
+          },
+          "function_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Function containing the variable. If omitted, the first function referencing it is used.",
+            "title": "Function Name"
+          },
+          "direction": {
+            "default": "forward",
+            "description": "'forward' = trace where the value flows to (call sites, ORM/SQL sinks). 'backward' = trace where the value comes from (callers, HTTP/config sources).",
+            "title": "Direction",
+            "type": "string"
+          }
+        },
+        "required": [
+          "variable_name",
+          "file"
+        ],
+        "title": "TraceVariableParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "forward",
+        "backward"
+      ]
+    },
+    "compressed_view": {
+      "input_schema": {
+        "properties": {
+          "file_path": {
+            "description": "Relative path to the file to analyze.",
+            "title": "File Path",
+            "type": "string"
+          },
+          "focus": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Optional: focus on a specific symbol name (substring match).",
+            "title": "Focus"
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "title": "CompressedViewParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "content",
+        "path",
+        "total_lines",
+        "symbol_count"
+      ]
+    },
+    "module_summary": {
+      "input_schema": {
+        "properties": {
+          "module_path": {
+            "description": "Relative path to the module directory (e.g. 'app/auth').",
+            "title": "Module Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "module_path"
+        ],
+        "title": "ModuleSummaryParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "content",
+        "file_count",
+        "loc"
+      ]
+    },
+    "expand_symbol": {
+      "input_schema": {
+        "properties": {
+          "symbol_name": {
+            "description": "Name of the symbol to expand (e.g. 'PaymentService' or 'process_payment').",
+            "title": "Symbol Name",
+            "type": "string"
+          },
+          "file_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "File containing the symbol. If omitted, searches the workspace.",
+            "title": "File Path"
+          }
+        },
+        "required": [
+          "symbol_name"
+        ],
+        "title": "ExpandSymbolParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "symbol_name",
+        "kind",
+        "file_path",
+        "start_line",
+        "end_line",
+        "signature",
+        "source"
+      ]
+    },
+    "detect_patterns": {
+      "input_schema": {
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Relative path within workspace to scan (file or directory). Omit to scan the whole workspace.",
+            "title": "Path"
+          },
+          "categories": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Pattern categories to detect. Omit to detect all. Options: webhook, queue, retry, lock, check_then_act, transaction, token_lifecycle, side_effect_chain.",
+            "title": "Categories"
+          },
+          "max_results": {
+            "default": 50,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Max Results",
+            "type": "integer"
+          }
+        },
+        "title": "DetectPatternsParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "file_path",
+        "line",
+        "category",
+        "pattern",
+        "snippet"
+      ]
+    },
+    "run_test": {
+      "input_schema": {
+        "properties": {
+          "test_file": {
+            "description": "Relative path to the test file to run (e.g. 'tests/test_auth.py').",
+            "title": "Test File",
+            "type": "string"
+          },
+          "test_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Specific test function or class to run (e.g. 'test_timeout', 'TestAuth::test_login'). If omitted, runs the whole file.",
+            "title": "Test Name"
+          },
+          "timeout": {
+            "default": 30,
+            "description": "Max seconds to wait for the test run (default: 30).",
+            "maximum": 60,
+            "minimum": 5,
+            "title": "Timeout",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "test_file"
+        ],
+        "title": "RunTestParams",
+        "type": "object"
+      },
+      "output_type": "dict",
+      "output_item_fields": [
+        "passed",
+        "output",
+        "failures"
+      ]
+    }
+  }
+}

@@ -325,6 +325,14 @@ class AgentLoopService:
             len(active_tools), len(TOOL_DEFINITIONS),
         )
 
+        # Emit classify event so the client knows what kind of analysis is starting
+        yield AgentEvent(kind="classify", data={
+            "query_type": classification.query_type,
+            "budget_level": classification.budget_level,
+            "tools_active": len(active_tools),
+            "tools_total": len(TOOL_DEFINITIONS),
+        })
+
         messages = self._initial_messages(query, classification)
         total_tool_calls = 0
         evidence_retries = 0

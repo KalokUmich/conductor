@@ -6,9 +6,14 @@ with a reusable engine that reads patterns from workflow YAML config.
 Two built-in classifier types:
   * risk_pattern   — regex match against file paths → dimension risk levels
   * keyword_pattern — regex/keyword match against query text → best route
+
+When route configs include ``examples``, the engine can build an LLM
+classification prompt that follows the "examples over rule lists" design
+principle (see CLAUDE.md §Agent Design).
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
@@ -219,14 +224,89 @@ class ClassifierEngine:
                 best_score = score
                 best_route = route_name
 
-        # Default to first route if no match (safe fallback)
+        # Default to a lightweight single-agent route when nothing matches.
+        # Prefer 'architecture_question' (general-purpose), else first non-multi-agent route.
         if best_route is None and self._routes:
-            best_route = next(iter(self._routes))
+            if "architecture_question" in self._routes:
+                best_route = "architecture_question"
+            else:
+                best_route = next(iter(self._routes))
 
         return ClassifierResult(
             best_route=best_route,
             raw_scores=raw_scores,
         )
+
+    # -----------------------------------------------------------------
+    # LLM classification with examples (design principle: examples > rules)
+    # -----------------------------------------------------------------
+
+    def has_examples(self) -> bool:
+        """Check if any route has examples configured."""
+        return any(r.examples for r in self._routes.values())
+
+    def build_llm_prompt(self, query_text: str) -> str:
+        """Build an LLM classification prompt using route examples.
+
+        Follows the 'examples over rule lists' principle: instead of
+        describing categories with abstract rules, show 3-5 concrete
+        example questions for each category so the model generalises
+        from motivation rather than memorising keywords.
+        """
+        sections: List[str] = []
+        for route_name, route in self._routes.items():
+            examples = route.examples
+            if not examples:
+                continue
+            example_lines = "\n".join(f"  - \"{ex}\"" for ex in examples)
+            sections.append(f"**{route_name}**:\n{example_lines}")
+
+        categories = "\n\n".join(sections)
+        route_names = ", ".join(self._routes.keys())
+
+        return (
+            "Classify this codebase question into exactly ONE category. "
+            "Reply with ONLY a JSON object, no other text.\n\n"
+            f"Categories (with example questions):\n\n{categories}\n\n"
+            f"Valid category values: {route_names}\n\n"
+            f"Question: {query_text[:500]}\n\n"
+            'Reply format: {"route": "<category>"}'
+        )
+
+    async def classify_with_llm(
+        self,
+        query_text: str,
+        provider: Any,
+    ) -> Optional[str]:
+        """Classify using an LLM call with example-based prompt.
+
+        Returns the best route name, or None on failure.
+        """
+        import asyncio
+
+        if not self.has_examples():
+            return None
+
+        prompt = self.build_llm_prompt(query_text)
+        try:
+            response = await asyncio.to_thread(
+                provider.chat_with_tools,
+                messages=[{"role": "user", "content": [{"text": prompt}]}],
+                tools=[],
+                max_tokens=100,
+                system="You are a query classifier. Reply with JSON only.",
+            )
+            text = (response.text or "").strip()
+            if "{" in text:
+                json_str = text[text.index("{"):text.rindex("}") + 1]
+                data = json.loads(json_str)
+                route = data.get("route", "")
+                if route in self._routes:
+                    return route
+                logger.warning("LLM returned unknown route '%s'", route)
+        except Exception as exc:
+            logger.warning("LLM classifier failed: %s", exc)
+        return None
 
 
 # ---------------------------------------------------------------------------

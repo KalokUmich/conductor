@@ -227,8 +227,10 @@ async def code_review_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
+            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
+            "Connection": "keep-alive",
         },
     )
 
