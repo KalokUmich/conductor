@@ -474,6 +474,267 @@ class TestAgentLoop:
 
 
 # ---------------------------------------------------------------------------
+# Completeness verifier tests
+# ---------------------------------------------------------------------------
+
+
+class TestCompletenessVerifier:
+    """Tests for the LLM-based completeness check."""
+
+    @pytest.mark.asyncio
+    async def test_completeness_sufficient(self, workspace):
+        """When completeness check returns sufficient, answer is accepted."""
+        from app.agent_loop.completeness import CompletenessCheck
+
+        class SufficientProvider(MockProvider):
+            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
+                return '{"sufficient": true}'
+
+        provider = SufficientProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            # Answer with evidence (passes EvidenceEvaluator)
+            ToolUseResponse(
+                text="Authentication uses JWT in app/auth.py:3. The authenticate() function at app/auth.py:4 decodes tokens.",
+                stop_reason="end_turn",
+            ),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=10)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        assert "JWT" in result.answer
+        assert result.error is None
+        # Should finish at iteration 3 (no extra iterations from verifier)
+        assert result.iterations == 3
+
+    @pytest.mark.asyncio
+    async def test_completeness_insufficient_triggers_continuation(self, workspace):
+        """When completeness check finds gaps, agent continues investigating."""
+        from app.agent_loop.completeness import CompletenessCheck
+
+        class InsufficientProvider(MockProvider):
+            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
+                return '{"sufficient": false, "hints": ["Check the router.py for endpoint handling"]}'
+
+        provider = InsufficientProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            # First answer — passes evidence but fails completeness
+            ToolUseResponse(
+                text="Authentication uses JWT in app/auth.py:3. The authenticate() function at app/auth.py:4 decodes tokens.",
+                stop_reason="end_turn",
+            ),
+            # After completeness hints, agent investigates more
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t3", name="read_file", input={"path": "app/router.py"})],
+                stop_reason="tool_use",
+            ),
+            # Updated answer
+            ToolUseResponse(
+                text="Auth uses JWT in app/auth.py:3. The login endpoint in app/router.py:3 calls authenticate().",
+                stop_reason="end_turn",
+            ),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=10)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        assert "router" in result.answer.lower()
+        assert result.tool_calls_made == 3
+        # 2 tool iters + first answer + 1 tool iter + final answer = 5
+        assert result.iterations == 5
+
+    @pytest.mark.asyncio
+    async def test_completeness_fires_only_once(self, workspace):
+        """Completeness check fires at most once — second end_turn is accepted."""
+
+        call_count = {"completeness": 0}
+
+        class TrackingProvider(MockProvider):
+            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
+                call_count["completeness"] += 1
+                return '{"sufficient": false, "hints": ["Check config files"]}'
+
+        provider = TrackingProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            # First answer — triggers completeness check (insufficient)
+            ToolUseResponse(
+                text="Auth uses JWT in app/auth.py:3. Tokens are decoded at app/auth.py:4.",
+                stop_reason="end_turn",
+            ),
+            # After hints, agent does more work
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t3", name="grep", input={"pattern": "config"})],
+                stop_reason="tool_use",
+            ),
+            # Second answer — should be accepted without another completeness check
+            ToolUseResponse(
+                text="Auth uses JWT in app/auth.py:3. Config at app/router.py:1 imports auth.",
+                stop_reason="end_turn",
+            ),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=10)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        # Completeness was called exactly once (for the first end_turn)
+        assert call_count["completeness"] == 1
+        assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_completeness_skipped_when_budget_low(self, workspace):
+        """Completeness check doesn't fire when < 3 iterations remain."""
+
+        call_count = {"completeness": 0}
+
+        class TrackingProvider(MockProvider):
+            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
+                call_count["completeness"] += 1
+                return '{"sufficient": false, "hints": ["Check more"]}'
+
+        provider = TrackingProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            # Answer on iteration 3 of max 4 — only 1 remaining (< 3)
+            ToolUseResponse(
+                text="Auth uses JWT in app/auth.py:3. Tokens decoded at app/auth.py:4.",
+                stop_reason="end_turn",
+            ),
+        ])
+        # max_iterations=4: after 2 tool iters, answer at iter 3, remaining=1
+        agent = AgentLoopService(provider=provider, max_iterations=4)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        # Completeness check should not have fired (budget too low)
+        assert call_count["completeness"] == 0
+        assert result.error is None
+
+    @pytest.mark.asyncio
+    async def test_completeness_error_treated_as_sufficient(self, workspace):
+        """If completeness check errors out, treat as sufficient (don't block)."""
+
+        class ErrorProvider(MockProvider):
+            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
+                raise RuntimeError("LLM call failed")
+
+        provider = ErrorProvider([
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="",
+                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                stop_reason="tool_use",
+            ),
+            ToolUseResponse(
+                text="Auth uses JWT in app/auth.py:3. Tokens decoded at app/auth.py:4.",
+                stop_reason="end_turn",
+            ),
+        ])
+        agent = AgentLoopService(provider=provider, max_iterations=10)
+        result = await agent.run("How does auth work?", str(workspace))
+
+        # Should still produce an answer despite completeness check error
+        assert "JWT" in result.answer
+        assert result.error is None
+        assert result.iterations == 3
+
+
+class TestCompletenessModule:
+    """Unit tests for the completeness module itself."""
+
+    @pytest.mark.asyncio
+    async def test_parse_sufficient(self):
+        from app.agent_loop.completeness import _parse_response
+        result = _parse_response('{"sufficient": true}')
+        assert result.sufficient is True
+        assert result.hints == []
+
+    @pytest.mark.asyncio
+    async def test_parse_insufficient(self):
+        from app.agent_loop.completeness import _parse_response
+        result = _parse_response('{"sufficient": false, "hints": ["Check SQL", "Trace appeal"]}')
+        assert result.sufficient is False
+        assert len(result.hints) == 2
+        assert "Check SQL" in result.hints
+
+    @pytest.mark.asyncio
+    async def test_parse_code_block_wrapped(self):
+        from app.agent_loop.completeness import _parse_response
+        result = _parse_response('```json\n{"sufficient": false, "hints": ["Look deeper"]}\n```')
+        assert result.sufficient is False
+        assert result.hints == ["Look deeper"]
+
+    @pytest.mark.asyncio
+    async def test_parse_invalid_json_defaults_sufficient(self):
+        from app.agent_loop.completeness import _parse_response
+        result = _parse_response("I think this is sufficient")
+        assert result.sufficient is True
+        assert result.hints == []
+
+    @pytest.mark.asyncio
+    async def test_build_tool_summary(self):
+        from app.agent_loop.completeness import _build_tool_summary
+        history = [
+            {"tool": "grep", "params": {"pattern": "auth"}, "summary": "5 results"},
+            {"tool": "read_file", "params": {"path": "auth.py"}, "summary": "42 lines"},
+        ]
+        summary = _build_tool_summary(history)
+        assert "grep" in summary
+        assert "read_file" in summary
+        assert "auth" in summary
+
+    @pytest.mark.asyncio
+    async def test_build_tool_summary_empty(self):
+        from app.agent_loop.completeness import _build_tool_summary
+        assert _build_tool_summary([]) == "(none)"
+
+    @pytest.mark.asyncio
+    async def test_build_tool_summary_truncation(self):
+        from app.agent_loop.completeness import _build_tool_summary
+        history = [{"tool": f"tool_{i}", "params": {}, "summary": ""} for i in range(50)]
+        summary = _build_tool_summary(history, max_entries=5)
+        assert "tool_0" in summary
+        assert "tool_4" in summary
+        assert "45 more" in summary
+
+
+# ---------------------------------------------------------------------------
 # Message format conversion tests
 # ---------------------------------------------------------------------------
 

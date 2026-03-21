@@ -10,10 +10,10 @@ input: [query, workspace_layout]
 output: perspective_answer
 ---
 
-## Strategy: Recent Changes / Git History
-1. **Start with git_log** to see recent commits (optionally filtered to a file or path).
-2. **Use git_show** on interesting commits to read the full commit message and diff.
-3. **Use git_diff** to compare specific refs (e.g. HEAD~5..HEAD) or branches.
-4. **Use git_blame** on specific files/lines to trace authorship.
-5. **Read affected code** with read_file to understand the context of changes.
-Target: 3-8 iterations. Answer with commit hashes, authors, dates, and what changed.
+## Perspective: Recent Changes / Git History
+
+You are investigating what changed recently and why. Your goal is to find **the relevant commits, who made them, and what they modified**.
+
+Start from the commit history, then drill into interesting commits to understand the motivation and scope of each change. If the question targets a specific file or function, narrow the history to that path.
+
+Answer with: commit hashes, authors, dates, summary of what changed, and the motivation (from commit messages or surrounding code context).

@@ -8,16 +8,16 @@ Usage:
     cd /home/kalok/conductor/backend
 
     # Run all baselines (direct agent only, ~30s per case)
-    python ../eval/agent_quality/run.py
+    python ../eval/agent_quality/run_bedrock.py
 
     # Run a specific baseline
-    python ../eval/agent_quality/run.py --case abound_render_approval
+    python ../eval/agent_quality/run_bedrock.py --case abound_render_approval
 
     # Run with workflow engine (multi-agent)
-    python ../eval/agent_quality/run.py --workflow
+    python ../eval/agent_quality/run_bedrock.py --workflow
 
     # Compare direct agent vs workflow
-    python ../eval/agent_quality/run.py --compare
+    python ../eval/agent_quality/run_bedrock.py --compare
 """
 from __future__ import annotations
 
@@ -310,7 +310,7 @@ async def main():
         all_results[case_id] = case_results
 
     # Save results
-    out_file = EVAL_DIR / "results.json"
+    out_file = EVAL_DIR / "results_bedrock.json"
     with open(out_file, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     logger.info("Results saved to %s", out_file)

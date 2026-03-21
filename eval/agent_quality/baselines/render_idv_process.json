@@ -1,0 +1,89 @@
+{
+  "id": "render_idv_process",
+  "workspace": "/home/kalok/render",
+  "question": "What is the process of IDV (Identity Verification) in our platform?",
+  "baseline_model": "claude-opus-4-6",
+  "created": "2026-03-21",
+  "thinking_steps": [
+    {
+      "step": 1,
+      "action": "grep idv|IDV|identity.*verif|IDVerse across backend",
+      "tool": "grep",
+      "rationale": "Find all IDV-related code",
+      "key_finding": "IDVerseIdentityService (main service), idverse_client.py (API client), idverse.py (webhooks), applicant_identity.py (models)"
+    },
+    {
+      "step": 2,
+      "action": "read IDVerseIdentityService.py — generate_identity_request, reload_identity_data",
+      "tool": "read_file",
+      "rationale": "Core service methods define the full IDV lifecycle",
+      "key_finding": "generate_identity_request() creates IDVerse transaction → redirect URL. reload_identity_data() fetches results, runs quality checks, determines final status"
+    },
+    {
+      "step": 3,
+      "action": "read applicant_identity.py — status enums, quality checks, data model",
+      "tool": "read_file",
+      "rationale": "Domain models define IDV states and verification criteria",
+      "key_finding": "IdentityVerificationStatus: Pending→Passed→Approved/Rejected. 13 quality checks (NameMatch, DOBMatch, DocumentFraudRisk, etc.)"
+    },
+    {
+      "step": 4,
+      "action": "read idverse.py — webhook callback and return URL handlers",
+      "tool": "read_file",
+      "rationale": "Webhook handlers process IDVerse callbacks",
+      "key_finding": "POST /idverse/notify processes callback events. GET /idverse/return redirects user after completion. Supports API flow (HMAC) and assisted flow (basic auth)"
+    },
+    {
+      "step": 5,
+      "action": "read case_identity_routes.py — dashboard endpoints for manual review",
+      "tool": "read_file",
+      "rationale": "Dashboard routes show the manual review process",
+      "key_finding": "POST /identity/create creates/reuses IDV session. POST /identity/review allows manual approve/reject. GET /identity/pending shows review queue"
+    }
+  ],
+  "answer": "## IDV (Identity Verification) Process\n\nIDV is the identity verification step in our lending platform, powered by IDVerse (third-party SaaS). It verifies applicant identity through document analysis and biometric liveness checks before loan approval.\n\n### Provider\n\n**IDVerse** — REST API with OAuth 2.0 client credentials flow.\n- Token: `POST /api/3.5/oauthToken`\n- Create session: `POST /api/3.5/storeTransaction`\n- Fetch results: `GET /api/3.5/transaction/{transactionId}`\n\nImplementation: `idverse_client.py:51-141`, settings: `render_settings.py:2864-2892`\n\n### Customer Journey\n\n1. **Generate IDV link** — `generate_identity_request()` creates IDVerse transaction, returns redirect URL. Status: `VerificationPending`. (`idverse_identity_service.py:150-241`)\n2. **User completes verification** — Applicant uploads document (passport/ID/driver's license) + completes liveness check (video biometric) via IDVerse portal\n3. **Webhook callback** — IDVerse sends `POST /api/integrations/v1/idverse/notify` with event (\"liveness\", \"pending\", etc.). Backend validates signature and triggers `reload_identity_data()`. (`idverse.py:31-116`)\n4. **Return redirect** — User redirected back via `GET /idverse/return/{transaction_id}/{token}`. Backend reloads data and redirects to success/failure URL. (`idverse.py:119-149`)\n5. **Quality checks** — `reload_identity_data()` runs 13 applicant match checks (`idverse_identity_service.py:388-575`):\n   - AnyDocuments, DocumentFraudRisk, DocumentFaceMatch, DocumentExpired\n   - ApplicantLiveCheck, ApplicantLiveFaceCountCheck\n   - NameMatch, DOBMatch, CurrentAddressMatch, AnyAddressMatch\n   - AutoApprovedNationality, DocumentTypeApprovalCheck, LocationFromUK\n6. **Auto-approval decision** — If VerificationPassed AND all checks pass AND random sampling passes → `VerificationApproved` (final). Otherwise → `VerificationReferred` for manual review. (`idverse_identity_service.py:483-495`)\n7. **Manual review** — Dashboard endpoint `POST /identity/review` allows underwriter to approve/reject referred cases. `GET /identity/pending` shows the review queue. (`case_identity_routes.py:33-131`)\n\n### Status State Machine\n\n`IdentityVerificationStatus`:\n- `VerificationPending` → user hasn't completed yet\n- `VerificationPassed` → IDVerse returned completedPass\n- `VerificationReferred` → IDVerse returned completedFlagged (needs manual review)\n- `VerificationApproved` → auto-approved after quality checks (final)\n- `VerificationRejected` → rejected by underwriter or auto-failed (final)\n- `VerificationCancelled` → user cancelled\n- `VerificationExpired` → session expired\n- `VerificationDataError` → parsing/data error\n\n### Decline Reasons\n\n`IdentityVerificationDeclineReason`: RTR_expiry, inadequate_docs_uk, inadequate_docs_non_uk, fraud, customer_withdrawal, timed_out, uw_decline, other.\n\n### Data Collected\n\n- Documents: passport, driver's license, ID card (front/back images)\n- Biometrics: selfie, liveness video\n- Extracted: name, DOB, address, document expiry, ID number, nationality\n\nModel: `ApplicantIdentity` at `applicant_identity.py:337-456`\n\n### Background Tasks\n\n- `upload_idv_images_task` — downloads and caches IDVerse images asynchronously (`idverse_tasks.py:18-62`)\n\n### Key Files\n\n- `idverse_identity_service.py` — Main service (1446 lines)\n- `idverse_client.py` — IDVerse API client\n- `idverse.py` — Webhook + return URL routes\n- `applicant_identity.py` — Domain models + quality checks\n- `case_identity_routes.py` — Dashboard manual review routes\n- `identity.py` — Applicant-facing link generation endpoint",
+  "required_findings": [
+    {
+      "id": "idv_provider",
+      "description": "Must identify IDVerse as the IDV provider",
+      "weight": 0.15,
+      "check_patterns": ["IDVerse|idverse"],
+      "min_matches": 1
+    },
+    {
+      "id": "idv_journey",
+      "description": "Must describe the customer journey: generate link → document upload → liveness check → callback",
+      "weight": 0.25,
+      "check_patterns": ["generate.*link|generate.*request|magic.*link|redirect.*url", "document|passport|driver.*license|ID.*card", "liveness|biometric|face.*match|selfie", "callback|webhook|notify"],
+      "min_matches": 3
+    },
+    {
+      "id": "idv_quality_checks",
+      "description": "Must mention quality/match checks (NameMatch, DOBMatch, fraud, etc.)",
+      "weight": 0.20,
+      "check_patterns": ["NameMatch|name.*match|match.*name", "DOBMatch|DOB.*match|date.*birth", "fraud|FraudRisk|document.*fraud", "liveness.*check|live.*check|ApplicantLiveCheck"],
+      "min_matches": 2
+    },
+    {
+      "id": "idv_statuses",
+      "description": "Must list IDV statuses (Pending, Passed, Approved, Rejected, Referred)",
+      "weight": 0.15,
+      "check_patterns": ["VerificationPending|Pending", "VerificationPassed|Passed|completedPass", "VerificationApproved|Approved|auto.*approv", "VerificationReferred|Referred|manual.*review"],
+      "min_matches": 3
+    },
+    {
+      "id": "idv_manual_review",
+      "description": "Must explain the manual review process for referred cases",
+      "weight": 0.15,
+      "check_patterns": ["manual.*review|review.*queue|pending.*review|underwriter", "dashboard|case.*identity|identity.*review"],
+      "min_matches": 2
+    },
+    {
+      "id": "idv_data_collected",
+      "description": "Must mention what data is collected (documents, selfie/liveness, extracted identity data)",
+      "weight": 0.10,
+      "check_patterns": ["passport|driver.*license|identity.*document|ID.*card", "selfie|liveness|biometric|face"],
+      "min_matches": 2
+    }
+  ]
+}

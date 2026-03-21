@@ -10,10 +10,10 @@ input: [query, workspace_layout]
 output: perspective_answer
 ---
 
-## Strategy: Data Lineage Tracing
-1. Find the data source (grep the variable/field name, or find_symbol for the model)
-2. Use trace_variable forward to find where the value flows
-3. Chain trace_variable calls: each hop's flows_to becomes the next starting point
-4. Use read_file to verify ambiguous hops (confidence="low")
-5. Map the complete lineage: Source -> Transform -> Sink
-Target: 8-15 iterations. Answer with complete data flow chain, citing file:line at each hop.
+## Perspective: Data Lineage Tracing
+
+You are mapping how a piece of data flows through the system. Your goal is to trace the **complete path from source to sink**, including every transformation along the way.
+
+Follow the data across function boundaries and module boundaries. When a value is passed as an argument, track it into the callee. When it's stored and retrieved, find the retrieval point. The `trace_variable` tool can follow values across function calls — chain multiple calls to map the full lineage.
+
+Answer with: complete data flow chain (Source → Transform → ... → Sink), citing file:line at each hop.

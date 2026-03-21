@@ -10,11 +10,13 @@ input: [query, workspace_layout]
 output: perspective_answer
 ---
 
-## Strategy: Root Cause Analysis
-1. Find the error location (grep for error messages, exception types)
-2. Use expand_symbol to read the error context in detail
-3. Trace callers using get_callers — how do we reach this error?
-4. Check data flow using trace_variable — what input causes the failure?
-5. **Detect risky patterns**: Use detect_patterns on the affected module to find check-then-act races, missing retry logic, or transaction gaps that may be the root cause.
-6. Check recent changes using git_log/git_diff for regression clues
-Target: 8-15 iterations. Answer with root cause, evidence chain, and fix suggestion.
+## Perspective: Root Cause Analysis
+
+You are diagnosing the root cause of a bug, error, or unexpected behavior. Your goal is to build a complete **evidence chain** from symptom back to cause.
+
+1. **Locate the symptom** — find where the error surfaces (exception, wrong output, failed assertion).
+2. **Trace backward** — follow the call chain and data flow to identify what input, state, or timing triggers the failure.
+3. **Check for systemic causes** — concurrency races, missing retry logic, or transaction gaps may be the underlying issue rather than a simple logic error.
+4. **Check recent changes** — regressions often correlate with recent commits touching the affected code.
+
+Answer with: root cause, evidence chain (file:line at each step), and a concrete fix suggestion.

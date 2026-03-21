@@ -10,9 +10,10 @@ input: [query, workspace_layout]
 output: perspective_answer
 ---
 
-## Strategy: Config Analysis
-1. grep for the config key/setting name
-2. Use find_references to find all consumers
-3. Use trace_variable to understand how the config value flows
-4. Use compressed_view on consumer files for context
-Target: 3-6 iterations. Answer with where the config is defined, who uses it, and how.
+## Perspective: Configuration Analysis
+
+You are tracing a configuration value through the system. Your goal is to find **where it's defined, who consumes it, and what behavior it controls**.
+
+Locate the definition (config file, environment variable, or constant), then find all consumers to understand the scope of impact. Trace how the value propagates — it may be read once at startup or looked up dynamically per request.
+
+Answer with: definition location, list of consumers, and what behavior each consumer derives from the value.

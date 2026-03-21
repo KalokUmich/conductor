@@ -30,6 +30,7 @@ from app.code_tools.output_policy import apply_policy
 from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
+from .completeness import CompletenessCheck, check_completeness, _build_tool_summary
 from .evidence import check_evidence
 from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
 from .query_classifier import QUERY_TYPES, QueryClassification, classify_query, classify_query_with_llm
@@ -129,6 +130,8 @@ class AgentLoopService:
         max_evidence_retries: int = 2,
         workflow_config=None,
         workflow_route_name: str = "",
+        verifier_provider: Optional[AIProvider] = None,
+        perspective: str = "",
     ) -> None:
         self._provider = provider
         self._max_iterations = max_iterations
@@ -142,6 +145,8 @@ class AgentLoopService:
         self._max_evidence_retries = max_evidence_retries
         self._workflow_config = workflow_config
         self._workflow_route_name = workflow_route_name
+        self._verifier_provider = verifier_provider
+        self._perspective = perspective
 
     @observe(name="agent_loop")
     async def run(
@@ -323,6 +328,7 @@ class AgentLoopService:
         messages = self._initial_messages(query, classification)
         total_tool_calls = 0
         evidence_retries = 0
+        completeness_checked = False  # fires at most once per run
         response: Optional[ToolUseResponse] = None
 
         # Token budget controller — tracks cumulative token usage
@@ -345,6 +351,8 @@ class AgentLoopService:
         dirs_accessed: Dict[str, int] = {}  # dir → count of files read
         # Track all tool calls to detect exact duplicate calls
         _tool_call_history: Dict[str, int] = {}  # "tool|params_json" → count
+        # Structured tool history for completeness verifier
+        _tool_history_for_verifier: List[Dict[str, Any]] = []
 
         # Build executor: prefer the injected one, fall back to local
         executor = self._tool_executor or LocalToolExecutor(workspace_path)
@@ -591,6 +599,43 @@ class AgentLoopService:
                         trace.add_iteration(iter_trace)
                         continue  # back to the loop for another LLM call
 
+                # Completeness check — fires once after evidence passes
+                if (
+                    ev.passed
+                    and not completeness_checked
+                    and remaining >= 3
+                ):
+                    completeness_checked = True
+                    verifier = self._verifier_provider or self._classifier_provider or self._provider
+                    cc = await check_completeness(
+                        provider=verifier,
+                        question=query,
+                        answer=answer,
+                        tool_history=_tool_history_for_verifier,
+                        files_accessed=sorted(budget.files_accessed),
+                        perspective=self._perspective,
+                    )
+                    if not cc.sufficient:
+                        logger.info(
+                            "Completeness check found gaps at iteration %d: %s",
+                            iteration + 1, cc.hints,
+                        )
+                        messages.append({
+                            "role": "assistant",
+                            "content": [{"text": answer}],
+                        })
+                        messages.append({
+                            "role": "user",
+                            "content": [{"text":
+                                "Your answer is on the right track but has gaps:\n"
+                                + "\n".join(f"• {h}" for h in cc.hints)
+                                + "\n\nContinue investigating these areas, then provide an updated answer."
+                            }],
+                        })
+                        iter_trace.budget_signal = budget.get_signal().value
+                        trace.add_iteration(iter_trace)
+                        continue  # back to loop
+
                 iter_trace.budget_signal = budget.get_signal().value
                 trace.add_iteration(iter_trace)
                 trace.finish(answer=answer, budget_summary=budget.summary())
@@ -682,6 +727,11 @@ class AgentLoopService:
 
                 # Emit tool_result summary
                 result_summary = _summarize_result(tc.name, tool_result)
+                _tool_history_for_verifier.append({
+                    "tool": tc.name,
+                    "params": tc.input,
+                    "summary": result_summary,
+                })
                 thinking_steps.append({
                     "kind": "tool_result",
                     "iteration": iteration + 1,
@@ -1242,6 +1292,8 @@ Anything the evidence did not conclusively show. If everything was confirmed, wr
                 budget_config=sub_budget,
                 trace_writer=self._trace_writer,
                 _is_sub_agent=True,  # sub-agents skip multi-agent dispatch
+                verifier_provider=self._provider,  # strong model for completeness
+                perspective=perspective['hint'],
             )
             perspective_query = f"{query}\n\n{perspective['hint']}"
             return await agent.run(perspective_query, workspace_path)

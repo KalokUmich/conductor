@@ -1,0 +1,89 @@
+{
+  "id": "render_credit_decision",
+  "workspace": "/home/kalok/render",
+  "question": "How does the credit decision engine work?",
+  "baseline_model": "claude-opus-4-6",
+  "created": "2026-03-21",
+  "thinking_steps": [
+    {
+      "step": 1,
+      "action": "grep decision|DecisionType|auto_decision in services and models",
+      "tool": "grep",
+      "rationale": "Find decision-related code",
+      "key_finding": "ApplicationService.auto_decision_application(), DecisionTypeEnum (9 states), ApplicationDecisionService"
+    },
+    {
+      "step": 2,
+      "action": "read ApplicationService.py — auto_decision_application, _auto_decision_from_config",
+      "tool": "read_file",
+      "rationale": "Core decision orchestration",
+      "key_finding": "3-layer decision: config flows → database rulesets → manual. First matching rule wins. AUTO_ACCEPT/AUTO_DECLINE/REFERRAL"
+    },
+    {
+      "step": 3,
+      "action": "read enums.py — DecisionTypeEnum, state transitions",
+      "tool": "read_file",
+      "rationale": "State machine defines all valid transitions",
+      "key_finding": "9 states (PENDING→ACCEPT/DECLINE/REFERRAL/AWAITING→APPEAL→DISBURSED→SETTLED). Valid transitions matrix."
+    },
+    {
+      "step": 4,
+      "action": "read feature_result.py, feature_lists.py",
+      "tool": "read_file",
+      "rationale": "ML feature system powers decision rules",
+      "key_finding": "FeatureResult (rule_id, metric, severity, category). NPD model: 53 XGBoost features. OB model: 100+ features."
+    },
+    {
+      "step": 5,
+      "action": "read application_decision_service.py — manual override, audit steps",
+      "tool": "read_file",
+      "rationale": "Manual underwriter flow",
+      "key_finding": "assign_underwriter(), update_decision(), add_more_info_request(). Audit steps track each reviewer's decision."
+    }
+  ],
+  "answer": "## Credit Decision Engine\n\nThe credit decision engine determines whether a loan application is approved, declined, or referred for manual review. It operates in three layers with ML feature evaluation driving automated rules.\n\n### Decision Pipeline\n\n```\nApplication Submitted → Feature Evaluation (100+ ML features)\n→ Ruleset Matching (AND/OR logic) → Decision Determination\n→ AUTO_ACCEPT / AUTO_DECLINE / REFERRAL (manual review)\n→ Quote Generation (if approved) → Disbursement\n```\n\n### Decision Types (9 states)\n\n`DecisionTypeEnum` (`enums.py:825-911`):\n- PENDING → initial state\n- ACCEPT → approved\n- DECLINE (Reject) → rejected\n- REFERRAL → requires underwriter review\n- AWAITING → waiting for applicant info\n- WITHDRAWN → applicant withdrew\n- APPEAL → declined decision appealed\n- DISBURSED → funds sent\n- SETTLED → loan fully repaid\n\n### 3-Layer Decision Logic\n\n**Layer 1: Config-based** (`_auto_decision_application_from_config`, `ApplicationService.py:1392-1443`):\n- Load decisioning flows from settings (DecisioningFlowSettings)\n- Find applicable flow by application_type\n- Iterate rules in priority order — first match wins\n- Each rule checks a feature_id metric → maps to AUTO_ACCEPT, AUTO_DECLINE, AUTO_AWAITING, or REFERRAL with audit steps\n\n**Layer 2: Database rulesets** (`_auto_decision_from_database`, `ApplicationService.py:1313-1359`):\n- Load workflows from database (ordered priority)\n- Match ruleset_id against application's ruleset_results\n- Rulesets use AND/OR logic on feature severities\n- Rule types: AutoDecline, AutoAccept, Review, PreApproval\n\n**Layer 3: Manual override** (`update_decision`, `ApplicationService.py:1613`):\n- Underwriter manually updates decision\n- Validates state transition\n- If APPEAL: creates new SeniorUnderwriter audit step\n\n### Feature Evaluation\n\nFeatures are computed via ML models and rule configurations:\n- `FeatureResult`: rule_id, metric (computed value), severity (risk score), category\n- NPD Model: 53 XGBoost features (credit risk scoring)\n- OB v5 Model: 100+ open banking features\n- Sources: credit file (Equifax/Experian/TransUnion), open banking transactions, applicant data\n\n### Affordability Assessment\n\n`ApplicationAffordabilityService` (`application_affordability_service.py:45-150`):\n- Categories: Income, CoreSpending, FinancialServices, OtherIncome, DiscretionarySpending, Excluded\n- Sources: OB transactions, credit file, ONS estimates, client-provided data\n\n### Audit Steps (Manual Review)\n\n- Created for REFERRAL decisions\n- Sequential underwriter levels (Underwriter → SeniorUnderwriter for appeals)\n- Each step: optional assignment + decision outcome\n- `ApplicationDecisionService` manages: assign, unassign, add_more_info_request, request_verification\n\n### State Machine (valid transitions)\n\n- PENDING → ACCEPT, DECLINE, REFERRAL, AWAITING, WITHDRAWN\n- ACCEPT → DECLINE, REFERRAL, APPEAL, DISBURSED\n- DECLINE → ACCEPT, REFERRAL, APPEAL\n- REFERRAL → ACCEPT, DECLINE, AWAITING, WITHDRAWN\n- APPEAL → ACCEPT, DECLINE, REFERRAL, WITHDRAWN\n- WITHDRAWN → (terminal)\n- DISBURSED → SETTLED\n- SETTLED → (terminal)\n\n### Key Files\n\n- `ApplicationService.py` (2800+ lines) — decision orchestration\n- `application_decision_service.py` (968 lines) — audit step management\n- `application_affordability_service.py` — affordability calculation\n- `enums.py:825-911` — DecisionTypeEnum + state machine\n- `feature_result.py` — FeatureResult model\n- `application_decision.py` — ApplicationDecision model",
+  "required_findings": [
+    {
+      "id": "decision_types",
+      "description": "Must list the decision outcomes (Accept, Decline, Referral, etc.)",
+      "weight": 0.20,
+      "check_patterns": ["ACCEPT|Accept|accept|approv", "DECLINE|Decline|decline|reject", "REFERRAL|Referral|referral|manual.*review", "AWAITING|Awaiting|awaiting"],
+      "min_matches": 3
+    },
+    {
+      "id": "feature_evaluation",
+      "description": "Must explain ML feature evaluation (features, severity, scoring models)",
+      "weight": 0.20,
+      "check_patterns": ["feature|Feature", "severity|score|risk", "XGBoost|ML|model|machine.*learn"],
+      "min_matches": 2
+    },
+    {
+      "id": "ruleset_logic",
+      "description": "Must describe how rulesets/rules determine the decision (AND/OR logic, auto-decline/accept)",
+      "weight": 0.20,
+      "check_patterns": ["ruleset|Ruleset|rule", "auto.*decline|auto.*accept|AUTO_ACCEPT|AUTO_DECLINE", "AND|OR|logic|priority|first.*match"],
+      "min_matches": 2
+    },
+    {
+      "id": "manual_review",
+      "description": "Must explain the manual underwriter review process (audit steps, referral)",
+      "weight": 0.15,
+      "check_patterns": ["underwriter|Underwriter|manual.*review", "audit.*step|AuditStep|review.*step"],
+      "min_matches": 2
+    },
+    {
+      "id": "affordability",
+      "description": "Must mention affordability assessment as part of the decision",
+      "weight": 0.15,
+      "check_patterns": ["affordability|Affordability", "income|Income|spending|CoreSpending"],
+      "min_matches": 2
+    },
+    {
+      "id": "state_machine",
+      "description": "Must describe the state machine or valid decision transitions",
+      "weight": 0.10,
+      "check_patterns": ["state.*machine|transition|state.*transition|PENDING.*ACCEPT|valid.*transition"],
+      "min_matches": 1
+    }
+  ]
+}

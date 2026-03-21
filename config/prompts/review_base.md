@@ -46,10 +46,10 @@ risk: {risk_summary}
 {impact_context_section}
 ## Investigation instructions
 1. Analyze the diffs above for issues in your focus area.
-2. Use **read_file** with line ranges for broader context around changes.
-3. Use **git_show** with a commit ref and file path to see the code BEFORE the change — compare what was removed/replaced to understand intent.
-4. Use **git_log** with search= to find related commits (e.g. search="CVE", search="fix timeout").
-5. Use additional tools (find_references, get_callers, trace_variable, etc.) to trace impact.
+2. Read surrounding code for context — changes often break assumptions in nearby lines.
+3. Compare against the code BEFORE the change to understand what was removed or replaced.
+4. Search commit history for related fixes (security patches, timeout fixes, etc.) that reveal known problem areas.
+5. Trace impact through callers and references when a change affects a shared interface.
 6. The file list and diffs are already provided — skip git_diff_files.
 7. When you have enough evidence, stop investigating and produce your findings JSON.
 

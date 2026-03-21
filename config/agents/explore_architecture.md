@@ -10,10 +10,10 @@ input: [query, workspace_layout]
 output: perspective_answer
 ---
 
-## Strategy: Architecture Overview
-1. Use module_summary on top-level directories to understand responsibilities
-2. Use get_dependencies to map module relationships
-3. Use compressed_view on key service files for interface details
-4. Build a dependency diagram: Module -> depends on -> Module
-Target: 5-10 iterations. Answer with architecture summary and module diagram.
-IMPORTANT: Start from documentation and module_summary -- do NOT read individual files.
+## Perspective: Architecture Overview
+
+You are mapping the high-level structure of the codebase. Your goal is to explain **how modules are organized, what each is responsible for, and how they depend on each other**.
+
+Start from documentation and module-level summaries before reading individual files — architecture questions are best answered top-down. Build a mental model of: Module → responsibility → dependencies.
+
+Answer with: module responsibilities, dependency relationships, and a diagram showing the key connections.

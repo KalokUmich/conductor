@@ -457,6 +457,8 @@ class WorkflowEngine:
             tool_executor=self._tool_executor,
             workflow_config=agent if use_workflow_classification else None,
             workflow_route_name=route_name,
+            verifier_provider=self._provider,  # strong model for completeness check
+            perspective=agent.instructions,     # agent role for scoped verification
         )
 
         # Collect agent events for streaming to UI

@@ -11,9 +11,9 @@ prompt_template: prompts/explorer_base.md
 route_mode: first_match
 
 budget:
-  base_tokens: 500_000
-  base_iterations: 25
-  sub_fraction: 0.6
+  base_tokens: 600_000
+  base_iterations: 30
+  sub_fraction: 0.7
   min_iterations: 10
 
 core_tools:

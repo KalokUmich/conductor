@@ -134,8 +134,9 @@ def create_provider(provider_name: str, model: str = None):
         return ClaudeBedrockProvider(
             aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
             aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            aws_session_token=os.environ.get("AWS_SESSION_TOKEN"),
             region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
-            model_id=model or "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+            model_id=model or "eu.anthropic.claude-sonnet-4-6",
         )
 
     elif provider_name == "openai":

@@ -1,0 +1,75 @@
+{
+  "id": "render_decline_flow",
+  "workspace": "/home/kalok/render",
+  "question": "What happens when a loan application is declined?",
+  "baseline_model": "claude-opus-4-6",
+  "created": "2026-03-21",
+  "thinking_steps": [
+    {
+      "step": 1,
+      "action": "grep decline|reject|DECLINE in services and models",
+      "tool": "grep",
+      "rationale": "Find decline-related code paths",
+      "key_finding": "ApplicationService.update_decision() handles all decision changes including decline. DecisionTypeEnum.Reject = 'DECLINE'"
+    },
+    {
+      "step": 2,
+      "action": "read ApplicationService.py — update_decision flow for Reject",
+      "tool": "read_file",
+      "rationale": "Trace what happens when decision becomes Reject",
+      "key_finding": "Validate transition → close audit steps → set is_final_decision → generate documents → send RejectedApplication email → fire callback → push notification"
+    },
+    {
+      "step": 3,
+      "action": "read decision_reasons.sql + IDV decline reasons",
+      "tool": "read_file",
+      "rationale": "Find all possible decline reasons",
+      "key_finding": "14 general reasons (affordability, gambling, CCJ, etc.) + 8 IDV-specific reasons (fraud, inadequate docs, etc.)"
+    },
+    {
+      "step": 4,
+      "action": "read enums.py — state transitions from Reject",
+      "tool": "read_file",
+      "rationale": "What can happen after a decline",
+      "key_finding": "Reject → {Accept, Reject, Referral, Awaiting, Withdrawn, Appeal, Disbursed}. Appeal creates SeniorUnderwriter audit step."
+    }
+  ],
+  "answer": "## What Happens When a Loan Application Is Declined\n\n### Triggers\n\n**Automated decline**: Ruleset with `auto_decline=true` fires based on feature evaluation (e.g. affordability fail, credit score below threshold). Decision: `AUTO_DECLINE`, `is_final_decision=true`, `is_auto_decision=true`.\n\n**Manual decline**: Underwriter selects Reject via dashboard. `update_decision()` validates state transition and processes the decline. (`ApplicationService.py:1613-1847`)\n\n### What Happens (in order)\n\n1. **State transition validated** — checks `DecisionTypeEnum.allowed_transitions` matrix\n2. **Audit step closed** — current reviewer's step completed with decision=Reject + reason\n3. **is_final_decision set to true** — marks underwriting as complete\n4. **Documents generated** — `_document_manager.generate_application_documents()` creates decline letter\n5. **Email sent** — `RejectedApplication` email to applicant (async via Procrastinate, 5 retries)\n6. **Callback fired** — if `application.callback_url` exists, webhook sent with `ApplicationCallbackTypeEnum.decision` and full decision data\n7. **Push notification** — `push_application_update()` with `UpdateType.ApplicationDecisionUpdate`\n8. **Case events logged** — `ApplicationDecisionUpdated` + `AuditStepCompleted` events recorded\n\n### Decline Reasons\n\n**General reasons** (14 total, `decision_reasons.sql:31-44`):\n- `affordability_unaffordable` — Unaffordable\n- `affordability_unclear` — Affordability unclear\n- `qcr_currentcredit` — QCR current credit issues\n- `qcr_unsustainable` — QCR unsustainable debt\n- `gambling` — Gambling activity detected\n- `unresolved_ccj` — Unresolved County Court Judgment\n- `unresolved_unpaid` — Unresolved unpaid accounts\n- `id_verification` — Identity verification failed\n- `loss_of_income` — Loss of income\n- `income_expenditure_mismatch` — Income/expenditure mismatch\n- `decline_generic` — Generic decline\n- `new loans not on file`, `dmp plan ongoing`, `business loan`\n\n**IDV-specific reasons** (8 total, `00501_add_idv_decline_reason.sql`):\n- `failed_predisb_fraud`, `failed_predisb_RTR_expiry`, `failed_predisb_inadequte_docs_uk/non_uk`\n- `failed_predisb_customer_withdrawal`, `failed_predisb_timed_out_no_response`\n- `failed_predisb_uw_decline`, `failed_predisb_other`\n\n### Appeal Process\n\nDecline CAN be appealed:\n- State transition: `Reject → Appeal` (valid)\n- Creates new `SeniorUnderwriter` audit step at `max_current_order + 1`\n- `is_final_decision` reset to false\n- Senior underwriter re-reviews and can Accept, Reject, Refer, or Withdraw\n\n### Decline vs Withdrawal\n\n| Aspect | Decline (Reject) | Withdrawal |\n|--------|-----------------|------------|\n| Initiated by | System or underwriter | Applicant/client |\n| Appealable | Yes | No (terminal state, no valid transitions) |\n| Email | RejectedApplication | WithdrawnApplication |\n| Constraint | None | Cannot withdraw if ledger facility exists |\n\n### Data Retention\n\n- Application and decision records preserved (not deleted)\n- All audit steps and feature results retained for compliance\n- Data anonymization process exists (`00483_anon_delete.sql`)\n- Temporal table design (`valid_from`/`valid_to`) preserves history\n\n### Re-application\n\nApplicant CAN re-apply after decline. Previous decline visible in applicant history but doesn't block new applications. Credit file searches from previous applications may be flagged.\n\n### Key Files\n\n- `ApplicationService.py:1613-1847` — update_decision() orchestration\n- `enums.py:825-910` — DecisionTypeEnum + state transitions\n- `application_decision.py` — ApplicationDecision model\n- `decision_reasons.sql` — All decline reason codes\n- `EmailSources.py` — RejectedApplication email source",
+  "required_findings": [
+    {
+      "id": "decline_triggers",
+      "description": "Must explain both automated and manual decline triggers",
+      "weight": 0.20,
+      "check_patterns": ["auto.*decline|AUTO_DECLINE|automated|automatic", "manual|underwriter|Underwriter"],
+      "min_matches": 2
+    },
+    {
+      "id": "decline_actions",
+      "description": "Must describe what happens after decline (email, documents, callback)",
+      "weight": 0.25,
+      "check_patterns": ["email|Email|notification|RejectedApplication", "document|letter|generate", "callback|webhook"],
+      "min_matches": 2
+    },
+    {
+      "id": "decline_reasons",
+      "description": "Must list specific decline reasons (affordability, CCJ, fraud, etc.)",
+      "weight": 0.20,
+      "check_patterns": ["affordability|unaffordable", "CCJ|county.*court|ccj", "fraud|Fraud", "gambling|Gambling|income.*mismatch|loss.*income"],
+      "min_matches": 2
+    },
+    {
+      "id": "appeal_process",
+      "description": "Must explain the appeal process (Reject → Appeal, senior underwriter review)",
+      "weight": 0.20,
+      "check_patterns": ["appeal|Appeal", "senior.*underwriter|SeniorUnderwriter|re.*review"],
+      "min_matches": 2
+    },
+    {
+      "id": "decline_vs_withdrawal",
+      "description": "Must distinguish decline from withdrawal",
+      "weight": 0.15,
+      "check_patterns": ["withdraw|Withdrawn|WITHDRAWN", "terminal|no.*transition|cannot.*appeal"],
+      "min_matches": 1
+    }
+  ]
+}

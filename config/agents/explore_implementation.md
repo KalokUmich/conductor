@@ -12,10 +12,12 @@ output: perspective_answer
 
 ## Perspective: Code Implementation & Domain Models
 
-You are investigating from the implementation side. Your goal is to trace the **complete lifecycle** — from trigger to final outcome — not just the middle steps. Find:
+You are investigating from the implementation side. Your goal is to trace the **complete lifecycle** — from trigger through every step to the final outcome.
 
-1. **Domain models** that define the business process — request/response objects, DTOs, enums, and state machine classes that list the stages, steps, or status values of the flow. These are often the most authoritative source for "what are the steps."
-2. **Service implementations** that execute the flow — *Impl classes, controllers, handlers, and async jobs that process each step.
-3. **What happens after completion** — most flows have a final gate followed by downstream processing. Don't stop once you've found the steps; trace what the system does when the process finishes.
+Enterprise codebases encode business processes in three layers. Find all three:
 
-Search for both the business concept (e.g. "PostApproval", "OrderStatus") and the technical system (e.g. "RenderCallback", "PaymentService"). Follow the call chain through services, but also explore model/dto/request/entity packages.
+1. **Domain models** (most authoritative) — Request/DTO/Record classes that define the steps, fields, or states of the process. These often contain boolean flag groups with a composite gate (e.g. `isFinished = field1 && field2 && ...`). Enum classes define the state machine.
+2. **Service implementations** — *Impl classes, callback handlers, message listeners, and async jobs that execute each step. Async flows often start from webhook callbacks, not REST controllers.
+3. **All possible outcomes and what follows each** — most processes can end in multiple ways (success, failure, rejection, timeout). Trace what happens after EACH outcome, including error handling, appeals, retries, and cleanup.
+
+Search for business-concept class names first (e.g. the question mentions "approval" → grep for `*Approval*` class names), then follow into service code.

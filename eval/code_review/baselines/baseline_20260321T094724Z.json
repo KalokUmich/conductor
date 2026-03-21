@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-03-21T09:47:24+00:00",
+  "provider": "bedrock",
+  "model": "eu.anthropic.claude-sonnet-4-6",
+  "mode": "pipeline",
+  "case_scores": [
+    {
+      "case_id": "requests-006",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.0,
+      "location_accuracy": 0.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "composite": 0.75,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    }
+  ],
+  "judge_verdicts": [],
+  "aggregate": {
+    "recall": 1.0,
+    "precision": 1.0,
+    "severity_accuracy": 0.0,
+    "location_accuracy": 0.0,
+    "recommendation_score": 1.0,
+    "context_depth": 1.0,
+    "composite": 0.75,
+    "cases_total": 1,
+    "cases_scored": 1,
+    "cases_errored": 0
+  },
+  "regressions": [],
+  "has_regressions": false,
+  "gold_comparisons": []
+}

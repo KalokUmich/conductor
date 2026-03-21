@@ -50,8 +50,9 @@ python ../eval/code_review/run.py --provider anthropic --model claude-sonnet-4-2
 python ../eval/code_review/run.py --filter "requests-001" --no-judge
 
 # Agent answer quality (baseline comparison)
-python ../eval/agent_quality/run.py                  # direct agent
-python ../eval/agent_quality/run.py --compare        # direct vs workflow
+python ../eval/agent_quality/run_bedrock.py                  # Bedrock (Sonnet/Haiku)
+python ../eval/agent_quality/run_bedrock.py --workflow --haiku  # Haiku explorer + Sonnet judge
+python ../eval/agent_quality/run_qwen.py --workflow            # Qwen (DashScope)
 
 # Tool parity (Python vs TS)
 python ../eval/tool_parity/run.py --generate-baseline
@@ -302,7 +303,7 @@ eval/
 ```
 
 - **Code review**: `eval/code_review/run.py` — scoring: recall (35%), precision (20%), severity (15%), location (10%), recommendation (10%), context (10%)
-- **Agent quality**: `eval/agent_quality/run.py` — pattern-match answers against `required_findings` in baseline JSON
+- **Agent quality**: `eval/agent_quality/run_bedrock.py` / `run_qwen.py` — pattern-match answers against `required_findings` in baseline JSON
 - **Tool parity**: `eval/tool_parity/run.py` — diff Python vs TS tool outputs for the same inputs
 
 ## Agent & Prompt Design Principles
@@ -333,7 +334,7 @@ When creating or editing agent definitions (`config/agents/*.md`), system prompt
 
 ### Validation
 
-14. **Test with eval** — Any prompt change must be validated with `eval/agent_quality/run.py`. Check both direct agent AND workflow mode — changes that help one can break the other.
+14. **Test with eval** — Any prompt change must be validated with `eval/agent_quality/run_bedrock.py`. Check both direct agent AND workflow mode — changes that help one can break the other.
 
 ## What's Next
 

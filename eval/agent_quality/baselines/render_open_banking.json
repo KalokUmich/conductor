@@ -1,0 +1,96 @@
+{
+  "id": "render_open_banking",
+  "workspace": "/home/kalok/render",
+  "question": "What is open banking in our business?",
+  "baseline_model": "claude-opus-4-6",
+  "created": "2026-03-21",
+  "thinking_steps": [
+    {
+      "step": 1,
+      "action": "grep open.banking|OpenBanking|open_banking across all files",
+      "tool": "grep",
+      "rationale": "Broad search for the business concept across the codebase",
+      "key_finding": "Found OpenBankingConnectionManager, OpenBankingConnectionProviders, consent models, affordability integration"
+    },
+    {
+      "step": 2,
+      "action": "read OpenBankingConnectionManager.py",
+      "tool": "read_file",
+      "rationale": "Core service — defines consent flow, provider delegation, transaction loading",
+      "key_finding": "generate_consent_request() → provider redirect → webhook callback → load transactions → classify → feed to affordability"
+    },
+    {
+      "step": 3,
+      "action": "read enums.py for OB-related enums",
+      "tool": "read_file",
+      "rationale": "Enum classes define state machines",
+      "key_finding": "ConsentLoadingStatusEnum (9 states), OpenBankingProvidersEnum (8 providers), OBJourneyTypesEnum (base, re-consent)"
+    },
+    {
+      "step": 4,
+      "action": "read consent.py, bank_account.py, transaction.py models",
+      "tool": "read_file",
+      "rationale": "Domain models define what data is collected",
+      "key_finding": "Consent (provider, status, expiry, bank_accounts), BankAccount (type, balance, sort_code), Transaction (amount, direction, classifications)"
+    },
+    {
+      "step": 5,
+      "action": "read application_affordability_service.py",
+      "tool": "read_file",
+      "rationale": "How OB data feeds into lending decisions",
+      "key_finding": "Transactions classified into affordability categories (Income, CoreSpending, FinancialServices, etc.) → merged with credit file + ONS data → decision models"
+    },
+    {
+      "step": 6,
+      "action": "read bud_webhooks.py, equifax_ob_handler.py",
+      "tool": "read_file",
+      "rationale": "Webhook handlers for async OB data loading",
+      "key_finding": "Bud: HMAC-SHA256 signature validation → queue task. Equifax: events (selected_bank, submitted_consent, signup_complete) → consent update → transaction load"
+    }
+  ],
+  "answer": "## What Is Open Banking in Our Business?\n\nOpen Banking (OB) is a **mandatory financial verification mechanism** in our lending platform. It enables the system to securely retrieve real bank transaction data from customers to verify income, assess affordability, and make informed credit decisions.\n\n### Purpose\n\nOB serves three core functions in our underwriting pipeline:\n1. **Income verification** — analyze transaction patterns to confirm borrower salary and other income sources\n2. **Affordability assessment** — calculate spending patterns, financial commitments (rent, utilities, loans), and disposable income\n3. **Account validation** — verify active bank accounts, balances, and account types\n\nWithout OB data, affordability calculations return `None` and certain products become ineligible (`application_affordability_service.py:84-88`).\n\n### Providers\n\nThe platform integrates with **8 OB providers** via a pluggable architecture (`OpenBankingConnectionProviders/`):\n- **Bud** (primary UK aggregator) — `BudOpenBankingConnectionProvider.py:121`\n- **Equifax AccountScore** — `EquifaxOpenBankingConnectionProvider.py:89`\n- **DirectApi**, **DOne**, **FreedomFinance**, **Fintern**, **Ibancar**, **Afterbanks**\n\nProvider selection uses weighted load balancing (`connection_balancer.py:68` — `ConnectionBalancerOB.determine_provider()`) based on bank availability and configured weights.\n\n### Consent Flow\n\n```\n1. API call: POST /get_open_banking_link → generates magic link URL\n2. Consent object created with status ConsentPending\n3. User redirected to provider's OAuth page (bank selection → login → approve)\n4. Provider redirects to webhook callback:\n   - Bud: POST /bud-webhook (HMAC-SHA256 validated) → bud_webhooks.py:136\n   - Equifax: GET /accountscore/webhook/{event}/{ref}/{id} → equifax_ob_handler.py:52\n5. Consent status updated to ConsentGranted\n6. Background task polls for transaction data (35 attempts, 1min→30min backoff)\n7. Transactions loaded, classified, status set to DataLoaded\n```\n\n`OpenBankingConnectionManager.generate_consent_request()` at line 198 orchestrates steps 1-3.\n\n### Data Collected\n\n**Bank Accounts** (`bank_account.py:58`):\n- bank, type (Current/Savings/CreditCard), balance, currency, sort_code, account_number, joint_account flag\n\n**Transactions** (`transaction.py:31`):\n- date, amount (4 decimal places), currency, description, vendor, direction (Credit/Debit), running_balance\n- `classifications`: list of category tags for affordability\n\n**Consent** (`consent.py:21`):\n- applicant_id, external_reference, provider, status, bank, authorised_at, expected_expiry (90 days per PSD2)\n\n### Transaction Classification & Affordability\n\nTransactions are classified into affordability categories via `OpenBankingColumnCalculator` (`affordability_column_calculator.py`):\n- **Income** — salary, benefits, other regular inflows\n- **CoreSpending** — rent, mortgage, utilities, groceries\n- **FinancialServices** — loan repayments, insurance, credit card payments\n- **DiscretionarySpending** — entertainment, subscriptions, dining\n- **Excluded** — transfers between own accounts, refunds\n\nThese feed into `ApplicationAffordabilityService` (`application_affordability_service.py:68`) which merges OB data with Credit File and ONS data for the final affordability calculation.\n\n### Consent Status State Machine\n\n`ConsentLoadingStatusEnum` (`enums.py:505`):\n```\nConsentPending (1) → ConsentWorkflowComplete (2) → ConsentGranted (3) → DataLoaded (40)\n                                                  → ConsentDeclined (4)\n                                                  → ConsentError (5)\n                                                  → ConsentTimedOut (6)\n                                                                     → DataError (50)\n                                                                     → DataLoadingTimedOut (60)\n```\n\n### Background Jobs\n\n- **Consent polling**: `is_consent_ready()` — 35 retries, exponential backoff (1min → 30min)\n- **Transaction loading**: `load_transaction_data()` — max 100K transactions per account\n- **Classification**: `rerun_classification()` — re-tags transactions after load\n- **Data retention**: Daily purge of expired Bud/Equifax consents per GDPR retention policies\n\n### Key Files\n\n- `OpenBankingConnectionManager.py` — Core service (consent flow, provider delegation)\n- `IOpenBankingConnectionProvider.py` — Provider interface\n- `BudOpenBankingConnectionProvider.py` — Bud implementation\n- `EquifaxOpenBankingConnectionProvider.py` — Equifax implementation\n- `consent.py`, `bank_account.py`, `transaction.py` — Domain models\n- `application_affordability_service.py` — Affordability calculation\n- `bud_webhooks.py`, `equifax_ob_handler.py` — Webhook handlers\n- `connection_balancer.py` — Provider load balancing\n- `ob_load_tasks.py` — Background tasks",
+  "required_findings": [
+    {
+      "id": "ob_purpose",
+      "description": "Must explain that OB is used for income verification and affordability assessment in lending decisions",
+      "weight": 0.25,
+      "check_patterns": ["income.*verif|verif.*income|income.*analysis|income.*categor|categor.*income|salary", "affordability|afford", "transaction|spending|spend"],
+      "min_matches": 3
+    },
+    {
+      "id": "ob_providers",
+      "description": "Must identify at least 2 OB providers (Bud, Equifax/AccountScore, DirectApi, DOne, etc.)",
+      "weight": 0.15,
+      "check_patterns": ["Bud", "Equifax|AccountScore", "DirectApi|DOne|Plaid|TrueLayer"],
+      "min_matches": 2
+    },
+    {
+      "id": "ob_consent_flow",
+      "description": "Must describe the consent flow: generate link → user authorizes → webhook callback → load transactions",
+      "weight": 0.20,
+      "check_patterns": ["consent|Consent", "redirect|link|magic.*link|OAuth", "webhook|callback", "load.*transaction|transaction.*load|refresh.*transaction"],
+      "min_matches": 3
+    },
+    {
+      "id": "ob_data_collected",
+      "description": "Must mention what data is collected: bank accounts, transactions, balances",
+      "weight": 0.15,
+      "check_patterns": ["bank.*account|BankAccount", "transaction|Transaction", "balance|Balance"],
+      "min_matches": 2
+    },
+    {
+      "id": "ob_classification",
+      "description": "Must explain that transactions are classified into categories for affordability",
+      "weight": 0.15,
+      "check_patterns": ["classif|categor|tag", "Income|CoreSpending|FinancialServices|Discretionary|affordability.*categor"],
+      "min_matches": 2
+    },
+    {
+      "id": "ob_consent_status",
+      "description": "Should mention consent statuses or the state machine (Pending, Granted, DataLoaded, etc.)",
+      "weight": 0.10,
+      "check_patterns": ["ConsentPending|ConsentGranted|DataLoaded|ConsentDeclined|consent.*status|status.*consent"],
+      "min_matches": 1
+    }
+  ]
+}

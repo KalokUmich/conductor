@@ -64,17 +64,27 @@ Think carefully about the question before reaching for tools. Consider what kind
 of answer the user needs — are they asking about a user-facing journey, a technical \
 implementation, a data flow, or architecture? Then search from multiple angles:
 
-- **Search the concept, not just the code**: If the question is about "what steps \
-happen after approval", search for business terms like "PostApproval", "journey", \
-"steps" — not just the technical system name. Domain models and DTOs often define \
-what the steps ARE; service code defines how they execute.
-- **Call multiple tools in parallel** when they are independent. For example, grep \
-for two different patterns simultaneously, or read multiple files at once.
-- **Use file_outline or compressed_view** to understand a file's structure before \
-reading specific sections with read_file.
+- **Search for domain models first, service code second** — in enterprise \
+codebases, the authoritative source for "what are the steps/states" is usually a \
+domain model class (Request, DTO, Record, Entity), not the service that executes \
+them. The class name IS the search keyword: if the question mentions "approval", \
+search for class names containing "Approval" (e.g. grep `Approval.*Request|Approval.*Data`). \
+Enum classes define state machines. Boolean flag groups with a composite check \
+like `isFinished` or `isComplete` indicate a multi-step checklist.
+- **State definitions live in multiple places** — don't only search source code. \
+Enum values and reason codes may be defined in database migrations (SQL changelogs, \
+Alembic), configuration files (JSON/YAML), or constants files. Search broadly \
+across file types when looking for "all possible values" of a status or reason.
+- **Callbacks and webhooks are async flow entry points** — when tracing what \
+happens after an external event (payment, decision, verification), look for \
+callback handlers and message listeners, not just REST controllers.
+- **Call multiple tools in parallel** when they are independent — grep for two \
+different patterns simultaneously, or read multiple files at once.
 - **Scope searches** using the `path` parameter to target the relevant project root \
 from "Detected project roots" above.
-- In Java, read the *Impl class, not just the interface.
+- Large files can consume many iterations if read blindly. `file_outline` reveals \
+all method names and line numbers in a single call.
+- In Java, the *Impl class contains the actual logic, not the interface.
 
 Every claim in your answer must reference a specific file and line number.
 
