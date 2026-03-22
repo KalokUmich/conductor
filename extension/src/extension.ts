@@ -2,8 +2,8 @@
  * Conductor (AI Collab) VS Code Extension
  *
  * This extension enables real-time collaborative development with AI assistance.
- * It combines VS Code Live Share for code collaboration, WebSocket-based chat
- * for team communication, and AI-powered code generation.
+ * It combines WebSocket-based chat for team communication, backend-managed
+ * git worktrees for multi-user collaboration, and AI-powered code generation.
  *
  * Main components:
  * - AICollabViewProvider: WebView panel for chat and AI interaction
@@ -16,7 +16,6 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as vsls from 'vsls/vscode';
 import { execSync } from 'child_process';
 
 import { checkBackendHealth } from './services/backendHealthCheck';
@@ -47,6 +46,13 @@ import { indexWorkspace, reindexSingleFile, cancelCurrentIndex } from './service
 import { RagClient, RagFileChange } from './services/ragClient';
 import { ConductorFileSystemProvider } from './services/conductorFileSystemProvider';
 import { WorkflowPanel } from './services/workflowPanel';
+import {
+    JiraUriHandler,
+    wrapJiraConnection,
+    getValidJiraConnection,
+    isJiraConnectionStale,
+    JIRA_GLOBALSTATE_KEY,
+} from './services/jiraAuthService';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
@@ -324,6 +330,54 @@ export function activate(context: vscode.ExtensionContext): void {
             WorkflowPanel.show(context.extensionUri, getBackendUrl());
         })
     );
+
+    // Register URI handler for OAuth callbacks (e.g., Jira)
+    const jiraUriHandler = new JiraUriHandler(
+        (status) => {
+            // Cache connection in globalState
+            context.globalState.update(JIRA_GLOBALSTATE_KEY, wrapJiraConnection({
+                connected: true,
+                siteUrl: status.siteUrl,
+                cloudId: status.cloudId,
+            }));
+            // Notify WebView
+            const view = (disposable as any)?._view;
+            if (view) {
+                view.webview.postMessage({
+                    command: 'jiraConnected',
+                    site_url: status.siteUrl,
+                });
+            }
+            vscode.window.showInformationMessage(`Jira connected: ${status.siteUrl}`);
+        },
+        getBackendUrl(),
+    );
+    context.subscriptions.push(vscode.window.registerUriHandler(jiraUriHandler));
+
+    // Register Jira commands
+    context.subscriptions.push(
+        vscode.commands.registerCommand('conductor.jiraConnect', () => {
+            // Trigger via WebView message
+            vscode.commands.executeCommand('workbench.view.extension.ai-collab-sidebar');
+        })
+    );
+    context.subscriptions.push(
+        vscode.commands.registerCommand('conductor.jiraDisconnect', async () => {
+            try {
+                await fetch(`${getBackendUrl()}/api/integrations/jira/disconnect`, { method: 'POST' });
+                context.globalState.update(JIRA_GLOBALSTATE_KEY, undefined);
+                vscode.window.showInformationMessage('Jira disconnected');
+            } catch {
+                vscode.window.showErrorMessage('Failed to disconnect Jira');
+            }
+        })
+    );
+
+    // Clear stale Jira connection on reload
+    const storedJira = context.globalState.get(JIRA_GLOBALSTATE_KEY);
+    if (isJiraConnectionStale(storedJira)) {
+        context.globalState.update(JIRA_GLOBALSTATE_KEY, undefined);
+    }
 
     // Register command to compare local tool implementations (LSP vs grep)
     context.subscriptions.push(
@@ -687,7 +741,6 @@ interface PolicyResult {
  * It handles:
  * - WebView HTML content generation
  * - Message passing between WebView and extension
- * - Live Share auto-start for lead users
  * - Code generation and application flow
  * - Sequential change review process
  *
@@ -827,8 +880,6 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     if (this._ragBatchTimer) { clearTimeout(this._ragBatchTimer); this._ragBatchTimer = null; }
                     this._ragPendingChanges.clear();
                     this._stopFileWatcher();
-                    // Close Live Share session if active
-                    this._closeLiveShare();
                     // Reset session state and generate new roomId
                     getSessionService().resetSession();
                     vscode.window.showInformationMessage('Chat session has ended.');
@@ -952,6 +1003,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'jiraGetCreateMeta':
                     await this._handleJiraGetCreateMeta(message.projectKey, message.issueTypeId);
                     return;
+                case 'jiraSearch':
+                    await this._handleJiraSearch(message.query);
+                    return;
                 case 'openExternal':
                     if (message.url) {
                         vscode.env.openExternal(vscode.Uri.parse(message.url));
@@ -1031,7 +1085,6 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             }
         });
 
-        // Note: We no longer auto-start Live Share here.
         // User must explicitly click "Start Session" to begin hosting.
     }
 
@@ -1078,37 +1131,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
     /**
      * Handle "Start Session" command from WebView.
-     * 1. Checks if Live Share is already active (prompts user to close it)
-     * 2. Runs health check if needed
-     * 3. Resets session (new roomId)
-     * 4. Transitions FSM to Hosting
-     * 5. Starts Live Share and generates invite link
+     * 1. Runs health check if needed
+     * 2. Resets session (new roomId)
+     * 3. Transitions FSM to Hosting
      */
     private async _handleStartSession(): Promise<void> {
         try {
-            // Check if Live Share is already active
-            const liveShareStatus = await this._checkLiveShareStatus();
-            if (liveShareStatus.isActive) {
-                const roleStr = liveShareStatus.role === vsls.Role.Host ? 'hosting' : 'in';
-                const choice = await vscode.window.showWarningMessage(
-                    `You are currently ${roleStr} a Live Share session. Please end it before starting a new Conductor session.`,
-                    'End Live Share',
-                    'Cancel'
-                );
-
-                if (choice === 'End Live Share') {
-                    const liveShareApi = await vsls.getApi();
-                    if (liveShareApi) {
-                        await liveShareApi.end();
-                        // Wait a moment for Live Share to fully close
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                    }
-                } else {
-                    // User cancelled
-                    return;
-                }
-            }
-
             const currentState = this._controller.getState();
 
             // If in Idle or BackendDisconnected, run health check first
@@ -1226,127 +1254,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // Send the fresh session state so the WebView can connect WebSocket
             // At this point, backendUrl will include ngrok URL if available
             this._sendSessionAndState();
-
-            // Now start Live Share and generate invite link
-            await this._startLiveShareAndGenerateInvite();
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.warn('[Conductor] startSession failed:', msg);
             vscode.window.showWarningMessage(`Cannot start session: ${msg}`);
-        }
-    }
-
-    /**
-     * Check if Live Share is currently active.
-     * @returns Object containing isActive flag and role (Host/Guest/None)
-     */
-    private async _checkLiveShareStatus(): Promise<{ isActive: boolean; role: vsls.Role }> {
-        try {
-            const liveShareApi = await vsls.getApi();
-            if (!liveShareApi) {
-                // Live Share extension not installed or not activated
-                return { isActive: false, role: vsls.Role.None };
-            }
-
-            const session = liveShareApi.session;
-            const isActive = session.id !== null;
-            const role = session.role;
-
-            console.log(`[Conductor] Live Share status: isActive=${isActive}, role=${vsls.Role[role]}`);
-            return { isActive, role };
-        } catch (error) {
-            console.warn('[Conductor] Failed to check Live Share status:', error);
-            return { isActive: false, role: vsls.Role.None };
-        }
-    }
-
-    /**
-     * Close the active Live Share session, if any.
-     * Called when the chat session ends so participants are fully disconnected.
-     */
-    private async _closeLiveShare(): Promise<void> {
-        try {
-            const liveShareApi = await vsls.getApi();
-            if (!liveShareApi || liveShareApi.session.id === null) {
-                return; // not active, nothing to close
-            }
-            console.log('[Conductor] Closing Live Share session...');
-            await liveShareApi.end();
-            console.log('[Conductor] Live Share session closed');
-        } catch (error) {
-            console.warn('[Conductor] Failed to close Live Share:', error);
-        }
-    }
-
-    /**
-     * Start Live Share session and generate invite link.
-     * Called when user clicks "Start Session".
-     * Note: ngrok URL detection is done in _handleStartSession before this is called.
-     */
-    private async _startLiveShareAndGenerateInvite(): Promise<void> {
-        try {
-            console.log('[Conductor] Starting Live Share session...');
-
-            // Start Live Share session
-            const liveShareResult = await vscode.commands.executeCommand('liveshare.start');
-
-            let liveShareUrl: string | null = null;
-
-            // Check if the command returned a URL directly
-            if (liveShareResult && typeof liveShareResult === 'string') {
-                liveShareUrl = liveShareResult;
-                console.log('[Conductor] Live Share returned URL directly:', liveShareUrl);
-            } else {
-                // Live Share might have copied the URL to clipboard instead
-                await new Promise(resolve => setTimeout(resolve, 500));
-                const clipboardContent = await vscode.env.clipboard.readText();
-
-                // Validate that it's a direct Live Share URL, not our invite URL
-                // Live Share URLs look like: https://prod.liveshare.vsengsaas.visualstudio.com/join?XXXXX
-                // Our invite URLs contain /invite? which we should NOT accept
-                if (
-                    clipboardContent &&
-                    clipboardContent.includes('liveshare.vsengsaas.visualstudio.com') &&
-                    !clipboardContent.includes('/invite?')
-                ) {
-                    liveShareUrl = clipboardContent;
-                    console.log('[Conductor] Got Live Share URL from clipboard:', liveShareUrl);
-                } else {
-                    console.log('[Conductor] Could not get Live Share URL from clipboard. Content:', clipboardContent?.substring(0, 100));
-                }
-            }
-
-            if (liveShareUrl) {
-                // Store in session
-                getSessionService().setLiveShareUrl(liveShareUrl);
-
-                // Generate invite URL
-                const inviteUrl = getSessionService().getInviteUrl();
-
-                if (inviteUrl) {
-                    // Log to output channel
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.appendLine('🎉 Conductor Session Started!');
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.appendLine('');
-                    outputChannel.appendLine('📋 Share this link with your team:');
-                    outputChannel.appendLine(inviteUrl);
-                    outputChannel.appendLine('');
-                    outputChannel.appendLine('📌 Room ID: ' + getSessionService().getRoomId());
-                    outputChannel.appendLine('🔗 Live Share URL: ' + liveShareUrl);
-                    outputChannel.appendLine('='.repeat(80));
-                    outputChannel.show();
-
-                    // Copy invite URL to clipboard
-                    await vscode.env.clipboard.writeText(inviteUrl);
-                    vscode.window.showInformationMessage('📋 Conductor invite link copied to clipboard!');
-                }
-            } else {
-                vscode.window.showWarningMessage('Could not get Live Share URL. You can still use "Copy Invite Link" later.');
-            }
-        } catch (error) {
-            console.error('[Conductor] Failed to start Live Share:', error);
-            vscode.window.showWarningMessage('Failed to start Live Share. Make sure Live Share extension is installed.');
         }
     }
 
@@ -1427,25 +1338,14 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      */
     private _handleCopyInviteLink(): void {
         const inviteUrl = getSessionService().getInviteUrl();
-        if (inviteUrl) {
-            vscode.env.clipboard.writeText(inviteUrl);
-            vscode.window.showInformationMessage('📋 Invite link copied to clipboard!');
-            outputChannel.appendLine(`📋 Invite link: ${inviteUrl}`);
-        } else {
-            // Build a simple invite URL with just roomId + backendUrl (no Live Share yet)
-            const roomId = getSessionService().getRoomId();
-            const backendUrl = getSessionService().getBackendUrl();
-            const simpleUrl = `${backendUrl}/invite?roomId=${roomId}`;
-            vscode.env.clipboard.writeText(simpleUrl);
-            vscode.window.showInformationMessage('📋 Invite link copied (no Live Share URL yet)');
-            outputChannel.appendLine(`📋 Invite link (no Live Share): ${simpleUrl}`);
-        }
+        vscode.env.clipboard.writeText(inviteUrl);
+        vscode.window.showInformationMessage('📋 Invite link copied to clipboard!');
+        outputChannel.appendLine(`📋 Invite link: ${inviteUrl}`);
     }
 
     /**
      * Handle "Join Session" command from WebView.
-     * Parses the invite URL, configures the session as a guest,
-     * opens Live Share if a URL is present, and transitions FSM.
+     * Parses the invite URL, configures the session as a guest, and transitions FSM.
      */
     private async _handleJoinSession(inviteUrl: string): Promise<void> {
         try {
@@ -1455,7 +1355,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // If in BackendDisconnected, we can still join (no local backend needed)
             if (currentState === ConductorState.Idle) {
                 await this._controller.start();
-                // Regardless of health check result (ReadyToHost or BackendDisHost),
+                // Regardless of health check result (ReadyToHost or BackendDisconnected),
                 // we can proceed with joining since JOIN_SESSION is valid in both states
             }
 
@@ -1471,44 +1371,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             getSessionService().joinAsGuest(
                 parsed.roomId,
                 parsed.backendUrl,
-                parsed.liveShareUrl,
             );
 
-            // Transition to Joined FIRST so user can start chatting immediately
-            // Don't wait for Live Share - it can connect in the background
+            // Transition to Joined so user can start chatting immediately
             this._controller.joinSucceeded();
             console.log('[Conductor] Joined session successfully');
             this._sendSessionAndState();
-
-            // Offer to join Live Share (optional - user can decline)
-            // This is non-blocking - user can chat while deciding
-            if (parsed.liveShareUrl) {
-                // Ask user if they want to join Live Share
-                // This is async and non-blocking
-                vscode.window.showInformationMessage(
-                    '🔗 This session has Live Share. Join to collaborate on code?',
-                    'Join Live Share',
-                    'Chat Only'
-                ).then(async (choice) => {
-                    if (choice === 'Join Live Share') {
-                        try {
-                            console.log('[Conductor] User chose to join Live Share...');
-                            await vscode.commands.executeCommand(
-                                'liveshare.join',
-                                vscode.Uri.parse(parsed.liveShareUrl!),
-                            );
-                            console.log('[Conductor] Live Share joined successfully');
-                        } catch (lsError) {
-                            console.warn('[Conductor] Live Share join failed:', lsError);
-                            vscode.window.showWarningMessage(
-                                'Could not join Live Share. You can still use chat.'
-                            );
-                        }
-                    } else {
-                        console.log('[Conductor] User chose chat only, skipping Live Share');
-                    }
-                });
-            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.warn('[Conductor] joinSession failed:', msg);
@@ -3005,6 +2873,38 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({
                 command: 'jiraError',
                 error: `Create issue failed: ${msg}`,
+            });
+        }
+    }
+
+    private async _handleJiraSearch(query: string): Promise<void> {
+        try {
+            const resp = await fetch(
+                `${getBackendUrl()}/api/integrations/jira/search?q=${encodeURIComponent(query)}`
+            );
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({ detail: `HTTP ${resp.status}` })) as { detail?: string };
+                this._view?.webview.postMessage({
+                    command: 'jiraError',
+                    error: err.detail || `Search failed (${resp.status})`,
+                });
+                return;
+            }
+            const results = await resp.json() as Array<{
+                key: string; summary: string; status: string;
+                priority: string; issuetype: string; assignee: string;
+                browse_url: string;
+            }>;
+            this._view?.webview.postMessage({
+                command: 'jiraSearchResults',
+                results,
+                query,
+            });
+        } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            this._view?.webview.postMessage({
+                command: 'jiraError',
+                error: `Search failed: ${msg}`,
             });
         }
     }

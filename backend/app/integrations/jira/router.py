@@ -69,7 +69,10 @@ p {{ color: #9ca3af; font-size: 0.9rem; }}
 <body><div class="card">
 <h2>&#10003; Jira Connected</h2>
 <p>Connected to <span class="site">{token_pair.site_url}</span></p>
-<p style="font-size:0.8rem; margin-top:1rem; color:#6b7280;">You can close this tab and return to VS Code.</p>
+<p style="margin-top:1rem;"><a href="vscode://ai-collab/jira/callback?connected=true"
+   style="color:#8b5cf6; text-decoration:underline;">Return to VS Code</a></p>
+<p style="font-size:0.8rem; margin-top:0.5rem; color:#6b7280;">Or close this tab manually.</p>
+<script>setTimeout(function(){{ window.location.href='vscode://ai-collab/jira/callback?connected=true'; }}, 2000);</script>
 </div></body></html>"""
         return HTMLResponse(content=html)
 
@@ -175,6 +178,24 @@ async def get_create_meta(
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         logger.error("Failed to get create meta: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/search")
+async def search_issues(
+    request: Request,
+    q: str = Query(..., description="Search query text"),
+    max_results: int = Query(10, alias="maxResults", le=50),
+) -> list:
+    """Search Jira issues using JQL text search."""
+    svc = _get_service(request)
+    try:
+        results = await svc.search_issues(q, max_results=max_results)
+        return results
+    except RuntimeError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except Exception as e:
+        logger.error("Failed to search Jira issues: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 

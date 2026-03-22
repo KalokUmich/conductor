@@ -534,3 +534,26 @@ class JiraOAuthService:
             self_url=data.get("self", ""),
             browse_url=browse_url,
         )
+
+    async def search_issues(self, query: str, max_results: int = 10) -> List[dict]:
+        """Search Jira issues using JQL text search."""
+        jql = f'text ~ "{query}" ORDER BY updated DESC'
+        data = await self._api_request("GET", "/search", params={
+            "jql": jql,
+            "maxResults": str(max_results),
+            "fields": "summary,status,assignee,priority,issuetype",
+        })
+        issues = data.get("issues", [])
+        result = []
+        for issue in issues:
+            fields = issue.get("fields", {})
+            result.append({
+                "key": issue["key"],
+                "summary": fields.get("summary", ""),
+                "status": fields.get("status", {}).get("name", ""),
+                "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+                "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+                "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+            })
+        return result

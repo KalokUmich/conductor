@@ -4,7 +4,7 @@
 
 This upgrade contains two major changes:
 
-1. **Git Workspace Module** — Replaces Live Share with backend-managed Git branches as the core of code collaboration, supporting two authentication modes (Token Direct / Client Delegate), switchable via settings configuration.
+1. **Git Workspace Module** — Backend-managed Git branches as the core of code collaboration, supporting two authentication modes (Token Direct / Client Delegate), switchable via settings configuration.
 2. **CocoIndex Code Integration** — Removes the existing home-built RAG (FAISS + Bedrock Embeddings) and integrates cocoindex-code as the code semantic search engine, configurable via settings.
 
 ---
@@ -244,7 +244,6 @@ langchain-community            # If only used for RAG
 If issues are found post-deployment:
 
 1. Set `git_workspace.enabled: false` and `code_search.enabled: false` in settings
-2. Re-enable `live_share` and old `rag` modules (previously they would be preserved but disabled)
-3. Restart backend
+2. Restart backend
 
 No database migrations are required — the new sqlite-vec index is additive and separate from existing data stores.

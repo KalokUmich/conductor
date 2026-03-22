@@ -2,7 +2,7 @@
 
 Lifespan initializes:
   * Database connection pool
-  * Git Workspace Service (replaces Live Share)
+  * Git Workspace Service (backend-managed worktrees for multi-user mode)
   * AI Provider Resolver (unified — powers summary, agent loop, etc.)
   * Agent Loop provider (for agentic code search)
   * Code Tools (code intelligence tools for the agent loop)

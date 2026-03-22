@@ -34,6 +34,21 @@ dispatch:
     type: keyword_pattern
 
 routes:
+  code_explanation:
+    text_patterns:
+      - "explain|what does|understand|describe|walk.?through"
+      - "how does this|what is this|tell me about|break.?down"
+      - "help me understand|meaning|purpose|logic"
+    examples:
+      - "explain this code to me"
+      - "what does this function do and why?"
+      - "walk me through this logic step by step"
+      - "I don't understand this code, can you help?"
+      - "describe what this class is responsible for and how it works"
+    pipeline:
+      - stage: investigate
+        agents: [agents/explore_code_explanation.md]
+
   business_flow_tracing:
     text_patterns:
       - "flow|process|trace|what happens"

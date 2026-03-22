@@ -1,0 +1,88 @@
+# Conductor ECS Deployment — Backend + Langfuse + Liquibase
+# ==========================================================
+# Connects to external AWS managed services:
+#   - RDS PostgreSQL (two databases: conductor + langfuse)
+#   - ElastiCache Redis
+#
+# Prerequisites:
+#   1. RDS instance with two databases created:
+#      ./scripts/init-cloud-db.sh --host <rds-host> --admin-user postgres ...
+#   2. ElastiCache Redis cluster running
+#   3. Fill in docker/ecs.env with credentials
+#
+# Usage:
+#   docker compose --env-file docker/ecs.env -f docker/docker-compose.ecs.yaml up -d
+#
+# Startup order:
+#   1. liquibase-init — runs schema migrations against RDS, then exits
+#   2. langfuse       — starts after liquibase-init (auto-creates its own tables)
+#   3. backend        — starts after liquibase-init succeeds
+
+services:
+  # ---------- Schema migration (runs once, then exits) ----------
+  liquibase-init:
+    image: liquibase/liquibase:4.29
+    volumes:
+      - ../database:/liquibase/changelog:ro
+    command: >
+      --defaults-file=/liquibase/changelog/liquibase.properties
+      update
+    environment:
+      POSTGRES_HOST: ${RDS_HOST}
+      POSTGRES_PORT: ${RDS_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-conductor}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
+  # ---------- Backend ----------
+  backend:
+    image: conductor/backend:latest
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      liquibase-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${RDS_HOST}:${RDS_PORT:-5432}/${POSTGRES_DB:-conductor}"
+      REDIS_URL: "redis://${ELASTICACHE_HOST}:${ELASTICACHE_PORT:-6379}/0"
+      BACKEND_HOST: "0.0.0.0"
+      BACKEND_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../config:/app/config:ro
+      - conductor-uploads:/app/uploads
+      - conductor-workspaces:/app/workspaces
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---------- Langfuse ----------
+  langfuse:
+    image: langfuse/langfuse:2
+    restart: unless-stopped
+    depends_on:
+      liquibase-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${RDS_HOST}:${RDS_PORT:-5432}/langfuse"
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:3001}
+      SALT: ${LANGFUSE_SALT}
+      TELEMETRY_ENABLED: "false"
+      HOSTNAME: "0.0.0.0"
+    ports:
+      - "3001:3000"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/public/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  conductor-uploads:
+  conductor-workspaces:

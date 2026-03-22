@@ -2,7 +2,6 @@
 
 This module provides:
     - GET /chat: Guest chat page (HTML)
-    - GET /invite: Unified invite page with Live Share button and chat
     - GET /chat/{room_id}/history: Paginated message history
     - WebSocket /ws/chat/{room_id}: Real-time chat messaging
 
@@ -95,46 +94,6 @@ async def guest_chat_page(
     # Role is validated above, so it's safe to use directly
     content = content.replace("{{ role }}", role)
     content = content.replace("{{ role | capitalize }}", role.capitalize())
-
-    return HTMLResponse(content=content)
-
-
-@router.get("/invite", response_class=HTMLResponse)
-async def invite_page(
-    roomId: str = Query(..., description="Room ID to join"),
-    liveShareUrl: str = Query(..., description="VS Code Live Share URL")
-) -> HTMLResponse:
-    """Serve the unified invite page with Live Share button and embedded chat.
-
-    This page is the main entry point for guests. It displays:
-    - Session info (room ID)
-    - "Join Live Share in VS Code" button
-    - Embedded chat iframe (2:1 layout ratio)
-
-    Args:
-        roomId: The room ID to join.
-        liveShareUrl: The VS Code Live Share URL (URL-encoded).
-
-    Returns:
-        HTMLResponse with the rendered invite page.
-
-    Example:
-        GET /invite?roomId=abc123&liveShareUrl=https%3A%2F%2Fprod.liveshare...
-    """
-    template_path = TEMPLATES_DIR / "invite.html"
-    template = template_path.read_text()
-
-    # Escape user inputs to prevent XSS attacks
-    safe_room_id = html.escape(roomId)
-    safe_live_share_url = html.escape(liveShareUrl)
-
-    # Simple template substitution (no Jinja2 dependency)
-    content = template.replace("{{ room_id }}", safe_room_id)
-    content = content.replace(
-        "{{ room_id[:8] }}",
-        safe_room_id[:8] if len(safe_room_id) >= 8 else safe_room_id
-    )
-    content = content.replace("{{ live_share_url }}", safe_live_share_url)
 
     return HTMLResponse(content=content)
 

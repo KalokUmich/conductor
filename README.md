@@ -141,8 +141,8 @@ Open the VS Code extension and start a session. Then ask questions like:
                                          │  └───────────────────────────────────┘  │
                                          │                                          │
                                          │  ┌───────────────────────────────────┐  │
-                                         │  │ DuckDB Storage                    │  │
-                                         │  │  audit_logs / todos / file meta   │  │
+                                         │  │ PostgreSQL (Liquibase-managed)    │  │
+                                         │  │  6 tables + Langfuse DB           │  │
                                          │  └───────────────────────────────────┘  │
                                          └──────────────────────────────────────────┘
 ```
@@ -158,6 +158,7 @@ Current prototype includes:
 - Isolated Git workspaces per room
 - Multi-provider AI support (Bedrock, Anthropic, OpenAI)
 - Langfuse self-hosted observability (nested execution trees, cost tracking)
+- Jira integration (OAuth 3LO, create/list issues from engineering decisions)
 - 1200+ automated tests
 
 ## Roadmap
@@ -166,10 +167,10 @@ Upcoming features:
 
 - AI decision distillation from discussions
 - Code change proposals with diff preview and review
-- Jira task generation from engineering decisions
-- Model B delegate authentication
+- Model B delegate authentication (no PAT required)
 - Enterprise access control and audit export
 - Persistent codebase memory (background file-summary indexer)
+- Teams and Slack integrations
 
 See [ROADMAP.md](ROADMAP.md) for full details.
 
@@ -179,7 +180,7 @@ See [ROADMAP.md](ROADMAP.md) for full details.
 cd backend
 pytest                                        # all tests (1200+)
 pytest tests/test_code_tools.py -v            # 24 code tools (98 tests)
-pytest tests/test_agent_loop.py -v            # agent loop + 3-layer prompt (39 tests)
+pytest tests/test_agent_loop.py -v            # agent loop + 3-layer prompt (47 tests)
 pytest tests/test_budget_controller.py -v     # token budget controller (20 tests)
 pytest tests/test_session_trace.py -v         # session trace (15 tests)
 pytest tests/test_evidence.py -v              # evidence evaluator (14 tests)
@@ -298,6 +299,7 @@ npm run compile
 - 每个房间独立的 Git 工作区
 - 多提供商 AI 支持（Bedrock、Anthropic、OpenAI）
 - Langfuse 自托管可观测性（嵌套执行树、成本追踪）
+- Jira 集成（OAuth 3LO，从工程决策创建/列出问题）
 - 1200+ 自动化测试
 
 ## Roadmap
@@ -306,10 +308,10 @@ npm run compile
 
 - 从讨论中 AI 提炼工程决策
 - 代码变更提案与 diff 预览审查
-- 从工程决策生成 Jira 任务
-- Model B 委托认证
+- Model B 委托认证（无需 PAT）
 - 企业级访问控制与审计导出
 - 持久化代码库记忆（后台文件摘要索引）
+- Teams 和 Slack 集成
 
 详见 [ROADMAP.md](ROADMAP.md)。
 

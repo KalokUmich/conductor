@@ -14,7 +14,6 @@ boto3
 sqlalchemy[asyncio]>=2.0
 asyncpg
 redis[hiredis]>=5.0
-alembic
 aiosqlite            # test only — async SQLite for unit tests
 fakeredis[aioredis]  # test only
 

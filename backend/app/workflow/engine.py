@@ -466,6 +466,7 @@ class WorkflowEngine:
         async for event in svc.run_stream(
             query=query,
             workspace_path=workspace_path,
+            code_context=context.get("code_context"),
         ):
             collected_events.append(event)
             if event.kind == "done":
@@ -654,6 +655,17 @@ class WorkflowEngine:
             if findings_parts:
                 parts.append("\n## Review Findings\n")
                 parts.append("\n\n---\n\n".join(findings_parts))
+
+        # Inject code snippet context if available
+        code_ctx = context.get("code_context")
+        if code_ctx and isinstance(code_ctx, dict):
+            lang = code_ctx.get("language", "")
+            parts.append(
+                f"\n## Code Under Discussion\n\n"
+                f"`{code_ctx['file_path']}` "
+                f"(lines {code_ctx.get('start_line', '?')}\u2013{code_ctx.get('end_line', '?')}):\n\n"
+                f"```{lang}\n{code_ctx['code']}\n```"
+            )
 
         # Inject diff_snippets if available
         diff_snippets = context.get("diff_snippets", "")

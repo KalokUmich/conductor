@@ -4,7 +4,6 @@
  * This module manages the collaboration session lifecycle, including:
  * - Room ID generation and persistence
  * - Host/User identification
- * - Live Share URL storage
  * - Session state across VS Code reloads
  *
  * The session is persisted using VS Code's globalState API, which stores
@@ -32,8 +31,6 @@ export interface SessionState {
     createdAt: number;
     /** Backend server URL for API calls. */
     backendUrl: string;
-    /** Live Share URL for joining the session (optional). */
-    liveShareUrl?: string;
 }
 
 /**
@@ -42,7 +39,6 @@ export interface SessionState {
  * Responsibilities:
  * - Generate and persist roomId using VS Code globalState
  * - Track host/user identification
- * - Store Live Share URL for invite generation
  * - Provide session state to WebView
  *
  * Usage:
@@ -65,8 +61,6 @@ export class SessionService {
     private _userId: string | null = null;
     /** Session creation timestamp (Unix ms). */
     private _createdAt: number | null = null;
-    /** Live Share URL (set when host starts session). */
-    private _liveShareUrl: string | null = null;
     /** Cached ngrok URL (detected at startup). */
     private _ngrokUrl: string | null = null;
 
@@ -75,8 +69,6 @@ export class SessionService {
     private static readonly HOST_ID_KEY = 'aiCollab.hostId';
     private static readonly USER_ID_KEY = 'aiCollab.userId';
     private static readonly CREATED_AT_KEY = 'aiCollab.createdAt';
-    private static readonly LIVE_SHARE_URL_KEY = 'aiCollab.liveShareUrl';
-
     /** Private constructor for singleton pattern. */
     private constructor() {}
 
@@ -278,23 +270,6 @@ export class SessionService {
     }
 
     /**
-     * Set the Live Share URL for this session.
-     */
-    public setLiveShareUrl(url: string): void {
-        this._liveShareUrl = url;
-        if (this._context) {
-            this._context.globalState.update(SessionService.LIVE_SHARE_URL_KEY, url);
-        }
-    }
-
-    /**
-     * Get the Live Share URL for this session.
-     */
-    public getLiveShareUrl(): string | null {
-        return this._liveShareUrl;
-    }
-
-    /**
      * Get session state to pass to the WebView.
      * This returns a serializable object that can be sent to the frontend.
      */
@@ -305,21 +280,16 @@ export class SessionService {
             userId: this.getUserId(),
             createdAt: this.getCreatedAt(),
             backendUrl: this.getBackendUrl(),
-            liveShareUrl: this._liveShareUrl || undefined
         };
     }
 
     /**
      * Generate the invite URL for guests.
      */
-    public getInviteUrl(): string | null {
-        if (!this._liveShareUrl) {
-            return null;
-        }
+    public getInviteUrl(): string {
         const backendUrl = this.getBackendUrl();
         const roomId = this.getRoomId();
-        const encodedLiveShareUrl = encodeURIComponent(this._liveShareUrl);
-        return `${backendUrl}/invite?roomId=${roomId}&liveShareUrl=${encodedLiveShareUrl}`;
+        return `${backendUrl}/chat?roomId=${roomId}`;
     }
 
     /**
@@ -332,18 +302,16 @@ export class SessionService {
     /**
      * Configure this session as a guest joining an existing room.
      *
-     * Overwrites roomId and Live Share URL with values from the invite.
+     * Overwrites roomId with value from the invite.
      * The backendUrl is stored as the ngrok URL override so that
      * {@link getBackendUrl} returns the invite origin.
      *
-     * @param roomId       - Room ID from the invite link.
-     * @param backendUrl   - Backend origin from the invite link.
-     * @param liveShareUrl - Live Share URL from the invite link (optional).
+     * @param roomId     - Room ID from the invite link.
+     * @param backendUrl - Backend origin from the invite link.
      */
     public joinAsGuest(
         roomId: string,
         backendUrl: string,
-        liveShareUrl?: string,
     ): void {
         if (!this._context) {
             throw new Error('SessionService not initialized. Call initialize() first.');
@@ -351,13 +319,9 @@ export class SessionService {
 
         this._roomId = roomId;
         this._ngrokUrl = backendUrl; // so getBackendUrl() returns the invite origin
-        this._liveShareUrl = liveShareUrl ?? null;
 
         // Persist to globalState
         this._context.globalState.update(SessionService.ROOM_ID_KEY, this._roomId);
-        if (liveShareUrl) {
-            this._context.globalState.update(SessionService.LIVE_SHARE_URL_KEY, liveShareUrl);
-        }
 
         console.log(
             `[SessionService] Joined as guest: roomId=${roomId}, backendUrl=${backendUrl}`,
@@ -378,14 +342,12 @@ export class SessionService {
         this._hostId = vscode.env.machineId;
         this._userId = randomUUID();
         this._createdAt = Date.now();
-        this._liveShareUrl = null;
 
         // Persist to globalState
         this._context.globalState.update(SessionService.ROOM_ID_KEY, this._roomId);
         this._context.globalState.update(SessionService.HOST_ID_KEY, this._hostId);
         this._context.globalState.update(SessionService.USER_ID_KEY, this._userId);
         this._context.globalState.update(SessionService.CREATED_AT_KEY, this._createdAt);
-        this._context.globalState.update(SessionService.LIVE_SHARE_URL_KEY, null);
 
         console.log(`[SessionService] Reset session: new roomId=${this._roomId}`);
     }

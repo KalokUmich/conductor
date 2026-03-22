@@ -1,7 +1,7 @@
 # Conductor Project Makefile
 # ===========================
 
-.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help langfuse-up langfuse-down langfuse-logs data-up data-down data-logs app-up app-down app-restart app-logs docker-up docker-down docker-clean db-migrate db-revision update-prompt-library test-parity update-contracts
+.PHONY: all setup setup-backend setup-extension venv ensure-backend-deps install run-backend run-backend-prod run-backend-port test test-backend test-extension integration-test compile compile-ts compile-css package clean help langfuse-up langfuse-down langfuse-logs data-up data-down data-logs app-up app-down app-restart app-logs docker-up docker-down docker-clean db-update db-status db-rollback-one update-prompt-library test-parity update-contracts
 
 # Python virtual environment
 VENV_DIR := .venv
@@ -10,7 +10,12 @@ PYTHON := $(CURDIR)/$(VENV_DIR)/bin/python
 PIP := $(CURDIR)/$(VENV_DIR)/bin/pip
 PYTEST := $(CURDIR)/$(VENV_DIR)/bin/pytest
 UVICORN := $(PYTHON) -m uvicorn
-ALEMBIC := cd backend && $(PYTHON) -m alembic
+LIQUIBASE_IMAGE := liquibase/liquibase:4.29
+LIQUIBASE := docker run --rm --network conductor-net \
+	-v $(CURDIR)/database:/liquibase/changelog \
+	-e POSTGRES_HOST=conductor-postgres \
+	$(LIQUIBASE_IMAGE) \
+	--defaults-file=/liquibase/changelog/liquibase.properties
 
 # Docker compose files
 DATA_COMPOSE := docker/docker-compose.data.yaml
@@ -266,10 +271,11 @@ app-logs:
 # Full Stack Docker
 # ===========================
 
-## Start full stack (update prompt library, data tier, then app tier)
+## Start full stack (update prompt library, data tier, schema, then app tier)
 docker-up: update-prompt-library data-up
 	@echo "Waiting for data tier to be healthy..."
 	@sleep 3
+	@$(MAKE) db-update
 	@$(MAKE) app-up
 	@echo "Full stack started!"
 
@@ -285,20 +291,25 @@ docker-clean: docker-down
 	@echo "Docker clean complete."
 
 # ===========================
-# Database Migrations
+# Database Schema (Liquibase)
 # ===========================
 
-## Run Alembic migrations (upgrade to head)
-db-migrate: ensure-backend-deps
-	@echo "Running database migrations..."
-	$(ALEMBIC) upgrade head
-	@echo "Migrations complete."
+## Apply pending Liquibase changesets
+db-update:
+	@echo "Running Liquibase update..."
+	$(LIQUIBASE) update
+	@echo "Schema update complete."
 
-## Generate new Alembic migration (auto-detect changes)
-db-revision: ensure-backend-deps
-	@echo "Generating new migration..."
-	$(ALEMBIC) revision --autogenerate -m "$(MSG)"
-	@echo "Migration generated. Review it before running db-migrate."
+## Show pending changesets (dry run)
+db-status:
+	@echo "Checking pending changesets..."
+	$(LIQUIBASE) status --verbose
+
+## Rollback last changeset
+db-rollback-one:
+	@echo "Rolling back last changeset..."
+	$(LIQUIBASE) rollback-count 1
+	@echo "Rollback complete."
 
 # ===========================
 # Langfuse (Observability)
@@ -356,9 +367,10 @@ help:
 	@echo "  make docker-down      - Stop everything"
 	@echo "  make docker-clean     - Stop everything + remove conductor images"
 	@echo ""
-	@echo "Database Migrations:"
-	@echo "  make db-migrate             - Run Alembic migrations"
-	@echo "  make db-revision MSG='...'  - Generate new migration"
+	@echo "Database Schema (Liquibase):"
+	@echo "  make db-update        - Apply pending Liquibase changesets"
+	@echo "  make db-status        - Show pending changesets (dry run)"
+	@echo "  make db-rollback-one  - Rollback last changeset"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test             - Run all tests (unit only)"

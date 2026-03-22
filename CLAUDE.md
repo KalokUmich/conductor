@@ -13,6 +13,8 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. Two main 
 ### Quick Start
 ```bash
 make setup          # create venv + install all dependencies
+make data-up        # start Postgres + Redis (Docker)
+make db-update      # apply Liquibase schema migrations
 make run-backend    # start backend (dev mode, auto-reload)
 make test           # run all tests (backend + extension)
 make package        # compile and package extension as .vsix
@@ -71,6 +73,7 @@ backend/app/
 │   ├── trace.py             # SessionTrace — per-session JSON trace
 │   ├── query_classifier.py  # QueryClassifier — keyword + optional LLM classification
 │   ├── evidence.py          # EvidenceEvaluator — rule-based answer quality check
+│   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
 │   ├── prompts.py           # 3-layer system prompt (Identity + Strategy + Runtime)
 │   └── router.py            # POST /api/context/query
 ├── workflow/                # Config-driven workflow engine
@@ -104,20 +107,25 @@ backend/app/
 │   ├── openai_provider.py   # OpenAI Chat Completions
 │   └── resolver.py          # ProviderResolver — health checks, selection
 ├── repo_graph/              # AST-based symbol extraction + dependency graph
-└── git_workspace/           # Git workspace management (Model A)
+├── git_workspace/           # Git workspace management (Model A)
+└── integrations/            # External service integrations
+    └── jira/                # Jira OAuth 3LO + REST API
+        ├── service.py       # JiraOAuthService — OAuth token lifecycle + API calls
+        ├── models.py        # JiraTokenPair, JiraProject, JiraIssue, CreateIssueRequest
+        └── router.py        # /api/integrations/jira/* endpoints
 
 config/
 ├── conductor.settings.yaml  # Non-sensitive settings (committed)
 ├── conductor.secrets.yaml   # Secrets (gitignored)
 ├── workflows/               # pr_review.yaml (parallel_all_matching), code_explorer.yaml (first_match)
-├── agents/                  # 17 agent .md files (YAML frontmatter + Markdown body)
+├── agents/                  # 18 agent .md files (YAML frontmatter + Markdown body)
 ├── prompts/                 # review_base.md, explorer_base.md (shared templates)
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 
 tests/
 ├── conftest.py              # Centralized stubs (cocoindex, litellm, etc.)
 ├── test_code_tools.py       # 98 tests — 24 tools + dispatcher + multi-language
-├── test_agent_loop.py       # 39 tests — agent loop + 3-layer prompt
+├── test_agent_loop.py       # 47 tests — agent loop + 3-layer prompt + completeness
 ├── test_query_classifier.py # 26 tests
 ├── test_compressed_tools.py # 24 tests
 ├── test_budget_controller.py # 20 tests
@@ -137,16 +145,22 @@ extension/src/
 ├── extension.ts             # Entry point, command registration, _handleLocalToolRequest
 ├── panels/                  # collabPanel.ts, workspacePanel.ts
 ├── services/
-│   ├── conductorStateMachine.ts   # FSM: Idle → ReadyToHost → Hosting → Joined
-│   ├── conductorController.ts     # FSM driver
-│   ├── workflowPanel.ts           # Workflow visualization WebView (singleton)
-│   ├── workspaceClient.ts         # /workspace/ HTTP client
-│   ├── workspaceIndexer.ts        # AST symbol extraction
+│   ├── conductorStateMachine.ts        # FSM: Idle → ReadyToHost → Hosting → Joined
+│   ├── conductorController.ts          # FSM driver
+│   ├── workflowPanel.ts                # Workflow visualization WebView (singleton)
+│   ├── workspaceClient.ts              # /workspace/ HTTP client
+│   ├── workspaceIndexer.ts             # AST symbol extraction
 │   ├── conductorFileSystemProvider.ts  # conductor:// URI scheme
-│   ├── localToolDispatcher.ts     # Three-tier tool dispatch (all native TS)
-│   ├── astToolRunner.ts           # 6 AST tools via web-tree-sitter
-│   ├── treeSitterService.ts       # web-tree-sitter WASM wrapper (8 languages)
-│   └── complexToolRunner.ts       # 6 complex tools (compressed_view, trace_variable, etc.)
+│   ├── explainWithContextPipeline.ts   # 8-stage code explanation pipeline
+│   │                                   # (Selection → LSP → Ranking → Plan → Execute → XML → LLM → Response)
+│   ├── lspResolver.ts                  # VS Code LSP definition + references
+│   ├── relevanceRanker.ts              # Hybrid structural + semantic relevance scoring
+│   ├── contextPlanGenerator.ts         # Deduplicated read-file operation planner
+│   ├── xmlPromptAssembler.ts           # Structured XML prompt builder for LLM
+│   ├── localToolDispatcher.ts          # Three-tier tool dispatch (all native TS)
+│   ├── astToolRunner.ts                # 6 AST tools via web-tree-sitter
+│   ├── treeSitterService.ts            # web-tree-sitter WASM wrapper (8 languages)
+│   └── complexToolRunner.ts            # 6 complex tools (compressed_view, trace_variable, etc.)
 └── commands/index.ts
 
 extension/media/
@@ -186,6 +200,8 @@ Query → QueryClassifier (keyword or LLM) → 3-layer system prompt
     → LLM picks tools (8-12 of 24, dynamic per query type)
     → Tool execution (up to 25 iterations / 500K tokens)
     → BudgetController: NORMAL → WARN_CONVERGE (70%) → FORCE_CONCLUDE (90%)
+    → EvidenceEvaluator: requires file:line refs + ≥2 tool calls + ≥1 file accessed
+    → CompletenessCheck: verifies all query aspects addressed before finalizing
   → AgentResult (answer + context_chunks + budget_summary)
 ```
 
@@ -313,6 +329,21 @@ BACKEND_PORT=8000
 GIT_WORKSPACE_ROOT=/tmp/conductor_workspaces
 ANTHROPIC_API_KEY=sk-ant-...     # or AWS_* for Bedrock, OPENAI_API_KEY for OpenAI
 ```
+
+### Database Schema
+
+Schema is managed by **Liquibase** (`database/changelog/`). The backend does NOT auto-create tables.
+
+```bash
+make data-up        # start Postgres + Redis
+make db-update      # apply pending changesets
+make db-status      # show pending changesets (dry run)
+make db-rollback-one  # rollback last changeset
+```
+
+- `docker/init-db.sql` creates the `langfuse` database on first Docker start
+- Langfuse manages its own tables internally (Prisma migrations)
+- New changelog files go in `database/changelog/changes/` (formatted SQL)
 
 ## Eval System
 

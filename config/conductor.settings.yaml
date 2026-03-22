@@ -88,14 +88,6 @@ rooms:
   enable_persistence: true
 
 # =============================================================================
-# Live Share (legacy — disabled, replaced by git_workspace)
-# =============================================================================
-live_share:
-  enabled: false
-  vscode_extension_id: "ms-vsliveshare.vsliveshare"
-  host_timeout_seconds: 300
-
-# =============================================================================
 # AWS SSO Configuration
 # =============================================================================
 sso:

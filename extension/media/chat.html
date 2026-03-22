@@ -2737,6 +2737,12 @@
                 hint: 'main...feature/branch-name',
                 transform: (args) => `do PR ${args}`,
             },
+            {
+                name: '/jira',
+                description: 'Create or search Jira tickets',
+                hint: 'create Fix login bug | search auth issues',
+                transform: null,  // handled specially below
+            },
         ];
         const slashMenu = document.getElementById('slash-command-menu');
         let slashMenuVisible = false;
@@ -3725,6 +3731,9 @@
                 case 'jiraError':
                     showJiraResult(false, message.error || 'Unknown error');
                     if (jiraCreateBtn) { jiraCreateBtn.disabled = false; jiraCreateBtn.textContent = 'Create Ticket'; }
+                    break;
+                case 'jiraSearchResults':
+                    renderJiraSearchResults(message.results, message.query);
                     break;
 
                 // ---- Stack trace ----
@@ -6542,8 +6551,25 @@
                 if (cmdMatch) {
                     const cmdName = '/' + cmdMatch[1].toLowerCase();
                     const cmdArgs = cmdMatch[2].trim();
+
+                    // /jira is handled specially — does not go through AI agent
+                    if (cmdName === '/jira') {
+                        const subMatch = cmdArgs.match(/^(create|search)\s*(.*)/i);
+                        if (subMatch && subMatch[1].toLowerCase() === 'search' && subMatch[2].trim()) {
+                            vscode.postMessage({ command: 'jiraSearch', query: subMatch[2].trim() });
+                        } else {
+                            // Open Jira modal, optionally pre-fill summary
+                            if (typeof showJiraModal === 'function') showJiraModal();
+                            const summaryInput = document.getElementById('jira-summary');
+                            if (summaryInput && subMatch && subMatch[1].toLowerCase() === 'create' && subMatch[2].trim()) {
+                                summaryInput.value = subMatch[2].trim();
+                            }
+                        }
+                        return;
+                    }
+
                     const cmd = SLASH_COMMANDS.find(c => c.name === cmdName);
-                    if (cmd) {
+                    if (cmd && cmd.transform) {
                         query = cmd.transform(cmdArgs);
                     }
                     // Unknown /commands pass through as-is
@@ -9613,6 +9639,28 @@
             jiraResult.style.color = '';
             jiraResult.classList.add(success ? 'jira-result-success' : 'jira-result-error');
             jiraResult.innerHTML = message;
+        }
+
+        function renderJiraSearchResults(results, query) {
+            if (!results || results.length === 0) {
+                appendSystemMessage('No Jira issues found for "' + query + '"');
+                return;
+            }
+            let html = '<div style="margin:0.5rem 0;font-size:0.85rem;color:#9ca3af;">Found ' + results.length + ' issue(s) for "' + query + '":</div>';
+            html += '<div style="display:flex;flex-direction:column;gap:4px;margin-bottom:0.5rem;">';
+            for (const issue of results) {
+                const statusColor = issue.status === 'Done' ? '#22c55e' : issue.status === 'In Progress' ? '#3b82f6' : '#9ca3af';
+                html += '<div style="background:rgba(30,41,59,0.6);border:1px solid rgba(71,85,105,0.4);border-radius:6px;padding:6px 10px;font-size:0.82rem;">'
+                    + '<span style="color:#8b5cf6;font-weight:600;cursor:pointer;" onclick="event.preventDefault();vscode.postMessage({command:\'openExternal\',url:\'' + issue.browse_url + '\'})">' + issue.key + '</span>'
+                    + ' <span style="color:#e2e8f0;">' + issue.summary + '</span>'
+                    + '<div style="margin-top:2px;font-size:0.75rem;">'
+                    + '<span style="color:' + statusColor + ';">' + issue.status + '</span>'
+                    + (issue.priority ? ' &middot; ' + issue.priority : '')
+                    + (issue.assignee ? ' &middot; ' + issue.assignee : '')
+                    + '</div></div>';
+            }
+            html += '</div>';
+            appendSystemMessage(html);
         }
 
         function populateSelect(selectId, options, labelFn, valueFn) {

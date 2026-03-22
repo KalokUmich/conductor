@@ -225,9 +225,12 @@ class ClassifierEngine:
                 best_route = route_name
 
         # Default to a lightweight single-agent route when nothing matches.
-        # Prefer 'architecture_question' (general-purpose), else first non-multi-agent route.
+        # When the user is asking about a specific code snippet, prefer
+        # 'code_explanation'; otherwise fall back to 'architecture_question'.
         if best_route is None and self._routes:
-            if "architecture_question" in self._routes:
+            if signals.get("code_context") and "code_explanation" in self._routes:
+                best_route = "code_explanation"
+            elif "architecture_question" in self._routes:
                 best_route = "architecture_question"
             else:
                 best_route = next(iter(self._routes))

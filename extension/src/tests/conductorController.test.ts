@@ -310,7 +310,7 @@ describe('ConductorController', () => {
 
     describe('startJoining()', () => {
         const INVITE_URL =
-            'https://example.ngrok.dev/invite?roomId=abc-123&liveShareUrl=https%3A%2F%2Fprod.liveshare.vsengsaas.visualstudio.com%2Fjoin%3FABC123';
+            'https://example.ngrok.dev/invite?roomId=abc-123';
 
         async function readyController(): Promise<ConductorController> {
             const ctrl = new ConductorController(fsm, healthyCheck, urlProvider);
@@ -325,25 +325,11 @@ describe('ConductorController', () => {
             assert.equal(ctrl.getState(), S.Joining);
         });
 
-        it('returns parsed invite with roomId, backendUrl, liveShareUrl', async () => {
+        it('returns parsed invite with roomId and backendUrl', async () => {
             const ctrl = await readyController();
             const parsed = ctrl.startJoining(INVITE_URL);
             assert.equal(parsed.roomId, 'abc-123');
             assert.equal(parsed.backendUrl, 'https://example.ngrok.dev');
-            assert.equal(
-                parsed.liveShareUrl,
-                'https://prod.liveshare.vsengsaas.visualstudio.com/join?ABC123',
-            );
-        });
-
-        it('works without liveShareUrl param', async () => {
-            const ctrl = await readyController();
-            const parsed = ctrl.startJoining(
-                'http://localhost:8000/invite?roomId=room-xyz',
-            );
-            assert.equal(parsed.roomId, 'room-xyz');
-            assert.equal(parsed.backendUrl, 'http://localhost:8000');
-            assert.equal(parsed.liveShareUrl, undefined);
         });
 
         it('throws for invalid URL', async () => {
@@ -404,10 +390,6 @@ describe('ConductorController', () => {
             const parsed = ctrl.startJoining(INVITE_URL);
             assert.equal(parsed.roomId, 'abc-123');
             assert.equal(parsed.backendUrl, 'https://example.ngrok.dev');
-            assert.equal(
-                parsed.liveShareUrl,
-                'https://prod.liveshare.vsengsaas.visualstudio.com/join?ABC123',
-            );
         });
 
         it('can complete full join flow from BackendDisconnected', async () => {

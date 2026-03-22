@@ -1,5 +1,6 @@
 {
   "name": "ai-collab",
+  "publisher": "conductor",
   "displayName": "AI Collab",
   "description": "AI collaboration extension for VS Code",
   "version": "0.0.1",
@@ -18,7 +19,8 @@
   ],
   "activationEvents": [
     "onView:aiCollabView",
-    "onFileSystem:conductor"
+    "onFileSystem:conductor",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -59,6 +61,14 @@
         "title": "Conductor: View Agent Workflows"
       },
       {
+        "command": "conductor.jiraConnect",
+        "title": "Conductor: Connect to Jira"
+      },
+      {
+        "command": "conductor.jiraDisconnect",
+        "title": "Conductor: Disconnect Jira"
+      },
+      {
         "command": "conductor.compareTools",
         "title": "Conductor: Compare Local Tools (LSP vs grep vs tree-sitter)"
       }
@@ -79,11 +89,6 @@
           "type": "string",
           "default": "http://localhost:8000",
           "description": "Backend server URL. Use ngrok URL for remote access."
-        },
-        "aiCollab.autoStartLiveShare": {
-          "type": "boolean",
-          "default": true,
-          "description": "Automatically start Live Share when opening the panel as lead."
         }
       }
     }
@@ -113,7 +118,6 @@
     "better-sqlite3": "^11.7.0",
     "js-tiktoken": "^1.0.12",
     "typescript": "^5.3.3",
-    "vsls": "^1.0.4753",
     "web-tree-sitter": "0.26.7"
   }
 }

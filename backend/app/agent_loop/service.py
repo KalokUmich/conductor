@@ -153,18 +153,20 @@ class AgentLoopService:
         self,
         query: str,
         workspace_path: str,
+        code_context: Optional[Dict[str, Any]] = None,
     ) -> AgentResult:
         """Execute the agent loop (non-streaming).
 
         Args:
             query:          Natural language question about the codebase.
             workspace_path: Absolute path to the workspace root.
+            code_context:   Optional code snippet dict for snippet-based queries.
 
         Returns:
             AgentResult with the answer and collected context.
         """
         result = AgentResult()
-        async for event in self.run_stream(query, workspace_path):
+        async for event in self.run_stream(query, workspace_path, code_context=code_context):
             if event.kind == "context_chunk":
                 result.context_chunks.append(ContextChunk(**event.data))
             elif event.kind in ("done", "error"):
@@ -196,11 +198,18 @@ class AgentLoopService:
         self,
         query: str,
         workspace_path: str,
+        code_context: Optional[Dict[str, Any]] = None,
     ) -> AsyncGenerator[AgentEvent, None]:
         """Execute the agent loop, yielding events for SSE streaming.
 
         Yields ``AgentEvent`` instances as the loop progresses so callers
         can forward them to clients via Server-Sent Events.
+
+        Parameters
+        ----------
+        code_context:
+            Optional code snippet dict (code, file_path, language, start_line, end_line).
+            When present, injected prominently into the system prompt.
         """
         start = time.monotonic()
 
@@ -315,6 +324,7 @@ class AgentLoopService:
             max_iterations=self._max_iterations,
             query_type=classification.query_type,
             risk_context=risk_context,
+            code_context=code_context,
         )
 
         # Dynamic tool set — only expose tools relevant to the query type

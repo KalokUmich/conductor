@@ -13,7 +13,7 @@
  *   4. Context plan – deduplicated read-file operations
  *   5. Execute plan – read file slices via VS Code workspace API
  *   6. XML prompt   – assemble all snippets into a structured XML string
- *   7. LLM call     – POST /api/context/explain-rich (agentic: backend explores codebase with tools)
+ *   7. LLM call     – POST /api/context/query/stream (agentic: backend explores codebase with tools)
  *   8. Response     – return explanation to the caller for rendering
  *
  * Graceful degradation
@@ -1039,7 +1039,7 @@ function _buildXmlInput(
 }
 
 /**
- * POST the code snippet to the backend `/api/context/explain-rich` endpoint.
+ * POST the code snippet to the backend `/api/context/query/stream` endpoint.
  *
  * The backend runs an agentic loop (AgentLoopService) that iteratively calls
  * code-intelligence tools — read_file, find_symbol, find_references, grep,
@@ -1092,18 +1092,21 @@ async function _callLlm(
     input:      PipelineInput,
 ): Promise<{ explanation: string; model: string; structured?: Record<string, string>; thinking_steps: ThinkingStep[] }> {
     const progress = input.onProgress;
+    const defaultQuestion = `Explain this ${input.language || 'code'} code: what it does, its inputs and outputs, and any key dependencies or side-effects.`;
     const requestBody = JSON.stringify({
         room_id:    input.workspaceId ?? '',
-        code:       input.code,
-        file_path:  input.relativePath,
-        language:   input.language,
-        start_line: input.startLine,
-        end_line:   input.endLine,
-        question:   input.question ?? null,
+        query:      input.question || defaultQuestion,
+        code_context: {
+            code:       input.code,
+            file_path:  input.relativePath,
+            language:   input.language,
+            start_line: input.startLine,
+            end_line:   input.endLine,
+        },
     });
 
     // --- Try SSE streaming endpoint first ---
-    const streamUrl = `${input.backendUrl}/api/context/explain-rich/stream`;
+    const streamUrl = `${input.backendUrl}/api/context/query/stream`;
     console.log(`${LOG} [LLM] POST ${streamUrl} — SSE agentic explain (room=${input.workspaceId ?? 'none'})`);
 
     try {
@@ -1194,7 +1197,7 @@ async function _callLlm(
         console.log(`${LOG} [LLM] SSE stream unavailable, falling back to non-streaming:`, streamErr);
         progress?.({ phase: 'agent', message: 'Waiting for AI response...' });
 
-        const url = `${input.backendUrl}/api/context/explain-rich`;
+        const url = `${input.backendUrl}/api/context/query`;
         const response = await fetch(url, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1203,20 +1206,17 @@ async function _callLlm(
 
         if (!response.ok) {
             const body = await response.text().catch(() => '');
-            throw new Error(`/api/context/explain-rich returned HTTP ${response.status}: ${body}`);
+            throw new Error(`/api/context/query returned HTTP ${response.status}: ${body}`);
         }
 
         const data = (await response.json()) as {
-            explanation: string;
-            model: string;
-            structured?: Record<string, string> | null;
+            answer: string;
             thinking_steps?: ThinkingStep[];
         };
 
         return {
-            explanation:    data.explanation,
-            model:          data.model,
-            structured:     data.structured ?? undefined,
+            explanation:    data.answer,
+            model:          'ai',
             thinking_steps: data.thinking_steps || [],
         };
     }

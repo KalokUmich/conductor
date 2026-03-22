@@ -177,7 +177,6 @@ class TestAppSettings:
         assert cfg.database is not None
         assert cfg.auth is not None
         assert cfg.rooms is not None
-        assert cfg.live_share is not None
         assert cfg.git_workspace is not None
         assert cfg.code_search is not None
         assert cfg.secrets is not None

@@ -74,9 +74,8 @@ async def init_db(
     )
     _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
 
-    # Create tables if they don't exist (safe for dev; production uses Alembic)
-    async with _engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Schema is managed by Liquibase (database/changelog/).
+    # Run `make db-update` before starting the backend.
 
     logger.info("Database initialised successfully")
     return _engine

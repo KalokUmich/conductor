@@ -35,7 +35,6 @@ export type HealthCheckFn = (url: string) => Promise<boolean>;
 export interface ParsedInvite {
     roomId: string;
     backendUrl: string;
-    liveShareUrl: string | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,14 +195,12 @@ export class ConductorController {
             throw new Error(`Invite URL is missing the 'roomId' query parameter: "${inviteUrl}"`);
         }
 
-        const backendUrl      = parsed.origin;
-        const liveShareRaw    = parsed.searchParams.get('liveShareUrl');
-        const liveShareUrl    = liveShareRaw ? decodeURIComponent(liveShareRaw) : undefined;
+        const backendUrl = parsed.origin;
 
         // URL is valid — now drive the FSM.
         this._fsm.transition(ConductorEvent.JOIN_SESSION);
 
-        return { roomId, backendUrl, liveShareUrl };
+        return { roomId, backendUrl };
     }
 
     /**

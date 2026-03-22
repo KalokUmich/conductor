@@ -154,13 +154,6 @@ class RoomSettings(BaseModel):
     enable_persistence:     bool = True
 
 
-class LiveShareSettings(BaseModel):
-    """Kept for backwards compatibility; disabled by default in new deployments."""
-    enabled:              bool = False
-    vscode_extension_id:  str  = "ms-vsliveshare.vsliveshare"
-    host_timeout_seconds: int  = 300
-
-
 class GitWorkspaceSettings(BaseModel):
     """Configuration for the Git Workspace module."""
     enabled:                bool                    = True
@@ -212,7 +205,6 @@ class AppSettings(BaseModel):
     redis:          RedisSettings        = Field(default_factory=RedisSettings)
     auth:           AuthSettings         = Field(default_factory=AuthSettings)
     rooms:          RoomSettings         = Field(default_factory=RoomSettings)
-    live_share:     LiveShareSettings    = Field(default_factory=LiveShareSettings)
     git_workspace:  GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
     code_search:    CodeSearchSettings   = Field(default_factory=CodeSearchSettings)
     trace:          TraceSettings        = Field(default_factory=TraceSettings)

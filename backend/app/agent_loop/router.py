@@ -1,8 +1,8 @@
-"""Agent loop router — replaces the old hybrid retrieval context endpoint.
+"""Agent loop router — agentic code intelligence endpoint.
 
 Provides:
   POST /api/context/query        — run an agent loop to answer a code question
-  POST /api/context/explain-rich — agentic code explanation (replaces XML-prompt pipeline)
+                                   (supports optional code_context for snippet-based queries)
 """
 from __future__ import annotations
 
@@ -48,13 +48,27 @@ def _get_code_explorer_workflow():
 # ---------------------------------------------------------------------------
 
 
+class CodeContext(BaseModel):
+    """Optional code snippet context anchoring the user's question."""
+    code: str = Field(..., description="Selected code snippet.")
+    file_path: str = Field(..., description="Workspace-relative path of the file.")
+    language: str = Field(default="", description="VS Code language ID, e.g. 'typescript'.")
+    start_line: int = Field(default=0, description="1-based start line of the selection.")
+    end_line: int = Field(default=0, description="1-based end line of the selection.")
+
+
 class ContextQueryRequest(BaseModel):
     room_id: str
-    query: str = Field(..., description="Natural-language question about the codebase.")
+    query: str = Field(default="", description="Natural-language question about the codebase.")
     max_iterations: int = Field(default=40, ge=1, le=80)
     model_id: Optional[str] = Field(
         default=None,
         description="Override model for this request. Uses default if null.",
+    )
+    code_context: Optional[CodeContext] = Field(
+        default=None,
+        description="Optional code snippet the user is asking about. "
+                    "Injected prominently into the agent's system prompt.",
     )
 
 
@@ -86,31 +100,6 @@ class ContextQueryResponse(BaseModel):
     iterations: int
     duration_ms: float
     error: Optional[str] = None
-
-
-class ExplainRichRequest(BaseModel):
-    """Request for the agentic code-explanation endpoint."""
-    room_id: str = Field(..., description="Room / workspace ID (maps to a git worktree).")
-    code: str = Field(..., description="Selected code snippet to explain.")
-    file_path: str = Field(..., description="Workspace-relative path of the file.")
-    language: str = Field(default="", description="VS Code language ID, e.g. 'typescript'.")
-    start_line: int = Field(default=0, description="1-based start line of the selection.")
-    end_line: int = Field(default=0, description="1-based end line of the selection.")
-    question: Optional[str] = Field(
-        default=None,
-        description="Optional specific question. Defaults to a general explanation request.",
-    )
-
-
-class ExplainRichResponse(BaseModel):
-    """Response from the agentic code-explanation endpoint."""
-    explanation: str
-    model: str
-    structured: Optional[Dict[str, str]] = None
-    thinking_steps: List[ThinkingStepResponse] = []
-    tool_calls_made: int = 0
-    iterations: int = 0
-    duration_ms: float = 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +215,19 @@ def _get_explorer_provider():
 # ---------------------------------------------------------------------------
 
 
+def _ensure_query(req: ContextQueryRequest) -> str:
+    """Return the query text, generating a default if code_context is present but query is empty."""
+    if req.query and req.query.strip():
+        return req.query
+    if req.code_context:
+        lang = req.code_context.language or "code"
+        return (
+            f"Explain this {lang} code: what it does, its inputs and outputs, "
+            "and any key dependencies or side-effects."
+        )
+    return req.query
+
+
 @router.post("/query", response_model=ContextQueryResponse)
 async def context_query(
     req: ContextQueryRequest,
@@ -235,7 +237,12 @@ async def context_query(
     classifier_provider=Depends(_get_classifier_provider),
     explorer_provider=Depends(_get_explorer_provider),
 ) -> ContextQueryResponse:
-    """Run an agent loop to find relevant code context and answer a question."""
+    """Run an agent loop to find relevant code context and answer a question.
+
+    When ``code_context`` is provided, the selected code snippet is injected
+    prominently into the agent's system prompt so it can use it as a starting
+    point for exploration.
+    """
     if agent_provider is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -261,6 +268,10 @@ async def context_query(
     if is_local:
         await _ensure_repo_graph(req.room_id, str(worktree_path), executor)
 
+    # Ensure query text (generate default when code_context is present but query is empty)
+    query = _ensure_query(req)
+    code_ctx = req.code_context.model_dump() if req.code_context else None
+
     # Execute the full workflow pipeline (parallel agents, synthesis, etc.)
     workflow = _get_code_explorer_workflow()
     if workflow:
@@ -272,11 +283,13 @@ async def context_query(
             tool_executor=executor,
             classifier_provider=classifier_provider,
         )
-        wf_context = {
-            "query_text": req.query,
-            "query": req.query,
+        wf_context: Dict[str, Any] = {
+            "query_text": query,
+            "query": query,
             "workspace_path": str(worktree_path),
         }
+        if code_ctx:
+            wf_context["code_context"] = code_ctx
         wf_result = await engine.run(workflow, wf_context)
         answer, chunks_raw, total_tool_calls, total_iters, total_ms = _extract_workflow_result(wf_result)
     else:
@@ -290,8 +303,9 @@ async def context_query(
             tool_executor=executor,
         )
         result: AgentResult = await agent.run(
-            query=req.query,
+            query=query,
             workspace_path=str(worktree_path),
+            code_context=code_ctx,
         )
         answer = result.answer
         chunks_raw = result.context_chunks
@@ -363,6 +377,10 @@ async def context_query_stream(
         type(executor).__name__, req.room_id, is_local, worktree_path,
     )
 
+    # Ensure query text (generate default when code_context is present but query is empty)
+    query = _ensure_query(req)
+    code_ctx = req.code_context.model_dump() if req.code_context else None
+
     # Execute the full workflow pipeline (parallel agents, synthesis, etc.)
     workflow = _get_code_explorer_workflow()
 
@@ -371,7 +389,7 @@ async def context_query_stream(
         # The padding comment pushes the first chunk past proxy buffer thresholds
         # (ngrok and some CDNs buffer until ~4KB before forwarding).
         yield f": padding {'.' * 2048}\n\n"
-        yield f"event: start\ndata: {json.dumps({'query': req.query, 'room_id': req.room_id})}\n\n"
+        yield f"event: start\ndata: {json.dumps({'query': query, 'room_id': req.room_id})}\n\n"
 
         if workflow:
             from app.workflow.engine import WorkflowEngine
@@ -381,11 +399,13 @@ async def context_query_stream(
                 trace_writer=trace_writer,
                 tool_executor=executor,
             )
-            wf_context = {
-                "query_text": req.query,
-                "query": req.query,
+            wf_context: Dict[str, Any] = {
+                "query_text": query,
+                "query": query,
                 "workspace_path": str(worktree_path),
             }
+            if code_ctx:
+                wf_context["code_context"] = code_ctx
             async for event in engine.run_stream(workflow, wf_context):
                 # Forward all events — agent events (thinking, tool_call, tool_result)
                 # are now streamed in real-time through the engine's event queue.
@@ -407,8 +427,9 @@ async def context_query_stream(
                 tool_executor=executor,
             )
             async for event in agent.run_stream(
-                query=req.query,
+                query=query,
                 workspace_path=str(worktree_path),
+                code_context=code_ctx,
             ):
                 yield f"event: {event.kind}\ndata: {json.dumps(event.data, default=str)}\n\n"
 
@@ -424,119 +445,3 @@ async def context_query_stream(
     )
 
 
-def _build_explain_query(req: ExplainRichRequest) -> str:
-    """Build the agent query from an explain-rich request."""
-    question = req.question or (
-        f"Explain this {req.language} code: what it does, its inputs and outputs, "
-        "the business scenario it serves, and any key dependencies or side-effects."
-    )
-    return (
-        f"I need you to explain code from `{req.file_path}` "
-        f"(lines {req.start_line}\u2013{req.end_line}).\n\n"
-        f"```{req.language}\n{req.code}\n```\n\n"
-        f"{question}\n\n"
-        "Use the available tools to explore the codebase for additional context "
-        "(e.g. read the surrounding file, find where functions are defined, "
-        "check who calls this code, inspect imports). Then provide a thorough explanation."
-    )
-
-
-def _resolve_model_name() -> str:
-    """Best-effort resolution of the active model name."""
-    try:
-        from app.ai_provider.resolver import get_resolver
-        resolver = get_resolver()
-        return resolver.active_model_id if resolver and resolver.active_model_id else "ai"
-    except Exception:
-        return "ai"
-
-
-@router.post("/explain-rich", response_model=ExplainRichResponse)
-async def explain_rich(
-    req: ExplainRichRequest,
-    git_workspace=Depends(_get_git_workspace_service),
-    agent_provider=Depends(_get_agent_provider),
-    trace_writer=Depends(_get_trace_writer),
-) -> ExplainRichResponse:
-    """Explain a code snippet using the agentic code-intelligence loop."""
-    if agent_provider is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No AI provider configured. Enable an AI provider in conductor.settings.yaml.",
-        )
-
-    worktree_path = git_workspace.get_worktree_path(req.room_id)
-    if worktree_path is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No workspace for room_id={req.room_id!r}.",
-        )
-
-    executor = _build_executor(git_workspace, req.room_id, worktree_path)
-    query = _build_explain_query(req)
-    agent = AgentLoopService(provider=agent_provider, max_iterations=25, trace_writer=trace_writer, tool_executor=executor)
-    result: AgentResult = await agent.run(query=query, workspace_path=str(worktree_path))
-
-    return ExplainRichResponse(
-        explanation=result.answer,
-        model=_resolve_model_name(),
-        thinking_steps=[
-            ThinkingStepResponse(
-                kind=s.kind, iteration=s.iteration, text=s.text,
-                tool=s.tool, params=s.params, summary=s.summary,
-                success=s.success,
-            )
-            for s in result.thinking_steps
-        ],
-        tool_calls_made=result.tool_calls_made,
-        iterations=result.iterations,
-        duration_ms=result.duration_ms,
-    )
-
-
-@router.post("/explain-rich/stream")
-async def explain_rich_stream(
-    req: ExplainRichRequest,
-    git_workspace=Depends(_get_git_workspace_service),
-    agent_provider=Depends(_get_agent_provider),
-    trace_writer=Depends(_get_trace_writer),
-):
-    """SSE streaming version of explain-rich."""
-    if agent_provider is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No AI provider configured. Enable an AI provider in conductor.settings.yaml.",
-        )
-
-    worktree_path = git_workspace.get_worktree_path(req.room_id)
-    if worktree_path is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No workspace for room_id={req.room_id!r}.",
-        )
-
-    executor = _build_executor(git_workspace, req.room_id, worktree_path)
-    query = _build_explain_query(req)
-    agent = AgentLoopService(provider=agent_provider, max_iterations=25, trace_writer=trace_writer, tool_executor=executor)
-    model_name = _resolve_model_name()
-
-    async def event_generator():
-        async for event in agent.run_stream(
-            query=query,
-            workspace_path=str(worktree_path),
-        ):
-            # Inject model name into the done/error events
-            if event.kind in ("done", "error"):
-                event.data["model"] = model_name
-            yield f"event: {event.kind}\ndata: {json.dumps(event.data, default=str)}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
-            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
-            "Connection": "keep-alive",
-        },
-    )

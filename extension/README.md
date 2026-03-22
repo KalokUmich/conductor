@@ -27,7 +27,6 @@ The extension drives all state through a finite state machine persisted in `glob
 ### Features
 
 #### Collaboration
-- **Live Share integration** — Host starts a Live Share session; guests join from the invite link. Conflict check prevents double-starting. End Session auto-closes the active Live Share session.
 - **`conductor://` virtual file system** — `ConductorFileSystemProvider` mounts a remote backend worktree as `conductor://{room_id}/`, making it browsable and editable in VS Code like a local folder.
 - **Git Workspace wizard** (`workspacePanel.ts`) — 5-step UI to clone a remote repo (PAT + URL), select branch, create a backend worktree, and open it as a `conductor://` workspace folder.
 
@@ -46,7 +45,16 @@ The extension drives all state through a finite state machine persisted in `glob
 
 #### Code Intelligence
 - **Code snippet sharing** — Extract editor selection and send in chat; recipients can navigate back to the file and line range.
-- **Agentic code explanation** — Sends a query to `POST /api/context/query/stream` which runs the backend LLM agent loop (up to 25 iterations, 500K token budget, 24 code tools). Progress is streamed via SSE and shown in real-time in the chat sidebar. The final answer is posted as a collapsible AI explanation card that can be expanded/collapsed inline.
+- **Agentic code explanation** — `explainWithContextPipeline.ts` orchestrates 8 stages to produce a rich LLM explanation of a selected code snippet:
+  1. **Selection** — receives the highlighted code, file URI, and position
+  2. **LSP context** — gathers definitions and references via VS Code LSP commands
+  3. **Ranking** — hybrid structural + semantic relevance scoring of related files (`relevanceRanker.ts`)
+  4. **Context plan** — deduplicates and prioritises read-file operations (`contextPlanGenerator.ts`)
+  5. **Execute plan** — reads file slices via VS Code workspace API
+  6. **XML prompt** — assembles all snippets into a structured XML string (`xmlPromptAssembler.ts`)
+  7. **LLM call** — `POST /api/context/query/stream` runs the backend agent loop (up to 25 iterations, 500K token budget, 24 code tools); progress streamed via SSE
+  8. **Response** — final answer posted as a collapsible AI explanation card in the chat sidebar
+  Graceful degradation: every stage has fallbacks; failures are logged with timing so the caller always receives a result.
 - **Workspace search** — `conductor.searchWorkspace` command: full-text search over the active `conductor://` workspace via `POST /workspace/{room_id}/search`.
 - **Stack trace parsing** — Shares stack traces in chat with resolved file paths and line anchors.
 
@@ -119,6 +127,11 @@ extension/
 │  │  ├─ workspaceClient.ts              # /workspace/ HTTP client
 │  │  ├─ workspaceIndexer.ts             # AST symbol extraction + incremental indexing
 │  │  ├─ workflowPanel.ts               # WorkflowPanel singleton — workflow visualization WebView
+│  │  ├─ explainWithContextPipeline.ts  # 8-stage code explanation pipeline (LSP→rank→plan→XML→LLM)
+│  │  ├─ lspResolver.ts                 # VS Code LSP definition + references
+│  │  ├─ relevanceRanker.ts             # Hybrid structural + semantic relevance scoring
+│  │  ├─ contextPlanGenerator.ts        # Deduplicated read-file operation planner
+│  │  ├─ xmlPromptAssembler.ts          # Structured XML prompt builder for LLM
 │  │  ├─ todoScanner.ts                  # Workspace TODO/FIXME scanner
 │  │  ├─ stackTraceParser.ts             # Stack trace parsing and path resolution
 │  │  ├─ diffPreview.ts                  # Diff preview + apply for ChangeSets
@@ -222,7 +235,6 @@ Conductor 是一个 VS Code 扩展，提供基于 WebView 的协作侧边栏、G
 ### 功能列表
 
 #### 协作
-- **Live Share 集成** — Host 发起 Live Share 会话，Guest 通过邀请链接加入。启动前检查冲突，结束会话时自动关闭 Live Share。
 - **`conductor://` 虚拟文件系统** — `ConductorFileSystemProvider` 将远端后端 worktree 挂载为 `conductor://{room_id}/`，可在 VS Code 中像本地文件夹一样浏览和编辑。
 - **Git 工作区向导**（`workspacePanel.ts`）— 5 步 UI，通过 PAT + URL 克隆远端仓库，选择分支，创建后端 worktree，并作为 `conductor://` 工作区文件夹打开。
 
@@ -241,7 +253,7 @@ Conductor 是一个 VS Code 扩展，提供基于 WebView 的协作侧边栏、G
 
 #### 代码智能
 - **代码片段共享** — 提取当前编辑器选区并发送到聊天；接收方可跳转至对应文件和行范围。
-- **Agentic 代码解释** — 向 `POST /api/context/query/stream` 发起请求，在后端运行 LLM agent loop（最多 25 轮迭代、50 万 token 预算、24 个代码工具）。进度通过 SSE 实时流式传输并在聊天侧边栏显示。最终答案以可折叠的 AI 解释卡片形式呈现，可在聊天中内联展开/收起。
+- **Agentic 代码解释** — `explainWithContextPipeline.ts` 通过 8 个阶段生成代码选区的 LLM 解释：选区 → LSP 上下文 → 相关性排名 → 读取计划 → 执行计划 → XML 提示词 → LLM 调用（`POST /api/context/query/stream`，25 轮迭代，50 万 token）→ 响应。每个阶段有独立的降级逻辑，确保始终返回结果。
 - **工作区搜索** — `conductor.searchWorkspace` 命令：通过 `POST /workspace/{room_id}/search` 对活跃 `conductor://` 工作区进行全文搜索。
 - **堆栈追踪解析** — 共享堆栈追踪，并解析文件路径和行号定位。
 

@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 24 code tools + token budget controller + 3-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, DuckDB-backed audit logs and TODOs, and multi-provider AI (Bedrock / Anthropic / OpenAI).
+Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 24 code tools + token budget controller + 3-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, Jira integration, PostgreSQL-backed persistence (schema managed by Liquibase), and multi-provider AI (Bedrock / Anthropic / OpenAI).
 
 ### Quick Start
 
@@ -68,10 +68,8 @@ Docs:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/context/query` | LLM agent loop — iteratively calls 24 code tools (up to 25 iterations, 500K token budget) |
+| POST | `/api/context/query` | LLM agent loop — iteratively calls 24 code tools (supports optional `code_context` for snippet-based queries) |
 | POST | `/api/context/query/stream` | SSE streaming — real-time tool call progress events |
-| POST | `/api/context/explain-rich` | Deep code explanation via agent (replaces XML-prompt pipeline) |
-| POST | `/api/context/explain-rich/stream` | SSE streaming for explain-rich |
 | GET | `/api/code-tools/available` | List all available code tools |
 | POST | `/api/code-tools/execute/{tool_name}` | Directly execute a single code tool |
 
@@ -154,6 +152,21 @@ The `code_tools/__main__.py` module is invoked by the VS Code extension's `pytho
 | GET | `/auth/providers` | List enabled auth providers |
 | POST | `/policy/evaluate-auto-apply` | Evaluate auto-apply safety |
 | POST | `/generate-changes` | Generate ChangeSet |
+
+#### Jira Integration (`/api/integrations/jira/`)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/integrations/jira/authorize-url` | Generate Atlassian OAuth authorize URL |
+| GET | `/api/integrations/jira/callback` | Handle OAuth redirect from Atlassian (browser) |
+| POST | `/api/integrations/jira/callback` | Exchange auth code for tokens (from extension) |
+| GET | `/api/integrations/jira/status` | Current Jira connection status |
+| POST | `/api/integrations/jira/disconnect` | Remove stored tokens |
+| GET | `/api/integrations/jira/projects` | List accessible Jira projects |
+| GET | `/api/integrations/jira/issue-types` | List issue types for a project |
+| GET | `/api/integrations/jira/create-meta` | Field metadata for creating an issue |
+| GET | `/api/integrations/jira/search` | Search issues by JQL text query |
+| POST | `/api/integrations/jira/issues` | Create a Jira issue |
 
 ### Agentic Code Intelligence
 
@@ -242,28 +255,37 @@ curl -X POST http://localhost:8000/api/code-tools/execute/grep \
 
 ### Storage
 
-- Audit DB: `audit_logs.duckdb`
-- File metadata DB: `file_metadata.duckdb`
-- TODOs DB: `todos.duckdb`
+All OLTP data is stored in **PostgreSQL** (shared instance with Langfuse):
+
+| Table | Description |
+|---|---|
+| `repo_tokens` | PAT cache for git workspace authentication |
+| `session_traces` | Agent loop session metrics (JSON trace) |
+| `audit_logs` | Changeset apply audit trail |
+| `file_metadata` | Uploaded file metadata |
+| `todos` | Room-scoped task tracking |
+| `integration_tokens` | OAuth tokens for external integrations (Jira, etc.) |
+
+Other storage:
 - File uploads: `uploads/{room_id}/`
 - Git workspaces: `workspaces/{room_id}/` (bare clone + worktree)
 - Chat room state: in-memory per process
 
-> The backend itself uses DuckDB (embedded) for all persistence — no Postgres required.
-> Postgres is only used by **Langfuse** (observability). Start it with `make data-up` before `make langfuse-up`.
+> Schema is managed by **Liquibase** (`database/changelog/`). Run `make db-update` after `make data-up`.
+> Langfuse manages its own tables internally (Prisma migrations).
 
 ### Docker Networking
 
 All Docker Compose files share the `conductor-net` network. Services communicate via container names:
 
-- `conductor-postgres:5432` — Postgres (used by Langfuse)
-- `conductor-redis:6379` — Redis (used by backend)
+- `conductor-postgres:5432` — Postgres (backend + Langfuse)
+- `conductor-redis:6379` — Redis (backend)
 
 This avoids `host.docker.internal` resolution issues in WSL2 / Linux Docker environments.
 
 ### Tests
 
-Total: **900+ tests**.
+Total: **1200+ tests**.
 
 ```bash
 cd backend
@@ -277,7 +299,7 @@ Key test files (agentic code intelligence):
 | File | Tests | Coverage |
 |------|-------|----------|
 | `tests/test_code_tools.py` | 98 | All 24 code tools + dispatcher + multi-language |
-| `tests/test_agent_loop.py` | 39 | Agent loop + message format + workspace layout + 3-layer prompt |
+| `tests/test_agent_loop.py` | 47 | Agent loop + message format + workspace layout + 3-layer prompt + completeness |
 | `tests/test_budget_controller.py` | 20 | Token budget signals, tracking, edge cases |
 | `tests/test_session_trace.py` | 15 | SessionTrace, IterationTrace, save/load |
 | `tests/test_evidence.py` | 14 | Evidence evaluator (file refs, tool calls, budget checks) |
@@ -347,7 +369,7 @@ python ../eval/tool_parity/run.py --compare
 <a name="中文"></a>
 ## 中文
 
-Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 24 个代码工具 + Token 预算控制器 + 三层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、DuckDB 审计日志与 TODO 管理，以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
+Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 24 个代码工具 + Token 预算控制器 + 三层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、Jira 集成、PostgreSQL 持久化（Liquibase 管理表结构），以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
 
 ### 快速启动
 
@@ -522,27 +544,37 @@ Extension 的 `pythonCliRunner.ts` 通过此 CLI 执行 7 个复杂工具（ast_
 
 ### 存储
 
-- 审计日志：`audit_logs.duckdb`
-- 文件元数据：`file_metadata.duckdb`
-- TODO：`todos.duckdb`
+所有 OLTP 数据存储在 **PostgreSQL**（与 Langfuse 共享实例）：
+
+| 表名 | 描述 |
+|---|---|
+| `repo_tokens` | Git 工作区 PAT 缓存 |
+| `session_traces` | Agent Loop 会话追踪（JSON） |
+| `audit_logs` | 变更审计日志 |
+| `file_metadata` | 上传文件元数据 |
+| `todos` | 房间级任务跟踪 |
+| `integration_tokens` | 外部集成 OAuth 令牌（Jira 等） |
+
+其他存储：
 - 文件上传：`uploads/{room_id}/`
 - Git 工作区：`workspaces/{room_id}/`（裸克隆 + worktree）
 - 聊天房间状态：进程内存
 
-> 后端本身使用嵌入式 DuckDB，**无需独立部署 Postgres**。Postgres 仅供 Langfuse 可观测性使用，通过 `make data-up` 启动。
+> 表结构由 **Liquibase** 管理（`database/changelog/`）。启动后运行 `make db-update`。
+> Langfuse 内部自动管理自己的表（Prisma migrations）。
 
 ### Docker 网络
 
 所有 Docker Compose 文件共享 `conductor-net` 网络，服务间通过容器名通信：
 
-- `conductor-postgres:5432` — Postgres（Langfuse 使用）
-- `conductor-redis:6379` — Redis（后端使用）
+- `conductor-postgres:5432` — Postgres（后端 + Langfuse）
+- `conductor-redis:6379` — Redis（后端）
 
 避免 WSL2 / Linux Docker 环境下 `host.docker.internal` 解析失败的问题。
 
 ### 测试
 
-共 **900+ 个测试**。
+共 **1200+ 个测试**。
 
 ```bash
 cd backend
@@ -556,7 +588,7 @@ pytest --cov=. --cov-report=html   # 覆盖率报告
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|----------|
 | `test_code_tools.py` | 98 | 全部 24 个工具 + 调度器 + 多语言 |
-| `test_agent_loop.py` | 39 | Agent Loop + 三层 Prompt + 工作区布局 |
+| `test_agent_loop.py` | 47 | Agent Loop + 三层 Prompt + 工作区布局 + 完整性检查 |
 | `test_budget_controller.py` | 20 | Token 预算信号、追踪、边界情况 |
 | `test_session_trace.py` | 15 | SessionTrace JSON 保存/加载 |
 | `test_evidence.py` | 14 | 证据评估器质量门控 |

@@ -443,6 +443,7 @@ def build_system_prompt(
     max_iterations: int = 20,
     query_type: Optional[str] = None,
     risk_context: Optional[str] = None,
+    code_context: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Build the full system prompt from 3 layers.
 
@@ -460,6 +461,9 @@ def build_system_prompt(
         Query type from classifier. Selects the Layer 2 strategy.
     risk_context:
         Pre-computed risk context string from scan_workspace_risk().
+    code_context:
+        Optional code snippet the user is asking about. Dict with keys:
+        code, file_path, language, start_line, end_line.
     """
     if workspace_layout is None:
         workspace_layout = scan_workspace_layout(workspace_path)
@@ -481,6 +485,20 @@ def build_system_prompt(
         project_docs_section=docs_section,
         max_iterations=max_iterations,
     )
+
+    # Code Under Discussion — injected prominently between Layer 1 and Layer 2
+    # so all agents see the snippet the user is asking about.
+    if code_context:
+        lang = code_context.get("language", "")
+        prompt += (
+            "\n\n## Code Under Discussion\n\n"
+            f"The user is asking about this code from "
+            f"`{code_context['file_path']}` "
+            f"(lines {code_context.get('start_line', '?')}\u2013{code_context.get('end_line', '?')}):\n\n"
+            f"```{lang}\n{code_context['code']}\n```\n\n"
+            "Use this as your starting point. Explore the codebase to understand "
+            "the surrounding context, callers, callees, and dependencies."
+        )
 
     # Layer 2: Strategy (selected by query classifier)
     strategy = STRATEGIES.get(query_type or "", _DEFAULT_STRATEGY)

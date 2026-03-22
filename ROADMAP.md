@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-03-19
+Last updated: 2026-03-21
 
 ## Current State
 
@@ -278,7 +278,7 @@ Optimizations guided by OpenAI review and academic research (ICLR 2026, MutaGReP
 - [x] `build_system_prompt()` accepts `query_type` to select Layer 2 strategy
 - [x] Accumulated text trimming — keeps only last 3 thinking turns to limit context growth
 - [x] Budget hard constraints at WARN_CONVERGE — refuses new broad searches, only allows verification calls
-- [x] 39 tests in `test_agent_loop.py` (including strategy selection by query type)
+- [x] 47 tests in `test_agent_loop.py` (including strategy selection by query type + completeness check)
 
 #### RepoMap v2: Dataflow-Enhanced Graph (PLANNED)
 - [ ] Dataflow edges: variable_flows_to, reads_config, writes_to
@@ -297,6 +297,12 @@ Optimizations guided by OpenAI review and academic research (ICLR 2026, MutaGReP
 - [x] 14 tests in `test_evidence.py`
 - Reference: [RAG-Gym](https://arxiv.org/abs/2502.13957)
 - [ ] Future: Optional Haiku-based evaluation when rules are insufficient
+
+#### Completeness Verifier (COMPLETE)
+Adds a second quality gate after EvidenceEvaluator to ensure the answer is complete and not truncated mid-thought.
+- [x] `completeness.py` in `agent_loop/` — `CompletenessCheck` detects incomplete answers (truncated sentences, unresolved placeholders, trailing "...")
+- [x] `check_completeness()` called after evidence gate; re-prompts LLM if answer appears cut off
+- [x] Improves stability of long agent answers at high token budgets
 
 #### Code Review Eval System (COMPLETE)
 Standalone eval system in `eval/` for measuring `CodeReviewService` quality against planted bugs.
@@ -322,7 +328,7 @@ Extract hardcoded multi-agent orchestration into a config-driven engine with YAM
 - [x] `workflow/mermaid.py` — `generate_mermaid()` auto-generates Mermaid flowchart from any `WorkflowConfig` (different layout per route_mode)
 - [x] `workflow/router.py` — 5 REST endpoints: `GET /api/workflows`, `GET /api/workflows/{name}`, `GET /api/workflows/{name}/mermaid`, `GET /api/workflows/{name}/graph`, `PUT /api/workflows/{name}/models`
 - [x] Config files: `config/workflows/pr_review.yaml` (6 routes, parallel_all_matching), `config/workflows/code_explorer.yaml` (9 routes, first_match, includes `delegate` to pr_review)
-- [x] 17 agent `.md` files in `config/agents/` — 5 PR explorer agents, 2 PR judge agents, 3 code explorer multi-agent, 7 code explorer single-agent routes
+- [x] 18 agent `.md` files in `config/agents/` — 5 PR explorer agents, 2 PR judge agents, 3 code explorer multi-agent, 8 code explorer single-agent routes (incl. `explore_code_explanation`)
 - [x] 2 shared prompt templates in `config/prompts/` — `review_base.md`, `explorer_base.md`
 - [x] `workflow/observability.py` — Langfuse `@observe` decorator; zero overhead when disabled (no-op function wrapper)
 - [x] `main.py` — `init_langfuse()` at startup, `flush()` at shutdown, `workflow_router` registered
@@ -490,7 +496,7 @@ This is a **multi-quarter R&D effort** requiring compiler engineering expertise.
 - [ ] Prometheus metrics endpoint
 - [ ] Health check improvements (deep checks for Git, AI provider)
 
-## Phase 7: External Service Integrations (PLANNED)
+## Phase 7: External Service Integrations (IN PROGRESS)
 
 **Database**: Shared Postgres (Langfuse instance, port 5433), new `conductor` database. SQLAlchemy async with `DatabaseSettings` pool config.
 
@@ -515,83 +521,77 @@ backend/app/integrations/
     └── router.py              # /api/integrations/slack/* endpoints
 ```
 
-### 7.0 Database Foundation
-- Add `sqlalchemy[asyncio]` + `asyncpg` to `requirements.txt`
-- Create `backend/app/integrations/db.py`: async engine from `DatabaseSecrets.url`, `AsyncSessionLocal` factory
-- Add `conductor` database to Langfuse's Postgres in `docker/docker-compose.langfuse.yaml` (init script or second DB)
-- Update `DatabaseSecrets.url` default to `postgresql+asyncpg://langfuse:langfuse@localhost:5433/conductor`
-- Create `integration_tokens` table (SQLAlchemy model):
-  - `user_email` (PK part 1), `provider` (PK part 2, e.g. "jira", "teams", "slack")
-  - `access_token`, `refresh_token`, `access_expires_at`, `refresh_expires_at`
-  - `metadata_json` (JSONB — provider-specific data like Jira `cloudId`, Teams `tenantId`)
-  - `updated_at`
-- Initialize engine in FastAPI lifespan (create tables on startup, dispose on shutdown)
+### 7.0 Database Foundation (COMPLETE)
+- [x] `sqlalchemy[asyncio]` + `asyncpg` in `requirements.txt`
+- [x] `backend/app/db/engine.py` — async engine + session factory
+- [x] `backend/app/db/models.py` — 6 SQLAlchemy ORM tables: `repo_tokens`, `session_traces`, `audit_logs`, `file_metadata`, `todos`, `integration_tokens`
+- [x] `docker/docker-compose.data.yaml` — shared Postgres + Redis; `init-db.sql` creates `langfuse` database
+- [x] Schema managed by **Liquibase** (`database/changelog/`) — replaced Alembic
+- [x] `make db-update` / `make db-status` / `make db-rollback-one` Makefile targets
 - Acceptance criteria:
-  - [ ] `docker compose -f docker/docker-compose.langfuse.yaml up` creates both `langfuse` and `conductor` databases
-  - [ ] SQLAlchemy async engine connects to Postgres, creates `integration_tokens` table
-  - [ ] CRUD operations on `IntegrationTokenStore` work (store, get, refresh, delete)
-  - [ ] Langfuse continues to work unchanged
-  - [ ] Unit tests with test Postgres (or SQLite async fallback for CI)
+  - [x] `make data-up` creates both `conductor` and `langfuse` databases
+  - [x] SQLAlchemy async engine connects to Postgres
+  - [x] `IntegrationToken` model with `(user_email, provider)` unique constraint
+  - [x] Langfuse continues to work unchanged
+  - [x] Unit tests with async SQLite fallback for CI
 
-### 7.1 Jira OAuth Backend
+### 7.1 Jira OAuth Backend (COMPLETE)
 - Atlassian OAuth 2.0 (3LO) flow on the backend
 - Access token: 1h lifetime; Refresh token: 90 days, rotating (each refresh returns new refresh token)
 - Scopes: `read:jira-work`, `write:jira-work`, `read:jira-user`, `offline_access`
-- `IntegrationTokenStore` (Postgres, keyed by `(user_email, "jira")`)
-- `cloudId` fetched from `accessible-resources` after token exchange, stored in `metadata_json`
-- Endpoints: `GET /api/integrations/jira/authorize-url`, `POST /callback`, `GET /status`, `POST /disconnect`
-- Config: `JiraSettings` + `JiraSecrets` in `config.py` (follows `LangfuseSettings` pattern)
-- Files to create: `integrations/jira/service.py`, `models.py`, `router.py`
-- Files to modify: `config.py` (add `JiraSettings`/`JiraSecrets`), `main.py` (register router), `conductor.settings.yaml`, `conductor.secrets.yaml.example`
+- `cloudId` fetched from `accessible-resources` after token exchange
+- Config: `JiraSettings` + `JiraSecrets` in `config.py`
+- Files created: `integrations/jira/service.py` (JiraOAuthService), `models.py`, `router.py`
 - Acceptance criteria:
-  - [ ] `POST /callback` exchanges auth code for tokens and stores in Postgres
-  - [ ] `get_valid_token()` auto-refreshes expired access tokens using rotating refresh token
-  - [ ] `cloudId` fetched and stored in `metadata_json`
-  - [ ] `GET /status` returns connection state
-  - [ ] `POST /disconnect` removes tokens from DB
-  - [ ] All endpoints return 400 when `jira.enabled: false`
-  - [ ] Unit tests with mocked httpx calls
+  - [x] `POST /callback` exchanges auth code for tokens
+  - [x] `get_valid_token()` auto-refreshes expired access tokens using rotating refresh token
+  - [x] `cloudId` fetched and stored
+  - [x] `GET /status` returns connection state
+  - [x] `POST /disconnect` removes tokens
+  - [x] All endpoints return 400 when `jira.enabled: false`
+  - [x] Unit tests with mocked httpx calls (39 tests in `test_jira_service.py`)
 
-### 7.2 Jira API Service
-- `JiraApiClient` wrapping `httpx.AsyncClient` with auto-token-refresh middleware
+### 7.2 Jira API Service (COMPLETE)
+- `JiraOAuthService` handles both OAuth lifecycle and API calls via `httpx.AsyncClient`
 - API base: `https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/...`
-- Endpoints: `GET /projects`, `GET /issue-types?projectKey=X`, `POST /search` (JQL), `POST /issues` (create), `GET /issues/{key}`
-- Files to create: `integrations/jira/api_client.py`
-- Files to modify: `integrations/jira/models.py` (add `JiraProject`, `JiraIssue`, `CreateIssueRequest`), `router.py` (add CRUD endpoints)
+- Endpoints: `GET /projects`, `GET /issue-types?projectKey=X`, `GET /create-meta`, `POST /issues` (create)
 - Acceptance criteria:
-  - [ ] Auto-refreshes token on 401 response (single retry)
-  - [ ] `POST /issues` creates a Jira ticket and returns issue key + URL
-  - [ ] `GET /projects` returns project list
-  - [ ] `POST /search` accepts JQL, returns paginated results
-  - [ ] All endpoints return 401 when user has no valid connection
-  - [ ] Unit tests with mocked Jira API responses
+  - [x] Auto-refreshes token on 401 response (single retry)
+  - [x] `POST /issues` creates a Jira ticket and returns issue key + URL
+  - [x] `GET /projects` returns project list
+  - [x] `GET /issue-types` returns issue types per project
+  - [x] `GET /create-meta` returns field metadata (priorities, components, teams)
+  - [x] All endpoints return 401 when user has no valid connection
+  - [x] Unit tests with mocked Jira API responses (29 tests in `test_jira_router.py`)
+  - [x] `GET /search?q=...` — JQL text search with formatted results
 
-### 7.3 Extension Jira Auth UI
+### 7.3 Extension Jira Auth UI (COMPLETE)
 - "Connect Jira" button in chat panel integrations section
-- OAuth flow: button click → `GET /authorize-url` → `vscode.env.openExternal()` → browser → Atlassian authorize → redirect to `vscode://conductor.ai-collab/jira/callback` → `registerUriHandler` captures code → `POST /callback` to backend
-- Connection status cached in `globalState` (follows `ssoIdentityCache.ts` pattern with TTL)
-- Requires setting `publisher` in `package.json` for URI handler
-- Files to create: `extension/src/services/jiraAuthService.ts`
-- Files to modify: `extension/package.json`, `extension/src/extension.ts` (register URI handler + commands), `extension/media/chat.html` (add button)
+- OAuth flow: browser callback → backend exchanges code → HTML auto-redirects to `vscode://ai-collab/jira/callback?connected=true` → `JiraUriHandler` refreshes status
+- Connection status cached in `globalState` via `jiraAuthService.ts` (follows `ssoIdentityCache.ts` pattern with 48h TTL)
+- `publisher` field added to `package.json`; `onUri` activation event registered
+- Files created: `extension/src/services/jiraAuthService.ts` (JiraUriHandler + cache functions)
+- Files modified: `extension/package.json`, `extension/src/extension.ts`, `backend/app/integrations/jira/router.py` (VS Code redirect in callback HTML)
 - Acceptance criteria:
-  - [ ] "Connect Jira" button visible in chat panel
-  - [ ] Browser opens to Atlassian authorize page
-  - [ ] `vscode://` callback captured and forwarded to backend
-  - [ ] Connection status indicator (green dot / "Connected")
-  - [ ] "Disconnect Jira" command works
-  - [ ] Error handling for timeout, denial, network failure
+  - [x] "Connect Jira" button visible in chat panel
+  - [x] Browser opens to Atlassian authorize page
+  - [x] `vscode://` callback captured and forwarded to backend
+  - [x] Connection status cached in globalState with TTL
+  - [x] "Disconnect Jira" command works (clears globalState + backend tokens)
+  - [x] Stale connection auto-cleared on extension reload
 
-### 7.4 Extension Jira Ticket Creation UI
-- Ticket creation modal: project dropdown, issue type selector, summary, description
-- Slash commands: `@AI /jira create [summary]`, `@AI /jira search [query]`
-- "Create Jira Ticket" button on code review findings (pre-populates summary + description from finding)
-- Files to modify: `extension/media/chat.html` (modal form), `extension/src/extension.ts` (message handlers)
+### 7.4 Extension Jira Ticket Creation UI (COMPLETE)
+- Ticket creation modal: project dropdown, issue type selector, priority, team, components, summary, description
+- Slash commands: `@AI /jira create [summary]` opens modal with pre-filled summary, `@AI /jira search [query]` searches Jira issues
+- Search results rendered as compact cards with clickable issue keys
+- Files modified: `extension/media/chat.html` (slash commands + search rendering), `extension/src/extension.ts` (jiraSearch handler)
+- Backend: `GET /api/integrations/jira/search?q=...` — JQL text search endpoint added
 - Acceptance criteria:
-  - [ ] Project/issue-type dropdowns load from API
-  - [ ] Submit creates ticket, shows issue key + clickable URL
-  - [ ] Code review findings have "Create Jira Ticket" button
-  - [ ] `/jira create` and `/jira search` slash commands work
-  - [ ] Form validates required fields
+  - [x] Project/issue-type dropdowns load from API
+  - [x] Submit creates ticket, shows issue key + clickable URL
+  - [x] `/jira create` and `/jira search` slash commands work
+  - [x] Search results displayed with status, priority, assignee
+  - [x] Form validates required fields
 
 ### 7.5 Microsoft Teams Integration
 - Bot Framework webhook: `POST /api/integrations/teams/bot/messages`
@@ -648,8 +648,8 @@ backend/app/integrations/
 | Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–9 |
 | Phase 5.6: Config-Driven Workflow Engine (A-D) | ✅ Complete | Sprint 9 |
 | Phase 6: Production Hardening | 🟡 Planned | Sprint 9 |
-| Phase 7.0–7.1: DB Foundation + Jira OAuth | 🟡 Planned | Sprint 10 |
-| Phase 7.2–7.4: Jira API + Extension UI | 🟡 Planned | Sprint 11 |
+| Phase 7.0–7.2: DB Foundation + Jira Backend | 🟢 Complete | Sprint 10 |
+| Phase 7.3–7.4: Jira Extension UI | 🟢 Complete | Sprint 11 |
 | Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
 
 ## Architecture Decision Log
