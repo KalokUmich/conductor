@@ -84,11 +84,13 @@
             border: 1px solid rgba(185,28,28,0.5);
             border-radius: 0.5rem;
             padding: 0.5rem 0.75rem;
-            display: flex;
             align-items: flex-start;
             gap: 0.5rem;
             font-size: 0.8rem;
             color: #fca5a5;
+        }
+        .error-banner:not(.hidden) {
+            display: flex;
         }
         .error-banner .error-dismiss {
             color: rgba(252,165,165,0.5);
@@ -1900,30 +1902,23 @@
                                 </div>
                             </div>
 
-                            <!-- Global Settings: Classifier + Explorer Model + LiteLLM -->
+                            <!-- Agent Models: Brain + Explorer + LiteLLM -->
                             <div id="ai-code-intel-section" class="space-y-3">
-                                <!-- Query Classifier -->
+                                <!-- Brain Model (also used for AI Summary) -->
                                 <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-2.5">
-                                            <div class="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
-                                                    <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                                </svg>
-                                            </div>
-                                            <div>
-                                                <span class="text-gray-200 text-xs font-medium block">Query Classifier</span>
-                                                <span class="text-[0.6rem] text-gray-500">Routes queries before dispatching tools</span>
-                                            </div>
+                                    <div class="flex items-center gap-2.5">
+                                        <div class="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-400" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd" />
+                                            </svg>
                                         </div>
-                                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                                            <input type="checkbox" id="ai-classifier-toggle" class="sr-only peer">
-                                            <div class="w-8 h-[18px] bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[14px] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:bg-emerald-600"></div>
-                                        </label>
+                                        <div>
+                                            <span class="text-gray-200 text-xs font-medium block">Brain Model</span>
+                                            <span class="text-[0.6rem] text-gray-500">Orchestrator + AI Summary (strong model)</span>
+                                        </div>
                                     </div>
-                                    <select id="ai-classifier-select" class="mt-2.5 w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-1.5 focus:ring-1 focus:ring-emerald-500/50">
-                                        <option value="">No classifier models available</option>
-                                    </select>
+                                    <!-- Brain uses the active model from the Models tab — no separate selector needed -->
+                                    <div class="mt-2 text-[0.6rem] text-gray-500 italic">Uses the active model selected above</div>
                                 </div>
 
                                 <!-- Explorer Model -->
@@ -1937,7 +1932,7 @@
                                             </div>
                                             <div>
                                                 <span class="text-gray-200 text-xs font-medium block">Explorer Model</span>
-                                                <span class="text-[0.6rem] text-gray-500">Shared by all explorer sub-agents</span>
+                                                <span class="text-[0.6rem] text-gray-500">Used by specialist sub-agents dispatched by Brain</span>
                                             </div>
                                         </div>
                                         <label class="relative inline-flex items-center cursor-pointer shrink-0">
@@ -1949,6 +1944,10 @@
                                         <option value="">No explorer models available</option>
                                     </select>
                                 </div>
+
+                                <!-- Hidden classifier elements (kept for backward compat with backend API) -->
+                                <input type="checkbox" id="ai-classifier-toggle" class="hidden">
+                                <select id="ai-classifier-select" class="hidden"></select>
 
                                 <!-- LiteLLM Fallback -->
                                 <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
@@ -3799,10 +3798,19 @@
                 case 'askAIProgress':
                     _updateAskAIThinking(message);
                     break;
+                case 'agentQuestion':
+                    _showAgentQuestion(message);
+                    break;
                 case 'askAIDone':
                     _removeAskAIThinking();
-                    if (message.error) {
-                        renderSystemMessage('⚠️ AI: ' + message.error);
+                    if (message.stopped) {
+                        // User clicked Stop — show thinking steps so they can debug
+                        _showStoppedThinking(message.thinkingSteps || _askAISteps);
+                    } else if (message.error) {
+                        renderSystemMessage('AI: ' + message.error);
+                        if (message.thinkingSteps && message.thinkingSteps.length > 0) {
+                            _showStoppedThinking(message.thinkingSteps);
+                        }
                     }
                     break;
                 case 'codeExplanationReady':
@@ -4381,15 +4389,9 @@
             return map[ext] || ext || '';
         }
 
-        /** Apply highlight.js to all code blocks in a container. */
-        function highlightCodeBlocks(container) {
-            if (typeof hljs === 'undefined') return;
-            const blocks = (container || document).querySelectorAll('pre code[class*="language-"]');
-            blocks.forEach(block => {
-                if (!block.classList.contains('hljs')) {
-                    hljs.highlightElement(block);
-                }
-            });
+        /** Apply highlight.js to all code blocks in a container. (disabled — plain code blocks) */
+        function highlightCodeBlocks(_container) {
+            // Syntax highlighting disabled per user preference.
         }
 
         function renderMermaidDiagrams(container) {
@@ -5382,6 +5384,8 @@
 
         let _askAISteps = [];
         let _askAICurrentAction = '';
+        // Tree state: Brain → agents → tool calls
+        let _brainTree = { thinking: '', agents: {}, phase: 'idle', currentAgent: '' };
 
         function _updateAskAIThinking(event) {
             if (event.phase === 'complete') {
@@ -5389,24 +5393,59 @@
                 return;
             }
 
-            if (event.kind === 'tool_result' && event.detail) {
-                _askAISteps.push({
-                    tool: event.detail.tool || '',
-                    summary: event.message || 'done',
-                    success: event.detail.success !== false,
+            const kind = event.kind;
+            const detail = event.detail || {};
+            const agentName = detail.agent_name || '';
+
+            // Update tree state
+            if (kind === 'thinking' && agentName) {
+                if (!_brainTree.agents[agentName]) _brainTree.agents[agentName] = { status: 'running', steps: [] };
+                _brainTree.currentAgent = agentName;
+            } else if (kind === 'agent_dispatched') {
+                _brainTree.agents[agentName] = { status: 'running', steps: [] };
+                _brainTree.currentAgent = agentName;
+                _brainTree.phase = 'dispatching';
+            } else if (kind === 'tool_call' && agentName) {
+                if (!_brainTree.agents[agentName]) _brainTree.agents[agentName] = { status: 'running', steps: [] };
+                _brainTree.agents[agentName].steps.push({ tool: detail.tool || '', status: 'running' });
+            } else if (kind === 'tool_result' && agentName) {
+                const ag = _brainTree.agents[agentName];
+                if (ag && ag.steps.length > 0) {
+                    const last = ag.steps[ag.steps.length - 1];
+                    last.status = detail.success !== false ? 'ok' : 'fail';
+                    last.summary = event.message || '';
+                }
+            } else if (kind === 'agent_complete') {
+                const ag = _brainTree.agents[agentName];
+                if (ag) ag.status = detail.status === 'done' ? 'done' : 'fail';
+            } else if (kind === 'swarm_dispatched') {
+                (detail.agents || []).forEach(n => {
+                    _brainTree.agents[n] = { status: 'running', steps: [] };
                 });
+                _brainTree.phase = 'swarm';
             }
 
-            if (event.kind === 'start') {
-                _askAICurrentAction = 'Connecting to AI...';
-            } else if (event.kind === 'classify') {
-                _askAICurrentAction = event.message || 'Classifying query...';
-            } else if (event.kind === 'tool_call') {
-                _askAICurrentAction = event.message || 'Working...';
-            } else if (event.kind === 'thinking') {
-                _askAICurrentAction = event.message || 'Thinking...';
+            // Also track flat steps for Stop button
+            if (kind === 'tool_result') {
+                _askAISteps.push({ tool: detail.tool || '', summary: event.message || 'done', success: detail.success !== false });
+            } else if (kind === 'agent_dispatched') {
+                _askAISteps.push({ tool: 'dispatch', summary: '→ ' + agentName, success: true });
+            } else if (kind === 'agent_complete') {
+                _askAISteps.push({ tool: agentName, summary: event.message || detail.status, success: detail.status === 'done' });
             }
 
+            // Current action text
+            if (kind === 'start') _askAICurrentAction = 'Connecting to AI...';
+            else if (kind === 'classify') _askAICurrentAction = event.message || 'Analyzing query...';
+            else if (kind === 'thinking' && !agentName) _askAICurrentAction = event.message || 'Thinking...';
+            else if (kind === 'thinking' && agentName) _askAICurrentAction = agentName + ': ' + (event.message || 'Thinking...');
+            else if (kind === 'tool_call' && agentName) _askAICurrentAction = agentName + ' → ' + (detail.tool || '');
+            else if (kind === 'tool_call') _askAICurrentAction = event.message || 'Working...';
+            else if (kind === 'agent_dispatched') _askAICurrentAction = '→ ' + agentName;
+            else if (kind === 'agent_complete') _askAICurrentAction = (detail.status === 'done' ? '✓' : '✗') + ' ' + agentName;
+            else if (kind === 'swarm_dispatched') _askAICurrentAction = '→ Swarm: ' + (detail.swarm_name || 'parallel');
+
+            // Render tree
             let el = document.getElementById('ask-ai-thinking-indicator');
             if (!el) {
                 el = document.createElement('div');
@@ -5415,16 +5454,27 @@
                 messagesContainer.appendChild(el);
             }
 
-            const recentSteps = _askAISteps.slice(-4);
-            const stepsHtml = recentSteps.map(s => {
-                const icon = s.success ? '\u2713' : '\u2717';
-                const cls = s.success ? 'text-blue-400' : 'text-red-400';
-                return '<div class="flex items-center gap-1.5 text-[0.6rem] text-gray-500"><span class="' + cls + '">' + icon + '</span><span class="truncate">' + escapeHtml(s.summary) + '</span></div>';
-            }).join('');
-
-            const iterInfo = (event.detail && event.detail.iteration)
-                ? '<span class="text-[0.55rem] text-gray-600 ml-auto">step ' + event.detail.iteration + '</span>'
-                : '';
+            // Build agent tree HTML
+            const agentEntries = Object.entries(_brainTree.agents);
+            let treeHtml = '';
+            if (agentEntries.length > 0) {
+                treeHtml = '<div style="margin-top:6px; border-top:1px solid rgba(59,130,246,0.15); padding-top:6px;">';
+                for (const [name, ag] of agentEntries) {
+                    const statusIcon = ag.status === 'done' ? '<span style="color:#4ade80">✓</span>'
+                        : ag.status === 'fail' ? '<span style="color:#f87171">✗</span>'
+                        : '<span style="color:#60a5fa">⟳</span>';
+                    const recentTools = ag.steps.slice(-3).map(s => {
+                        const tIcon = s.status === 'ok' ? '✓' : s.status === 'fail' ? '✗' : '…';
+                        const tColor = s.status === 'ok' ? '#60a5fa' : s.status === 'fail' ? '#f87171' : '#9ca3af';
+                        return '<span style="color:' + tColor + '">' + tIcon + '</span> ' + escapeHtml(s.tool);
+                    }).join('&nbsp;&nbsp;');
+                    treeHtml += '<div style="font-size:0.6rem; color:#9ca3af; padding:1px 0;">'
+                        + statusIcon + ' <b style="color:#c4b5fd">' + escapeHtml(name) + '</b>'
+                        + (recentTools ? '&nbsp;&nbsp;' + recentTools : '')
+                        + '</div>';
+                }
+                treeHtml += '</div>';
+            }
 
             el.innerHTML = `
                 <div class="w-7 h-7 bg-blue-700 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0 mt-1">
@@ -5436,13 +5486,26 @@
                 <div class="max-w-[85%] min-w-0">
                     <div class="bg-blue-950/20 rounded-lg border border-blue-800/30 px-3 py-2">
                         <div class="flex items-center gap-2">
-                            <span class="text-xs text-blue-300 font-medium">AI is researching...</span>
-                            ${iterInfo}
+                            <span class="text-xs text-blue-300 font-medium">Brain</span>
+                            <span class="text-[0.55rem] text-gray-600">${agentEntries.length > 0 ? agentEntries.length + ' agent' + (agentEntries.length > 1 ? 's' : '') : ''}</span>
+                            <button id="stop-ask-ai-btn" title="Stop investigation" style="margin-left:auto; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); color:#fca5a5; width:20px; height:20px; border-radius:4px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0;"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor"><rect width="8" height="8" rx="1"/></svg></button>
                         </div>
                         <div class="text-[0.65rem] text-blue-400/80 mt-1 truncate">${escapeHtml(_askAICurrentAction)}</div>
-                        ${stepsHtml ? '<div class="step-list mt-1.5 pt-1.5 border-t border-blue-900/30">' + stepsHtml + '</div>' : ''}
+                        ${treeHtml}
                     </div>
                 </div>`;
+
+            // Wire Stop button
+            const stopBtn = document.getElementById('stop-ask-ai-btn');
+            if (stopBtn) {
+                stopBtn.addEventListener('click', () => {
+                    vscode.postMessage({ command: 'stopAskAI' });
+                    stopBtn.innerHTML = '<svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" opacity="0.4"><rect width="8" height="8" rx="1"/></svg>';
+                    stopBtn.style.opacity = '0.5';
+                    stopBtn.style.cursor = 'default';
+                    stopBtn.disabled = true;
+                });
+            }
 
             smartScroll(false);
         }
@@ -5454,8 +5517,154 @@
                 el.style.opacity = '0';
                 setTimeout(() => el.remove(), 300);
             }
+            // Reset tree state (keep _askAISteps for _showStoppedThinking)
+            _brainTree = { thinking: '', agents: {}, phase: 'idle', currentAgent: '' };
+        }
+
+        /**
+         * Show stopped/errored thinking steps in a collapsed card.
+         * Allows user to expand and copy error details.
+         */
+        function _showStoppedThinking(steps) {
+            const stepsData = steps || _askAISteps || [];
+
+            const el = document.createElement('div');
+            el.className = 'flex justify-start gap-2 mt-2 mb-2';
+            const bodyId = 'stopped-thinking-' + Date.now();
+
+            // Build steps HTML
+            let stepsHtml = '';
+            if (Array.isArray(stepsData)) {
+                stepsHtml = stepsData.map(s => {
+                    if (typeof s === 'object') {
+                        const kind = s.kind || s.tool || '';
+                        const text = s.text || s.summary || s.message || JSON.stringify(s);
+                        const icon = s.success === false ? '\u2717' : '\u2713';
+                        const cls = s.success === false ? 'color:#f87171' : 'color:#60a5fa';
+                        return '<div style="font-size:0.6rem; color:#9ca3af; padding:1px 0;"><span style="' + cls + '">' + icon + '</span> <b>' + escapeHtml(kind) + '</b>: ' + escapeHtml(String(text).slice(0, 200)) + '</div>';
+                    }
+                    return '<div style="font-size:0.6rem; color:#9ca3af;">' + escapeHtml(String(s).slice(0, 200)) + '</div>';
+                }).join('');
+            }
+
+            el.innerHTML =
+                '<div style="width:28px; height:28px; background:rgba(239,68,68,0.3); border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:11px; flex-shrink:0; margin-top:4px;">!</div>' +
+                '<div style="max-width:90%; min-width:0;">' +
+                    '<div style="background:rgba(239,68,68,0.08); border-radius:8px; border:1px solid rgba(239,68,68,0.2); padding:8px 10px;">' +
+                        '<div style="display:flex; align-items:center; gap:6px; cursor:pointer;" id="' + bodyId + '-toggle">' +
+                            '<span style="font-size:0.7rem; color:#fca5a5; font-weight:600;">Investigation stopped</span>' +
+                            '<span style="font-size:0.55rem; color:#6b7280;">(' + stepsData.length + ' steps — click to expand)</span>' +
+                        '</div>' +
+                        '<div id="' + bodyId + '" style="display:none; margin-top:6px; max-height:300px; overflow-y:auto; user-select:text;">' +
+                            stepsHtml +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+
+            messagesContainer.appendChild(el);
+            smartScroll(false);
+
+            // Toggle expand/collapse
+            const toggle = document.getElementById(bodyId + '-toggle');
+            const body = document.getElementById(bodyId);
+            if (toggle && body) {
+                toggle.addEventListener('click', () => {
+                    body.style.display = body.style.display === 'none' ? 'block' : 'none';
+                });
+            }
+
+            // Clear steps now
             _askAISteps.length = 0;
             _askAICurrentAction = '';
+        }
+
+        /**
+         * Show an agent clarifying question card with input field.
+         * Replaces the thinking indicator while the agent waits for a user answer.
+         */
+        function _showAgentQuestion(event) {
+            // Hide the thinking indicator while showing the question
+            const thinking = document.getElementById('ask-ai-thinking-indicator');
+            if (thinking) thinking.style.display = 'none';
+
+            // Remove any existing question card
+            const existing = document.getElementById('agent-question-card');
+            if (existing) existing.remove();
+
+            const el = document.createElement('div');
+            el.id = 'agent-question-card';
+            el.className = 'flex justify-start gap-2 mt-2 mb-2';
+
+            const qId = 'agent-q-input-' + Date.now();
+            const ctxHtml = event.context
+                ? '<div style="font-size:0.65rem; color:rgba(217,119,6,0.7); margin:4px 0 8px 0;">' + escapeHtml(event.context) + '</div>'
+                : '';
+
+            el.innerHTML =
+                '<div style="width:28px; height:28px; background:rgba(217,119,6,0.8); border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:600; flex-shrink:0; margin-top:4px;">?</div>' +
+                '<div style="max-width:85%; min-width:0;">' +
+                    '<div style="background:rgba(120,53,15,0.15); border-radius:8px; border:1px solid rgba(217,119,6,0.3); padding:10px 12px;">' +
+                        '<div style="font-size:0.7rem; color:#f59e0b; font-weight:600;">AI needs your input</div>' +
+                        '<div style="font-size:0.8rem; color:#e5e7eb; margin-top:4px;">' + escapeHtml(event.question) + '</div>' +
+                        ctxHtml +
+                        '<div style="display:flex; gap:8px; margin-top:8px;">' +
+                            '<input id="' + qId + '" type="text" ' +
+                                'style="flex:1; background:#1f2937; border:1px solid #4b5563; border-radius:4px; padding:5px 8px; font-size:0.8rem; color:#e5e7eb; outline:none;" ' +
+                                'placeholder="Type your answer..." />' +
+                            '<button id="' + qId + '-btn" ' +
+                                'style="background:#d97706; color:white; font-size:0.7rem; padding:5px 12px; border-radius:4px; font-weight:600; border:none; cursor:pointer;">Send</button>' +
+                            '<button id="' + qId + '-skip" ' +
+                                'style="background:#374151; color:#9ca3af; font-size:0.7rem; padding:5px 10px; border-radius:4px; border:none; cursor:pointer;">Skip</button>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+
+            messagesContainer.appendChild(el);
+            smartScroll(false);
+
+            const input = document.getElementById(qId);
+            const sendBtn = document.getElementById(qId + '-btn');
+            const skipBtn = document.getElementById(qId + '-skip');
+
+            function submitAnswer(answer) {
+                vscode.postMessage({
+                    command: 'agentAnswer',
+                    sessionId: event.sessionId,
+                    answer: answer || '',
+                });
+                // Replace card with compact Q&A summary
+                el.innerHTML =
+                    '<div style="width:28px; height:28px; background:rgba(217,119,6,0.4); border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:600; flex-shrink:0; margin-top:4px;">?</div>' +
+                    '<div style="max-width:85%; min-width:0;">' +
+                        '<div style="background:rgba(120,53,15,0.08); border-radius:8px; border:1px solid rgba(217,119,6,0.15); padding:8px 10px;">' +
+                            '<div style="font-size:0.65rem; color:rgba(217,119,6,0.6);">Q: ' + escapeHtml(event.question) + '</div>' +
+                            '<div style="font-size:0.65rem; color:#9ca3af; margin-top:2px;">A: ' + escapeHtml(answer || '(skipped)') + '</div>' +
+                        '</div>' +
+                    '</div>';
+                // Re-show the thinking indicator
+                const thinkEl = document.getElementById('ask-ai-thinking-indicator');
+                if (thinkEl) {
+                    thinkEl.style.display = '';
+                } else {
+                    _updateAskAIThinking({
+                        phase: 'agent', kind: 'thinking',
+                        message: 'Continuing analysis with your input...',
+                        detail: {},
+                    });
+                }
+            }
+
+            if (sendBtn) sendBtn.addEventListener('click', () => submitAnswer(input?.value?.trim() || ''));
+            if (skipBtn) skipBtn.addEventListener('click', () => submitAnswer(''));
+            if (input) {
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitAnswer(input.value?.trim() || '');
+                    }
+                });
+                setTimeout(() => input.focus(), 100);
+            }
         }
 
         function _buildThinkingStepsHtml(steps) {
@@ -8742,6 +8951,8 @@
          */
         function fetchAiStatus() {
             console.log('[WebView] fetchAiStatus called');
+            // Reset retry counter so each explicit fetch gets full retry budget
+            _aiStatusRetries = 0;
             // Show loading state
             aiConfigLoading.classList.remove('hidden');
             aiConfigError.classList.add('hidden');

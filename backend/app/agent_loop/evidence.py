@@ -55,6 +55,8 @@ def check_evidence(
     tool_calls_made: int,
     files_accessed: int,
     remaining_iterations: int,
+    min_file_refs: int = 1,
+    min_tool_calls: int = 2,
 ) -> EvidenceCheck:
     """Check whether an answer has sufficient evidence to be finalised.
 
@@ -85,17 +87,16 @@ def check_evidence(
 
     problems: list[str] = []
 
-    if file_refs == 0 and code_blocks == 0:
+    if file_refs < min_file_refs and code_blocks == 0:
         problems.append(
-            "Your answer has NO file:line references or code blocks. "
+            f"Your answer has {file_refs} file:line references (need {min_file_refs}). "
             "Every claim must cite a specific file path and line number."
         )
 
-    if tool_calls_made < 2:
+    if tool_calls_made < min_tool_calls:
         problems.append(
-            "You have only made {n} tool call(s). This is too few for a "
-            "substantive answer. Use compressed_view or find_symbol to "
-            "gather more evidence.".format(n=tool_calls_made)
+            f"You have only made {tool_calls_made} tool call(s) (need {min_tool_calls}). "
+            "Use compressed_view or find_symbol to gather more evidence."
         )
 
     if files_accessed == 0:

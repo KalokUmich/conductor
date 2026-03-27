@@ -216,6 +216,41 @@ class DbSchemaParams(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Interactive tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+class AskUserParams(BaseModel):
+    question: str = Field(..., description="The clarifying question to ask the user. Be specific about what information you need.")
+    context: str = Field(
+        default="",
+        description="Brief context for why you need this information, shown to the user alongside the question.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Brain orchestrator tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+class SignalBlockerParams(BaseModel):
+    reason: str = Field(..., description="Why you need direction — describe what ambiguity or choice you encountered.")
+    options: List[str] = Field(default_factory=list, description="2-4 concrete options you've identified.")
+    context: str = Field(default="", description="Brief context about what you've found so far.")
+
+
+class DispatchAgentParams(BaseModel):
+    agent_name: str = Field(..., description="Agent to dispatch (from the available agents list in your system prompt)")
+    query: str = Field(..., description="Focused question for the agent to investigate")
+    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0, description="Budget multiplier (1.0 = standard)")
+
+
+class DispatchSwarmParams(BaseModel):
+    swarm_name: str = Field(..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms.")
+    query: str = Field(..., description="Shared investigation query for all agents in the swarm")
+
+
+# ---------------------------------------------------------------------------
 # Browser tool parameter schemas
 # ---------------------------------------------------------------------------
 
@@ -324,6 +359,12 @@ TOOL_PARAM_MODELS: Dict[str, type] = {
     "web_fill": WebFillParams,
     "web_screenshot": WebScreenshotParams,
     "web_extract": WebExtractParams,
+    # Interactive tools
+    "ask_user": AskUserParams,
+    # Brain orchestrator tools
+    "dispatch_agent": DispatchAgentParams,
+    "dispatch_swarm": DispatchSwarmParams,
+    "signal_blocker": SignalBlockerParams,
 }
 
 
@@ -444,6 +485,11 @@ def filter_tools(names: List[str]) -> List[Dict[str, Any]]:
     """Return TOOL_DEFINITIONS filtered to only the given tool names."""
     name_set = set(names)
     return [t for t in TOOL_DEFINITIONS if t["name"] in name_set]
+
+
+def get_ask_user_tool_def() -> Dict[str, Any]:
+    """Return the ask_user tool definition dict (for interactive mode injection)."""
+    return next(t for t in TOOL_DEFINITIONS if t["name"] == "ask_user")
 
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
@@ -783,4 +829,81 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         ),
         "input_schema": WebExtractParams.model_json_schema(),
     },
+    # --- Interactive tool (only available in interactive mode) ---
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user for direction when there are multiple valid approaches "
+            "and their preference would materially change your investigation. "
+            "Call this in your first iteration, before exploring the codebase. "
+            "Provide 2-4 concrete options when possible, and mark your "
+            "recommended option. The user's answer is returned as the tool "
+            "result. Use at most once per session."
+        ),
+        "input_schema": AskUserParams.model_json_schema(),
+    },
+    # --- Signal blocker (only available for Brain-dispatched sub-agents) ---
+    {
+        "name": "signal_blocker",
+        "description": (
+            "Ask the Brain orchestrator for direction when you encounter "
+            "ambiguity that you cannot resolve from the codebase alone. "
+            "Provide 2-4 concrete options. The Brain will respond with "
+            "a direction to follow. Use sparingly — only when genuinely stuck."
+        ),
+        "input_schema": SignalBlockerParams.model_json_schema(),
+    },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Brain orchestrator tool definitions (separate from TOOL_DEFINITIONS)
+#
+# These are meta-tools for the Brain agent only — they dispatch sub-agents
+# and evaluate findings. Never exposed to regular explorer/review agents,
+# never included in parity tests, never proxied to the VS Code extension.
+# ---------------------------------------------------------------------------
+
+BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
+    {
+        "name": "dispatch_agent",
+        "description": (
+            "Dispatch a specialist agent to investigate a specific aspect of "
+            "the codebase. The agent runs in an isolated context with its own "
+            "tools and budget, then returns condensed findings (answer, file "
+            "references, gaps identified). Choose the agent based on the "
+            "available agents list in your system prompt."
+        ),
+        "input_schema": DispatchAgentParams.model_json_schema(),
+    },
+    {
+        "name": "dispatch_swarm",
+        "description": (
+            "Dispatch a predefined group of parallel agents. Only use for "
+            "tasks that require multiple perspectives simultaneously: "
+            "'pr_review' (5-agent code review) or 'business_flow' (2-agent "
+            "flow tracing). For all other tasks, use dispatch_agent instead. "
+            "The result includes a synthesis_guide with instructions for "
+            "how to combine the agents' findings."
+        ),
+        "input_schema": DispatchSwarmParams.model_json_schema(),
+    },
+]
+
+
+SIGNAL_BLOCKER_TOOL_DEF: Dict[str, Any] = {
+    "name": "signal_blocker",
+    "description": (
+        "Ask the Brain orchestrator for direction when you encounter "
+        "ambiguity that you cannot resolve from the codebase alone. "
+        "Provide 2-4 concrete options. The Brain will respond with "
+        "a direction to follow. Use sparingly — only when genuinely stuck."
+    ),
+    "input_schema": SignalBlockerParams.model_json_schema(),
+}
+
+
+def get_brain_tool_definitions() -> List[Dict[str, Any]]:
+    """Return Brain tool definitions + ask_user for Brain's tool list."""
+    ask_user_def = next(t for t in TOOL_DEFINITIONS if t["name"] == "ask_user")
+    return BRAIN_TOOL_DEFINITIONS + [ask_user_def]

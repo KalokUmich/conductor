@@ -294,6 +294,7 @@ class LiteLLMProvider(AIProvider):
         prompt: str,
         max_tokens: int = 2048,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> str:
         response = self._call(
             messages=[{"role": "user", "content": prompt}],
@@ -308,6 +309,7 @@ class LiteLLMProvider(AIProvider):
         tools: List[Dict[str, Any]],
         max_tokens: int = 4096,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> ToolUseResponse:
         """Send messages with tool definitions via LiteLLM.
 

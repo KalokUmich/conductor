@@ -13,12 +13,16 @@ This guide covers running tests for the backend (Python/pytest) and the extensio
 
 ```bash
 cd backend
-pytest                                        # all tests (900+)
+pytest                                        # all tests (1300+)
 pytest -k "test_code_tools"                  # code tools tests only
 pytest -k "test_agent_loop"                  # agent loop tests only
 pytest -k "test_repo_graph"                  # repo graph tests only
 pytest -v --tb=short                         # verbose with short tracebacks
 pytest --cov=. --cov-report=html             # coverage report
+
+# Tool parity (Python ↔ TypeScript)
+make test-parity                              # contract check + shape validation + subprocess validation
+make update-contracts                         # regenerate after schema changes
 ```
 
 ### Test Files
@@ -26,7 +30,7 @@ pytest --cov=. --cov-report=html             # coverage report
 | File | Tests | Coverage |
 |------|-------|----------|
 | `tests/test_code_tools.py` | 98 | All 24 code tools + dispatcher + multi-language |
-| `tests/test_agent_loop.py` | 39 | Agent loop + message format + workspace layout + 3-layer prompt |
+| `tests/test_agent_loop.py` | 47 | Agent loop + 3-layer prompt + completeness check |
 | `tests/test_budget_controller.py` | 20 | Token budget signals, tracking, edge cases |
 | `tests/test_session_trace.py` | 15 | SessionTrace, IterationTrace, save/load |
 | `tests/test_evidence.py` | 14 | Evidence evaluator (file refs, tool calls, budget checks) |
@@ -36,7 +40,9 @@ pytest --cov=. --cov-report=html             # coverage report
 | `tests/test_compressed_tools.py` | 24 | compressed_view, module_summary, expand_symbol |
 | `tests/test_langextract.py` | 57 | Bedrock provider, catalog, service, router |
 | `tests/test_repo_graph.py` | 72 | Parser + graph + PageRank + RepoMapService |
-| `tests/test_config_new.py` | 27 | Config + secrets (RAG remnants removed) |
+| `tests/test_config_new.py` | 27 | Config + secrets |
+| `tests/test_chat_persistence.py` | — | ChatPersistenceService: micro-batch writes, flush timer, delete room |
+| `tests/test_browser_tools.py` | — | Browser tools (Playwright — mocked BrowserService) |
 | `tests/test_git_workspace.py` | — | Git workspace lifecycle |
 | `tests/test_ai_provider.py` | 131 | All 3 AI providers + chat_with_tools + TokenUsage |
 | `tests/test_chat.py` | 29 | WebSocket + history + typing indicators |
@@ -329,12 +335,15 @@ jobs:
 
 ```bash
 cd backend
-pytest                                        # 所有测试 (900+)
+pytest                                        # 所有测试 (1300+)
 pytest -k "test_code_tools"                  # 代码工具测试
 pytest -k "test_agent_loop"                  # agent loop 测试
 pytest -k "test_repo_graph"                  # repo graph 测试
 pytest -v --tb=short                         # 详细输出
 pytest --cov=. --cov-report=html             # 覆盖率报告
+
+# 工具一致性验证（Python ↔ TypeScript）
+make test-parity                              # 合约检查 + 形状验证 + 子进程验证
 ```
 
 ### 测试文件
@@ -342,7 +351,7 @@ pytest --cov=. --cov-report=html             # 覆盖率报告
 | 文件 | 测试数 | 覆盖 |
 |------|--------|------|
 | `tests/test_code_tools.py` | 98 | 24 个代码工具 + 调度器 + 多语言 |
-| `tests/test_agent_loop.py` | 39 | Agent loop + 消息格式 + 工作区侦察 + 三层提示词 |
+| `tests/test_agent_loop.py` | 47 | Agent loop + 三层提示词 + 完整性检查 |
 | `tests/test_budget_controller.py` | 20 | Token 预算信号、跟踪、边界情况 |
 | `tests/test_session_trace.py` | 15 | SessionTrace、IterationTrace、保存/加载 |
 | `tests/test_evidence.py` | 14 | 证据评估器（文件引用、工具调用、预算检查） |
@@ -352,7 +361,9 @@ pytest --cov=. --cov-report=html             # 覆盖率报告
 | `tests/test_compressed_tools.py` | 24 | compressed_view、module_summary、expand_symbol |
 | `tests/test_langextract.py` | 57 | Bedrock 提供商、目录、服务、路由 |
 | `tests/test_repo_graph.py` | 72 | 解析器 + 图构建 + PageRank + 服务 |
-| `tests/test_config_new.py` | 27 | 配置 + 密钥（RAG 遗留代码已清除） |
+| `tests/test_config_new.py` | 27 | 配置 + 密钥 |
+| `tests/test_chat_persistence.py` | — | ChatPersistenceService micro-batch 写入、刷新计时器 |
+| `tests/test_browser_tools.py` | — | 浏览器工具（Playwright service mocked）|
 | `tests/test_git_workspace.py` | — | Git 工作区生命周期 |
 | `tests/test_ai_provider.py` | 131 | 三个 AI 提供商 + chat_with_tools + TokenUsage |
 

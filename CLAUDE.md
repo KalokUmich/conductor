@@ -65,7 +65,7 @@ python ../eval/tool_parity/run.py --generate-baseline
 
 ```
 backend/app/
-├── main.py                  # FastAPI app, lifespan, router registration
+├── main.py                  # FastAPI app, lifespan, router registration + service startup init
 ├── config.py                # Settings + Secrets from YAML
 ├── agent_loop/              # Agentic code intelligence (LLM + tools)
 │   ├── service.py           # AgentLoopService — LLM loop, tool dispatch
@@ -76,6 +76,15 @@ backend/app/
 │   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
 │   ├── prompts.py           # 3-layer system prompt (Identity + Strategy + Runtime)
 │   └── router.py            # POST /api/context/query
+├── chat/                    # WebSocket chat + persistence
+│   ├── manager.py           # ConnectionManager — WebSocket room management
+│   ├── redis_store.py       # Redis-backed hot message cache (6h TTL)
+│   ├── persistence.py       # ChatPersistenceService — write-through micro-batch Postgres
+│   └── router.py            # /ws/chat/{room_id}, /chat/{room_id}/history, DELETE /chat/{room_id}
+├── browser/                 # Playwright-based web browsing tools
+│   ├── service.py           # BrowserService — Chromium automation (Playwright)
+│   ├── tools.py             # browse_url, search_web, screenshot tool implementations
+│   └── router.py            # /api/browser/ endpoints
 ├── workflow/                # Config-driven workflow engine
 │   ├── models.py            # Pydantic models: WorkflowConfig, AgentConfig, RouteConfig
 │   ├── loader.py            # load_workflow() + load_agent() — YAML + Markdown parser
@@ -135,7 +144,9 @@ tests/
 ├── test_output_policy.py    # 19 tests
 ├── test_langextract.py      # 57 tests
 ├── test_repo_graph.py       # 72 tests
-└── test_config_new.py       # 27 tests
+├── test_config_new.py       # 27 tests
+├── test_chat_persistence.py # ChatPersistenceService — micro-batch Postgres writes
+└── test_browser_tools.py    # Browser tools (Playwright) — mocked service
 ```
 
 ### Extension Structure
@@ -143,13 +154,13 @@ tests/
 ```
 extension/src/
 ├── extension.ts             # Entry point, command registration, _handleLocalToolRequest
+│                            # getOnlineRooms, removeQuitRoom, auto-workspace registration
 ├── panels/                  # collabPanel.ts, workspacePanel.ts
 ├── services/
 │   ├── conductorStateMachine.ts        # FSM: Idle → ReadyToHost → Hosting → Joined
 │   ├── conductorController.ts          # FSM driver
 │   ├── workflowPanel.ts                # Workflow visualization WebView (singleton)
 │   ├── workspaceClient.ts              # /workspace/ HTTP client
-│   ├── workspaceIndexer.ts             # AST symbol extraction
 │   ├── conductorFileSystemProvider.ts  # conductor:// URI scheme
 │   ├── explainWithContextPipeline.ts   # 8-stage code explanation pipeline
 │   │                                   # (Selection → LSP → Ranking → Plan → Execute → XML → LLM → Response)
@@ -160,12 +171,18 @@ extension/src/
 │   ├── localToolDispatcher.ts          # Three-tier tool dispatch (all native TS)
 │   ├── astToolRunner.ts                # 6 AST tools via web-tree-sitter
 │   ├── treeSitterService.ts            # web-tree-sitter WASM wrapper (8 languages)
-│   └── complexToolRunner.ts            # 6 complex tools (compressed_view, trace_variable, etc.)
+│   ├── complexToolRunner.ts            # 6 complex tools (compressed_view, trace_variable, etc.)
+│   └── chatLocalStore.ts               # Local message cache (IndexedDB via VS Code globalState)
 └── commands/index.ts
 
 extension/media/
 ├── chat.html      # Main WebView — @AI /ask /pr slash commands, Workflows tab
+│                  # Online mode room list, renderMessageByType, Highlight.js syntax highlighting
+│                  # chatLocalStore integration, mermaid with raw-source fallback
 └── workflow.html  # Workflow visualization — SVG graph + agent detail panel
+
+extension/media/highlight.min.js    # Bundled Highlight.js 11.9.0 (no CDN dependency)
+extension/media/github-dark.min.css # Highlight.js GitHub Dark theme
 
 extension/grammars/          # tree-sitter .wasm grammar files (committed)
 ├── tree-sitter.wasm         # web-tree-sitter runtime
@@ -174,12 +191,13 @@ extension/grammars/          # tree-sitter .wasm grammar files (committed)
 
 ### Local Mode Tool Dispatch
 
-When the agent runs in local workspace mode, tools are proxied via WebSocket to the extension. The extension runs ALL 24 tools natively — zero Python dependency:
+When the agent runs in local workspace mode, tools are proxied via WebSocket to the extension. The extension runs ALL tools natively — zero Python dependency:
 
 ```
 RemoteToolExecutor → WebSocket → extension._handleLocalToolRequest
   → localToolDispatcher.ts
-    ├── SUBPROCESS (12): grep, read_file, list_files, git_*, find_tests, run_test, module_summary, ast_search
+    ├── SUBPROCESS (12): grep, read_file, list_files, git_log, git_diff, git_diff_files,
+    │                    git_blame, git_show, find_tests, run_test, ast_search, get_repo_graph
     ├── AST (6):         file_outline, find_symbol, find_references, get_callees, get_callers, expand_symbol
     │                    → web-tree-sitter WASM (treeSitterService + astToolRunner)
     └── COMPLEX (6):     compressed_view, trace_variable, detect_patterns, get_dependencies, get_dependents, test_outline
@@ -190,37 +208,36 @@ Grammar WASM files in `extension/grammars/` are committed to the repo. **Do not*
 grammars independently — the grammar ABI version must match `web-tree-sitter` (pinned at 0.26.7).
 Mismatched versions cause silent fallback to regex extraction with degraded accuracy.
 
-### Agentic Code Intelligence
+### Brain Orchestrator (Agentic Code Intelligence)
 
-Active agent loop (not RAG). Agent iteratively calls tools to navigate the codebase.
+The **Brain** is an LLM orchestrator (strong model) that replaces the keyword classifier.
+It understands queries, dispatches specialist agents, evaluates findings, and synthesizes answers.
 
 ```
-Query → QueryClassifier (keyword or LLM) → 3-layer system prompt
-  → AgentLoopService.run_stream()
-    → LLM picks tools (8-12 of 24, dynamic per query type)
-    → Tool execution (up to 25 iterations / 500K tokens)
-    → BudgetController: NORMAL → WARN_CONVERGE (70%) → FORCE_CONCLUDE (90%)
-    → EvidenceEvaluator: requires file:line refs + ≥2 tool calls + ≥1 file accessed
-    → CompletenessCheck: verifies all query aspects addressed before finalizing
-  → AgentResult (answer + context_chunks + budget_summary)
+Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, ask_user)
+  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel preset)
+  → dispatch_agent → AgentLoopService (Haiku, code tools, isolated context)
+    → Tool execution (up to 20 iter / 420K tokens)
+    → Evidence check + completeness check (internal retry)
+    → Returns condensed AgentFindings to Brain
+  → Brain synthesizes final answer with file:line evidence
 ```
+
+**Three dispatch modes:**
+- **SIMPLE** (~80%): one agent, trust result, done
+- **COMPLEX** (~15%): agent → evaluate → handoff to different specialist with previous findings
+- **SWARM** (~5%): `dispatch_swarm("pr_review")` or `dispatch_swarm("business_flow")` — predefined parallel presets
+
+**Configuration:**
+- `config/brain.yaml` — Brain limits (iterations, budget, concurrency, timeout)
+- `config/agents/*.md` — Agent templates (name, description, model, tools, limits + instructions)
+- `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode)
+
+**Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
 **24 code tools** (`code_tools/tools.py`): `grep`, `read_file`, `list_files`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `run_test`.
 
 Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_params>'` (used by extension local mode).
-
-### Config-Driven Workflow Engine
-
-`workflow/` module: two routing modes, config via YAML + Markdown agent files.
-
-- `first_match` — classifier picks best route → run its pipeline (Code Explorer, 9 routes)
-- `parallel_all_matching` — all matching routes run in parallel → post_pipeline (PR Review, 6 routes)
-
-```
-Input → ClassifierEngine.classify() → WorkflowEngine dispatches routes
-  → explorer agents (AgentLoopService, up to 40 iter) or judge (single call)
-  → context dict with _stage_results
-```
 
 **Workflow API** (`/api/workflows/`): `GET` list/detail/mermaid/graph, `PUT /{name}/models`.
 
@@ -274,6 +291,15 @@ result = execute_tool("grep", workspace="/path/to/ws", params={"pattern": "authe
 # result.success, result.data, result.error
 ```
 
+### Chat WebView (chat.html) Key Patterns
+
+- **Message rendering**: use `renderMessageByType(msg)` — dispatches to the correct renderer based on `msg.type` (`text`, `code_snippet`, `ai_response`, `file_share`, etc.). Do NOT use `renderMessage()` directly for history/cached messages as it only handles text.
+- **Syntax highlighting**: `highlightCodeBlocks(container)` — called after inserting any message DOM. Requires Highlight.js (`highlight.min.js` + `github-dark.min.css`) loaded from bundled files (not CDN).
+- **Mermaid diagrams**: wrap `mermaid.render()` calls in `.catch()` to show raw source as fallback on parse error (Qwen/other LLMs sometimes emit invalid syntax).
+- **Online mode**: auto-loads room list from `GET /chat/rooms?email=...` via `getOnlineRooms` extension command on mode selection. Rooms have status dots. Deleting a room calls `DELETE /chat/{roomId}` to purge history from Postgres.
+- **Local workspace**: `_handleStartSession` auto-registers the workspace via `POST /api/git-workspace/workspaces/local` — no manual "Use Local" button needed. If no workspace folder is open, shows a warning with "Open Folder" action.
+- **AI status retries**: silent retry up to 3 times before showing error banner — avoids false alarms on transient connectivity hiccups.
+
 ## Testing Notes
 
 - Backend: `pytest` with mocked external dependencies
@@ -290,12 +316,15 @@ Python and TypeScript tools must produce equivalent output. `make test-parity` v
 
 1. Checks `contracts/tool_contracts.json` matches Python Pydantic schemas
 2. Validates TS tool output shapes against the contract
-3. Runs cross-language parity tests (60+ tests across 13 dual-implementation tools)
+3. **Validates 11 subprocess tools** by calling the Python CLI (`python -m app.code_tools`) and checking `{success, data}` shape — done inside `extension/tests/validate_contract.js`
+4. Runs cross-language parity tests (60+ tests across 13 dual-implementation tools)
 
 ```bash
 make test-parity          # full validation (contract + shape + output comparison)
 make update-contracts     # regenerate contracts after changing Python schemas
 ```
+
+Contract output: `contracts/tool_contracts.json` (JSON Schema) + `extension/src/services/toolContracts.d.ts` (TypeScript interfaces). Regenerate after any schema change with `make update-contracts`.
 
 ### Tool Change Process
 
@@ -344,6 +373,16 @@ make db-rollback-one  # rollback last changeset
 - `docker/init-db.sql` creates the `langfuse` database on first Docker start
 - Langfuse manages its own tables internally (Prisma migrations)
 - New changelog files go in `database/changelog/changes/` (formatted SQL)
+- **Liquibase connection**: URL, username, and password are passed as `--url`, `--username`, `--password` CLI args in the Makefile (not in `liquibase.properties`). This is required because Java cannot parse bash `${VAR:-default}` syntax in JDBC URLs — use plain `${VAR}` or CLI args only.
+
+### Chat Persistence
+
+Chat messages use a **write-through** model:
+1. Every message is written to Redis immediately (6h TTL hot cache)
+2. `ChatPersistenceService` batches messages and writes to Postgres in groups of 3 (flush timer: 5s)
+3. Postgres is the source of truth — history is loaded from Postgres on reconnect
+
+Singleton services (`TODOService`, `AuditLogService`, `FileStorageService`, `ChatPersistenceService`) are initialized in `main.py` lifespan with the async SQLAlchemy engine. Do NOT call `get_instance()` without providing `engine=` on the first call.
 
 ## Eval System
 
@@ -393,7 +432,9 @@ When creating or editing agent definitions (`config/agents/*.md`), system prompt
 ## What's Next
 
 See [ROADMAP.md](ROADMAP.md). Near-term priorities:
-- Model B delegate authentication (no PAT required)
-- Cross-session query patterns (learn from session traces)
-- Persistent codebase memory (background file-summary indexer)
+- Microsoft Teams integration (Phase 7.5)
+- Slack integration (Phase 7.6)
+- Model B delegate authentication (no PAT required — Phase 5.1)
+- Cross-session query patterns (learn from session traces — Phase 5.5)
+- Persistent codebase memory (background file-summary indexer — Phase 5.5.2)
 - Production hardening (Phase 6)

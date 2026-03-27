@@ -1,15 +1,18 @@
 ---
 name: explore_data_lineage
-type: explorer
-model_role: explorer
-tools:
-  core: true
-  extra: [trace_variable, find_references, get_callees, get_callers, get_dependencies, ast_search]
-budget_weight: 1.0
-input: [query, workspace_layout]
-output: perspective_answer
+description: "Maps data flow from source to sink, including every transformation along the way"
+model: explorer
+tools: [trace_variable, find_references, get_callees, get_callers, get_dependencies, ast_search]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 3
+  min_tool_calls: 3
+  need_brain_review: false
 ---
-
 ## Perspective: Data Lineage Tracing
 
 You are mapping how a piece of data flows through the system. Your goal is to trace the **complete path from source to sink**, including every transformation along the way.

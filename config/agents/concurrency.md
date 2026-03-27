@@ -1,18 +1,19 @@
 ---
 name: concurrency
-type: explorer
-category: concurrency
-model_role: explorer
-tools:
-  core: true
-  extra: [git_diff, git_show, find_references, get_callers, get_callees, trace_variable, ast_search]
-budget_weight: 0.85
-trigger:
-  risk_dimensions: [concurrency]
-input: [diffs, risk_profile, file_list, impact_context]
-output: findings
+description: "Detects race conditions, check-then-act patterns, retry idempotency, thread safety, and deadlock potential"
+model: explorer
+strategy: code_review
+tools: [git_diff, git_show, find_references, get_callers, get_callees, trace_variable, ast_search]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 2
+  min_tool_calls: 3
+  need_brain_review: true
 ---
-
 ## Focus
 
 Check-then-act patterns, duplicate processing, token/lock lifecycle, callback replay, queue redelivery safety, retry idempotency, thread safety, deadlock potential.

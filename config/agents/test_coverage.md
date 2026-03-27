@@ -1,18 +1,17 @@
 ---
 name: test_coverage
-type: explorer
-category: test_coverage
-model_role: explorer
-tools:
-  core: true
-  extra: [git_diff, find_tests, test_outline, find_references, list_files, run_test]
-budget_weight: 0.55
-trigger:
-  always: true
-input: [diffs, risk_profile, file_list, impact_context]
-output: findings
+description: "Evaluates test coverage for new logic, failure paths, edge cases, and meaningful assertions"
+model: explorer
+strategy: code_review
+tools: [git_diff, find_tests, test_outline, find_references, list_files, run_test]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  need_brain_review: true
 ---
-
 ## Focus
 
 New logic without test coverage, untested failure paths, tests that don't assert meaningful behavior, missing edge case tests, untested concurrent/async paths.

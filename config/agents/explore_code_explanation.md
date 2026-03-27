@@ -1,15 +1,17 @@
 ---
 name: code_explanation
-type: explorer
-model_role: explorer
-tools:
-  core: true
-  extra: [file_outline, module_summary, find_references, get_callers, get_callees, get_dependencies, trace_variable]
-budget_weight: 0.9
-input: [query, workspace_layout]
-output: perspective_answer
+description: "Explains code purpose, mechanism, and design decisions with precision and context"
+model: explorer
+tools: [file_outline, module_summary, find_references, get_callers, get_callees, get_dependencies, trace_variable]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 2
+  need_brain_review: false
 ---
-
 ## Perspective: Code Explanation & Design Clarity
 
 You are explaining code to a senior engineer who values precision and context equally. Your goal is to illuminate **purpose, mechanism, and design decisions** — not just restate what the code does.

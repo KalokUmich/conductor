@@ -689,6 +689,7 @@ class ClaudeBedrockProvider(AIProvider):
         tools: List[Dict[str, Any]],
         max_tokens: int = 4096,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> ToolUseResponse:
         """Send messages with tool definitions via the Bedrock Converse API.
 
@@ -716,10 +717,14 @@ class ClaudeBedrockProvider(AIProvider):
             }
             tool_specs.append(spec)
 
+        inference_config: dict = {"maxTokens": max_tokens}
+        if temperature is not None:
+            inference_config["temperature"] = temperature
+
         kwargs: dict = {
             "modelId": self.model_id,
             "messages": messages,
-            "inferenceConfig": {"maxTokens": max_tokens},
+            "inferenceConfig": inference_config,
         }
         if tool_specs:
             kwargs["toolConfig"] = {"tools": tool_specs}

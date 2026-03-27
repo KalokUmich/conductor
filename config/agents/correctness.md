@@ -1,18 +1,19 @@
 ---
 name: correctness
-type: explorer
-category: correctness
-model_role: explorer
-tools:
-  core: true
-  extra: [git_diff, git_show, git_log, find_references, get_callers, get_callees, trace_variable, get_dependencies]
-budget_weight: 1.0
-trigger:
-  risk_dimensions: [correctness]
-input: [diffs, risk_profile, file_list, impact_context]
-output: findings
+description: "Finds logic errors, null access, off-by-one, wrong conditionals, missing edge cases, and state machine violations"
+model: explorer
+strategy: code_review
+tools: [git_diff, git_show, git_log, find_references, get_callers, get_callees, trace_variable, get_dependencies]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 2
+  min_tool_calls: 3
+  need_brain_review: true
 ---
-
 ## Focus
 
 Logic errors, null/undefined access, off-by-one, race conditions, wrong conditionals, missing edge cases, breaking API contracts, state machine violations, incorrect error handling.

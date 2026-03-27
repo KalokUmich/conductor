@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from jsonschema import validate, ValidationError as JsonSchemaValidationError
+from jsonschema import Draft7Validator, ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
 
 from app.main import app
@@ -386,7 +386,7 @@ class TestJsonSchemaValidation:
         change_set_dict = response.change_set.model_dump()
 
         # This should not raise ValidationError
-        validate(instance=change_set_dict, schema=changeset_schema)
+        Draft7Validator(changeset_schema).validate(change_set_dict)
 
     def test_endpoint_output_validates_against_schema(self, changeset_schema):
         """Endpoint ChangeSet should validate against the JSON schema."""
@@ -401,7 +401,7 @@ class TestJsonSchemaValidation:
 
         # Extract the change_set and validate
         change_set = data["change_set"]
-        validate(instance=change_set, schema=changeset_schema)
+        Draft7Validator(changeset_schema).validate(change_set)
 
     def test_schema_rejects_invalid_type(self, changeset_schema):
         """Schema should reject invalid change types."""
@@ -416,7 +416,7 @@ class TestJsonSchemaValidation:
         }
 
         with pytest.raises(JsonSchemaValidationError):
-            validate(instance=invalid_data, schema=changeset_schema)
+            Draft7Validator(changeset_schema).validate(invalid_data)
 
     def test_schema_requires_range_for_replace_range(self, changeset_schema):
         """Schema should require range field for replace_range type."""
@@ -431,7 +431,7 @@ class TestJsonSchemaValidation:
         }
 
         with pytest.raises(JsonSchemaValidationError):
-            validate(instance=invalid_data, schema=changeset_schema)
+            Draft7Validator(changeset_schema).validate(invalid_data)
 
     def test_schema_accepts_create_file_without_range(self, changeset_schema):
         """Schema should accept create_file without range field."""
@@ -446,4 +446,4 @@ class TestJsonSchemaValidation:
         }
 
         # This should not raise ValidationError
-        validate(instance=valid_data, schema=changeset_schema)
+        Draft7Validator(changeset_schema).validate(valid_data)

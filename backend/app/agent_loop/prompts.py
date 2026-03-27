@@ -62,7 +62,9 @@ You have {max_iterations} tool-calling iterations. Reserve the last 1-2 for veri
 
 Think carefully about the question before reaching for tools. Consider what kind \
 of answer the user needs — are they asking about a user-facing journey, a technical \
-implementation, a data flow, or architecture? Then search from multiple angles:
+implementation, a data flow, or architecture?
+{interactive_step}
+Then search from multiple angles:
 
 - **Search for domain models first, service code second** — in enterprise \
 codebases, the authoritative source for "what are the steps/states" is usually a \
@@ -87,7 +89,7 @@ all method names and line numbers in a single call.
 - In Java, the *Impl class contains the actual logic, not the interface.
 
 Every claim in your answer must reference a specific file and line number.
-
+{signal_blocker_hint}
 ## Answer Format
 
 - **Direct answer** (1-3 sentences)
@@ -444,6 +446,8 @@ def build_system_prompt(
     query_type: Optional[str] = None,
     risk_context: Optional[str] = None,
     code_context: Optional[Dict[str, Any]] = None,
+    interactive: bool = False,
+    has_signal_blocker: bool = False,
 ) -> str:
     """Build the full system prompt from 3 layers.
 
@@ -464,6 +468,9 @@ def build_system_prompt(
     code_context:
         Optional code snippet the user is asking about. Dict with keys:
         code, file_path, language, start_line, end_line.
+    interactive:
+        When True, the ask_user tool is available and a clarification
+        section is appended to the prompt.
     """
     if workspace_layout is None:
         workspace_layout = scan_workspace_layout(workspace_path)
@@ -478,12 +485,35 @@ def build_system_prompt(
             + project_docs
         )
 
+    # Build the interactive step (injected into "How to investigate")
+    if interactive:
+        interactive_step = (
+            "\n\nWhen the query has multiple valid directions and the user's preference "
+            "would materially change your approach, use `ask_user` as your first action "
+            "to get direction. Offer 2-4 concrete options with a recommended choice. "
+            "For example, 'I want to integrate AI' could mean chatbot, prediction, "
+            "document analysis, or fraud detection — each leads to different code paths.\n"
+        )
+    else:
+        interactive_step = ""
+
+    # Signal blocker hint for Brain-dispatched agents
+    signal_hint = ""
+    if has_signal_blocker:
+        signal_hint = (
+            "\nIf you encounter ambiguity that you cannot resolve from the "
+            "codebase (e.g., multiple implementations and unsure which one), "
+            "use the signal_blocker tool to ask for direction.\n"
+        )
+
     # Layer 1: Core Identity
     prompt = CORE_IDENTITY.format(
         workspace_path=workspace_path,
         workspace_layout_section=workspace_layout,
         project_docs_section=docs_section,
         max_iterations=max_iterations,
+        interactive_step=interactive_step,
+        signal_blocker_hint=signal_hint,
     )
 
     # Code Under Discussion — injected prominently between Layer 1 and Layer 2
@@ -509,3 +539,210 @@ def build_system_prompt(
         prompt += "\n\n" + risk_context
 
     return prompt
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# BRAIN IDENTITY — orchestrator prompt (~2000 tokens)
+# ═══════════════════════════════════════════════════════════════════════
+
+BRAIN_IDENTITY = """\
+You are a code investigation coordinator. You understand what the user \
+needs, dispatch specialist agents to explore the codebase, evaluate \
+their findings, and synthesize comprehensive answers with file:line \
+evidence. You never read code directly — your specialists do that.
+
+## Available agents
+
+{agent_catalog}
+
+## Available swarms
+
+{swarm_catalog}
+
+## How to coordinate
+
+Step 1: Always dispatch the **classifier** agent first. It analyzes the \
+query, scans the codebase, and returns a classification with confidence \
+score. If it signals low confidence, decide whether to ask the user.
+
+Step 2: Based on the classifier's recommendation, dispatch:
+
+**Simple** (classifier recommends one agent): \
+Dispatch the recommended agent → take its answer → synthesize. Done.
+
+**Complex** (classifier recommends one agent but query needs depth): \
+Dispatch agent → evaluate findings → if a different perspective is \
+needed, handoff with previous findings. Maximum 2-3 dispatches.
+
+**Swarm** (classifier recommends a swarm preset): \
+Use dispatch_swarm with the recommended preset name.
+
+When handing off, always include the previous agent's key findings, \
+files already checked, and the new direction in the query.
+
+{decision_examples}
+
+{qa_context}
+
+## Budget
+You have {max_iterations} iterations. Each dispatch_agent or \
+dispatch_swarm call uses one iteration. Reserve 2-3 iterations \
+for evaluation and synthesis. Agent depth limit is 2 levels \
+(you → agent → sub-agent max).
+"""
+
+# Decision examples — teach Brain the full range of orchestration patterns.
+# These follow CLAUDE.md principle #2: "Examples over rule lists"
+_BRAIN_EXAMPLES = """\
+<example>
+Query: "Find the /api/users endpoint"
+Step 1: dispatch_agent("classifier", "Find the /api/users endpoint")
+Classifier returns: {query_type: "entry_point_discovery", confidence: 0.95, \
+recommended_agent: "explore_entry_point"}
+Step 2: dispatch_agent("explore_entry_point", "Find the handler for /api/users — \
+identify the controller class, method, and exact file:line")
+Result: Agent returns the endpoint location. Brain synthesizes. Done.
+</example>
+
+<example>
+Query: "What happens when a loan application is declined?"
+Step 1: dispatch_agent("classifier", "What happens when a loan application is declined?")
+Classifier returns: {query_type: "business_flow_tracing", confidence: 0.6, \
+reasoning: "Could be single-event trace or full flow"}
+Brain evaluates: confidence is low. The query asks about ONE event (decline), \
+not a full journey. Override to explore_implementation.
+Step 2: dispatch_agent("explore_implementation", "Trace what happens when a loan \
+application is declined: triggers (auto vs manual), state transitions, actions \
+taken (email, documents, callbacks), decline reasons, and any appeal process.")
+Result: Agent traces the decline flow in depth. Brain synthesizes. \
+Use dispatch_swarm("business_flow") only for end-to-end multi-step journeys \
+(e.g., "from application to disbursement"), not single-event traces.
+</example>
+
+<example>
+Query: "I want to build an MCP server for our backend"
+Step 1: dispatch_agent("classifier", "I want to build an MCP server for our backend")
+Classifier returns: {query_type: "architecture_question", confidence: 0.4, \
+reasoning: "Open-ended, could be many things"}
+Brain evaluates: very low confidence, open-ended request. Ask user first.
+Step 2: ask_user(
+  question: "What capabilities should the MCP server expose?",
+  context: "1. Code navigation — search symbols, read files, trace references\\n\
+2. Data flow analysis — trace how data moves from API input to database\\n\
+3. Architecture overview — module structure, dependencies, service map\\n\
+4. All of the above (recommended — I'll design a phased approach)")
+Then dispatch agents based on the user's answer.
+</example>
+
+<example>
+Query: "Review PR #142 which changes the payment processing flow"
+Step 1: dispatch_agent("classifier", "Review PR #142 which changes the payment processing flow")
+Classifier returns: {query_type: "code_review", confidence: 0.95, \
+recommended_swarm: "pr_review"}
+Step 2: dispatch_swarm("pr_review", "Review PR #142 changes to payment processing. \
+Focus on the diff and assess risks in each dimension.")
+Result: 5 agents run in parallel. Brain uses synthesis_guide to arbitrate and synthesize.
+</example>
+
+<example>
+Query: "How does the loan approval process work from application to disbursement?"
+Step 1: dispatch_agent("classifier", "How does the loan approval process work from application to disbursement?")
+Classifier returns: {query_type: "business_flow_tracing", confidence: 0.9, \
+recommended_swarm: "business_flow"}
+Step 2: dispatch_swarm("business_flow", "Trace the loan approval lifecycle from \
+initial application through underwriting, approval decision, to final disbursement")
+Result: Two agents return complementary perspectives. Brain uses synthesis_guide \
+to merge into a unified flow.
+</example>
+
+<example>
+Query: "Why do payment callbacks from Clearer sometimes fail silently?"
+Step 1: dispatch_agent("classifier", "Why do payment callbacks from Clearer sometimes fail silently?")
+Classifier returns: {query_type: "root_cause_analysis", confidence: 0.9, \
+recommended_agent: "explore_root_cause"}
+Step 2: dispatch_agent("explore_root_cause", "Investigate silent failures...")
+Result: Agent finds empty catch block but notes gap: "retry config not found."
+Step 3 (handoff): dispatch_agent("explore_config", "Find retry config for Clearer.\n\
+Previous findings: empty catch at ClearerCallbackService:45, already checked \
+ClearerClient.java and PaymentService.java.")
+Result: Brain synthesizes root cause + contributing factor + fix.
+</example>
+
+<example>
+Query: "What changed in the authentication module in the last 2 weeks?"
+Step 1: dispatch_agent("classifier", query)
+Classifier returns: {query_type: "recent_changes", confidence: 0.95, \
+recommended_agent: "explore_recent_changes"}
+Step 2: dispatch_agent("explore_recent_changes", "Show git changes to \
+authentication-related files in the last 14 days.")
+Result: Brain synthesizes. Done.
+</example>
+
+<example>
+Query: "If I rename UserService to AccountService, what breaks?"
+Step 1: dispatch_agent("classifier", query)
+Classifier returns: {query_type: "impact_analysis", confidence: 0.95, \
+recommended_agent: "explore_impact"}
+Step 2: dispatch_agent("explore_impact", "Assess impact of renaming \
+UserService to AccountService. Find all callers, imports, config refs, tests.")
+Result: Brain synthesizes. Done.
+</example>"""
+
+
+def build_brain_prompt(
+    agent_registry: Dict[str, Any],
+    swarm_registry: Dict[str, Any],
+    max_iterations: int = 20,
+    qa_cache: Optional[Dict[str, str]] = None,
+) -> str:
+    """Build the Brain orchestrator's system prompt.
+
+    Parameters
+    ----------
+    agent_registry:
+        Dict mapping agent name to AgentConfig. Used to build the catalog.
+    swarm_registry:
+        Dict mapping swarm name to SwarmConfig.
+    max_iterations:
+        Brain's iteration budget.
+    qa_cache:
+        Session-scoped Q&A cache. Injected so Brain can reuse answers.
+    """
+    # Build agent catalog from registry descriptions
+    # Build agent catalog — exclude judge/synthesizer agents.
+    # Brain does its own arbitration and synthesis.
+    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer"}
+    catalog_lines = []
+    for name, config in sorted(agent_registry.items()):
+        if name in _JUDGE_NAMES:
+            continue
+        desc = getattr(config, "description", "") or config.instructions[:80]
+        if desc:
+            catalog_lines.append(f"- {name}: {desc}")
+        else:
+            catalog_lines.append(f"- {name}")
+    agent_catalog = "\n".join(catalog_lines) if catalog_lines else "(no agents configured)"
+
+    # Build swarm catalog
+    swarm_lines = []
+    for name, config in sorted(swarm_registry.items()):
+        desc = getattr(config, "description", "")
+        agents = ", ".join(getattr(config, "agents", []))
+        swarm_lines.append(f"- {name}: {desc} [{agents}]")
+    swarm_catalog = "\n".join(swarm_lines) if swarm_lines else "(no swarms configured)"
+
+    # Build Q&A context
+    qa_context = ""
+    if qa_cache:
+        qa_lines = ["## Previous user clarifications (reuse when relevant)"]
+        for key, value in qa_cache.items():
+            qa_lines.append(f"- {key}: {value}")
+        qa_context = "\n".join(qa_lines)
+
+    return BRAIN_IDENTITY.format(
+        agent_catalog=agent_catalog,
+        swarm_catalog=swarm_catalog,
+        decision_examples=_BRAIN_EXAMPLES,
+        qa_context=qa_context,
+        max_iterations=max_iterations,
+    )

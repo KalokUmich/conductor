@@ -88,6 +88,7 @@ QUERY_TYPES: Dict[str, dict] = {
             "module_summary", "get_callees", "get_callers",
             "trace_variable", "get_dependencies", "list_files",
             "find_references", "detect_patterns",
+            "web_search", "web_navigate",
         ],
     },
     "root_cause_analysis": {
@@ -101,6 +102,7 @@ QUERY_TYPES: Dict[str, dict] = {
             "find_references", "get_callers", "get_callees",
             "trace_variable", "git_log", "git_diff", "git_blame",
             "git_show", "find_tests", "detect_patterns",
+            "web_search", "web_navigate",
         ],
     },
     "impact_analysis": {
@@ -126,6 +128,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "module_summary", "list_files", "get_dependencies",
             "get_dependents", "detect_patterns",
+            "web_search", "web_navigate",
         ],
     },
     "config_analysis": {
@@ -149,6 +152,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "trace_variable", "find_references", "get_callees",
             "get_callers", "get_dependencies", "ast_search",
+            "web_search", "web_navigate",
         ],
     },
     "code_review": {
@@ -179,6 +183,18 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "git_log", "git_diff", "git_blame", "git_show",
             "find_references", "list_files",
+        ],
+    },
+    "web_browsing": {
+        "budget_level": "medium",
+        "suggested_token_budget": 300_000,
+        "keywords": [
+            "browse", "web", "website", "url", "http",
+            "search online", "look up", "fetch page",
+        ],
+        "tools": _CORE_TOOLS + [
+            "web_search", "web_navigate", "web_click",
+            "web_fill", "web_screenshot", "web_extract",
         ],
     },
 }

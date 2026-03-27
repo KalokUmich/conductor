@@ -1,19 +1,19 @@
 ---
 name: security
-type: explorer
-category: security
-model_role: explorer
-tools:
-  core: true
-  extra: [git_diff, git_show, git_log, trace_variable, find_references, git_blame, ast_search]
-budget_weight: 0.75
-trigger:
-  risk_dimensions: [security]
-file_scope: [business_logic, config]
-input: [diffs, risk_profile, file_list, impact_context]
-output: findings
+description: "Detects injection vulnerabilities, auth bypass, secrets exposure, insecure defaults, and input validation gaps"
+model: explorer
+strategy: code_review
+tools: [git_diff, git_show, git_log, trace_variable, find_references, git_blame, ast_search]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 2
+  min_tool_calls: 3
+  need_brain_review: true
 ---
-
 ## Focus
 
 Injection vulnerabilities (SQL, XSS, command), auth bypass, secrets in code, insecure defaults, missing input validation, sensitive data in logs, replay attacks, CSRF/CORS issues.

@@ -65,30 +65,53 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application startup / shutdown lifecycle."""
     settings: AppSettings = load_settings()
 
-    # ---- PostgreSQL ----
+    # ---- PostgreSQL (with startup retry) ----
+    # create_async_engine() is lazy and never actually connects, so we perform
+    # a real SELECT 1 probe after creation.  If Postgres is not ready (common in
+    # Docker Compose where data and app tiers start concurrently), we retry up to
+    # 5 times with a 2-second delay before giving up.
+    import asyncio as _asyncio
     from .db.engine import init_db, close_db
-    try:
-        engine = await init_db(
-            url=settings.build_postgres_url(),
-            pool_size=settings.postgres.pool_size,
-            max_overflow=settings.postgres.max_overflow,
-            echo=settings.database.echo_sql,
-        )
-        app.state.db_engine = engine
-        logger.info("PostgreSQL connected")
-    except Exception as exc:
-        logger.warning("PostgreSQL unavailable (%s) — services will use fallback storage", exc)
-        app.state.db_engine = None
+    _engine = None
+    _pg_url = settings.build_postgres_url()
+    for _attempt in range(1, 6):
+        try:
+            from sqlalchemy import text as _sql_text
+            _engine = await init_db(
+                url=_pg_url,
+                pool_size=settings.postgres.pool_size,
+                max_overflow=settings.postgres.max_overflow,
+                echo=settings.database.echo_sql,
+            )
+            async with _engine.connect() as _probe_conn:
+                await _probe_conn.execute(_sql_text("SELECT 1"))
+            logger.info("PostgreSQL connected (attempt %d/%d)", _attempt, 5)
+            break
+        except Exception as exc:
+            logger.warning(
+                "PostgreSQL unavailable (attempt %d/5): %s — retrying in 2s",
+                _attempt, exc,
+            )
+            _engine = None
+            if _attempt < 5:
+                await _asyncio.sleep(2)
+    app.state.db_engine = _engine
+    if _engine is None:
+        logger.warning("PostgreSQL permanently unavailable — DB-backed services disabled")
 
     # ---- Initialize singleton services with DB engine ----
     if app.state.db_engine:
-        from .todos.service import TODOService
-        from .audit.service import AuditLogService
-        from .files.service import FileStorageService
-        TODOService.get_instance(engine=app.state.db_engine)
-        AuditLogService.get_instance(engine=app.state.db_engine)
-        FileStorageService.get_instance(engine=app.state.db_engine)
-        logger.info("Singleton services initialized: TODOService, AuditLogService, FileStorageService")
+        try:
+            from .todos.service import TODOService
+            from .audit.service import AuditLogService
+            from .files.service import FileStorageService
+            TODOService.get_instance(engine=app.state.db_engine)
+            AuditLogService.get_instance(engine=app.state.db_engine)
+            FileStorageService.get_instance(engine=app.state.db_engine)
+            logger.info("Singleton services initialized: TODOService, AuditLogService, FileStorageService")
+        except Exception as exc:
+            logger.error("Failed to initialize singleton services: %s — DB-backed endpoints will return 503", exc)
+            app.state.db_engine = None  # mark as unusable so routers return 503
 
     # ---- Redis ----
     from .db.redis import init_redis, close_redis

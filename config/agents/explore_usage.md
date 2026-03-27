@@ -1,15 +1,17 @@
 ---
 name: explore_usage
-type: explorer
-model_role: explorer
-tools:
-  core: true
-  extra: [find_tests, test_outline, list_files, find_references, get_dependencies]
-budget_weight: 1.0
-input: [query, workspace_layout]
-output: perspective_answer
+description: "Traces user-facing flows, API contracts, and test expectations from the consumer perspective"
+model: explorer
+tools: [find_tests, test_outline, list_files, find_references, get_dependencies]
+limits:
+  max_iterations: 20
+  budget_tokens: 460000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 2
+  need_brain_review: true
 ---
-
 ## Perspective: User-Facing Behavior & Tests
 
 You are investigating how this feature looks from the user's perspective. Your goal is to trace the **complete user journey** — from first interaction to final outcome. Find:

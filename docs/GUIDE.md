@@ -18,15 +18,17 @@
 8. [AI 提供商层](#8-ai-提供商层)
 9. [Git 工作区管理](#9-git-工作区管理)
 10. [聊天系统](#10-聊天系统)
-11. [文件共享](#11-文件共享)
-12. [审计日志与 TODO 管理](#12-审计日志与-todo-管理)
-13. [身份认证](#13-身份认证)
-14. [LangExtract 集成](#14-langextract-集成)
-15. [Langfuse 可观测性](#15-langfuse-可观测性)
-16. [代码评审评估系统 (eval/)](#16-代码评审评估系统-eval)
-17. [测试规范](#17-测试规范)
-18. [常见开发任务](#18-常见开发任务)
-19. [部署说明](#19-部署说明)
+11. [Extension UI 流程](#11-extension-ui-流程)
+12. [文件共享](#12-文件共享)
+13. [审计日志与 TODO 管理](#13-审计日志与-todo-管理)
+14. [身份认证](#14-身份认证)
+15. [Jira 集成](#15-jira-集成)
+16. [LangExtract 集成](#16-langextract-集成)
+17. [Langfuse 可观测性](#17-langfuse-可观测性)
+18. [评估系统 (eval/)](#18-评估系统-eval)
+19. [测试规范](#19-测试规范)
+20. [常见开发任务](#20-常见开发任务)
+21. [部署说明](#21-部署说明)
 
 ---
 
@@ -90,13 +92,15 @@ config/
 ```
 VS Code Extension
 ├── chat.html                  — 聊天 WebView，@AI 斜杠命令菜单
+│                                在线模式房间列表，renderMessageByType，Highlight.js 代码高亮
 ├── workflow.html              — 工作流可视化面板（SVG 图）
 ├── workflowPanel.ts           — 面板控制器
 └── services/
     ├── localToolDispatcher.ts — 三级工具派发：子进程 → AST → 原生 TS
     ├── astToolRunner.ts       — 6 个 AST 工具（基于 web-tree-sitter）
     ├── treeSitterService.ts   — web-tree-sitter WASM 封装（8 种语言）
-    └── complexToolRunner.ts   — 6 个复杂工具（compressed_view、trace_variable 等）
+    ├── complexToolRunner.ts   — 6 个复杂工具（compressed_view、trace_variable 等）
+    └── chatLocalStore.ts      — 本地消息缓存（VS Code globalState）
 
 FastAPI Backend
 ├── workflow/          — 配置驱动的多 Agent 工作流引擎  ← 核心新增
@@ -104,7 +108,8 @@ FastAPI Backend
 ├── code_review/       — PR 多 Agent 评审管线
 ├── ai_provider/       — 三提供商抽象层（Bedrock / Anthropic / OpenAI）
 ├── git_workspace/     — Git 裸仓库 + Worktree 管理
-├── chat/              — WebSocket 聊天 + HTTP 历史
+├── chat/              — WebSocket 聊天 + Redis 热缓存 + Postgres 持久化
+├── browser/           — Playwright Chromium 浏览工具（browse_url / search_web / screenshot）
 ├── code_tools/        — 24 个代码智能工具实现 + Python CLI 入口
 └── langextract/       — 多厂商 Bedrock 结构化提取集成
 ```
@@ -119,18 +124,27 @@ FastAPI Backend
 # 系统依赖
 git --version     # 需要 2.15+（worktree 支持）
 rg --version      # ripgrep，code tools 的 grep 工具用它
-# ast-grep 可选，用于结构化 AST 搜索
-
-# Python 依赖
-cd backend
-pip install -r requirements.txt
-
-# Extension 依赖（tree-sitter grammar .wasm 文件）
-# 已提交到 extension/grammars/，开箱即用
-# 如需更新：make update-grammars
+docker --version  # 运行 Postgres + Redis（数据层）
+# ast-grep 可选，用于结构化 AST 搜索（ast_search 工具）
 ```
 
-### 2.2 配置文件
+> tree-sitter grammar `.wasm` 文件已提交到 `extension/grammars/`，克隆后开箱即用，无需手动下载。如果 ABI 不兼容，重新安装 `web-tree-sitter` npm 包即可，版本已锁定在 `package.json`。
+
+### 2.2 一键安装
+
+```bash
+# 创建 Python venv + 安装所有依赖（Python + npm）
+make setup
+```
+
+等价于：
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r backend/requirements.txt
+cd extension && npm install
+```
+
+### 2.3 配置文件
 
 ```bash
 # 拷贝模板，填入你的 API 密钥
@@ -150,21 +164,31 @@ ai_providers:
     region: "us-east-1"
 ```
 
-### 2.3 启动后端
+### 2.4 启动数据层（必须先于后端）
 
 ```bash
-cd backend
-uvicorn app.main:app --reload --port 8000
+make data-up      # 启动 Postgres（5432）+ Redis（6379）
+make db-update    # 应用 Liquibase schema 变更
+```
+
+> **为什么必须先启动数据层？** 后端启动时会初始化 `ChatPersistenceService`、`AuditLogService` 等单例，这些服务在构造时会尝试连接 Postgres。如果数据层未就绪，后端启动会报错。
+
+### 2.5 启动后端
+
+```bash
+make run-backend  # 开发模式（自动重载，端口 8000）
 ```
 
 启动日志应该显示：
 ```
 INFO  AI Provider Resolver initialized: active_model=claude-sonnet-4-6, active_provider=anthropic
 INFO  Git Workspace module initialized.
-INFO  Conducator startup complete.
+INFO  Conductor startup complete.
 ```
 
-### 2.4 验证
+如果看到 `asyncpg.exceptions.ConnectionDoesNotExistError`，说明 Postgres 未就绪，先运行 `make data-up`。
+
+### 2.6 验证
 
 ```bash
 # 健康检查
@@ -181,15 +205,20 @@ curl -X POST http://localhost:8000/api/context/query \
   -d '{"query": "how does authentication work?", "workspace_path": "/path/to/repo"}'
 ```
 
-### 2.5 运行测试
+### 2.7 运行测试
 
 ```bash
+make test-backend  # 全量后端测试（1300+）
+
+# 或者细粒度：
 cd backend
-pytest                          # 全量测试（1200+）
 pytest tests/test_agent_loop.py -v    # Agent Loop 测试
 pytest tests/test_code_tools.py -v    # 代码工具测试
 pytest -k "workflow" -v               # 工作流引擎测试
 pytest --cov=. --cov-report=html      # 覆盖率报告
+
+# 工具一致性（Python ↔ TypeScript）
+make test-parity
 ```
 
 ---
@@ -439,7 +468,17 @@ backend/
 │   │   ├── graph.py               # networkx 依赖图 + PageRank
 │   │   └── service.py             # RepoMapService（图构建 + 缓存）
 │   │
-│   ├── chat/                      # WebSocket + HTTP 聊天接口
+│   ├── chat/                      # WebSocket 聊天 + 持久化
+│   │   ├── manager.py             # ConnectionManager — WebSocket 房间管理
+│   │   ├── redis_store.py         # Redis 热缓存（6h TTL）
+│   │   ├── persistence.py         # ChatPersistenceService — 写穿透 micro-batch Postgres
+│   │   └── router.py              # /ws/chat/{room_id}, /chat/{room_id}/history, DELETE /chat/{room_id}
+│   │
+│   ├── browser/                   # Playwright 网页浏览工具
+│   │   ├── service.py             # BrowserService — Chromium 自动化
+│   │   ├── tools.py               # browse_url、search_web、screenshot 实现
+│   │   └── router.py              # /api/browser/ 接口
+│   │
 │   ├── files/                     # 文件上传下载（PostgreSQL 元数据）
 │   ├── audit/                     # PostgreSQL 审计日志
 │   ├── todos/                     # PostgreSQL TODO 追踪
@@ -453,7 +492,7 @@ backend/
 │   ├── workflows/
 │   │   ├── pr_review.yaml         # PR 评审工作流：6 条路由，parallel_all_matching
 │   │   └── code_explorer.yaml     # 代码问答工作流：9 条路由，first_match
-│   ├── agents/                    # 17 个 Agent 定义文件（YAML 头部 + Markdown 正文）
+│   ├── agents/                    # 18 个 Agent 定义文件（YAML 头部 + Markdown 正文）
 │   │   ├── security.md            # PR 探索 Agent：认证/注入/XSS
 │   │   ├── correctness.md         # PR 探索 Agent：逻辑/状态/持久化
 │   │   ├── ... (15 more)
@@ -462,10 +501,10 @@ backend/
 │       └── explorer_base.md       # 共享探索提示词（CORE_IDENTITY）
 │
 ├── requirements.txt
-└── tests/                         # 1200+ 测试
+└── tests/                         # 1300+ 测试
     ├── conftest.py                # 中央 stub（cocoindex、litellm 等）
     ├── test_code_tools.py         # 98 个：24 工具 + 多语言
-    ├── test_agent_loop.py         # 39 个：循环 + 三层 Prompt
+    ├── test_agent_loop.py         # 47 个：循环 + 三层 Prompt + 完整性检查
     ├── test_budget_controller.py  # 20 个：预算信号
     ├── test_query_classifier.py   # 26 个：分类 + 动态工具集
     ├── test_compressed_tools.py   # 24 个：压缩视图工具
@@ -474,6 +513,8 @@ backend/
     ├── test_output_policy.py      # 19 个：截断策略
     ├── test_langextract.py        # 57 个：Bedrock 多厂商
     ├── test_repo_graph.py         # 72 个：AST + 依赖图
+    ├── test_chat_persistence.py   # ChatPersistenceService — micro-batch Postgres
+    ├── test_browser_tools.py      # 浏览器工具（Playwright，mocked）
     └── ...
 ```
 
@@ -505,14 +546,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.explorer_provider   = resolver.get_explorer_provider()    # 轻量模型（可选）
     app.state.classifier_provider = resolver.get_classifier_provider()  # 分类模型（可选）
 
-    # 3. Langfuse 可观测性（self-hosted，可选）
+    # 3. 单例服务初始化（必须在 lifespan 中用 engine= 参数首次调用）
+    TodoService.get_instance(engine=engine)
+    AuditLogService.get_instance(engine=engine)
+    FileStorageService.get_instance(engine=engine)
+    ChatPersistenceService.get_instance(engine=engine)
+    # 注意：不在 lifespan 中初始化会导致首次请求时 RuntimeError
+
+    # 4. Langfuse 可观测性（self-hosted，可选）
     init_langfuse(settings)
 
-    # 4. Ngrok 隧道（VS Code Remote-WSL 场景，可选）
+    # 5. Ngrok 隧道（VS Code Remote-WSL 场景，可选）
     if ngrok_cfg.get("enabled"):
         start_ngrok(port=settings.server.port, ...)
 
-    # 5. Bedrock 模型目录（动态发现可用模型，可选）
+    # 6. Bedrock 模型目录（动态发现可用模型，可选）
     catalog = BedrockCatalog(region=bedrock_region)
     catalog.refresh()
     app.state.bedrock_catalog = catalog
@@ -1027,8 +1075,8 @@ backend AgentLoopService
       ↓
   localToolDispatcher.ts（全部原生 TypeScript，零 Python 依赖）
       ├── Tier 1: SUBPROCESS (12) → child_process (rg/git)
-      │   grep, read_file, list_files, git_log, git_diff, git_blame,
-      │   git_show, find_tests, run_test, module_summary, ast_search
+      │   grep, read_file, list_files, git_log, git_diff, git_diff_files,
+      │   git_blame, git_show, find_tests, run_test, ast_search, get_repo_graph
       │
       ├── Tier 2: AST (6) → web-tree-sitter WASM
       │   file_outline, find_symbol, find_references,
@@ -1047,12 +1095,7 @@ backend AgentLoopService
 
 **Grammar WASM 管理：**
 
-```bash
-make update-grammars          # 重新下载固定版本的 grammar 文件
-make update-grammars LATEST=1 # 拉取 GitHub 最新 release 版本
-```
-
-Grammar 文件已提交到 `extension/grammars/`，克隆仓库即可使用，无需手动下载。
+Grammar 文件已提交到 `extension/grammars/`，克隆仓库即可使用，无需手动下载。如需更换版本，手动替换 `.wasm` 文件并确保 `web-tree-sitter` npm 包版本与 grammar ABI 匹配（当前锁定在 `extension/package.json`）。
 
 ---
 
@@ -1226,9 +1269,16 @@ DELETE /api/git-workspace/workspaces/{room_id}
 
 ## 10. 聊天系统
 
-### 10.1 房间模型
+### 10.1 房间模型与持久化
 
-每个协作会话是一个**房间**（room），由 `room_id` 标识。`ConnectionManager` 维护所有 WebSocket 连接和消息历史。
+每个协作会话是一个**房间**（room），由 `room_id` 标识。消息使用**写穿透**模型：
+
+```
+发消息 → Redis 热缓存（6h TTL，即写即读）
+       → ChatPersistenceService（micro-batch，每 3 条或 5 秒写入 Postgres）
+```
+
+**Postgres 是 source of truth**。重连时从 Postgres 加载历史，Redis 是读缓存。
 
 ```python
 # chat/manager.py
@@ -1236,7 +1286,7 @@ class ConnectionManager:
     def __init__(self):
         # room_id → [WebSocket, ...]
         self.active_connections: dict[str, list[WebSocket]] = {}
-        # room_id → [message, ...]（内存中，服务重启后清空）
+        # room_id → [message, ...]（内存缓存，服务重启后从 Postgres 重建）
         self.room_messages: dict[str, list[dict]] = {}
 
     async def broadcast(self, room_id: str, msg: dict) -> None:
@@ -1303,11 +1353,120 @@ async def get_history(room_id: str, since: str | None = None, limit: int = 50):
     return messages[-limit:]
 ```
 
+历史记录包含 `codeSnippet` 字段（对 `code_snippet` 类型消息），确保重连后代码片段能正确渲染。
+
+### 10.5 删除房间
+
+```python
+# DELETE /chat/{room_id}
+# 清除：内存历史、Redis 缓存、Postgres 记录、关联文件、审计日志
+@router.delete("/chat/{room_id}")
+async def delete_room(room_id: str):
+    manager.clear_room(room_id)          # 内存
+    await redis_store.delete_room(...)   # Redis
+    await persistence.delete_room(...)   # Postgres
+    ...
+```
+
+Extension 在用户退出房间时调用此接口，彻底清除历史。
+
 ---
 
-## 11. 文件共享
+## 11. Extension UI 流程
 
-### 11.1 上传流程
+这一节解释 Extension 侧的两种使用模式，以及它们是如何与后端交互的。新工程师调试 UI 问题时必读。
+
+### 11.1 两种会话模式
+
+```
+┌─────────────────────────────────────────┐
+│  Extension 启动 → 选择模式              │
+│                                         │
+│  [在线模式 (Online)]                    │
+│   └── 加载房间列表 (GET /chat/rooms)    │
+│   └── 加入已有房间 or 创建新房间        │
+│   └── Git Workspace 在服务器端管理     │
+│                                         │
+│  [本地模式 (Local)]                     │
+│   └── 自动注册本地工作区               │
+│       (POST /api/git-workspace/         │
+│        workspaces/local)               │
+│   └── 工具通过 WebSocket 转发给        │
+│       Extension 本地执行               │
+└─────────────────────────────────────────┘
+```
+
+**关键区别：**
+
+| | 在线模式 | 本地模式 |
+|---|---|---|
+| Git 工作区 | 后端 bare clone + worktree | 用户本地目录 |
+| 工具执行 | 后端 Python | Extension TypeScript（localToolDispatcher） |
+| 聊天历史 | Postgres（持久） | chatLocalStore（VS Code globalState） |
+| AI 调用 | 走后端 `/api/context/query` | 同上（都走后端） |
+
+### 11.2 在线模式：房间列表加载
+
+```typescript
+// chat.html — 用户选择在线模式时触发
+function selectMode(mode) {
+    if (mode === 'online') {
+        loadOnlineRooms();  // 发消息给 Extension Host
+    }
+}
+
+// extension.ts — getOnlineRooms handler
+case 'getOnlineRooms':
+    const resp = await fetch(`${backendUrl}/chat/rooms?email=${userEmail}`);
+    const rooms = await resp.json();
+    panel.webview.postMessage({ command: 'onlineRooms', rooms });
+```
+
+### 11.3 本地模式：自动注册工作区
+
+```typescript
+// extension.ts — _handleStartSession()
+// 用户按下"New Session"后自动调用（无需手动"Use Local"按钮）
+async _handleStartSession() {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders?.length) {
+        // 没有打开工作区时弹警告
+        const action = await vscode.window.showWarningMessage(
+            'No workspace folder open.',
+            'Open Folder'
+        );
+        return;
+    }
+    // 注册本地工作区到后端
+    await fetch(`${backendUrl}/api/git-workspace/workspaces/local`, {
+        method: 'POST',
+        body: JSON.stringify({ room_id, path: folders[0].uri.fsPath }),
+    });
+}
+```
+
+### 11.4 本地工具派发（localToolDispatcher）
+
+本地模式下，Agent 的工具调用流程：
+
+```
+后端 AgentLoopService
+  → RemoteToolExecutor（检测到是本地会话）
+  → WebSocket tool_request 消息
+  → Extension._handleLocalToolRequest()
+  → localToolDispatcher.ts（纯 TypeScript，零 Python 依赖）
+      ├── grep/git/read 等 12 个子进程工具
+      ├── file_outline/find_symbol 等 6 个 AST 工具（web-tree-sitter）
+      └── compressed_view/trace_variable 等 6 个复杂工具
+  → tool_response 消息返回后端
+  → 后端继续 Agent 循环
+```
+
+---
+
+## 12. 文件共享
+
+### 12.1 上传流程
 
 ```
 VS Code WebView（浏览器沙盒）
@@ -1322,7 +1481,7 @@ Extension 通过 WebSocket 广播 file_id
 
 **为什么由 Extension Host 代理？** VS Code WebView 运行在浏览器沙盒里，无法直接发任意 HTTP 请求（CORS 限制）。Extension Host 是 Node.js 进程，没有这个限制。
 
-### 11.2 去重机制
+### 12.2 去重机制
 
 上传时计算 SHA-256，如果哈希已存在则直接返回已有的 `file_id`，不重复存储文件：
 
@@ -1341,13 +1500,13 @@ def upload_file(self, room_id: str, filename: str, content: bytes) -> FileRecord
 
 ---
 
-## 12. 审计日志与 TODO 管理
+## 13. 审计日志与 TODO 管理
 
-### 12.1 存储层
+### 13.1 存储层
 
 审计日志和 TODO 数据持久化在 PostgreSQL，与其他业务数据共用同一个数据库实例。
 
-### 12.2 审计日志
+### 13.2 审计日志
 
 记录每次用户接受/拒绝 AI 建议变更的操作：
 
@@ -1378,7 +1537,7 @@ CREATE TABLE audit_logs (
 )
 ```
 
-### 12.3 TODO 追踪
+### 13.3 TODO 追踪
 
 每个房间有独立的 TODO 列表，支持完整 CRUD：
 
@@ -1393,9 +1552,9 @@ TODO 持久化在 PostgreSQL，服务重启后不丢失。
 
 ---
 
-## 13. 身份认证
+## 14. 身份认证
 
-### 13.1 AWS SSO（设备授权流程）
+### 14.1 AWS SSO（设备授权流程）
 
 ```yaml
 # conductor.settings.yaml
@@ -1411,17 +1570,141 @@ sso:
 3. Extension 轮询 `POST /auth/sso/poll` 直到登录完成
 4. 获得 session token，缓存在 `globalState`（带 TTL）
 
-### 13.2 Git 凭证（PAT）
+### 14.2 Git 凭证（PAT）
 
 Personal Access Token 通过 `GIT_ASKPASS` 机制传给 Git（见第 9 节）。后端从不持久化 PAT，只在 git 操作期间在内存中保存。
 
 ---
 
-## 14. LangExtract 集成
+## 15. Jira 集成
+
+Conductor 通过 Atlassian OAuth 2.0 (3LO) 授权码流程连接 Jira Cloud，让团队成员直接从 VS Code 创建和搜索 Jira issue。
+
+### 15.1 OAuth 3LO 流程
+
+```
+用户点击 "Connect Jira"
+      ↓
+GET /api/integrations/jira/authorize-url
+      → 生成 Atlassian 授权 URL + state（防 CSRF）
+      ↓
+用户在浏览器登录 Atlassian，授权 Conductor 访问
+      ↓
+Atlassian 重定向到 redirect_uri → 后端交换 code → tokens + cloud_id
+      ↓
+浏览器打开 vscode://publisher.conductor/jira/callback?connected=true
+      ↓
+JiraUriHandler.handleUri()
+      → GET /api/integrations/jira/status
+      → 更新 globalState（带 48h 时间戳）
+      ↓
+连接成功，显示已连接的 Jira 站点 URL
+```
+
+**配置（conductor.secrets.yaml）：**
+
+```yaml
+jira:
+  client_id: "your-atlassian-client-id"
+  client_secret: "your-atlassian-client-secret"
+  redirect_uri: "https://your-backend-url/api/integrations/jira/callback"
+  # 可选：静态团队列表（避免每次请求 create-meta API）
+  teams:
+    - id: "uuid-1234"
+      name: "Platform"
+```
+
+### 15.2 后端服务 (JiraOAuthService)
+
+`JiraOAuthService` 管理整个 OAuth 生命周期。Token 存储在**内存**中（重启后清空，用户需重新授权）：
+
+```python
+# integrations/jira/service.py — 使用示例
+svc = JiraOAuthService(
+    client_id="...",
+    client_secret="...",
+    redirect_uri="...",
+    static_teams=[JiraFieldOption(id="uuid-1234", name="Platform")]
+)
+
+# 1. 生成授权 URL（带 state 防重放）
+result = svc.get_authorize_url()
+# → {"authorize_url": "https://auth.atlassian.com/authorize?...", "state": "abc..."}
+
+# 2. OAuth callback 交换授权码
+token_pair = await svc.exchange_code(code, state)
+# → JiraTokenPair(access_token, refresh_token, cloud_id, site_url)
+
+# 3. 查看连接状态
+status = svc.get_status()
+# → {"connected": True, "site_url": "https://your-org.atlassian.net"}
+
+# 4. 创建 issue
+issue = await svc.create_issue(CreateIssueRequest(
+    project_key="PLAT",
+    summary="Fix authentication bug in JWT refresh",
+    description="Token expiry not checked before use",
+    issue_type="Bug",
+    priority="High",
+    team="Platform",
+))
+# → JiraIssue(id="12345", key="PLAT-42", browse_url="https://...atlassian.net/browse/PLAT-42")
+```
+
+**API 端点：**
+
+```bash
+GET  /api/integrations/jira/authorize-url  # 获取授权 URL
+GET  /api/integrations/jira/callback        # OAuth 浏览器重定向处理
+POST /api/integrations/jira/callback        # Extension 直接交换 code
+GET  /api/integrations/jira/status          # 当前连接状态
+POST /api/integrations/jira/disconnect      # 断开连接
+GET  /api/integrations/jira/projects        # 列出可访问项目
+GET  /api/integrations/jira/issue-types     # 查询项目的 issue 类型
+GET  /api/integrations/jira/create-meta     # 创建 issue 所需字段元数据
+GET  /api/integrations/jira/search          # JQL 文本搜索（?q=...&maxResults=10）
+POST /api/integrations/jira/issues          # 创建 issue
+```
+
+### 15.3 Extension 前端 (jiraAuthService.ts)
+
+连接信息存储在 `globalState`，key 为 `conductor.jiraConnection`，有效期 48 小时：
+
+```typescript
+import { getValidJiraConnection, wrapJiraConnection, JIRA_GLOBALSTATE_KEY } from './jiraAuthService';
+
+// 读取缓存（过期或旧格式返回 null）
+const stored = context.globalState.get(JIRA_GLOBALSTATE_KEY);
+const conn = getValidJiraConnection(stored);
+if (conn) {
+    // 连接有效，conn.siteUrl / conn.cloudId 可用
+} else {
+    // 需要重新授权
+}
+
+// 授权成功后写入缓存（带时间戳）
+context.globalState.update(JIRA_GLOBALSTATE_KEY,
+    wrapJiraConnection({ connected: true, siteUrl, cloudId }));
+```
+
+`JiraUriHandler` 注册为 VS Code URI 处理器，监听 `vscode://publisher.conductor/jira/callback`，自动处理授权码交换或刷新连接状态。
+
+### 15.4 常见问题
+
+| 症状 | 原因 | 解法 |
+|------|------|------|
+| `Jira integration is not enabled` | `jira.client_id` 未在 secrets 中配置 | 填写 `conductor.secrets.yaml` → `make app-restart` |
+| 连接后立即失效 | 旧格式 globalState（无 `storedAt`）| 清除 `globalState` 后重新授权 |
+| Team 字段找不到 | `customfield_10001` 因 Jira 实例不同而变化 | 先调用 `GET /create-meta` 确认 team_field_key |
+| 重启后断开连接 | Token 只存内存 | 正常行为，重新点击 Connect Jira |
+
+---
+
+## 16. LangExtract 集成
 
 `langextract/` 为 Google 的 [langextract](https://github.com/google/langextract) 库提供 Bedrock 多厂商插件。
 
-### 14.1 BedrockCatalog — 动态模型发现
+### 16.1 BedrockCatalog — 动态模型发现
 
 ```python
 from app.langextract.catalog import BedrockCatalog
@@ -1436,7 +1719,7 @@ models = catalog.models_by_vendor()
 
 `BedrockCatalog` 自动处理跨区域推理 Profile 的 `eu.` 前缀，无需手动构造 ID。
 
-### 14.2 LangExtractService
+### 16.2 LangExtractService
 
 ```python
 from app.langextract.service import LangExtractService
@@ -1464,7 +1747,7 @@ result = await svc.extract_from_text(
 
 ---
 
-## 15. Langfuse 可观测性
+## 17. Langfuse 可观测性
 
 Langfuse 提供嵌套执行树、成本追踪和延迟分析，是 SessionTrace 的补充：
 
@@ -1475,7 +1758,7 @@ Langfuse 提供嵌套执行树、成本追踪和延迟分析，是 SessionTrace 
 | 界面 | 无（离线分析）| Web UI（团队可视化）|
 | 开销 | ~0（本地写文件）| ~0.1ms（异步 SDK）|
 
-### 15.1 本地启动 Langfuse
+### 17.1 本地启动 Langfuse
 
 ```bash
 # 启动 Langfuse + PostgreSQL（端口 3001）
@@ -1490,7 +1773,7 @@ make langfuse-down
 
 访问 `http://localhost:3001`，创建项目并获取 API Keys。
 
-### 15.2 配置
+### 17.2 配置
 
 ```yaml
 # conductor.settings.yaml
@@ -1504,7 +1787,7 @@ langfuse:
   secret_key: "sk-..."
 ```
 
-### 15.3 追踪结构
+### 17.3 追踪结构
 
 PR 评审的 Langfuse 追踪树示例：
 
@@ -1525,7 +1808,7 @@ workflow: pr-review                      45.2s  $0.38
     └── agent: review_synthesizer (judge)
 ```
 
-### 15.4 @observe 装饰器
+### 17.4 @observe 装饰器
 
 在工作流代码中使用零侵入的装饰器：
 
@@ -1542,7 +1825,7 @@ async def _run_agent(self, agent: AgentConfig, ...):
 
 ---
 
-## 16. 评估系统 (eval/)
+## 18. 评估系统 (eval/)
 
 `eval/` 是独立的三套评估套件（通过 `.dockerignore` 排除在 Docker 镜像之外）：
 
@@ -1555,7 +1838,7 @@ eval/
 
 详细文档见 `eval/README.md`。
 
-### 16.1 代码评审评估（code_review/）
+### 18.1 代码评审评估（code_review/）
 
 在真实开源代码库中植入已知 bug（git patch），运行完整的 `CodeReviewService` 管线，检查发现的结果是否匹配预期。
 
@@ -1579,7 +1862,7 @@ python ../eval/code_review/run.py --gold --gold-model opus --save-baseline
 
 **评分维度：** 召回率 (35%)、精确率 (20%)、严重程度准确性 (15%)、位置准确性 (10%)、修复建议 (10%)、上下文深度 (10%)。
 
-### 16.2 Agent 质量评估（agent_quality/）
+### 18.2 Agent 质量评估（agent_quality/）
 
 对 Agent Loop 的回答质量进行端到端测试，与基线答案对比：
 
@@ -1598,7 +1881,7 @@ python ../eval/agent_quality/run.py --compare
 
 基线文件在 `eval/agent_quality/baselines/*.json`，每个 JSON 定义 `workspace`、`question`、`required_findings`（含权重和匹配模式）。
 
-### 16.3 工具一致性评估（tool_parity/）
+### 18.3 工具一致性评估（tool_parity/）
 
 对比 Python（tree-sitter）和 TypeScript（extension）实现的工具输出是否一致：
 
@@ -1614,13 +1897,13 @@ python ../eval/tool_parity/run.py --compare
 
 ---
 
-## 17. 测试规范
+## 19. 测试规范
 
-### 17.1 运行测试
+### 19.1 运行测试
 
 ```bash
 cd backend
-pytest                                            # 全量 1200+ 测试
+pytest                                            # 全量 1300+ 测试
 pytest tests/test_agent_loop.py -v               # Agent Loop
 pytest tests/test_code_tools.py -v               # 代码工具
 pytest tests/test_budget_controller.py -v        # 预算控制器
@@ -1628,7 +1911,12 @@ pytest tests/test_query_classifier.py -v         # 查询分类器
 pytest tests/test_compressed_tools.py -v         # 压缩视图工具
 pytest tests/test_langextract.py -v              # LangExtract
 pytest tests/test_repo_graph.py -v               # 依赖图
-pytest --cov=. --cov-report=html                  # 覆盖率报告
+pytest tests/test_chat_persistence.py -v         # 聊天持久化
+pytest tests/test_browser_tools.py -v            # 浏览器工具（Playwright，mocked）
+pytest --cov=. --cov-report=html                 # 覆盖率报告
+
+# 工具一致性验证（Python ↔ TypeScript）
+make test-parity                                  # 合约检查 + 形状验证 + 子进程验证
 ```
 
 **主要测试文件：**
@@ -1636,7 +1924,7 @@ pytest --cov=. --cov-report=html                  # 覆盖率报告
 | 文件 | 数量 | 覆盖内容 |
 |------|------|---------|
 | `test_code_tools.py` | 98 | 全部 24 工具 + 多语言支持 |
-| `test_agent_loop.py` | 39 | Agent Loop + 三层 Prompt + 工作区布局 |
+| `test_agent_loop.py` | 47 | Agent Loop + 三层 Prompt + 完整性检查 |
 | `test_budget_controller.py` | 20 | 预算信号转换、追踪、边界情况 |
 | `test_session_trace.py` | 15 | SessionTrace JSON 保存/加载 |
 | `test_evidence.py` | 14 | 证据评估器质量门控 |
@@ -1647,8 +1935,10 @@ pytest --cov=. --cov-report=html                  # 覆盖率报告
 | `test_langextract.py` | 57 | Bedrock Provider、Catalog、Service |
 | `test_repo_graph.py` | 72 | Parser + 依赖图 + PageRank |
 | `test_config_new.py` | 27 | Config + Secrets |
+| `test_chat_persistence.py` | — | ChatPersistenceService micro-batch 写入、刷新计时器 |
+| `test_browser_tools.py` | — | 浏览器工具（Playwright service mocked）|
 
-### 17.2 测试基础设施
+### 19.2 测试基础设施
 
 **`conftest.py` 中央 stub：** cocoindex、litellm、sentence_transformers、sqlite_vec 等库被 stub 掉，避免需要安装所有外部依赖才能跑测试。
 
@@ -1694,7 +1984,7 @@ async def test_agent_loop_basic():
 
 MockProvider 允许在不调用真实 API 的情况下测试 Agent Loop 的完整逻辑：工具调用、结果注入、迭代控制、预算信号、证据验证。
 
-### 17.3 工作流引擎测试
+### 19.3 工作流引擎测试
 
 工作流测试使用**真实的配置文件**（`config/workflows/*.yaml`、`config/agents/*.md`），只 mock AI Provider：
 
@@ -1717,9 +2007,9 @@ def test_workflow_pr_review():
 
 ---
 
-## 18. 常见开发任务
+## 20. 常见开发任务
 
-### 18.1 添加一个新的 Agent
+### 20.1 添加一个新的 Agent
 
 1. 在 `config/agents/` 下创建 `.md` 文件：
 
@@ -1769,7 +2059,7 @@ routes:
 pytest -k "test_workflow" -v
 ```
 
-### 18.2 添加一个新的代码工具
+### 20.2 添加一个新的代码工具
 
 1. 在 `code_tools/tools.py` 实现工具函数：
 
@@ -1820,7 +2110,7 @@ TOOL_REGISTRY = {
 
 5. 在 `tests/test_code_tools.py` 中添加测试。
 
-### 18.3 添加一个新的 AI 提供商
+### 20.3 添加一个新的 AI 提供商
 
 1. 继承 `AIProvider`：
 
@@ -1853,7 +2143,7 @@ def _configured_providers(self) -> list[tuple[str, AIProvider]]:
         yield "my_provider", MyProvider(self._config.ai_providers.my_provider)
 ```
 
-### 18.4 修改工作流路由的触发条件
+### 20.4 修改工作流路由的触发条件
 
 直接编辑 `config/workflows/*.yaml`，不需要改 Python 代码：
 
@@ -1868,7 +2158,7 @@ routes:
 
 修改后重启后端即可生效（工作流在每次请求时从文件加载）。
 
-### 18.5 调试 Agent Loop
+### 20.5 调试 Agent Loop
 
 最快的调试方式是用同步接口并看完整日志：
 
@@ -1900,9 +2190,9 @@ print(f"Token 使用: {result.budget_summary}")
 
 ---
 
-## 19. 部署说明
+## 21. 部署说明
 
-### 19.1 系统依赖
+### 21.1 系统依赖
 
 ```bash
 # 必需
@@ -1914,7 +2204,7 @@ ast-grep       # ast_search 工具（结构化 AST 查询）
 docker         # 运行 Langfuse（自托管可观测性）
 ```
 
-### 19.2 目录布局
+### 21.2 目录布局
 
 运行时需要以下目录可写：
 
@@ -1926,7 +2216,7 @@ docker         # 运行 Langfuse（自托管可观测性）
 
 每个活跃房间约占用仓库大小的 2-3 倍磁盘空间。
 
-### 19.3 配置文件优先级
+### 21.3 配置文件优先级
 
 ```python
 # config.py — 配置文件搜索顺序
@@ -1937,7 +2227,7 @@ _SEARCH_DIRS = [
 ]
 ```
 
-### 19.4 Dockerfile 示例
+### 21.4 Dockerfile 示例
 
 ```dockerfile
 FROM python:3.12-slim
@@ -1964,7 +2254,7 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 > 所有持久化数据（审计日志、TODO、文件元数据）存储在 PostgreSQL 中。
 
-### 19.5 Docker 组件网络（本地开发）
+### 21.5 Docker 组件网络（本地开发）
 
 本地 Docker Compose 使用三个 compose 文件，共享同一个 `conductor-net` Docker 网络：
 
@@ -1988,7 +2278,7 @@ make docker-up
 
 **注意（WSL2 场景）：** `host.docker.internal` 在某些 WSL2 配置下无法从容器内解析。所有 compose 文件已改为使用容器名（`conductor-postgres`、`conductor-redis`）代替 `host.docker.internal`，通过共享 `conductor-net` 网络互相通信。
 
-### 19.5 健康检查与监控
+### 21.6 健康检查与监控
 
 ```bash
 # 基础存活检查
@@ -2014,6 +2304,8 @@ GET /ai/status
 - [ ] `npm test` 通过（extension 测试）
 - [ ] 新增代码有测试覆盖
 - [ ] 如果修改了工作流配置：确认 `pytest -k "workflow"` 通过
+- [ ] 如果修改了代码工具 schema：`make update-contracts` 并提交生成文件
+- [ ] `make test-parity` 通过（Python ↔ TypeScript 工具一致性验证）
 - [ ] `CLAUDE.md` 更新（如引入新模式或新模块）
 - [ ] `ROADMAP.md` 更新（如完成路线图条目）
 - [ ] 无硬编码的 API Key 或密码

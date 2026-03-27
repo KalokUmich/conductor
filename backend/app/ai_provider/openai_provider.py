@@ -205,6 +205,7 @@ class OpenAIProvider(AIProvider):
         prompt: str,
         max_tokens: int = 2048,
         system: str | None = None,
+        temperature: float | None = None,
         assistant_prefix: str | None = None,
     ) -> str:
         """Call the OpenAI model with a raw prompt.
@@ -250,6 +251,7 @@ class OpenAIProvider(AIProvider):
         tools: List[Dict[str, Any]],
         max_tokens: int = 4096,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> ToolUseResponse:
         """Send messages with tool definitions via the OpenAI Chat Completions API.
 

@@ -73,12 +73,14 @@ class WorkflowEngine:
         trace_writer=None,
         tool_executor=None,
         classifier_provider: Optional[AIProvider] = None,
+        interactive: bool = False,
     ) -> None:
         self._provider = provider
         self._explorer_provider = explorer_provider or provider
         self._trace_writer = trace_writer
         self._tool_executor = tool_executor
         self._classifier_provider = classifier_provider
+        self._interactive = interactive
         self._event_queue: Optional[asyncio.Queue] = None
 
     # -----------------------------------------------------------------
@@ -159,9 +161,13 @@ class WorkflowEngine:
         # drain the event queue while agents are working
         async def _execute():
             if workflow.route_mode == "first_match":
+                # Single-agent route: allow interactive clarification
+                context["_interactive"] = self._interactive
                 async for event in self._run_first_match(workflow, classify_result, context):
                     await self._event_queue.put(event)
             elif workflow.route_mode == "parallel_all_matching":
+                # Multi-agent parallel: no interactive (agents can't ask user)
+                context["_interactive"] = False
                 async for event in self._run_parallel_all_matching(workflow, classify_result, context):
                     await self._event_queue.put(event)
             # Sentinel to signal completion
@@ -184,6 +190,128 @@ class WorkflowEngine:
 
         yield WorkflowEvent("done", {
             "workflow": workflow.name,
+            "duration_ms": duration_ms,
+        })
+
+        self._event_queue = None
+
+    # -----------------------------------------------------------------
+    # Brain mode — LLM orchestrator replaces classifier + pipeline
+    # -----------------------------------------------------------------
+
+    async def run_brain_stream(
+        self,
+        context: Dict[str, Any],
+    ) -> AsyncGenerator[WorkflowEvent, None]:
+        """Execute a query using the Brain orchestrator.
+
+        Brain replaces the classifier + route pipeline. It uses LLM
+        intelligence to understand queries, dispatch specialist agents
+        via ``dispatch_agent`` / ``dispatch_swarm`` tools, evaluate
+        findings, and synthesize comprehensive answers.
+
+        Args:
+            context: Must include ``query`` and ``workspace_path``.
+        """
+        from .loader import load_brain_config, load_agent_registry, load_swarm_registry
+        from app.agent_loop.brain import AgentToolExecutor, BrainBudgetManager
+        from app.agent_loop.prompts import build_brain_prompt
+        from app.agent_loop.service import AgentLoopService
+        from app.agent_loop.budget import BudgetConfig
+        from app.code_tools.executor import LocalToolExecutor
+
+        start_time = time.monotonic()
+        brain_config = load_brain_config()
+        agent_registry = load_agent_registry()
+        swarm_registry = load_swarm_registry()
+
+        logger.info(
+            "Starting Brain orchestrator (agents=%d, swarms=%d, max_iter=%d)",
+            len(agent_registry), len(swarm_registry), brain_config.limits.max_iterations,
+        )
+
+        # Set up event queue for streaming
+        self._event_queue = asyncio.Queue()
+
+        # Build Brain's system prompt
+        qa_cache: Dict[str, str] = {}
+        brain_prompt = build_brain_prompt(
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            max_iterations=brain_config.limits.max_iterations,
+            qa_cache=qa_cache,
+        )
+
+        # Budget manager
+        budget_mgr = BrainBudgetManager(brain_config.limits.total_session_tokens)
+
+        # Build the Brain's tool executor
+        workspace_path = context.get("workspace_path", "")
+        inner_executor = self._tool_executor or LocalToolExecutor(workspace_path)
+
+        brain_executor = AgentToolExecutor(
+            inner_executor=inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=self._explorer_provider,
+            workspace_path=workspace_path,
+            brain_config=brain_config,
+            trace_writer=self._trace_writer,
+            event_sink=self._event_queue,
+            current_depth=0,
+            max_depth=brain_config.limits.max_depth,
+            max_concurrent=brain_config.limits.max_concurrent_agents,
+            sub_agent_timeout=brain_config.limits.sub_agent_timeout,
+            budget_manager=budget_mgr,
+            qa_cache=qa_cache,
+        )
+
+        # Propagate code_context so sub-agents can include the snippet
+        brain_executor._code_context = code_context
+
+        # Create Brain agent loop
+        brain = AgentLoopService(
+            provider=self._provider,  # strong model for Brain
+            tool_executor=brain_executor,
+            max_iterations=brain_config.limits.max_iterations,
+            budget_config=BudgetConfig(max_input_tokens=brain_config.limits.budget_tokens),
+            trace_writer=self._trace_writer,
+            interactive=True,
+            _is_brain=True,
+            brain_system_prompt=brain_prompt,
+        )
+
+        query = context.get("query") or context.get("query_text", "")
+        code_context = context.get("code_context")
+
+        # Run Brain in background task, drain events from queue
+        async def _execute():
+            try:
+                async for event in brain.run_stream(query, workspace_path, code_context=code_context):
+                    await self._event_queue.put(
+                        WorkflowEvent(event.kind, event.data)
+                    )
+            except Exception as exc:
+                logger.error("Brain failed: %s", exc, exc_info=True)
+                await self._event_queue.put(
+                    WorkflowEvent("error", {"error": str(exc)})
+                )
+            await self._event_queue.put(None)  # sentinel
+
+        task = asyncio.create_task(_execute())
+
+        # Drain and yield events
+        while True:
+            event = await self._event_queue.get()
+            if event is None:
+                break
+            yield event
+
+        await task
+
+        duration_ms = (time.monotonic() - start_time) * 1000
+        yield WorkflowEvent("done", {
+            "workflow": "brain",
             "duration_ms": duration_ms,
         })
 
@@ -457,9 +585,10 @@ class WorkflowEngine:
             workflow_route_name=route_name,
             verifier_provider=self._provider,  # strong model for completeness check
             perspective=agent.instructions,     # agent role for scoped verification
+            interactive=context.get("_interactive", False),
         )
 
-        # Collect agent events for streaming to UI
+        # Stream agent events to UI in real-time (required for ask_user)
         collected_events: list = []
         result: Optional[AgentResult] = None
 
@@ -469,6 +598,14 @@ class WorkflowEngine:
             code_context=context.get("code_context"),
         ):
             collected_events.append(event)
+
+            # Forward events immediately so ask_user reaches the client
+            # before the generator pauses waiting for the user's answer.
+            if self._event_queue is not None:
+                await self._event_queue.put(
+                    WorkflowEvent(event.kind, {"agent": agent.name, **event.data})
+                )
+
             if event.kind == "done":
                 result = AgentResult(
                     answer=event.data.get("answer", ""),
@@ -478,13 +615,6 @@ class WorkflowEngine:
                     iterations=event.data.get("iterations", 0),
                     duration_ms=event.data.get("duration_ms", 0),
                     budget_summary=event.data.get("budget_summary"),
-                )
-
-        # Push events to the engine's event queue if available (for streaming)
-        if self._event_queue is not None:
-            for evt in collected_events:
-                await self._event_queue.put(
-                    WorkflowEvent(evt.kind, {"agent": agent.name, **evt.data})
                 )
 
         if result is None:
@@ -559,6 +689,8 @@ class WorkflowEngine:
         """Build the full query string for an explorer agent.
 
         Composes: user's original question + agent-specific instructions.
+        When interactive mode is enabled, inserts an ask_user step as part
+        of the agent's investigation flow.
         """
         parts = []
 
@@ -569,7 +701,19 @@ class WorkflowEngine:
 
         # 2. Agent-specific instructions (from .md file)
         if agent.instructions:
-            parts.append(f"\n## Your Role\n\n{agent.instructions}")
+            instructions = agent.instructions
+            # In interactive mode, prepend ask_user guidance into the agent's
+            # instructions so it becomes part of the investigation flow.
+            if context.get("_interactive"):
+                instructions = (
+                    "Before investigating, check whether this query has multiple "
+                    "valid directions (e.g. different features to build, different "
+                    "subsystems to focus on). If so, call `ask_user` with 2-4 "
+                    "concrete options to get the user's preference. Then proceed "
+                    "with your investigation focused on their answer.\n\n"
+                    + instructions
+                )
+            parts.append(f"\n## Your Role\n\n{instructions}")
 
         return "\n\n".join(parts) if parts else "Review the code changes."
 

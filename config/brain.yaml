@@ -1,0 +1,23 @@
+# Brain orchestrator configuration
+# The Brain is the central coordinator that understands queries,
+# dispatches specialist agents, evaluates findings, and synthesizes answers.
+
+model: strong
+
+limits:
+  max_iterations: 20
+  budget_tokens: 100000           # Brain's own budget (thinking + synthesis)
+  total_session_tokens: 800000    # total budget across Brain + all sub-agents
+  max_concurrent_agents: 3
+  sub_agent_timeout: 300          # 5 minutes per sub-agent
+  max_depth: 2                    # Brain(0) → agent(1) → sub-agent(2)
+
+# Core tools given to ALL explorer agents automatically.
+# Individual agents can add more via their template's `tools` field.
+core_tools:
+  - grep
+  - read_file
+  - find_symbol
+  - file_outline
+  - compressed_view
+  - expand_symbol

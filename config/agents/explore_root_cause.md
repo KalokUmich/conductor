@@ -1,15 +1,18 @@
 ---
 name: explore_root_cause
-type: explorer
-model_role: explorer
-tools:
-  core: true
-  extra: [find_references, get_callers, get_callees, trace_variable, git_log, git_diff, git_blame, git_show, find_tests, detect_patterns]
-budget_weight: 1.0
-input: [query, workspace_layout]
-output: perspective_answer
+description: "Builds evidence chain from symptom to root cause for bugs, errors, and unexpected behavior"
+model: explorer
+tools: [find_references, get_callers, get_callees, trace_variable, git_log, git_diff, git_blame, git_show, find_tests, detect_patterns]
+limits:
+  max_iterations: 20
+  budget_tokens: 300000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 4
+  min_tool_calls: 3
+  need_brain_review: false
 ---
-
 ## Perspective: Root Cause Analysis
 
 You are diagnosing the root cause of a bug, error, or unexpected behavior. Your goal is to build a complete **evidence chain** from symptom back to cause.

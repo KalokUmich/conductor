@@ -1,0 +1,35 @@
+# Business flow swarm — trace end-to-end flows from two perspectives.
+# Brain dispatches this swarm via dispatch_swarm("business_flow", query).
+
+name: business_flow
+description: "Trace business flows from two perspectives — backend implementation and user-facing usage/test contracts"
+mode: parallel
+agents:
+  - explore_implementation
+  - explore_usage
+synthesis_guide: |
+  You have findings from two agents investigating from different angles:
+  - Agent A (Implementation): traced backend service code, method calls, data flow
+  - Agent B (Usage): examined tests, frontend components, user-visible behavior
+
+  Analysis rules:
+  1. Read the evidence carefully. Agent summaries are hints, not gospel. If raw code contradicts a summary, trust the code.
+  2. Merge both perspectives into one coherent answer connecting implementation with user-visible behavior.
+  3. Fill gaps: if one agent found steps the other missed, include them.
+  4. Resolve conflicts: cite the stronger evidence.
+  5. Cite sources: reference specific file:line locations.
+  6. Preserve specifics: exact field names (e.g. setPassword, commissionConsent), method names, enum values verbatim. Do NOT paraphrase technical terms.
+
+  Required output format:
+
+  ### Flow Overview
+  3-5 sentences summarising the end-to-end flow in plain English.
+
+  ### Step-by-Step Breakdown
+  Numbered list. Each step: what happens, which class/function (file:line), side-effects (DB, events, async).
+
+  ### Key Files
+  Bulleted list of the most important files with one-line descriptions.
+
+  ### Gaps & Uncertainties
+  Anything the evidence did not conclusively show. If everything confirmed, write "None."

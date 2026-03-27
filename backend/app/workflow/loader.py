@@ -20,9 +20,13 @@ import yaml
 
 from .models import (
     AgentConfig,
+    AgentLimits,
+    BrainConfig,
     DispatchConfig,
+    QualityConfig,
     RouteConfig,
     StageConfig,
+    SwarmConfig,
     ToolsConfig,
     TriggerConfig,
     WorkflowConfig,
@@ -115,10 +119,14 @@ def load_agent(path: str) -> AgentConfig:
     if not isinstance(frontmatter, dict):
         raise ValueError(f"Frontmatter must be a YAML mapping in {path}")
 
-    # Normalize tools config
+    # Normalize tools config — supports both formats:
+    #   New (flat list): tools: [grep, read_file, ...]
+    #   Legacy (dict):   tools: {core: true, extra: [...]}
     tools_raw = frontmatter.pop("tools", {})
-    if isinstance(tools_raw, dict):
-        tools = ToolsConfig(**tools_raw)
+    if isinstance(tools_raw, list):
+        tools = tools_raw  # new Brain format: flat list
+    elif isinstance(tools_raw, dict):
+        tools = ToolsConfig(**tools_raw)  # legacy format
     else:
         tools = ToolsConfig()
 
@@ -129,9 +137,25 @@ def load_agent(path: str) -> AgentConfig:
     else:
         trigger = TriggerConfig()
 
+    # Normalize limits config (new Brain format)
+    limits_raw = frontmatter.pop("limits", {})
+    if isinstance(limits_raw, dict):
+        limits = AgentLimits(**limits_raw)
+    else:
+        limits = AgentLimits()
+
+    # Normalize quality config
+    quality_raw = frontmatter.pop("quality", {})
+    if isinstance(quality_raw, dict):
+        quality = QualityConfig(**quality_raw)
+    else:
+        quality = QualityConfig()
+
     return AgentConfig(
         tools=tools,
         trigger=trigger,
+        limits=limits,
+        quality=quality,
         instructions=body,
         source_path=str(resolved),
         **frontmatter,
@@ -334,4 +358,108 @@ def load_all_workflows() -> Dict[str, WorkflowConfig]:
         except Exception as exc:
             logger.error("Failed to load workflow %s: %s", rel_path, exc)
 
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Brain config loader
+# ---------------------------------------------------------------------------
+
+
+def load_brain_config() -> BrainConfig:
+    """Load the Brain orchestrator configuration from brain.yaml.
+
+    Returns:
+        BrainConfig with limits, core_tools, and model settings.
+        Falls back to defaults if brain.yaml doesn't exist.
+    """
+    try:
+        resolved = _resolve_path("brain.yaml")
+        data = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            logger.warning("brain.yaml is not a mapping, using defaults")
+            return BrainConfig()
+        return BrainConfig(**data)
+    except FileNotFoundError:
+        logger.info("brain.yaml not found, using default Brain config")
+        return BrainConfig()
+    except Exception as exc:
+        logger.warning("Failed to load brain.yaml: %s — using defaults", exc)
+        return BrainConfig()
+
+
+# ---------------------------------------------------------------------------
+# Swarm preset loader
+# ---------------------------------------------------------------------------
+
+
+def load_swarm(path: str) -> SwarmConfig:
+    """Load a swarm preset from a YAML file.
+
+    Args:
+        path: Config-relative path (e.g. "swarms/pr_review.yaml").
+
+    Returns:
+        SwarmConfig with agent list and mode.
+    """
+    resolved = _resolve_path(path)
+    data = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"Swarm file must be a YAML mapping: {path}")
+    return SwarmConfig(**data)
+
+
+def load_swarm_registry() -> Dict[str, SwarmConfig]:
+    """Load all swarm presets from config/swarms/*.yaml.
+
+    Returns:
+        Dict mapping swarm name to SwarmConfig.
+    """
+    config_dir = _find_config_dir()
+    swarms_dir = config_dir / "swarms"
+    if not swarms_dir.is_dir():
+        logger.info("No swarms directory found at %s", swarms_dir)
+        return {}
+
+    result: Dict[str, SwarmConfig] = {}
+    for yaml_file in sorted(swarms_dir.glob("*.yaml")):
+        rel_path = f"swarms/{yaml_file.name}"
+        try:
+            swarm = load_swarm(rel_path)
+            result[swarm.name] = swarm
+            logger.info("Loaded swarm '%s': %d agents, mode=%s",
+                        swarm.name, len(swarm.agents), swarm.mode)
+        except Exception as exc:
+            logger.error("Failed to load swarm %s: %s", rel_path, exc)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Agent registry loader (for Brain mode)
+# ---------------------------------------------------------------------------
+
+
+def load_agent_registry() -> Dict[str, AgentConfig]:
+    """Load all agent definitions from config/agents/*.md.
+
+    Returns:
+        Dict mapping agent name to AgentConfig.
+    """
+    config_dir = _find_config_dir()
+    agents_dir = config_dir / "agents"
+    if not agents_dir.is_dir():
+        logger.warning("No agents directory found at %s", agents_dir)
+        return {}
+
+    result: Dict[str, AgentConfig] = {}
+    for md_file in sorted(agents_dir.glob("*.md")):
+        rel_path = f"agents/{md_file.name}"
+        try:
+            agent = load_agent(rel_path)
+            result[agent.name] = agent
+        except Exception as exc:
+            logger.error("Failed to load agent %s: %s", rel_path, exc)
+
+    logger.info("Loaded agent registry: %d agents", len(result))
     return result

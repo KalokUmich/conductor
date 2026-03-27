@@ -30,7 +30,7 @@ from app.code_tools.output_policy import apply_policy
 from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
-from .completeness import CompletenessCheck, check_completeness, _build_tool_summary
+# completeness check removed — Brain handles via need_brain_review
 from .evidence import check_evidence
 from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
 from .query_classifier import QUERY_TYPES, QueryClassification, classify_query, classify_query_with_llm
@@ -38,27 +38,6 @@ from .trace import IterationTrace, SessionTrace, ToolCallTrace, TraceWriter
 from app.workflow.observability import observe
 
 logger = logging.getLogger(__name__)
-
-# Keywords that signal a high-level / architectural question
-_HIGH_LEVEL_KEYWORDS = {
-    "journey", "journeys", "step", "steps", "flow", "flows",
-    "workflow", "workflows", "pipeline", "pipelines",
-    "stage", "stages", "process", "processes",
-    "architecture", "design", "overview", "high level", "high-level",
-    "how does .* work", "what are the", "what is the",
-    "explain the flow", "explain the process", "explain the architecture",
-    "describe the", "walk me through", "walkthrough",
-    "sequence", "lifecycle", "life cycle",
-}
-
-
-def _is_high_level_query(query: str) -> bool:
-    """Heuristic: does the query ask a high-level / architectural question?"""
-    q = query.lower()
-    for kw in _HIGH_LEVEL_KEYWORDS:
-        if kw in q:
-            return True
-    return False
 
 
 @dataclass
@@ -132,6 +111,10 @@ class AgentLoopService:
         workflow_route_name: str = "",
         verifier_provider: Optional[AIProvider] = None,
         perspective: str = "",
+        interactive: bool = False,
+        _is_brain: bool = False,
+        brain_system_prompt: str = "",
+        forced_tools: Optional[List[str]] = None,
     ) -> None:
         self._provider = provider
         self._max_iterations = max_iterations
@@ -147,6 +130,13 @@ class AgentLoopService:
         self._workflow_route_name = workflow_route_name
         self._verifier_provider = verifier_provider
         self._perspective = perspective
+        self._interactive = interactive and not _is_sub_agent
+        self._is_brain = _is_brain
+        self._brain_system_prompt = brain_system_prompt
+        self._forced_tools = forced_tools
+        self._temperature = None  # set per-agent via forced_tools dispatch
+        self._quality_config = None  # set per-agent via brain dispatch
+        self._forced_strategy = ""  # Layer 2 strategy key override
 
     @observe(name="agent_loop")
     async def run(
@@ -221,6 +211,10 @@ class AgentLoopService:
         )
         trace.begin()
 
+        # Emit session ID so the client can correlate ask_user answers
+        if self._interactive:
+            yield AgentEvent(kind="session", data={"session_id": trace.session_id})
+
         # Scan workspace for context (layout, docs, risk) so the LLM
         # knows the project structure from iteration 1.
         layout_task = asyncio.to_thread(scan_workspace_layout, workspace_path)
@@ -230,8 +224,57 @@ class AgentLoopService:
             layout_task, docs_task, risk_task,
         )
 
+        # Branch 0: Brain mode — skip classification, use Brain tools + prompt
+        if self._is_brain:
+            from app.code_tools.schemas import get_brain_tool_definitions
+            system = self._brain_system_prompt
+            # Inject code_context so Brain sees the snippet when deciding dispatch
+            if code_context:
+                lang = code_context.get("language", "")
+                system += (
+                    "\n\n## Code Under Discussion\n\n"
+                    "The user is asking about this specific code snippet. "
+                    "Pass the full query (including this context) to the dispatched agent.\n\n"
+                    f"`{code_context['file_path']}` "
+                    f"(lines {code_context.get('start_line', '?')}–{code_context.get('end_line', '?')}):\n\n"
+                    f"```{lang}\n{code_context['code']}\n```\n"
+                )
+            active_tools = get_brain_tool_definitions()
+            classification = QueryClassification(
+                query_type="brain",
+                budget_level="high",
+                suggested_token_budget=self._budget_config.max_input_tokens if self._budget_config else 100_000,
+                tool_set=[],
+            )
+            logger.info("Brain mode: %d meta-tools, prompt=%d chars",
+                        len(active_tools), len(system))
+
+            # Emit classify event for UI
+            yield AgentEvent(kind="classify", data={
+                "query_type": "brain",
+                "budget_level": "high",
+                "tools_active": len(active_tools),
+                "tools_total": len(active_tools),
+            })
+
+            # Brain is always interactive
+            self._interactive = True
+
+            messages = self._initial_messages(query, classification)
+
+        # Branch 0.5: Dispatched by Brain with forced_tools — skip classification entirely
+        elif self._forced_tools:
+            classification = QueryClassification(
+                query_type="brain_dispatched",
+                budget_level="medium",
+                suggested_token_budget=self._budget_config.max_input_tokens if self._budget_config else 300_000,
+                tool_set=self._forced_tools,
+            )
+            logger.info("Brain-dispatched agent: forced_tools=%d, skipping classification",
+                        len(self._forced_tools))
+
         # Branch 1: Running under WorkflowEngine — use the route's classification directly
-        if self._workflow_route_name:
+        elif self._workflow_route_name:
             route_type = (
                 self._workflow_route_name
                 or getattr(self._workflow_config, "category", None)
@@ -263,90 +306,58 @@ class AgentLoopService:
                     classification = classify_query(query)
             else:
                 classification = classify_query(query)
-        is_high_level = classification.query_type == "architecture_question" or _is_high_level_query(query)
+        is_high_level = classification.query_type in ("architecture_question", "business_flow_tracing")
 
-        # ---- Multi-agent code review delegation ----
-        # When a PR diff spec is detected, delegate to CodeReviewService
-        # for parallel multi-agent review instead of the single agent loop.
-        # Skip if _is_sub_agent is set (sub-agents inside CodeReviewService).
-        if (
-            classification.query_type == "code_review"
-            and classification.diff_spec
-            and not self._is_sub_agent
-        ):
-            logger.info(
-                "Delegating to multi-agent code review: diff_spec=%s",
-                classification.diff_spec,
-            )
-            async for event in self._run_multi_agent_review(
-                workspace_path=workspace_path,
-                diff_spec=classification.diff_spec,
-                trace=trace,
-                start_time=start,
-            ):
-                yield event
-            return
-
-        # ---- Multi-perspective exploration for business flow questions ----
-        # When the query asks about a business flow / user journey, dispatch
-        # two parallel agents from different perspectives (code implementation
-        # vs tests/interfaces) and synthesize their answers with the strong
-        # model. This avoids tunnel vision where a single agent only traces
-        # backend services and misses the user-facing flow.
-        # Only applies to business_flow_tracing — architecture questions
-        # are better served by the single-agent module_summary approach.
-        if (
-            classification.query_type == "business_flow_tracing"
-            and not self._is_sub_agent
-            and self._classifier_provider is not None
-        ):
-            logger.info(
-                "Delegating to multi-perspective exploration: type=%s",
-                classification.query_type,
-            )
-            async for event in self._run_multi_perspective_stream(
-                query=query,
-                workspace_path=workspace_path,
-                classification=classification,
-                trace=trace,
-                start_time=start,
-                layout=layout,
+        # Build system prompt and tool list (skip for Brain — already set above)
+        if not self._is_brain:
+            # Use forced_strategy if set (e.g., "code_review" for PR review agents),
+            # otherwise fall back to classification query_type
+            effective_query_type = self._forced_strategy or classification.query_type
+            system = build_system_prompt(
+                workspace_path,
+                workspace_layout=layout,
                 project_docs=project_docs,
+                max_iterations=self._max_iterations,
+                query_type=effective_query_type,
                 risk_context=risk_context,
-            ):
-                yield event
-            return
+                code_context=code_context,
+                interactive=self._interactive,
+                has_signal_blocker=bool(self._forced_tools),
+            )
 
-        system = build_system_prompt(
-            workspace_path,
-            workspace_layout=layout,
-            project_docs=project_docs,
-            max_iterations=self._max_iterations,
-            query_type=classification.query_type,
-            risk_context=risk_context,
-            code_context=code_context,
-        )
+            # Dynamic tool set: forced_tools (from Brain dispatch) > classification > all
+            if self._forced_tools:
+                active_tools = filter_tools(self._forced_tools)
+                logger.info("Using forced tools from Brain dispatch: %d tools", len(active_tools))
+            elif classification.tool_set:
+                active_tools = filter_tools(classification.tool_set)
+            else:
+                active_tools = TOOL_DEFINITIONS
 
-        # Dynamic tool set — only expose tools relevant to the query type
-        active_tools = filter_tools(classification.tool_set) if classification.tool_set else TOOL_DEFINITIONS
+            # In interactive mode, append the ask_user tool so the LLM can
+            # request clarification from the user mid-loop.
+            if self._interactive:
+                from app.code_tools.schemas import get_ask_user_tool_def
+                active_tools = list(active_tools) + [get_ask_user_tool_def()]
+
         logger.info(
-            "Query classified: type=%s, budget=%s, tools=%d/%d",
+            "Query classified: type=%s, budget=%s, tools=%d",
             classification.query_type, classification.budget_level,
-            len(active_tools), len(TOOL_DEFINITIONS),
+            len(active_tools),
         )
 
-        # Emit classify event so the client knows what kind of analysis is starting
-        yield AgentEvent(kind="classify", data={
-            "query_type": classification.query_type,
-            "budget_level": classification.budget_level,
-            "tools_active": len(active_tools),
-            "tools_total": len(TOOL_DEFINITIONS),
-        })
-
-        messages = self._initial_messages(query, classification)
+        # Emit classify event (Brain already emitted its own above)
+        if not self._is_brain:
+            yield AgentEvent(kind="classify", data={
+                "query_type": classification.query_type,
+                "budget_level": classification.budget_level,
+                "tools_active": len(active_tools),
+                "tools_total": len(TOOL_DEFINITIONS),
+            })
+            messages = self._initial_messages(query, classification)
         total_tool_calls = 0
         evidence_retries = 0
-        completeness_checked = False  # fires at most once per run
+        # completeness_checked removed — Brain handles via need_brain_review
         response: Optional[ToolUseResponse] = None
 
         # Token budget controller — tracks cumulative token usage
@@ -445,6 +456,7 @@ class AgentLoopService:
                                     tools=active_tools,
                                     max_tokens=8192,
                                     system=system,
+                                    temperature=self._temperature,
                                 ),
                                 timeout=_LLM_TIMEOUT_SECONDS,
                             )
@@ -456,6 +468,7 @@ class AgentLoopService:
                                 tools=active_tools,
                                 max_tokens=8192,
                                 system=system,
+                                temperature=self._temperature,
                             ),
                             timeout=_LLM_TIMEOUT_SECONDS,
                         )
@@ -575,14 +588,45 @@ class AgentLoopService:
                         iteration + 1, len(answer),
                     )
 
-                # Evidence check — reject weak answers if budget remains
+                # Quality checks driven by agent template config.
+                # Brain skips all checks (it dispatches agents, doesn't explore).
+                qc = self._quality_config  # QualityConfig or None
+
+                if self._is_brain:
+                    duration = (time.monotonic() - start) * 1000
+                    trace.finish(answer=answer, budget_summary=budget.summary())
+                    self._save_trace(trace)
+                    yield AgentEvent(kind="done", data={
+                        "answer": answer,
+                        "context_chunks": [],
+                        "thinking_steps": thinking_steps,
+                        "tool_calls_made": total_tool_calls,
+                        "iterations": iteration + 1,
+                        "duration_ms": duration,
+                        "budget_summary": budget.summary(),
+                    })
+                    return
+
+                # Evidence check — skip if template says evidence_check: false
+                skip_evidence = qc and not qc.evidence_check
+                effective_files = len(budget.files_accessed)
+                if self._forced_tools and effective_files == 0 and total_tool_calls >= 3:
+                    effective_files = 1  # grep/list_files count as investigation
+
                 remaining = self._max_iterations - (iteration + 1)
-                ev = check_evidence(
-                    answer=answer,
-                    tool_calls_made=total_tool_calls,
-                    files_accessed=len(budget.files_accessed),
-                    remaining_iterations=remaining,
-                )
+                if skip_evidence:
+                    # Create a passing evidence result
+                    from .evidence import EvidenceCheck
+                    ev = EvidenceCheck(passed=True, file_refs=0, code_blocks=0, tool_calls_made=total_tool_calls, guidance="")
+                else:
+                    ev = check_evidence(
+                        answer=answer,
+                        tool_calls_made=total_tool_calls,
+                        files_accessed=effective_files,
+                        remaining_iterations=remaining,
+                        min_file_refs=qc.min_file_refs if qc else 1,
+                        min_tool_calls=qc.min_tool_calls if qc else 2,
+                    )
                 if not ev.passed:
                     evidence_retries += 1
                     if evidence_retries > self._max_evidence_retries:
@@ -617,42 +661,8 @@ class AgentLoopService:
                         trace.add_iteration(iter_trace)
                         continue  # back to the loop for another LLM call
 
-                # Completeness check — fires once after evidence passes
-                if (
-                    ev.passed
-                    and not completeness_checked
-                    and remaining >= 3
-                ):
-                    completeness_checked = True
-                    verifier = self._verifier_provider or self._classifier_provider or self._provider
-                    cc = await check_completeness(
-                        provider=verifier,
-                        question=query,
-                        answer=answer,
-                        tool_history=_tool_history_for_verifier,
-                        files_accessed=sorted(budget.files_accessed),
-                        perspective=self._perspective,
-                    )
-                    if not cc.sufficient:
-                        logger.info(
-                            "Completeness check found gaps at iteration %d: %s",
-                            iteration + 1, cc.hints,
-                        )
-                        messages.append({
-                            "role": "assistant",
-                            "content": [{"text": answer}],
-                        })
-                        messages.append({
-                            "role": "user",
-                            "content": [{"text":
-                                "Your answer is on the right track but has gaps:\n"
-                                + "\n".join(f"• {h}" for h in cc.hints)
-                                + "\n\nContinue investigating these areas, then provide an updated answer."
-                            }],
-                        })
-                        iter_trace.budget_signal = budget.get_signal().value
-                        trace.add_iteration(iter_trace)
-                        continue  # back to loop
+                # Completeness check removed — Brain handles quality evaluation
+                # via need_brain_review flag. Sub-agents only do evidence check.
 
                 iter_trace.budget_signal = budget.get_signal().value
                 trace.add_iteration(iter_trace)
@@ -685,10 +695,147 @@ class AgentLoopService:
                     "params": tc.input,
                 })
 
-            # Execute all tool calls concurrently
-            tool_outputs = await asyncio.gather(
-                *[_exec_tool(tc) for tc in response.tool_calls]
-            )
+            # Separate special tools from regular tool calls
+            _special = {"ask_user", "signal_blocker"}
+            regular_calls = [tc for tc in response.tool_calls if tc.name not in _special]
+            ask_user_calls = [tc for tc in response.tool_calls if tc.name == "ask_user"]
+            signal_calls = [tc for tc in response.tool_calls if tc.name == "signal_blocker"]
+
+            # Execute regular tool calls concurrently
+            tool_outputs: list = []
+            if regular_calls:
+                tool_outputs = list(await asyncio.gather(
+                    *[_exec_tool(tc) for tc in regular_calls]
+                ))
+
+            # Handle ask_user (at most one per turn)
+            if ask_user_calls and self._interactive:
+                from app.agent_loop.interactive import (
+                    ASK_USER_TIMEOUT,
+                    register_question,
+                    cleanup as cleanup_question,
+                )
+                from app.code_tools.schemas import ToolResult
+
+                tc = ask_user_calls[0]
+                question_text = tc.input.get("question", "")
+                question_ctx = tc.input.get("context", "")
+
+                pq = register_question(trace.session_id, question_text, question_ctx)
+
+                yield AgentEvent(kind="ask_user", data={
+                    "session_id": trace.session_id,
+                    "question": question_text,
+                    "context": question_ctx,
+                    "tool_use_id": tc.id,
+                })
+
+                # Wait for user answer with 15s keepalive heartbeats
+                ask_start = time.monotonic()
+                try:
+                    while not pq.event.is_set():
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(pq.event.wait()), timeout=15.0,
+                            )
+                        except asyncio.TimeoutError:
+                            elapsed = time.monotonic() - ask_start
+                            if elapsed >= ASK_USER_TIMEOUT:
+                                pq.timed_out = True
+                                break
+                            yield AgentEvent(kind="ask_user_waiting", data={
+                                "session_id": trace.session_id,
+                                "elapsed_seconds": int(elapsed),
+                            })
+                except asyncio.CancelledError:
+                    cleanup_question(trace.session_id)
+                    raise
+
+                if pq.timed_out:
+                    answer_text = (
+                        "(The user did not respond within the time limit. "
+                        "Continue with your best judgment based on available evidence.)"
+                    )
+                else:
+                    answer_text = pq.answer or "(No answer provided)"
+
+                cleanup_question(trace.session_id)
+
+                tool_outputs.append((tc, ToolResult(
+                    tool_name="ask_user",
+                    success=True,
+                    data={"answer": answer_text, "timed_out": pq.timed_out},
+                ), 0.0))
+
+                # Record the Q&A in thinking steps
+                thinking_steps.append({
+                    "kind": "ask_user",
+                    "iteration": iteration + 1,
+                    "text": f"Q: {question_text}\nA: {answer_text}",
+                    "tool": "ask_user",
+                })
+
+            # Handle extra ask_user calls beyond the first (return guidance)
+            for extra_tc in ask_user_calls[1:]:
+                from app.code_tools.schemas import ToolResult
+                tool_outputs.append((extra_tc, ToolResult(
+                    tool_name="ask_user",
+                    success=False,
+                    error="Only one question per turn. Continue with the answer you received.",
+                ), 0.0))
+
+            # Handle signal_blocker — sub-agent asks Brain for direction
+            if signal_calls and self._forced_tools:
+                from app.agent_loop.signal_blocker import (
+                    SIGNAL_TIMEOUT,
+                    register_signal,
+                    cleanup_signal,
+                )
+                from app.code_tools.schemas import ToolResult
+
+                tc = signal_calls[0]
+                reason = tc.input.get("reason", "")
+                options = tc.input.get("options", [])
+                sig_ctx = tc.input.get("context", "")
+
+                ps = register_signal(trace.session_id, reason, options, sig_ctx)
+
+                yield AgentEvent(kind="signal_blocker", data={
+                    "session_id": trace.session_id,
+                    "reason": reason,
+                    "options": options,
+                    "context": sig_ctx,
+                    "tool_use_id": tc.id,
+                })
+
+                # Wait for Brain's response (with timeout)
+                try:
+                    await asyncio.wait_for(ps.event.wait(), timeout=SIGNAL_TIMEOUT)
+                except asyncio.TimeoutError:
+                    ps.timed_out = True
+                except asyncio.CancelledError:
+                    cleanup_signal(trace.session_id)
+                    raise
+
+                if ps.timed_out:
+                    response_text = "(Brain did not respond. Continue with your best judgment.)"
+                else:
+                    response_text = ps.response or "(No direction provided)"
+
+                cleanup_signal(trace.session_id)
+
+                tool_outputs.append((tc, ToolResult(
+                    tool_name="signal_blocker",
+                    success=True,
+                    data={"response": response_text, "timed_out": ps.timed_out},
+                ), 0.0))
+
+                thinking_steps.append({
+                    "kind": "signal_blocker",
+                    "iteration": iteration + 1,
+                    "text": f"Signal: {reason}\nBrain: {response_text}",
+                    "tool": "signal_blocker",
+                })
 
             # Process results and collect context
             tool_results_content = []
@@ -1046,541 +1193,8 @@ class AgentLoopService:
     #
     # We use the Bedrock Converse message format as the canonical format
     # because it's the most structured. Provider adapters in
-    # ------------------------------------------------------------------
-    # Multi-agent code review delegation
-    # ------------------------------------------------------------------
-
-    async def _run_multi_agent_review(
-        self,
-        workspace_path: str,
-        diff_spec: str,
-        trace: SessionTrace,
-        start_time: float,
-    ) -> AsyncGenerator[AgentEvent, None]:
-        """Run multi-agent code review via CodeReviewService.
-
-        Yields AgentEvent objects compatible with the SSE streaming protocol
-        so the frontend displays progress just like a normal agent loop.
-        """
-        from app.code_review.service import CodeReviewService
-
-        thinking_steps: List[Dict[str, Any]] = []
-
-        # Step 1: Emit initial thinking
-        yield AgentEvent(kind="thinking", data={
-            "text": f"Starting multi-agent code review: {diff_spec}",
-            "iteration": 1,
-        })
-        thinking_steps.append({
-            "kind": "thinking", "iteration": 1,
-            "text": f"Starting multi-agent code review: {diff_spec}",
-        })
-
-        try:
-            service = CodeReviewService(
-                provider=self._provider,
-                explorer_provider=self._explorer_provider or self._classifier_provider,
-                trace_writer=self._trace_writer,
-            )
-
-            # Step 2: Run the review
-            yield AgentEvent(kind="tool_call", data={
-                "tool": "code_review",
-                "iteration": 2,
-                "params": {"diff_spec": diff_spec},
-            })
-            thinking_steps.append({
-                "kind": "tool_call", "iteration": 2,
-                "tool": "code_review",
-                "text": f"Reviewing {diff_spec} with specialized agents",
-            })
-
-            # Run review as a background task and send keepalive events
-            # every 15s to prevent proxy/ngrok timeouts on idle SSE connections.
-            review_task = asyncio.create_task(service.review(
-                workspace_path=workspace_path,
-                diff_spec=diff_spec,
-                max_agents=5,
-            ))
-
-            keepalive_count = 0
-            while not review_task.done():
-                try:
-                    await asyncio.wait_for(asyncio.shield(review_task), timeout=15.0)
-                except asyncio.TimeoutError:
-                    keepalive_count += 1
-                    yield AgentEvent(kind="thinking", data={
-                        "text": f"Multi-agent review in progress... ({keepalive_count * 15}s)",
-                        "iteration": 2,
-                    })
-
-            result = review_task.result()
-
-            # Step 3: Emit per-agent results
-            iteration = 3
-            for ar in result.agent_results:
-                status = "error" if ar.error else "done"
-                summary = (
-                    f"{ar.agent_name}: {len(ar.findings)} finding(s), "
-                    f"{ar.tokens_used:,} tokens, {ar.duration_ms:.0f}ms"
-                )
-                if ar.error:
-                    summary += f" [error: {ar.error}]"
-
-                yield AgentEvent(kind="tool_result", data={
-                    "tool": ar.agent_name,
-                    "summary": summary,
-                    "success": ar.error is None,
-                    "iteration": iteration,
-                })
-                thinking_steps.append({
-                    "kind": "tool_result", "iteration": iteration,
-                    "tool": ar.agent_name, "summary": summary,
-                    "success": ar.error is None,
-                })
-                iteration += 1
-
-            # Step 4: Format the answer
-            answer = self._format_review_result(result)
-
-            duration_ms = (time.monotonic() - start_time) * 1000
-            trace.finish()
-            if self._trace_writer:
-                self._trace_writer.save(trace)
-
-            yield AgentEvent(kind="done", data={
-                "answer": answer,
-                "thinking_steps": thinking_steps,
-                "tool_calls_made": len(result.agent_results),
-                "iterations": iteration - 1,
-                "duration_ms": duration_ms,
-                "budget_summary": {
-                    "total_tokens": result.total_tokens,
-                    "agents_dispatched": len(result.agent_results),
-                    "findings_count": len(result.findings),
-                },
-            })
-
-        except Exception as exc:
-            logger.exception("Multi-agent code review failed: %s", exc)
-            duration_ms = (time.monotonic() - start_time) * 1000
-            trace.finish()
-            yield AgentEvent(kind="error", data={
-                "error": str(exc),
-                "answer": f"Code review failed: {exc}",
-                "thinking_steps": thinking_steps,
-                "iterations": 0,
-                "duration_ms": duration_ms,
-            })
-
-    # ------------------------------------------------------------------
-    # Multi-perspective exploration for high-level questions
-    # ------------------------------------------------------------------
-
-    # Two complementary perspectives that cover blind spots of each other.
-    _PERSPECTIVES = [
-        {
-            "name": "implementation",
-            "label": "Code Implementation",
-            "hint": (
-                "[PERSPECTIVE: Code Implementation]\n"
-                "Focus on the internal code path: service classes, controllers, "
-                "handlers, data access, async jobs, message queues. Trace the "
-                "call chain through the actual implementation. Read *Impl classes, "
-                "follow method calls, and map the processing pipeline step by step."
-            ),
-        },
-        {
-            "name": "usage",
-            "label": "Tests & User-Facing Flows",
-            "hint": (
-                "[PERSPECTIVE: Tests & External Interfaces]\n"
-                "Focus on how this feature looks from the outside: E2E tests "
-                "(Playwright, Cypress, Selenium specs), integration tests, API "
-                "specs, frontend components, page routes, step wizards, and "
-                "documentation. Tests describe the actual user-visible behavior "
-                "and the end-to-end journey in order. Start by searching for "
-                "test/spec files related to the topic."
-            ),
-        },
-    ]
-
-    _SYNTHESIS_PROMPT = """\
-You are a senior engineer answering a question about a codebase. You have been \
-given raw evidence collected by two exploration agents, each from a different angle:
-
-- **Perspective A (Code Implementation)**: traced backend service code, method \
-calls, data flow, internal processing.
-- **Perspective B (Tests & User-Facing Flows)**: examined E2E tests, frontend \
-components, integration tests, user-visible behavior.
-
-You have access to:
-1. The raw code evidence each agent collected (file paths, code snippets, tool outputs).
-2. Each agent's preliminary summary (from a lightweight model — may be incomplete or imprecise).
-
-Your job is to produce the DEFINITIVE answer by re-analyzing the raw evidence yourself.
-
-## Analysis Rules
-1. **Read the evidence carefully.** The preliminary summaries are hints, not gospel. \
-If the raw code contradicts a summary, trust the code.
-2. **Merge both perspectives** into one coherent answer. Find the narrative that \
-connects implementation details with user-visible behavior.
-3. **Fill gaps**: if one perspective found steps the other missed, include them.
-4. **Resolve conflicts**: if perspectives disagree, cite the stronger evidence.
-5. **Cite sources**: reference specific file:line locations from the evidence.
-
-## Required Output Format
-Structure your answer using ALL of the following sections, in order:
-
-### Flow Overview
-One short paragraph (3-5 sentences) summarising the end-to-end flow in plain English.
-
-### Step-by-Step Breakdown
-Numbered list. Each step must include:
-- What happens (action / decision)
-- Which component / class / function is responsible (`file:line` where known)
-- Any important side-effects (DB write, event publish, async handoff, etc.)
-
-### Sequence Diagram
-A Mermaid sequence diagram capturing the key actors and messages. Use this block:
-
-```mermaid
-sequenceDiagram
-    ...
-```
-
-Keep the diagram focused: max ~15 arrows. Omit trivial getters/setters. \
-Label async calls with `-->>` and synchronous calls with `->>`.
-
-### Key Files
-Bulleted list of the most important files involved, with a one-line description each.
-
-### Gaps & Uncertainties
-Anything the evidence did not conclusively show. If everything was confirmed, write "None."\
-"""
-
-    async def _run_multi_perspective_stream(
-        self,
-        query: str,
-        workspace_path: str,
-        classification: QueryClassification,
-        trace: SessionTrace,
-        start_time: float,
-        layout: str,
-        project_docs: str,
-        risk_context: str,
-    ) -> AsyncGenerator[AgentEvent, None]:
-        """Run two parallel exploration agents from different perspectives,
-        then synthesize their answers with the strong model.
-
-        This is triggered for high-level questions (business_flow_tracing,
-        architecture_question) where a single agent tends to get tunnel
-        vision on one aspect of the codebase.
-        """
-        thinking_steps: List[Dict[str, Any]] = []
-
-        yield AgentEvent(kind="thinking", data={
-            "text": "High-level question detected — exploring from two perspectives in parallel",
-            "iteration": 1,
-        })
-        thinking_steps.append({
-            "kind": "thinking", "iteration": 1,
-            "text": "Multi-perspective exploration: code implementation + tests/interfaces",
-        })
-
-        # Budget: each sub-agent gets 60% of the normal budget.
-        # Two agents run in parallel so the effective total stays well below 2×
-        # the single-agent limit, leaving headroom for synthesis.
-        base_budget = self._budget_config or BudgetConfig()
-        sub_max_iters = max(int(self._max_iterations * 0.6), 10)
-        sub_budget = BudgetConfig(
-            max_input_tokens=int(base_budget.max_input_tokens * 0.6),
-            max_iterations=sub_max_iters,
-        )
-
-        # Use the explorer model for sub-agents (thinking enabled for Alibaba);
-        # fall back to classifier, then main provider.
-        sub_provider = self._explorer_provider or self._classifier_provider or self._provider
-
-        # Create two sub-agents with different perspectives
-        async def _run_perspective(perspective: dict) -> AgentResult:
-            agent = AgentLoopService(
-                provider=sub_provider,
-                max_iterations=sub_max_iters,
-                budget_config=sub_budget,
-                trace_writer=self._trace_writer,
-                _is_sub_agent=True,  # sub-agents skip multi-agent dispatch
-                verifier_provider=self._provider,  # strong model for completeness
-                perspective=perspective['hint'],
-            )
-            perspective_query = f"{query}\n\n{perspective['hint']}"
-            return await agent.run(perspective_query, workspace_path)
-
-        # Dispatch both perspectives in parallel
-        perspective_a, perspective_b = self._PERSPECTIVES[0], self._PERSPECTIVES[1]
-
-        yield AgentEvent(kind="tool_call", data={
-            "tool": f"explore_{perspective_a['name']}",
-            "iteration": 2,
-            "params": {"perspective": perspective_a['label']},
-        })
-        yield AgentEvent(kind="tool_call", data={
-            "tool": f"explore_{perspective_b['name']}",
-            "iteration": 2,
-            "params": {"perspective": perspective_b['label']},
-        })
-        thinking_steps.append({
-            "kind": "tool_call", "iteration": 2,
-            "text": f"Dispatching: {perspective_a['label']} + {perspective_b['label']}",
-        })
-
-        # Run both with keepalive pings
-        async def _run_both():
-            return await asyncio.gather(
-                _run_perspective(perspective_a),
-                _run_perspective(perspective_b),
-            )
-
-        explore_task = asyncio.create_task(_run_both())
-
-        keepalive_count = 0
-        while not explore_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(explore_task), timeout=15.0)
-            except asyncio.TimeoutError:
-                keepalive_count += 1
-                yield AgentEvent(kind="thinking", data={
-                    "text": f"Exploring from two perspectives... ({keepalive_count * 15}s)",
-                    "iteration": 2,
-                })
-
-        result_a, result_b = explore_task.result()
-
-        # Emit sub-agent results
-        for label, res in [(perspective_a['label'], result_a), (perspective_b['label'], result_b)]:
-            status = "error" if res.error else "done"
-            summary = (
-                f"{label}: {res.tool_calls_made} tool calls, "
-                f"{res.iterations} iterations, {res.duration_ms:.0f}ms"
-            )
-            if res.error:
-                summary += f" [error: {res.error}]"
-            yield AgentEvent(kind="tool_result", data={
-                "tool": label,
-                "summary": summary,
-                "success": res.error is None,
-                "iteration": 3,
-            })
-            thinking_steps.append({
-                "kind": "tool_result", "iteration": 3,
-                "tool": label, "summary": summary,
-                "success": res.error is None,
-            })
-
-        # Synthesize both perspectives using the strong model.
-        # Include raw evidence (context_chunks) so Sonnet can re-analyze
-        # the actual code, not just rely on Haiku's summary.
-        yield AgentEvent(kind="thinking", data={
-            "text": "Synthesizing both perspectives with strong model...",
-            "iteration": 4,
-        })
-        thinking_steps.append({
-            "kind": "thinking", "iteration": 4,
-            "text": "Synthesis pass using strong model (with raw evidence)",
-        })
-
-        # Build raw evidence sections (truncated to fit context)
-        _MAX_EVIDENCE_CHARS = 30_000  # per perspective
-
-        def _format_evidence(result: AgentResult, max_chars: int) -> str:
-            if not result.context_chunks:
-                return "(no code evidence collected)"
-            parts = []
-            total = 0
-            for chunk in result.context_chunks:
-                entry = f"### {chunk.file_path}"
-                if chunk.start_line:
-                    entry += f":{chunk.start_line}"
-                    if chunk.end_line and chunk.end_line != chunk.start_line:
-                        entry += f"-{chunk.end_line}"
-                entry += f"\n```\n{chunk.content}\n```"
-                if total + len(entry) > max_chars:
-                    parts.append(f"... ({len(result.context_chunks) - len(parts)} more chunks truncated)")
-                    break
-                parts.append(entry)
-                total += len(entry)
-            return "\n\n".join(parts)
-
-        evidence_a = _format_evidence(result_a, _MAX_EVIDENCE_CHARS)
-        evidence_b = _format_evidence(result_b, _MAX_EVIDENCE_CHARS)
-
-        synthesis_prompt = (
-            f"## Question\n{query}\n\n"
-            f"---\n"
-            f"## Perspective A — {perspective_a['label']}\n\n"
-            f"### Preliminary Summary (lightweight model)\n"
-            f"{result_a.answer or '(no answer produced)'}\n\n"
-            f"### Raw Code Evidence\n"
-            f"{evidence_a}\n\n"
-            f"---\n"
-            f"## Perspective B — {perspective_b['label']}\n\n"
-            f"### Preliminary Summary (lightweight model)\n"
-            f"{result_b.answer or '(no answer produced)'}\n\n"
-            f"### Raw Code Evidence\n"
-            f"{evidence_b}\n\n"
-            f"---\n"
-            f"Produce the definitive answer by re-analyzing the raw evidence from "
-            f"both perspectives. The preliminary summaries are starting points — "
-            f"trust the code over the summaries when they disagree."
-        )
-
-        logger.info(
-            "Synthesis prompt: ~%d chars (%d chunks from A, %d chunks from B)",
-            len(synthesis_prompt),
-            len(result_a.context_chunks),
-            len(result_b.context_chunks),
-        )
-
-        try:
-            loop = asyncio.get_event_loop()
-            answer = await loop.run_in_executor(
-                None,
-                lambda: self._provider.call_model(
-                    prompt=synthesis_prompt,
-                    max_tokens=6144,  # raised from 4096 — Mermaid diagram needs headroom
-                    system=self._SYNTHESIS_PROMPT,
-                ),
-            )
-        except Exception as exc:
-            logger.warning("Synthesis failed, using longer answer as fallback: %s", exc)
-            # Fall back to the longer answer
-            answer = result_a.answer if len(result_a.answer or "") >= len(result_b.answer or "") else result_b.answer
-
-        # Compute totals
-        total_tokens = 0
-        for res in [result_a, result_b]:
-            if res.budget_summary:
-                total_tokens += res.budget_summary.get("total_tokens", 0)
-        total_tool_calls = result_a.tool_calls_made + result_b.tool_calls_made
-        total_iterations = result_a.iterations + result_b.iterations
-
-        duration_ms = (time.monotonic() - start_time) * 1000
-        trace.finish()
-        if self._trace_writer:
-            self._trace_writer.save(trace)
-
-        yield AgentEvent(kind="done", data={
-            "answer": answer,
-            "thinking_steps": thinking_steps,
-            "tool_calls_made": total_tool_calls,
-            "iterations": total_iterations,
-            "duration_ms": duration_ms,
-            "budget_summary": {
-                "total_tokens": total_tokens,
-                "perspectives": 2,
-                "synthesis": True,
-            },
-        })
-
-    @staticmethod
-    def _format_review_result(result) -> str:
-        """Format a ReviewResult into a markdown answer for the chat.
-
-        If a synthesis (from the strong model) is available, use it as the
-        primary review body.  Otherwise fall back to the structured listing.
-        """
-        from app.code_review.models import FindingCategory, Severity
-
-        lines = []
-
-        # Prefer synthesis from strong model when available
-        if result.synthesis:
-            lines.append(result.synthesis)
-            lines.append("")
-        else:
-            # Structured fallback
-            lines.append(result.pr_summary)
-            lines.append("")
-
-            code_findings = [
-                f for f in result.findings
-                if f.category != FindingCategory.TEST_COVERAGE
-            ]
-            test_findings = [
-                f for f in result.findings
-                if f.category == FindingCategory.TEST_COVERAGE
-            ]
-
-            if code_findings:
-                lines.append("### Findings\n")
-                for i, f in enumerate(code_findings, 1):
-                    lines.extend(AgentLoopService._format_finding(i, f))
-
-            if test_findings:
-                lines.append("### Test Coverage Gaps\n")
-                for i, f in enumerate(test_findings, 1):
-                    lines.extend(AgentLoopService._format_finding(i, f))
-
-            if not code_findings and not test_findings:
-                lines.append("No issues found. Code looks good!\n")
-
-        # Agent summary (always show for transparency)
-        if result.agent_results:
-            lines.append("---")
-            lines.append("### Review Agents")
-            for ar in result.agent_results:
-                status = "error" if ar.error else f"{len(ar.findings)} finding(s)"
-                lines.append(
-                    f"- **{ar.agent_name}**: {status} "
-                    f"({ar.tokens_used:,} tokens, {ar.duration_ms:.0f}ms)"
-                )
-            lines.append("")
-
-        # Stats
-        lines.append(
-            f"*{result.total_tokens:,} tokens | "
-            f"{len(result.agent_results)} agents | "
-            f"{result.total_duration_ms:.0f}ms*"
-        )
-
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
-    # Message builders — Bedrock Converse format.  Providers'
-    # chat_with_tools() handle any necessary translation.
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _format_finding(index: int, f) -> List[str]:
-        """Format a single ReviewFinding as markdown lines."""
-        from app.code_review.models import Severity
-
-        icon = {
-            Severity.CRITICAL: "**CRITICAL**",
-            Severity.WARNING: "**WARNING**",
-            Severity.NIT: "nit",
-            Severity.PRAISE: "praise",
-        }.get(f.severity, str(f.severity.value))
-
-        loc = ""
-        if f.file:
-            loc = f"`{f.file}"
-            if f.start_line:
-                loc += f":{f.start_line}"
-                if f.end_line and f.end_line != f.start_line:
-                    loc += f"-{f.end_line}"
-            loc += "`"
-
-        out = [f"{index}. [{icon}] **{f.title}** {loc}"]
-        if f.risk:
-            out.append(f"   - Risk: {f.risk}")
-        if f.suggested_fix:
-            out.append(f"   - Fix: {f.suggested_fix}")
-        if f.evidence:
-            for ev in f.evidence[:3]:
-                out.append(f"   - Evidence: {ev}")
-        out.append("")
-        return out
+    # (Legacy multi-agent review and multi-perspective methods removed —
+    #  now handled by Brain dispatch_swarm)
 
     @staticmethod
     def _initial_messages(

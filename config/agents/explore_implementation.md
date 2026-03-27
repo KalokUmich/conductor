@@ -1,15 +1,18 @@
 ---
 name: explore_implementation
-type: explorer
-model_role: explorer
-tools:
-  core: true
-  extra: [module_summary, get_callees, get_callers, trace_variable, get_dependencies, find_references, detect_patterns, list_files]
-budget_weight: 1.0
-input: [query, workspace_layout]
-output: perspective_answer
+description: "Traces complete lifecycle from trigger through domain models, services, to final outcome"
+model: explorer
+tools: [module_summary, get_callees, get_callers, trace_variable, get_dependencies, find_references, detect_patterns, list_files]
+limits:
+  max_iterations: 20
+  budget_tokens: 460000
+  evidence_retries: 1
+quality:
+  evidence_check: true
+  min_file_refs: 3
+  min_tool_calls: 3
+  need_brain_review: true
 ---
-
 ## Perspective: Code Implementation & Domain Models
 
 You are investigating from the implementation side. Your goal is to trace the **complete lifecycle** — from trigger through every step to the final outcome.
