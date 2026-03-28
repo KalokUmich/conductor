@@ -288,6 +288,10 @@ class WorkflowEngine:
         async def _execute():
             try:
                 async for event in brain.run_stream(query, workspace_path, code_context=code_context):
+                    if event.kind == "transfer":
+                        # Hand off to specialized brain (one-way)
+                        await self._run_specialized_brain(event.data, context)
+                        return
                     await self._event_queue.put(
                         WorkflowEvent(event.kind, event.data)
                     )
@@ -316,6 +320,54 @@ class WorkflowEngine:
         })
 
         self._event_queue = None
+
+    async def _run_specialized_brain(
+        self,
+        transfer_data: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> None:
+        """Launch a specialized brain after a transfer_to_brain handoff.
+
+        The specialized brain streams events into the same event queue,
+        so they propagate to the client via SSE.
+        """
+        brain_name = transfer_data.get("brain", "")
+        params = transfer_data.get("params", {})
+
+        if brain_name == "pr_review":
+            from app.agent_loop.pr_brain import PRBrainOrchestrator
+            from .loader import load_pr_brain_config, load_agent_registry
+            from app.code_tools.executor import LocalToolExecutor
+
+            workspace_path = params.get("workspace_path", context.get("workspace_path", ""))
+            diff_spec = params.get("diff_spec", "HEAD~1..HEAD")
+
+            orchestrator = PRBrainOrchestrator(
+                provider=self._provider,
+                explorer_provider=self._explorer_provider,
+                workspace_path=workspace_path,
+                diff_spec=diff_spec,
+                pr_brain_config=load_pr_brain_config(),
+                agent_registry=load_agent_registry(),
+                tool_executor=self._tool_executor or LocalToolExecutor(workspace_path),
+                trace_writer=self._trace_writer,
+                event_sink=self._event_queue,
+            )
+
+            try:
+                async for event in orchestrator.run_stream():
+                    await self._event_queue.put(event)
+            except Exception as exc:
+                logger.error("PR Brain failed: %s", exc, exc_info=True)
+                await self._event_queue.put(
+                    WorkflowEvent("error", {"error": f"PR Brain failed: {exc}"})
+                )
+        else:
+            await self._event_queue.put(
+                WorkflowEvent("error", {"error": f"Unknown specialized brain: {brain_name}"})
+            )
+
+        await self._event_queue.put(None)  # sentinel
 
     # -----------------------------------------------------------------
     # first_match mode (Code Explorer)

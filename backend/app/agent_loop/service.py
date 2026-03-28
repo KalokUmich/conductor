@@ -138,7 +138,8 @@ class AgentLoopService:
         self._agent_identity = agent_identity  # 4-layer: per-agent identity from .md
         self._temperature = None  # set per-agent via forced_tools dispatch
         self._quality_config = None  # set per-agent via brain dispatch
-        self._forced_strategy = ""  # strategy key override (Layer 3 skill)
+        self._forced_strategy = ""  # strategy key override (Layer 3 strategy)
+        self._forced_skill = ""    # investigation skill override (Layer 3 skill)
 
     @observe(name="agent_loop")
     async def run(
@@ -326,6 +327,7 @@ class AgentLoopService:
                     risk_context=risk_context,
                     code_context=code_context,
                     strategy_key=self._forced_strategy or None,
+                    skill_key=self._forced_skill or self._agent_identity.get("skill") or None,
                     has_signal_blocker=bool(self._forced_tools),
                 )
             else:
@@ -725,6 +727,14 @@ class AgentLoopService:
                 tool_outputs = list(await asyncio.gather(
                     *[_exec_tool(tc) for tc in regular_calls]
                 ))
+
+            # Check for brain transfer (one-way handoff to specialized brain)
+            for tc, result, _lat in tool_outputs:
+                if (tc.name == "transfer_to_brain" and result.success
+                        and isinstance(result.data, dict) and result.data.get("transfer")):
+                    logger.info("Brain transfer to '%s' — exiting agent loop", result.data.get("brain"))
+                    yield AgentEvent(kind="transfer", data=result.data)
+                    return
 
             # Handle ask_user (at most one per turn)
             if ask_user_calls and self._interactive:

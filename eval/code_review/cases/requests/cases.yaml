@@ -200,8 +200,8 @@ cases:
       all exceptions from response hooks, hiding errors from callers.
     expected_findings:
       - title_pattern: "hook|swallow|suppress|exception|silent"
-        file_pattern: "sessions\\.py"
-        line_range: [708, 715]
+        file_pattern: "hooks\\.py|sessions\\.py"
+        line_range: [27, 35]
         severity: warning
         category: correctness
         requires_context:

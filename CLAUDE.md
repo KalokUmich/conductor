@@ -49,10 +49,13 @@ cd backend
 # Code review quality (12 planted-bug cases)
 python ../eval/code_review/run.py --provider anthropic --model claude-sonnet-4-20250514
 python ../eval/code_review/run.py --filter "requests-001" --no-judge
+python ../eval/code_review/run.py --brain --no-judge --verbose   # PR Brain mode
+python ../eval/code_review/run.py --gold --gold-model sonnet     # Claude Code CLI baseline
 
 # Agent answer quality (baseline comparison)
 python ../eval/agent_quality/run_bedrock.py                  # Bedrock (Sonnet/Haiku)
 python ../eval/agent_quality/run_bedrock.py --workflow --haiku  # Haiku explorer + Sonnet judge
+python ../eval/agent_quality/run_bedrock.py --brain              # Brain orchestrator
 python ../eval/agent_quality/run_qwen.py --workflow            # Qwen (DashScope)
 
 # Tool parity (Python vs TS)
@@ -69,11 +72,14 @@ backend/app/
 ├── config.py                # Settings + Secrets from YAML
 ├── agent_loop/              # Agentic code intelligence (LLM + tools)
 │   ├── service.py           # AgentLoopService — LLM loop, tool dispatch
+│   ├── brain.py             # AgentToolExecutor — dispatch_agent/dispatch_swarm/transfer_to_brain
+│   ├── pr_brain.py          # PRBrainOrchestrator — deterministic PR review pipeline via Brain
 │   ├── budget.py            # BudgetController — token-based budget management
 │   ├── trace.py             # SessionTrace — per-session JSON trace
 │   ├── query_classifier.py  # QueryClassifier — keyword + optional LLM classification
 │   ├── evidence.py          # EvidenceEvaluator — rule-based answer quality check
 │   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
+│   ├── interactive.py       # ask_user coordination (register/submit/cleanup)
 │   ├── prompts.py           # 4-layer prompt architecture (Identity + Tools + Skills + Task)
 │   └── router.py            # POST /api/context/query
 ├── chat/                    # WebSocket chat + persistence
@@ -94,7 +100,8 @@ backend/app/
 │   ├── router.py            # /api/workflows/ endpoints
 │   └── observability.py     # Langfuse @observe decorator (no-op when disabled)
 ├── code_review/             # Multi-agent PR review pipeline
-│   ├── service.py           # CodeReviewService — 10-step review pipeline
+│   ├── service.py           # CodeReviewService — legacy 10-step review pipeline
+│   ├── shared.py            # Shared functions (used by both CodeReviewService + PRBrain)
 │   ├── agents.py            # Specialized review agents (parallel dispatch)
 │   ├── models.py            # PRContext, ReviewFinding, ReviewResult, RiskProfile
 │   ├── diff_parser.py       # Parse git diff into PRContext
@@ -126,8 +133,15 @@ backend/app/
 config/
 ├── conductor.settings.yaml  # Non-sensitive settings (committed)
 ├── conductor.secrets.yaml   # Secrets (gitignored)
+├── brain.yaml               # Brain orchestrator config (limits, core_tools, model)
+├── brains/                  # Specialized Brain configs
+│   └── pr_review.yaml       # PR Brain config (agents, budget_weights, post_processing)
 ├── workflows/               # pr_review.yaml (parallel_all_matching), code_explorer.yaml (first_match)
-├── agents/                  # 18 agent .md files (YAML frontmatter + Markdown body)
+├── agents/                  # 19 agent .md files (YAML frontmatter + Markdown body)
+│   └── pr_arbitrator.md     # Defense attorney for PR review (challenges findings)
+├── swarms/                  # Swarm presets (agent group + parallel/sequential)
+│   ├── pr_review.yaml       # 5-agent PR review swarm
+│   └── business_flow.yaml   # 2-agent business flow tracing
 ├── prompts/                 # review_base.md, explorer_base.md (shared templates)
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 
@@ -214,8 +228,8 @@ The **Brain** is an LLM orchestrator (strong model) that replaces the keyword cl
 It understands queries, dispatches specialist agents, evaluates findings, and synthesizes answers.
 
 ```
-Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, ask_user)
-  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel preset)
+Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, transfer_to_brain, ask_user)
+  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel) | TRANSFER (specialized brain)
   → dispatch_agent → AgentLoopService (Haiku, code tools, isolated context)
     → 4-layer prompt: L1 system (agent identity) + L2 tools + L3 skills (workspace) + L4 query
     → Tool execution (up to 20 iter / 420K tokens)
@@ -227,16 +241,32 @@ Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, ask_user)
 **Sub-agent prompt assembly (4-layer):**
 - **Layer 1 (system prompt)**: Built per-agent from `.md` description + instructions — defines who this agent is
 - **Layer 2 (tools)**: `brain.yaml` core_tools ∪ agent `.md` tools ∪ signal_blocker
-- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents
+- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. PR review agents get `code_review_pr` skill (severity framework, DO NOT FLAG list, JSON output format).
 - **Layer 4 (user message)**: The query from Brain + optional code_context — no role injection
 
-**Three dispatch modes:**
+**Four dispatch modes:**
 - **SIMPLE** (~80%): one agent, trust result, done
 - **COMPLEX** (~15%): agent → evaluate → handoff to different specialist with previous findings
-- **SWARM** (~5%): `dispatch_swarm("pr_review")` or `dispatch_swarm("business_flow")` — predefined parallel presets
+- **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets
+- **TRANSFER**: `transfer_to_brain("pr_review")` — one-way handoff to specialized Brain (PR reviews)
+
+**PR Brain** (`agent_loop/pr_brain.py`): Specialized deterministic pipeline for PR reviews. Activated via `transfer_to_brain("pr_review")`. Combines Brain's 4-layer prompts with CodeReviewService's deterministic post-processing:
+
+```
+transfer_to_brain("pr_review") → PRBrainOrchestrator
+  Phase 1: Pre-compute (parse_diff, classify_risk, prefetch_diffs, impact_graph)
+  Phase 2: Dispatch review agents (correctness[strong], security, reliability, concurrency, test_coverage)
+  Phase 3: Post-process (evidence_gate → post_filter → dedup → score_and_rank)
+  Phase 4: Adversarial arbitration (pr_arbitrator tries to rebut each finding)
+  Phase 5: Merge recommendation (deterministic)
+  Phase 6: Synthesis — Brain as final judge (sees sub-agent evidence + arbitrator counter-evidence)
+```
+
+Key design: The arbitrator is a **defense attorney** — it tries to rebut findings with counter-evidence and a rebuttal confidence score. It does NOT adjust severity. The synthesis LLM sees both sides (prosecution + defense) and makes the final call.
 
 **Configuration:**
 - `config/brain.yaml` — Brain limits (iterations, budget, concurrency, timeout) + core_tools
+- `config/brains/pr_review.yaml` — PR Brain config (agents, budget_weights, post_processing)
 - `config/agents/*.md` — Agent definitions (name, description, model, tools, limits + identity instructions)
 - `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode + synthesis_guide)
 
@@ -248,15 +278,20 @@ Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_pa
 
 **Workflow API** (`/api/workflows/`): `GET` list/detail/mermaid/graph, `PUT /{name}/models`.
 
-### Code Review Pipeline (10 steps)
+### Code Review Pipeline
+
+**Two paths available:**
+
+1. **Legacy** (`CodeReviewService`): Hardcoded 10-step pipeline with Python `AgentSpec` definitions. Direct `POST /api/code-review/review` and `/review/stream` (SSE).
+
+2. **PR Brain** (`PRBrainOrchestrator`): Brain-based pipeline with 4-layer prompts, per-agent `.md` identity, adversarial arbitration. Activated via `transfer_to_brain("pr_review")` from the Brain chat flow.
+
+Both share the same post-processing code via `code_review/shared.py` (parse_findings, evidence_gate, dedup, ranking).
 
 ```
-git diff → parse → classify risk → dynamic budget → impact graph
-  → parallel specialized agents → dedup → adversarial verify
-  → severity arbitration → rank → synthesis → ReviewResult
+Legacy:  git diff → parse → risk → budget → impact → parallel agents → dedup → arbitration → synthesis
+PR Brain: transfer_to_brain → pre-compute → dispatch agents (4-layer) → post-process → adversarial arbitration → synthesis (judge)
 ```
-
-Endpoints: `POST /api/code-review/review` and `/review/stream` (SSE).
 
 ### Model A Git Workspace
 
@@ -440,6 +475,9 @@ Every agent prompt — Brain or sub-agent — MUST follow this 4-layer structure
 
 8. **Role specialization** — Each agent has a distinct identity (Layer 1 system prompt). Shared investigation patterns belong in Layer 3, not Layer 1. Never add shared strategies to individual agent identities — this destroys role separation (proven by eval: 60% → 25% regression).
 9. **Structured output via strategy** — Output format templates (e.g. code_review) are injected as a Layer 3 skill when the agent's frontmatter sets `strategy: code_review`. Don't inject investigation procedures for open-ended queries.
+10. **Adversarial arbitration for PR reviews** — Sub-agents provide evidence FOR findings (prosecution). The arbitrator provides evidence AGAINST (defense). The synthesis LLM acts as judge, seeing both sides. The arbitrator does NOT adjust severity — it provides counter-evidence and a rebuttal confidence score.
+11. **DO NOT FLAG list** — PR review agents have an explicit exclusion list: style/formatting, pre-existing issues, speculative concerns, secondary effects of the same root cause, design disagreements, generated/vendored code.
+12. **Per-agent model selection** — Critical review dimensions (correctness) use the strong model; others use the explorer model. Set `model: strong` in the agent `.md` frontmatter.
 
 ### Agent `.md` File Design (informed by prompts.chat patterns)
 
@@ -450,7 +488,7 @@ Every agent prompt — Brain or sub-agent — MUST follow this 4-layer structure
 
 ### Validation
 
-14. **Test with eval** — Any prompt change must be validated with `eval/agent_quality/run_bedrock.py`. Check both direct agent AND workflow mode — changes that help one can break the other.
+15. **Test with eval** — Any prompt change must be validated with eval. For PR review: `eval/code_review/run.py --brain --verbose`. For exploration: `eval/agent_quality/run_bedrock.py --brain`. Check multiple modes — changes that help one can break another.
 
 ## What's Next
 

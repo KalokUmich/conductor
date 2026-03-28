@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class GrepParams(BaseModel):
-    pattern: str = Field(..., description="Regex pattern to search for.")
+    pattern: str = Field(..., description="Python regex pattern. Use | for alternation (NOT \\|). Example: 'Foo|Bar' matches Foo or Bar.")
     path: Optional[str] = Field(None, description="Relative path within workspace to search (file or directory).")
     include_glob: Optional[str] = Field(None, description="Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files.")
     max_results: int = Field(default=50, ge=1, le=200)
@@ -248,6 +248,12 @@ class DispatchAgentParams(BaseModel):
 class DispatchSwarmParams(BaseModel):
     swarm_name: str = Field(..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms.")
     query: str = Field(..., description="Shared investigation query for all agents in the swarm")
+
+
+class TransferToBrainParams(BaseModel):
+    brain_name: str = Field(..., description="Target specialized brain (e.g. 'pr_review')")
+    workspace_path: str = Field(..., description="Workspace path for the review")
+    diff_spec: str = Field(default="", description="Git diff spec (e.g. 'main...feature/branch', 'HEAD~1..HEAD')")
 
 
 # ---------------------------------------------------------------------------
@@ -496,14 +502,15 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "grep",
         "description": (
-            "Search for a regex pattern across files in the workspace. "
+            "Search for a Python regex pattern across files in the workspace. "
             "Returns matching lines with file paths and line numbers. "
             "Use path to scope search to a subdirectory. "
             "Only use include_glob if you know the exact file extension (e.g. '*.java', '*.py'). "
             "Omit include_glob to search ALL file types. "
-            "Pattern tips: for class names use 'class\\s+Approval', for method calls use "
-            "'approve\\(', for enum values use 'APPROVED|REJECTED|PENDING', for config keys "
-            "use the key name as a literal string."
+            "IMPORTANT: Uses Python regex syntax — use | for alternation (e.g. 'Foo|Bar'), "
+            "NOT \\| which matches a literal pipe character. "
+            "Pattern tips: class names 'class\\s+Approval', method calls 'approve\\(', "
+            "multiple terms 'APPROVED|REJECTED|PENDING', business concepts 'PostApproval|ApprovalData'."
         ),
         "input_schema": GrepParams.model_json_schema(),
     },
@@ -891,13 +898,22 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "name": "dispatch_swarm",
         "description": (
             "Dispatch a predefined group of parallel agents. Only use for "
-            "tasks that require multiple perspectives simultaneously: "
-            "'pr_review' (5-agent code review) or 'business_flow' (2-agent "
-            "flow tracing). For all other tasks, use dispatch_agent instead. "
-            "The result includes a synthesis_guide with instructions for "
-            "how to combine the agents' findings."
+            "end-to-end business flow tracing: 'business_flow' (2-agent "
+            "flow tracing). For PR reviews use transfer_to_brain instead. "
+            "For all other tasks, use dispatch_agent."
         ),
         "input_schema": DispatchSwarmParams.model_json_schema(),
+    },
+    {
+        "name": "transfer_to_brain",
+        "description": (
+            "Transfer control to a specialized Brain orchestrator. "
+            "Use for PR reviews: transfer_to_brain(brain_name='pr_review'). "
+            "The specialized Brain takes over entirely with its own pipeline — "
+            "pre-computed context, parallel review agents, arbitration, and synthesis. "
+            "You will NOT get control back. One-way handoff."
+        ),
+        "input_schema": TransferToBrainParams.model_json_schema(),
     },
 ]
 

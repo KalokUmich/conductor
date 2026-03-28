@@ -37,7 +37,7 @@ if str(_EVAL_DIR) not in sys.path:
     sys.path.insert(0, str(_EVAL_DIR))
 
 # Backend imports (runner adds backend/ to sys.path)
-from runner import CaseConfig, RunResult, run_case  # noqa: E402
+from runner import CaseConfig, RunResult, run_case, run_case_brain  # noqa: E402
 from gold_runner import GoldRunResult, run_gold_case  # noqa: E402
 from scorer import CaseScore, score_case  # noqa: E402
 from judge import judge_case  # noqa: E402
@@ -88,6 +88,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-agents", type=int, default=5,
         help="Max parallel agents per review (default: 5)",
+    )
+    parser.add_argument(
+        "--brain", action="store_true",
+        help="Use PR Brain orchestrator instead of CodeReviewService pipeline",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-finding details (title, severity, file:line, match result)",
     )
 
     # Gold-standard baseline options
@@ -204,18 +212,30 @@ async def run_single_case(
     max_agents: int,
     use_judge: bool,
     judge_provider=None,
+    use_brain: bool = False,
+    verbose: bool = False,
 ) -> tuple:
     """Run a single case through the pipeline and return (CaseScore, judge_verdict)."""
-    print(f"  Running {case.id} ({case.difficulty})... ", end="", flush=True)
+    mode_label = "[brain]" if use_brain else "[legacy]"
+    print(f"  {mode_label} Running {case.id} ({case.difficulty})... ", end="", flush=True)
 
-    run_result = await run_case(
-        case=case,
-        source_dir=source_dir,
-        patch_dir=patch_dir,
-        provider=provider,
-        explorer_provider=explorer_provider,
-        max_agents=max_agents,
-    )
+    if use_brain:
+        run_result = await run_case_brain(
+            case=case,
+            source_dir=source_dir,
+            patch_dir=patch_dir,
+            provider=provider,
+            explorer_provider=explorer_provider,
+        )
+    else:
+        run_result = await run_case(
+            case=case,
+            source_dir=source_dir,
+            patch_dir=patch_dir,
+            provider=provider,
+            explorer_provider=explorer_provider,
+            max_agents=max_agents,
+        )
 
     if run_result.error:
         print(f"ERROR: {run_result.error}")
@@ -227,6 +247,24 @@ async def run_single_case(
 
     score = score_case(case, findings, files_reviewed)
     print(f"composite={score.composite:.3f} (recall={score.recall:.2f}, findings={len(findings)})")
+
+    if verbose and findings:
+        for i, f in enumerate(findings):
+            matched = any(m.actual_index == i for m in score.matches)
+            marker = "MATCH" if matched else "extra"
+            print(
+                f"    [{marker:5s}] {f.severity.value:8s} conf={f.confidence:.2f} "
+                f"| {f.file}:{f.start_line}-{f.end_line} | agent={f.agent}"
+            )
+            print(f"            {f.title}")
+        if score.matches:
+            for m in score.matches:
+                exp = case.expected_findings[m.expected_index]
+                print(
+                    f"    -> expected[{m.expected_index}] matched actual[{m.actual_index}]: "
+                    f"title={m.title_match} file={m.file_match} line={m.line_match} "
+                    f"sev={m.severity_match} rec={m.recommendation_match}"
+                )
 
     # LLM judge
     judge_verdict = None
@@ -350,7 +388,13 @@ async def run_all(args: argparse.Namespace) -> None:
         return
 
     is_gold = args.gold
-    mode_label = "gold-standard (Claude Code CLI)" if is_gold else "pipeline"
+    is_brain = getattr(args, 'brain', False)
+    if is_gold:
+        mode_label = "gold-standard (Claude Code CLI)"
+    elif is_brain:
+        mode_label = "brain (PRBrainOrchestrator)"
+    else:
+        mode_label = "pipeline (CodeReviewService)"
     print(f"Loaded {len(cases)} case(s) — mode: {mode_label}")
 
     if is_gold:
@@ -397,12 +441,16 @@ async def run_all(args: argparse.Namespace) -> None:
             explorer_provider = create_provider(args.provider, args.explorer_model)
         judge_provider = provider if not args.no_judge else None
 
+        use_brain = getattr(args, 'brain', False)
+        verbose = getattr(args, 'verbose', False)
+
         if args.parallelism <= 1:
             for case, source_dir, patch_dir in cases:
                 score, verdict = await run_single_case(
                     case, source_dir, patch_dir,
                     provider, explorer_provider, args.max_agents,
                     not args.no_judge, judge_provider,
+                    use_brain=use_brain, verbose=verbose,
                 )
                 scores.append(score)
                 if verdict:
@@ -415,6 +463,7 @@ async def run_all(args: argparse.Namespace) -> None:
                         case, source_dir, patch_dir,
                         provider, explorer_provider, args.max_agents,
                         not args.no_judge, judge_provider,
+                        use_brain=use_brain, verbose=verbose,
                     )
                     for case, source_dir, patch_dir in batch
                 ]
@@ -443,7 +492,7 @@ async def run_all(args: argparse.Namespace) -> None:
         judge_verdicts=verdicts or None,
         provider="claude-code" if is_gold else args.provider,
         model=args.gold_model if is_gold else (args.model or "default"),
-        mode="gold" if is_gold else "pipeline",
+        mode="gold" if is_gold else ("brain" if is_brain else "pipeline"),
         gold_baseline=gold_baseline,
     )
     print_report(report)

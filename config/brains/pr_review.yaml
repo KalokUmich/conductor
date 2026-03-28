@@ -1,0 +1,38 @@
+# PR Brain — specialized Brain orchestrator for PR reviews.
+# Replaces the ad-hoc dispatch_swarm("pr_review") with a deterministic
+# pipeline that pre-computes context, dispatches review agents, runs
+# post-processing, arbitration, and synthesis.
+
+name: pr_review
+description: "Specialized Brain for PR reviews — deterministic pipeline with 4-layer agent prompts"
+model: strong
+
+limits:
+  total_session_tokens: 2000000
+  max_concurrent_agents: 3
+  sub_agent_timeout: 300
+  max_depth: 2
+
+# Review agents dispatched in parallel (risk-gated)
+review_agents:
+  - correctness
+  - concurrency
+  - security
+  - reliability
+  - test_coverage
+
+# Dedicated arbitration agent (has tools to verify findings)
+arbitrator: pr_arbitrator
+
+# Budget weights per agent (relative complexity)
+budget_weights:
+  correctness: 1.00
+  concurrency: 0.85
+  security: 0.75
+  reliability: 0.70
+  test_coverage: 0.55
+
+# Deterministic post-processing settings
+post_processing:
+  min_confidence: 0.75
+  max_findings: 10

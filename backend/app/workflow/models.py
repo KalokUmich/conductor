@@ -58,13 +58,15 @@ class AgentConfig(BaseModel):
 
     # --- New Brain format fields ---
     description: str = ""                     # Brain reads this to match queries to agents
-    model: Literal["explorer", "strong", "classifier"] = "explorer"
+    model: Literal["explorer", "strong"] = "explorer"
     strategy: str = ""                        # Layer 2 strategy key (e.g., "code_review")
+    skill: str = ""                            # Layer 3 investigation skill (e.g., "business_flow")
+    focus: str = ""                            # Focus directive prepended to query in swarm dispatch
     limits: AgentLimits = Field(default_factory=AgentLimits)
     quality: QualityConfig = Field(default_factory=QualityConfig)
 
     # --- Legacy format fields (kept for backward compat) ---
-    model_role: Literal["explorer", "strong", "classifier"] = "explorer"
+    model_role: Literal["explorer", "strong"] = "explorer"
 
     # Tools — new format: flat list; legacy: ToolsConfig with core+extra
     tools: Any = Field(default_factory=ToolsConfig)
@@ -132,6 +134,37 @@ class BrainConfig(BaseModel):
         "grep", "read_file", "find_symbol", "file_outline",
         "compressed_view", "expand_symbol",
     ])
+
+
+# ---------------------------------------------------------------------------
+# PR Brain config (loaded from brains/pr_review.yaml)
+# ---------------------------------------------------------------------------
+
+
+class PostProcessingConfig(BaseModel):
+    """Post-processing settings for PR Brain."""
+    min_confidence: float = 0.6
+    max_findings: int = 10
+
+
+class PRBrainConfig(BaseModel):
+    """PR Brain orchestrator configuration, loaded from brains/pr_review.yaml."""
+    name: str = "pr_review"
+    description: str = ""
+    model: str = "strong"
+    limits: BrainLimits = Field(default_factory=BrainLimits)
+    review_agents: List[str] = Field(default_factory=lambda: [
+        "correctness", "concurrency", "security", "reliability", "test_coverage",
+    ])
+    arbitrator: str = "pr_arbitrator"
+    budget_weights: Dict[str, float] = Field(default_factory=lambda: {
+        "correctness": 1.00,
+        "concurrency": 0.85,
+        "security": 0.75,
+        "reliability": 0.70,
+        "test_coverage": 0.55,
+    })
+    post_processing: PostProcessingConfig = Field(default_factory=PostProcessingConfig)
 
 
 # ---------------------------------------------------------------------------

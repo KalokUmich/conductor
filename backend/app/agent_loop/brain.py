@@ -200,6 +200,7 @@ class AgentToolExecutor(ToolExecutor):
         sub_agent_timeout: float = 300.0,
         budget_manager: Optional[BrainBudgetManager] = None,
         qa_cache: Optional[Dict[str, str]] = None,
+        llm_semaphore: Optional[asyncio.Semaphore] = None,
     ):
         self._inner = inner_executor
         self._agent_registry = agent_registry
@@ -215,16 +216,55 @@ class AgentToolExecutor(ToolExecutor):
         self._sub_agent_timeout = sub_agent_timeout
         self._budget_manager = budget_manager
         self._qa_cache = qa_cache or {}
+        self._llm_semaphore = llm_semaphore
         self._code_context: Optional[Dict[str, Any]] = None
 
     async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
-        """Execute a tool. Intercepts dispatch_agent and dispatch_swarm."""
+        """Execute a tool. Intercepts dispatch_agent, dispatch_swarm, and transfer_to_brain."""
         if tool_name == "dispatch_agent":
             return await self._dispatch_agent(params)
         elif tool_name == "dispatch_swarm":
             return await self._dispatch_swarm(params)
+        elif tool_name == "transfer_to_brain":
+            return await self._transfer_to_brain(params)
         # All other tools (grep, read_file, ask_user, etc.) pass through
         return await self._inner.execute(tool_name, params)
+
+    # -----------------------------------------------------------------
+    # transfer_to_brain — hand off to a specialized brain
+    # -----------------------------------------------------------------
+
+    async def _transfer_to_brain(self, params: Dict[str, Any]) -> ToolResult:
+        """Transfer control to a specialized Brain orchestrator (one-way handoff)."""
+        brain_name = params.get("brain_name", "")
+        valid_brains = {"pr_review"}
+
+        if brain_name not in valid_brains:
+            available = ", ".join(sorted(valid_brains))
+            return ToolResult(
+                tool_name="transfer_to_brain",
+                success=False,
+                error=f"Unknown brain '{brain_name}'. Available: {available}",
+            )
+
+        logger.info("[Brain] Transferring to specialized brain '%s'", brain_name)
+
+        if self._event_sink:
+            from app.workflow.engine import WorkflowEvent
+            await self._event_sink.put(WorkflowEvent("transfer_initiated", {
+                "brain": brain_name,
+                "params": params,
+            }))
+
+        return ToolResult(
+            tool_name="transfer_to_brain",
+            success=True,
+            data={
+                "transfer": True,
+                "brain": brain_name,
+                "params": params,
+            },
+        )
 
     # -----------------------------------------------------------------
     # dispatch_agent — run one agent-as-tool
@@ -319,10 +359,12 @@ class AgentToolExecutor(ToolExecutor):
             _is_sub_agent=True,
             perspective=agent_config.instructions,
             forced_tools=agent_tool_names,
+            llm_semaphore=self._llm_semaphore,
             agent_identity={
                 "name": agent_config.name,
                 "description": getattr(agent_config, "description", "") or "",
                 "instructions": agent_config.instructions,
+                "skill": getattr(agent_config, "skill", "") or "",
             },
         )
         # Per-agent overrides from template
@@ -332,6 +374,9 @@ class AgentToolExecutor(ToolExecutor):
         # Layer 2 strategy override (e.g., PR review agents get "code_review" strategy)
         if agent_config.strategy:
             svc._forced_strategy = agent_config.strategy
+        # Layer 3 investigation skill (e.g., "business_flow", "root_cause")
+        if agent_config.skill:
+            svc._forced_skill = agent_config.skill
 
         # 4-layer: query stays clean — agent identity is in system prompt (Layer 1),
         # not in the user message (Layer 4).
@@ -510,10 +555,14 @@ class AgentToolExecutor(ToolExecutor):
         semaphore = asyncio.Semaphore(self._max_concurrent)
 
         async def run_one(name: str) -> Dict[str, Any]:
+            # Prepend agent's focus directive to differentiate exploration paths
+            agent_config = self._agent_registry.get(name)
+            agent_focus = getattr(agent_config, "focus", "") if agent_config else ""
+            agent_query = f"{agent_focus}\n\n{query}" if agent_focus else query
             async with semaphore:
                 result = await self._dispatch_agent({
                     "agent_name": name,
-                    "query": query,
+                    "query": agent_query,
                 })
                 return {"agent": name, **(result.data if result.data else {"error": result.error})}
 

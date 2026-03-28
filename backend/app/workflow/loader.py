@@ -388,6 +388,30 @@ def load_brain_config() -> BrainConfig:
         return BrainConfig()
 
 
+def load_pr_brain_config():
+    """Load the PR Brain configuration from brains/pr_review.yaml.
+
+    Returns:
+        PRBrainConfig with review agents, budget weights, and post-processing settings.
+        Falls back to defaults if brains/pr_review.yaml doesn't exist.
+    """
+    from .models import PRBrainConfig
+
+    try:
+        resolved = _resolve_path("brains/pr_review.yaml")
+        data = yaml.safe_load(resolved.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            logger.warning("brains/pr_review.yaml is not a mapping, using defaults")
+            return PRBrainConfig()
+        return PRBrainConfig(**data)
+    except FileNotFoundError:
+        logger.info("brains/pr_review.yaml not found, using default PR Brain config")
+        return PRBrainConfig()
+    except Exception as exc:
+        logger.warning("Failed to load brains/pr_review.yaml: %s — using defaults", exc)
+        return PRBrainConfig()
+
+
 # ---------------------------------------------------------------------------
 # Swarm preset loader
 # ---------------------------------------------------------------------------
