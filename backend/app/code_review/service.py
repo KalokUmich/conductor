@@ -19,7 +19,6 @@ import asyncio
 import json
 import logging
 import re
-import subprocess
 import time
 from typing import Dict, List, Optional
 
@@ -31,6 +30,19 @@ from .diff_parser import parse_diff
 from .models import FindingCategory, PRContext, ReviewFinding, ReviewResult, RiskProfile, Severity
 from .ranking import score_and_rank
 from .risk_classifier import classify_risk
+from .shared import (
+    MIN_CONFIDENCE as _MIN_CONFIDENCE,
+    DIFF_HEADER_RE as _DIFF_HEADER_RE,
+    build_impact_context as _build_impact_context,
+    build_summary as _build_summary,
+    compute_budget_multiplier as _compute_budget_multiplier,
+    extract_relevant_diff as _extract_relevant_diff,
+    is_multi_source as _is_multi_source,
+    merge_recommendation as _merge_recommendation,
+    post_filter as _post_filter,
+    prefetch_diffs as _prefetch_diffs,
+    should_reject_pr as _should_reject_pr,
+)
 from app.workflow.observability import observe
 
 # Workflow engine (optional — used when workflow_config is provided)
@@ -44,155 +56,8 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Minimum confidence to keep a finding (below this = too speculative)
-_MIN_CONFIDENCE = 0.6
 
 
-# ---------------------------------------------------------------------------
-# Post-filter — enforce quality rules before dedup
-# ---------------------------------------------------------------------------
-
-
-def _post_filter(findings: list[ReviewFinding]) -> list[ReviewFinding]:
-    """Apply quality rules to raw agent findings.
-
-    Rules:
-      1. Drop findings with confidence < _MIN_CONFIDENCE.
-      2. Test-coverage findings can never be critical — downgrade to warning.
-      3. Findings whose title contains "missing test" are capped at warning.
-    """
-    result: list[ReviewFinding] = []
-    dropped = 0
-
-    for f in findings:
-        # Rule 1: confidence floor
-        if f.confidence < _MIN_CONFIDENCE:
-            dropped += 1
-            continue
-
-        # Rule 2: test_coverage agent findings capped at warning
-        if f.category == FindingCategory.TEST_COVERAGE and f.severity == Severity.CRITICAL:
-            f.severity = Severity.WARNING
-
-        # Rule 3: "missing test" in any agent capped at warning
-        if "missing test" in f.title.lower() and f.severity == Severity.CRITICAL:
-            f.severity = Severity.WARNING
-
-        result.append(f)
-
-    if dropped:
-        logger.info("Post-filter: dropped %d low-confidence findings", dropped)
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Impact Graph — pre-compute callers/dependents of changed files
-# ---------------------------------------------------------------------------
-
-
-def _build_impact_context(
-    workspace_path: str,
-    pr_context: PRContext,
-) -> str:
-    """Query the dependency graph for callers/dependents of changed files.
-
-    Returns a structured text block that can be injected into agent prompts
-    so they see cross-file impact without burning tool-call budget.
-    """
-    try:
-        from app.code_tools.tools import get_dependents, get_dependencies
-    except ImportError:
-        logger.warning("Impact graph unavailable: cannot import code_tools")
-        return ""
-
-    biz_files = pr_context.business_logic_files()
-    if not biz_files:
-        return ""
-
-    sections: List[str] = []
-    files_processed = 0
-
-    for f in biz_files[:15]:  # cap to avoid slow scans on huge PRs
-        dependents_result = get_dependents(workspace=workspace_path, file_path=f.path)
-        dependencies_result = get_dependencies(workspace=workspace_path, file_path=f.path)
-
-        dep_lines: List[str] = []
-
-        if dependents_result.success and dependents_result.data:
-            callers = dependents_result.data[:5]  # top 5 by weight
-            caller_strs = [
-                f"  ← {d['file_path']} (refs: {', '.join(d.get('symbols', [])[:3])})"
-                for d in callers
-            ]
-            dep_lines.extend(caller_strs)
-
-        if dependencies_result.success and dependencies_result.data:
-            deps = dependencies_result.data[:5]
-            dep_strs = [
-                f"  → {d['file_path']} (uses: {', '.join(d.get('symbols', [])[:3])})"
-                for d in deps
-            ]
-            dep_lines.extend(dep_strs)
-
-        if dep_lines:
-            sections.append(f"`{f.path}` (+{f.additions}/-{f.deletions}):\n" + "\n".join(dep_lines))
-            files_processed += 1
-
-    if not sections:
-        return ""
-
-    logger.info("Impact graph: computed dependencies for %d/%d files", files_processed, len(biz_files))
-    return (
-        "## Impact Graph — callers (←) and dependencies (→) of changed files\n\n"
-        + "\n\n".join(sections)
-    )
-
-
-
-
-
-def _extract_relevant_diff(full_diff: str, start_line: int, window: int = 80) -> str:
-    """Extract the diff hunk(s) most relevant to a finding's line range.
-
-    Instead of blindly truncating at N chars, this finds the hunk containing
-    *start_line* and returns a window around it.  Falls back to the first
-    *window* lines if no matching hunk is found.
-    """
-    if not full_diff or not start_line:
-        # No line info → return first portion (still better than nothing)
-        lines = full_diff.split("\n")
-        return "\n".join(lines[:window])
-
-    lines = full_diff.split("\n")
-    hunk_header_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
-
-    # Find the hunk that contains start_line
-    best_start = 0
-    for i, line in enumerate(lines):
-        m = hunk_header_re.match(line)
-        if m:
-            hunk_start = int(m.group(1))
-            hunk_len = int(m.group(2)) if m.group(2) else 1
-            if hunk_start <= start_line <= hunk_start + hunk_len + 20:
-                # Found the relevant hunk — take window lines centered here
-                begin = max(0, i - 5)
-                end = min(len(lines), i + window)
-                return "\n".join(lines[begin:end])
-            best_start = i  # track last hunk before our line
-
-    # No exact match — return around the closest hunk before our line
-    if best_start > 0:
-        begin = max(0, best_start - 5)
-        end = min(len(lines), best_start + window)
-        return "\n".join(lines[begin:end])
-
-    # Fallback: first window lines
-    return "\n".join(lines[:window])
-
-
-def _is_multi_source(finding: ReviewFinding) -> bool:
-    """Check if a finding was reported by 2+ independent agents (dedup merges with '+')."""
-    return "+" in finding.agent
 
 
 
@@ -414,94 +279,6 @@ async def _arbitrate_severities(
 # ---------------------------------------------------------------------------
 
 
-def _compute_budget_multiplier(pr_context: PRContext) -> float:
-    """Compute a budget multiplier based on PR size.
-
-    Small PRs (<500 lines): 0.5x budget (quick review)
-    Medium PRs (500-2000 lines): 1.0x budget (standard)
-    Large PRs (2000-5000 lines): 1.5x budget
-    Very large PRs (5000+ lines): 2.0x budget (if model supports it)
-    """
-    lines = pr_context.total_changed_lines
-    if lines < 500:
-        return 0.5
-    elif lines < 2000:
-        return 1.0
-    elif lines < 5000:
-        return 1.5
-    else:
-        return 2.0
-
-
-def _should_reject_pr(pr_context: PRContext) -> Optional[str]:
-    """Check if a PR is too large to review meaningfully.
-
-    Returns a rejection message or None if the PR is reviewable.
-    With dynamic budgets, we raise the threshold to 8000 lines.
-    """
-    if pr_context.total_changed_lines > 8000:
-        return (
-            f"This PR has {pr_context.total_changed_lines:,} lines of changes "
-            f"across {pr_context.file_count} files, which is too large for an "
-            f"effective review. Please split it into smaller PRs (ideally < 500 "
-            f"lines each).\n\nChanged files:\n"
-            + "\n".join(
-                f"- `{f.path}` (+{f.additions}/-{f.deletions})"
-                for f in pr_context.files[:30]
-            )
-        )
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Pre-fetch diffs (shared across agents)
-# ---------------------------------------------------------------------------
-
-# Matches "diff --git a/path b/path" headers in unified diff output
-_DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+?)$", re.MULTILINE)
-
-
-def _prefetch_diffs(workspace_path: str, diff_spec: str) -> Dict[str, str]:
-    """Fetch all file diffs in a single git call and split by file.
-
-    Returns a dict mapping ``file_path → diff_text`` so that each review
-    agent can receive only the diffs relevant to its scope, without making
-    redundant ``git_diff`` / ``git_diff_files`` tool calls.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--unified=10"] + diff_spec.strip().split(),
-            cwd=workspace_path,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0:
-            logger.warning("Pre-fetch diff failed: %s", result.stderr[:200])
-            return {}
-    except Exception as exc:
-        logger.warning("Pre-fetch diff error: %s", exc)
-        return {}
-
-    full_diff = result.stdout
-    if not full_diff:
-        return {}
-
-    diffs: Dict[str, str] = {}
-
-    # Split on "diff --git a/X b/Y" headers.  re.split with capture groups
-    # returns: [preamble, a1, b1, body1, a2, b2, body2, ...]
-    parts = _DIFF_HEADER_RE.split(full_diff)
-
-    for i in range(1, len(parts) - 2, 3):
-        a_path = parts[i]
-        b_path = parts[i + 1]
-        body = parts[i + 2]
-        header = f"diff --git a/{a_path} b/{b_path}"
-        diffs[b_path] = header + body
-
-    logger.info("Pre-fetched diffs for %d files", len(diffs))
-    return diffs
 
 
 # ---------------------------------------------------------------------------
@@ -904,56 +681,3 @@ preliminary_recommendation: {merge_rec}
         return ""
 
 
-def _merge_recommendation(findings: list) -> str:
-    """Determine merge recommendation based on findings."""
-    critical = sum(1 for f in findings if f.severity == Severity.CRITICAL)
-    warnings = sum(1 for f in findings if f.severity == Severity.WARNING)
-
-    if critical > 0:
-        return "request_changes"
-    if warnings >= 3:
-        return "request_changes"
-    if warnings > 0:
-        return "approve_with_followups"
-    return "approve"
-
-
-def _build_summary(
-    pr_context: PRContext,
-    risk_profile: RiskProfile,
-    findings: list,
-    merge_rec: str,
-) -> str:
-    """Build a human-readable review summary."""
-    critical = sum(1 for f in findings if f.severity == Severity.CRITICAL)
-    warnings = sum(1 for f in findings if f.severity == Severity.WARNING)
-    nits = sum(1 for f in findings if f.severity == Severity.NIT)
-
-    rec_emoji = {
-        "approve": "Approve",
-        "request_changes": "Request Changes",
-        "approve_with_followups": "Approve (with follow-ups)",
-    }
-
-    lines = [
-        f"## Code Review: {pr_context.diff_spec}",
-        f"",
-        f"**{pr_context.file_count} files** | "
-        f"**+{pr_context.total_additions}/-{pr_context.total_deletions} lines** | "
-        f"Risk: {risk_profile.max_risk().value}",
-        f"",
-        f"### Recommendation: {rec_emoji.get(merge_rec, merge_rec)}",
-        f"",
-    ]
-
-    if critical + warnings + nits == 0:
-        lines.append("No issues found. Code looks good!")
-    else:
-        if critical:
-            lines.append(f"- **{critical} critical** issue(s)")
-        if warnings:
-            lines.append(f"- **{warnings} warning(s)**")
-        if nits:
-            lines.append(f"- {nits} nit(s)")
-
-    return "\n".join(lines)

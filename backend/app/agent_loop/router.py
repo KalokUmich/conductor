@@ -381,9 +381,6 @@ async def context_query_stream(
     query = _ensure_query(req)
     code_ctx = req.code_context.model_dump() if req.code_context else None
 
-    # Execute the full workflow pipeline (parallel agents, synthesis, etc.)
-    workflow = _get_code_explorer_workflow()
-
     async def event_generator():
         # Emit start event immediately so the client sees feedback < 100ms.
         # The padding comment pushes the first chunk past proxy buffer thresholds
@@ -391,47 +388,26 @@ async def context_query_stream(
         yield f": padding {'.' * 2048}\n\n"
         yield f"event: start\ndata: {json.dumps({'query': query, 'room_id': req.room_id})}\n\n"
 
-        if workflow:
-            from app.workflow.engine import WorkflowEngine
-            engine = WorkflowEngine(
-                provider=agent_provider,
-                explorer_provider=explorer_provider,
-                trace_writer=trace_writer,
-                tool_executor=executor,
-            )
-            wf_context: Dict[str, Any] = {
-                "query_text": query,
-                "query": query,
-                "workspace_path": str(worktree_path),
-            }
-            if code_ctx:
-                wf_context["code_context"] = code_ctx
-            async for event in engine.run_stream(workflow, wf_context):
-                # Forward all events — agent events (thinking, tool_call, tool_result)
-                # are now streamed in real-time through the engine's event queue.
-                yield f"event: {event.kind}\ndata: {json.dumps(event.data, default=str)}\n\n"
+        # Use Brain orchestrator — it replaces the classifier + pipeline.
+        # Brain dispatches specialist agents via dispatch_agent/dispatch_swarm.
+        from app.workflow.engine import WorkflowEngine
+        engine = WorkflowEngine(
+            provider=agent_provider,
+            explorer_provider=explorer_provider,
+            trace_writer=trace_writer,
+            tool_executor=executor,
+            interactive=True,
+        )
+        brain_context: Dict[str, Any] = {
+            "query_text": query,
+            "query": query,
+            "workspace_path": str(worktree_path),
+        }
+        if code_ctx:
+            brain_context["code_context"] = code_ctx
 
-                # When the workflow is done, emit the final synthesized answer
-                if event.kind == "done":
-                    answer, _, _, _, _ = _extract_workflow_result(wf_context)
-                    if answer:
-                        yield f"event: done\ndata: {json.dumps({'answer': answer}, default=str)}\n\n"
-        else:
-            # Fallback: direct AgentLoopService
-            agent = AgentLoopService(
-                provider=agent_provider,
-                max_iterations=req.max_iterations,
-                trace_writer=trace_writer,
-                classifier_provider=classifier_provider,
-                explorer_provider=explorer_provider,
-                tool_executor=executor,
-            )
-            async for event in agent.run_stream(
-                query=query,
-                workspace_path=str(worktree_path),
-                code_context=code_ctx,
-            ):
-                yield f"event: {event.kind}\ndata: {json.dumps(event.data, default=str)}\n\n"
+        async for event in engine.run_brain_stream(brain_context):
+            yield f"event: {event.kind}\ndata: {json.dumps(event.data, default=str)}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -443,5 +419,44 @@ async def context_query_stream(
             "Connection": "keep-alive",
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Interactive AI — user answers agent's clarifying question
+# ---------------------------------------------------------------------------
+
+
+class AskUserAnswerRequest(BaseModel):
+    """Request body for submitting the user's answer to an agent question."""
+    answer: str = Field(..., description="The user's answer to the agent's question.")
+
+
+@router.post("/query/{session_id}/answer")
+async def submit_ask_user_answer(
+    session_id: str,
+    req: AskUserAnswerRequest,
+):
+    """Submit the user's answer to a pending ``ask_user`` question.
+
+    Called by the VS Code extension when the user responds to the agent's
+    clarifying question in the chat UI.
+    """
+    from .interactive import get_pending, submit_answer
+
+    pq = get_pending(session_id)
+    if pq is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No pending question for session {session_id}.",
+        )
+
+    success = submit_answer(session_id, req.answer)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Question already answered or timed out.",
+        )
+
+    return {"status": "ok", "session_id": session_id}
 
 

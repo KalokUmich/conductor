@@ -37,7 +37,7 @@ if str(_EVAL_DIR) not in sys.path:
     sys.path.insert(0, str(_EVAL_DIR))
 
 # Backend imports (runner adds backend/ to sys.path)
-from runner import CaseConfig, RunResult, run_case  # noqa: E402
+from runner import CaseConfig, RunResult, run_case, run_case_brain  # noqa: E402
 from gold_runner import GoldRunResult, run_gold_case  # noqa: E402
 from scorer import CaseScore, score_case  # noqa: E402
 from judge import judge_case  # noqa: E402
@@ -51,6 +51,11 @@ _GOLD_TRACES_DIR = Path(__file__).resolve().parent / "gold_traces"
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for the code review eval CLI.
+
+    Returns:
+        Parsed argparse namespace with all eval configuration options.
+    """
     parser = argparse.ArgumentParser(
         description="Run code review eval suite",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -89,6 +94,14 @@ def parse_args() -> argparse.Namespace:
         "--max-agents", type=int, default=5,
         help="Max parallel agents per review (default: 5)",
     )
+    parser.add_argument(
+        "--brain", action="store_true",
+        help="Use PR Brain orchestrator instead of CodeReviewService pipeline",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Print per-finding details (title, severity, file:line, match result)",
+    )
 
     # Gold-standard baseline options
     gold_group = parser.add_argument_group("gold-standard baseline")
@@ -113,7 +126,24 @@ def parse_args() -> argparse.Namespace:
 
 
 def create_provider(provider_name: str, model: str = None):
-    """Create an AIProvider instance based on CLI args."""
+    """Create an AIProvider instance from CLI provider/model arguments.
+
+    Reads credentials from environment variables (ANTHROPIC_API_KEY,
+    AWS_ACCESS_KEY_ID, OPENAI_API_KEY, etc.) and exits with an error
+    message if required credentials are missing.
+
+    Args:
+        provider_name: One of ``"anthropic"``, ``"bedrock"``, or ``"openai"``.
+        model: Optional model ID override; falls back to a sensible default
+            for each provider.
+
+    Returns:
+        A configured AIProvider instance.
+
+    Raises:
+        SystemExit: If required API credentials are not set, or if
+            ``provider_name`` is unrecognised.
+    """
     _backend = str(Path(__file__).resolve().parent.parent / "backend")
     if _backend not in sys.path:
         sys.path.insert(0, _backend)
@@ -156,7 +186,17 @@ def create_provider(provider_name: str, model: str = None):
 
 
 def load_cases(eval_dir: Path, filter_str: str = None) -> list:
-    """Load all case configs from repos.yaml + per-repo cases.yaml."""
+    """Load all case configs from repos.yaml and per-repo cases.yaml files.
+
+    Args:
+        eval_dir: Path to the ``eval/code_review/`` directory.
+        filter_str: Optional substring filter applied to case IDs; only cases
+            whose ID contains this string are returned.
+
+    Returns:
+        List of ``(CaseConfig, source_dir, patch_dir)`` tuples for each
+        matching case across all configured repos.
+    """
     repos_path = eval_dir / "repos.yaml"
     with open(repos_path) as f:
         repos_config = yaml.safe_load(f)
@@ -204,18 +244,30 @@ async def run_single_case(
     max_agents: int,
     use_judge: bool,
     judge_provider=None,
+    use_brain: bool = False,
+    verbose: bool = False,
 ) -> tuple:
     """Run a single case through the pipeline and return (CaseScore, judge_verdict)."""
-    print(f"  Running {case.id} ({case.difficulty})... ", end="", flush=True)
+    mode_label = "[brain]" if use_brain else "[legacy]"
+    print(f"  {mode_label} Running {case.id} ({case.difficulty})... ", end="", flush=True)
 
-    run_result = await run_case(
-        case=case,
-        source_dir=source_dir,
-        patch_dir=patch_dir,
-        provider=provider,
-        explorer_provider=explorer_provider,
-        max_agents=max_agents,
-    )
+    if use_brain:
+        run_result = await run_case_brain(
+            case=case,
+            source_dir=source_dir,
+            patch_dir=patch_dir,
+            provider=provider,
+            explorer_provider=explorer_provider,
+        )
+    else:
+        run_result = await run_case(
+            case=case,
+            source_dir=source_dir,
+            patch_dir=patch_dir,
+            provider=provider,
+            explorer_provider=explorer_provider,
+            max_agents=max_agents,
+        )
 
     if run_result.error:
         print(f"ERROR: {run_result.error}")
@@ -227,6 +279,24 @@ async def run_single_case(
 
     score = score_case(case, findings, files_reviewed)
     print(f"composite={score.composite:.3f} (recall={score.recall:.2f}, findings={len(findings)})")
+
+    if verbose and findings:
+        for i, f in enumerate(findings):
+            matched = any(m.actual_index == i for m in score.matches)
+            marker = "MATCH" if matched else "extra"
+            print(
+                f"    [{marker:5s}] {f.severity.value:8s} conf={f.confidence:.2f} "
+                f"| {f.file}:{f.start_line}-{f.end_line} | agent={f.agent}"
+            )
+            print(f"            {f.title}")
+        if score.matches:
+            for m in score.matches:
+                exp = case.expected_findings[m.expected_index]
+                print(
+                    f"    -> expected[{m.expected_index}] matched actual[{m.actual_index}]: "
+                    f"title={m.title_match} file={m.file_match} line={m.line_match} "
+                    f"sev={m.severity_match} rec={m.recommendation_match}"
+                )
 
     # LLM judge
     judge_verdict = None
@@ -341,7 +411,16 @@ async def run_single_gold_case(
 # ---------------------------------------------------------------------------
 
 async def run_all(args: argparse.Namespace) -> None:
-    """Main async entry point."""
+    """Run all eval cases and print the final report.
+
+    Dispatches to the appropriate mode (pipeline, brain, or gold-standard)
+    based on CLI args, then builds and prints the eval report.  Saves a
+    baseline file if ``--save-baseline`` is set and exits with a non-zero
+    status code if regressions are detected.
+
+    Args:
+        args: Parsed CLI arguments from ``parse_args()``.
+    """
     eval_dir = Path(__file__).resolve().parent
     cases = load_cases(eval_dir, args.filter)
 
@@ -350,7 +429,13 @@ async def run_all(args: argparse.Namespace) -> None:
         return
 
     is_gold = args.gold
-    mode_label = "gold-standard (Claude Code CLI)" if is_gold else "pipeline"
+    is_brain = getattr(args, 'brain', False)
+    if is_gold:
+        mode_label = "gold-standard (Claude Code CLI)"
+    elif is_brain:
+        mode_label = "brain (PRBrainOrchestrator)"
+    else:
+        mode_label = "pipeline (CodeReviewService)"
     print(f"Loaded {len(cases)} case(s) — mode: {mode_label}")
 
     if is_gold:
@@ -397,12 +482,16 @@ async def run_all(args: argparse.Namespace) -> None:
             explorer_provider = create_provider(args.provider, args.explorer_model)
         judge_provider = provider if not args.no_judge else None
 
+        use_brain = getattr(args, 'brain', False)
+        verbose = getattr(args, 'verbose', False)
+
         if args.parallelism <= 1:
             for case, source_dir, patch_dir in cases:
                 score, verdict = await run_single_case(
                     case, source_dir, patch_dir,
                     provider, explorer_provider, args.max_agents,
                     not args.no_judge, judge_provider,
+                    use_brain=use_brain, verbose=verbose,
                 )
                 scores.append(score)
                 if verdict:
@@ -415,6 +504,7 @@ async def run_all(args: argparse.Namespace) -> None:
                         case, source_dir, patch_dir,
                         provider, explorer_provider, args.max_agents,
                         not args.no_judge, judge_provider,
+                        use_brain=use_brain, verbose=verbose,
                     )
                     for case, source_dir, patch_dir in batch
                 ]
@@ -443,7 +533,7 @@ async def run_all(args: argparse.Namespace) -> None:
         judge_verdicts=verdicts or None,
         provider="claude-code" if is_gold else args.provider,
         model=args.gold_model if is_gold else (args.model or "default"),
-        mode="gold" if is_gold else "pipeline",
+        mode="gold" if is_gold else ("brain" if is_brain else "pipeline"),
         gold_baseline=gold_baseline,
     )
     print_report(report)

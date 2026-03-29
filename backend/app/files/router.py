@@ -19,6 +19,13 @@ def get_download_url(request: Request, file_id: str) -> str:
     return f"{base_url}/files/download/{file_id}"
 
 
+def _service() -> FileStorageService:
+    try:
+        return FileStorageService.get_instance()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="File service unavailable (database not connected)")
+
+
 @router.post("/upload/{room_id}", response_model=FileUploadResponse)
 async def upload_file(
     request: Request,
@@ -37,7 +44,7 @@ async def upload_file(
                 detail="File size exceeds limit of 20MB",
             )
         mime_type = file.content_type or "application/octet-stream"
-        service = FileStorageService.get_instance()
+        service = _service()
         metadata = await service.save_file(
             room_id=room_id,
             user_id=user_id,
@@ -71,7 +78,7 @@ async def upload_file(
 @router.get("/download/{file_id}")
 async def download_file(file_id: str):
     """Download a file by ID."""
-    service = FileStorageService.get_instance()
+    service = _service()
     metadata = await service.get_file(file_id)
     if not metadata:
         raise HTTPException(status_code=404, detail="File not found")
@@ -92,7 +99,7 @@ async def check_duplicate(
     filename: str,
 ):
     """Check if a file with the same name already exists in the room."""
-    service = FileStorageService.get_instance()
+    service = _service()
     room_files = await service.get_room_files(room_id)
 
     filename_lower = filename.lower()
@@ -120,7 +127,7 @@ async def check_duplicate(
 @router.delete("/room/{room_id}")
 async def delete_room_files(room_id: str):
     """Delete all files for a room."""
-    service = FileStorageService.get_instance()
+    service = _service()
     count = await service.delete_room_files(room_id)
     logger.info("Deleted %d files for room %s", count, room_id)
     return {"deleted_count": count, "room_id": room_id}

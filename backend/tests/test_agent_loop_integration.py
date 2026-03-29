@@ -28,7 +28,7 @@ import pytest
 import yaml
 
 from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
-from app.agent_loop.service import AgentLoopService, AgentResult, _is_high_level_query
+from app.agent_loop.service import AgentLoopService, AgentResult
 from app.code_tools.tools import invalidate_graph_cache
 
 
@@ -918,29 +918,6 @@ def loan_journey_repo(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 
-class TestQueryClassification:
-    """Test the _is_high_level_query heuristic."""
-
-    def test_high_level_journey(self):
-        assert _is_high_level_query("What are the steps in our journey?")
-
-    def test_high_level_architecture(self):
-        assert _is_high_level_query("Explain the architecture of this system")
-
-    def test_high_level_flow(self):
-        assert _is_high_level_query("Describe the flow of a loan application")
-
-    def test_high_level_workflow(self):
-        assert _is_high_level_query("What is the workflow for onboarding?")
-
-    def test_code_level_function(self):
-        assert not _is_high_level_query("What does the authenticate() function do?")
-
-    def test_code_level_bug(self):
-        assert not _is_high_level_query("Why is line 42 in auth.py throwing an error?")
-
-    def test_code_level_specific(self):
-        assert not _is_high_level_query("Show me the implementation of verify_identity")
 
 
 # ---------------------------------------------------------------------------

@@ -71,7 +71,7 @@ class MockProvider(AIProvider):
     def call_model(self, prompt, max_tokens=2048, system=None):
         return ""
 
-    def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+    def chat_with_tools(self, messages, tools, max_tokens=4096, system=None, temperature=None):
         if self._call_count < len(self._responses):
             resp = self._responses[self._call_count]
             self._call_count += 1
@@ -311,7 +311,7 @@ class TestAgentLoop:
         original_chat = MockProvider.chat_with_tools
 
         class TrackingProvider(MockProvider):
-            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None, temperature=None):
                 call_log.append(messages)
                 return original_chat(self, messages, tools, max_tokens, system)
 
@@ -346,7 +346,7 @@ class TestAgentLoop:
         call_log = []
 
         class TrackingProvider(MockProvider):
-            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None, temperature=None):
                 call_log.append(system)
                 return ToolUseResponse(text="Done.", stop_reason="end_turn")
 
@@ -363,7 +363,7 @@ class TestAgentLoop:
         call_log = []
 
         class TrackingProvider(MockProvider):
-            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None, temperature=None):
                 call_log.append(messages)
                 resp = super().chat_with_tools(messages, tools, max_tokens, system)
                 return resp
@@ -399,7 +399,7 @@ class TestAgentLoop:
         call_log = []
 
         class TrackingProvider(MockProvider):
-            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None):
+            def chat_with_tools(self, messages, tools, max_tokens=4096, system=None, temperature=None):
                 call_log.append(messages)
                 resp = super().chat_with_tools(messages, tools, max_tokens, system)
                 return resp
@@ -478,202 +478,7 @@ class TestAgentLoop:
 # ---------------------------------------------------------------------------
 
 
-class TestCompletenessVerifier:
-    """Tests for the LLM-based completeness check."""
-
-    @pytest.mark.asyncio
-    async def test_completeness_sufficient(self, workspace):
-        """When completeness check returns sufficient, answer is accepted."""
-        from app.agent_loop.completeness import CompletenessCheck
-
-        class SufficientProvider(MockProvider):
-            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
-                return '{"sufficient": true}'
-
-        provider = SufficientProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # Answer with evidence (passes EvidenceEvaluator)
-            ToolUseResponse(
-                text="Authentication uses JWT in app/auth.py:3. The authenticate() function at app/auth.py:4 decodes tokens.",
-                stop_reason="end_turn",
-            ),
-        ])
-        agent = AgentLoopService(provider=provider, max_iterations=10)
-        result = await agent.run("How does auth work?", str(workspace))
-
-        assert "JWT" in result.answer
-        assert result.error is None
-        # Should finish at iteration 3 (no extra iterations from verifier)
-        assert result.iterations == 3
-
-    @pytest.mark.asyncio
-    async def test_completeness_insufficient_triggers_continuation(self, workspace):
-        """When completeness check finds gaps, agent continues investigating."""
-        from app.agent_loop.completeness import CompletenessCheck
-
-        class InsufficientProvider(MockProvider):
-            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
-                return '{"sufficient": false, "hints": ["Check the router.py for endpoint handling"]}'
-
-        provider = InsufficientProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # First answer — passes evidence but fails completeness
-            ToolUseResponse(
-                text="Authentication uses JWT in app/auth.py:3. The authenticate() function at app/auth.py:4 decodes tokens.",
-                stop_reason="end_turn",
-            ),
-            # After completeness hints, agent investigates more
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t3", name="read_file", input={"path": "app/router.py"})],
-                stop_reason="tool_use",
-            ),
-            # Updated answer
-            ToolUseResponse(
-                text="Auth uses JWT in app/auth.py:3. The login endpoint in app/router.py:3 calls authenticate().",
-                stop_reason="end_turn",
-            ),
-        ])
-        agent = AgentLoopService(provider=provider, max_iterations=10)
-        result = await agent.run("How does auth work?", str(workspace))
-
-        assert "router" in result.answer.lower()
-        assert result.tool_calls_made == 3
-        # 2 tool iters + first answer + 1 tool iter + final answer = 5
-        assert result.iterations == 5
-
-    @pytest.mark.asyncio
-    async def test_completeness_fires_only_once(self, workspace):
-        """Completeness check fires at most once — second end_turn is accepted."""
-
-        call_count = {"completeness": 0}
-
-        class TrackingProvider(MockProvider):
-            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
-                call_count["completeness"] += 1
-                return '{"sufficient": false, "hints": ["Check config files"]}'
-
-        provider = TrackingProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # First answer — triggers completeness check (insufficient)
-            ToolUseResponse(
-                text="Auth uses JWT in app/auth.py:3. Tokens are decoded at app/auth.py:4.",
-                stop_reason="end_turn",
-            ),
-            # After hints, agent does more work
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t3", name="grep", input={"pattern": "config"})],
-                stop_reason="tool_use",
-            ),
-            # Second answer — should be accepted without another completeness check
-            ToolUseResponse(
-                text="Auth uses JWT in app/auth.py:3. Config at app/router.py:1 imports auth.",
-                stop_reason="end_turn",
-            ),
-        ])
-        agent = AgentLoopService(provider=provider, max_iterations=10)
-        result = await agent.run("How does auth work?", str(workspace))
-
-        # Completeness was called exactly once (for the first end_turn)
-        assert call_count["completeness"] == 1
-        assert result.error is None
-
-    @pytest.mark.asyncio
-    async def test_completeness_skipped_when_budget_low(self, workspace):
-        """Completeness check doesn't fire when < 3 iterations remain."""
-
-        call_count = {"completeness": 0}
-
-        class TrackingProvider(MockProvider):
-            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
-                call_count["completeness"] += 1
-                return '{"sufficient": false, "hints": ["Check more"]}'
-
-        provider = TrackingProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # Answer on iteration 3 of max 4 — only 1 remaining (< 3)
-            ToolUseResponse(
-                text="Auth uses JWT in app/auth.py:3. Tokens decoded at app/auth.py:4.",
-                stop_reason="end_turn",
-            ),
-        ])
-        # max_iterations=4: after 2 tool iters, answer at iter 3, remaining=1
-        agent = AgentLoopService(provider=provider, max_iterations=4)
-        result = await agent.run("How does auth work?", str(workspace))
-
-        # Completeness check should not have fired (budget too low)
-        assert call_count["completeness"] == 0
-        assert result.error is None
-
-    @pytest.mark.asyncio
-    async def test_completeness_error_treated_as_sufficient(self, workspace):
-        """If completeness check errors out, treat as sufficient (don't block)."""
-
-        class ErrorProvider(MockProvider):
-            def call_model(self, prompt, max_tokens=2048, system=None, assistant_prefix=None):
-                raise RuntimeError("LLM call failed")
-
-        provider = ErrorProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="Auth uses JWT in app/auth.py:3. Tokens decoded at app/auth.py:4.",
-                stop_reason="end_turn",
-            ),
-        ])
-        agent = AgentLoopService(provider=provider, max_iterations=10)
-        result = await agent.run("How does auth work?", str(workspace))
-
-        # Should still produce an answer despite completeness check error
-        assert "JWT" in result.answer
-        assert result.error is None
-        assert result.iterations == 3
-
+# TestCompletenessVerifier removed — completeness check replaced by Brain review.
 
 class TestCompletenessModule:
     """Unit tests for the completeness module itself."""
@@ -1065,104 +870,21 @@ class TestBuildSystemPrompt:
             assert "## Strategy" not in prompt
             assert "## Goal" not in prompt
 
+    def test_interactive_mode_adds_clarification_step(self, tmp_path: Path):
+        """Interactive mode injects ask_user guidance into investigation flow."""
+        prompt = build_system_prompt(str(tmp_path), interactive=True)
+        assert "ask_user" in prompt
+        # Guidance should be INSIDE "How to investigate", not a separate section
+        how_idx = prompt.index("How to investigate")
+        ask_idx = prompt.index("ask_user")
+        angles_idx = prompt.index("multiple angles")
+        assert how_idx < ask_idx < angles_idx, "ask_user guidance should be between 'How to investigate' and 'multiple angles'"
 
-class TestMultiPerspective:
-    """Test multi-perspective exploration for high-level queries."""
+    def test_non_interactive_no_ask_user(self, tmp_path: Path):
+        """Non-interactive mode has no ask_user guidance."""
+        prompt = build_system_prompt(str(tmp_path), interactive=False)
+        assert "ask_user" not in prompt
 
-    @pytest.mark.asyncio
-    async def test_multi_perspective_dispatched_for_high_level(self, workspace):
-        """High-level query with classifier_provider triggers multi-perspective."""
-        sub_provider = MockProvider([
-            ToolUseResponse(text="Implementation perspective answer.", stop_reason="end_turn"),
-        ])
-        main_provider = MockProvider([
-            ToolUseResponse(text="unused", stop_reason="end_turn"),
-        ])
-        # Mock call_model for synthesis
-        main_provider.call_model = lambda prompt, max_tokens=2048, system=None: (
-            "Synthesized: Implementation + Tests combined."
-        )
 
-        agent = AgentLoopService(
-            provider=main_provider,
-            classifier_provider=sub_provider,
-            max_iterations=25,
-        )
-
-        events = []
-        async for event in agent.run_stream(
-            "How does the payment flow work?",  # triggers business_flow_tracing
-            str(workspace),
-        ):
-            events.append(event)
-
-        kinds = [e.kind for e in events]
-        # Should have thinking, tool_call (perspectives), tool_result, thinking (synthesis), done
-        assert "thinking" in kinds
-        assert "done" in kinds
-
-        done = [e for e in events if e.kind == "done"][0]
-        assert "Synthesized" in done.data["answer"]
-        assert done.data["budget_summary"]["perspectives"] == 2
-        assert done.data["budget_summary"]["synthesis"] is True
-
-    @pytest.mark.asyncio
-    async def test_no_multi_perspective_without_classifier(self, workspace):
-        """Without classifier_provider, high-level queries use single agent."""
-        provider = MockProvider([
-            ToolUseResponse(text="Single agent answer.", stop_reason="end_turn"),
-        ])
-
-        agent = AgentLoopService(
-            provider=provider,
-            # No classifier_provider
-            max_iterations=5,
-        )
-        result = await agent.run("How does the payment flow work?", str(workspace))
-
-        # Should get direct single-agent answer, not synthesized
-        assert result.answer == "Single agent answer."
-
-    @pytest.mark.asyncio
-    async def test_architecture_question_uses_single_agent(self, workspace):
-        """Architecture questions should NOT trigger multi-perspective."""
-        main_provider = MockProvider([
-            ToolUseResponse(text="Single agent architecture answer.", stop_reason="end_turn"),
-        ])
-        classifier_provider = MockProvider([])
-
-        agent = AgentLoopService(
-            provider=main_provider,
-            classifier_provider=classifier_provider,
-            max_iterations=5,
-        )
-        # "architecture overview" triggers architecture_question classification
-        result = await agent.run("Give me an architecture overview", str(workspace))
-
-        # Should use single agent (main_provider), not multi-perspective synthesis
-        assert result.answer == "Single agent architecture answer."
-
-    @pytest.mark.asyncio
-    async def test_synthesis_failure_falls_back(self, workspace):
-        """If synthesis call fails, uses the longer sub-agent answer."""
-        # Both responses have the same marker so order doesn't matter
-        sub_provider = MockProvider([
-            ToolUseResponse(text="Perspective A: the payment flow involves steps X, Y, Z.", stop_reason="end_turn"),
-            ToolUseResponse(text="Perspective B: the payment flow involves steps X, Y, Z.", stop_reason="end_turn"),
-        ])
-        main_provider = MockProvider([])
-        # Simulate call_model failure
-        main_provider.call_model = MagicMock(side_effect=Exception("Model down"))
-
-        agent = AgentLoopService(
-            provider=main_provider,
-            classifier_provider=sub_provider,
-            max_iterations=25,
-        )
-        result = await agent.run(
-            "How does the payment flow work?",
-            str(workspace),
-        )
-
-        # Should fall back to one of the sub-agent answers (not empty)
-        assert "payment flow" in result.answer
+# TestMultiPerspective removed — multi-perspective exploration is now
+# handled by Brain's dispatch_swarm("business_flow"), not AgentLoopService.

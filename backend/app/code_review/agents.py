@@ -7,9 +7,7 @@ in parallel and merges their findings.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -26,6 +24,19 @@ from .models import (
     RiskLevel,
     RiskProfile,
     Severity,
+)
+from .shared import (
+    FOCUS_DESCRIPTIONS as _FOCUS_DESCRIPTIONS,
+    STRATEGY_HINTS,
+    MAX_FILE_DIFF_CHARS as _MAX_FILE_DIFF_CHARS,
+    MAX_TOTAL_DIFF_CHARS as _MAX_TOTAL_DIFF_CHARS,
+    CRITICAL_MIN_EVIDENCE as _CRITICAL_MIN_EVIDENCE,
+    CRITICAL_REQUIRE_FILE as _CRITICAL_REQUIRE_FILE,
+    CRITICAL_REQUIRE_LINE as _CRITICAL_REQUIRE_LINE,
+    build_diffs_section as _build_diffs_section,
+    parse_findings as _parse_findings_shared,
+    repair_output as _repair_output_shared,
+    evidence_gate as _evidence_gate_shared,
 )
 
 logger = logging.getLogger(__name__)
@@ -309,84 +320,6 @@ RULES:
 - If your token budget is running low, output your findings JSON IMMEDIATELY"""
 
 
-_FOCUS_DESCRIPTIONS = {
-    "correctness": (
-        "Logic errors, null/undefined access, off-by-one, race conditions, "
-        "wrong conditionals, missing edge cases, breaking API contracts, "
-        "state machine violations, incorrect error handling."
-    ),
-    "concurrency": (
-        "Check-then-act patterns, duplicate processing, token/lock lifecycle, "
-        "callback replay, queue redelivery safety, retry idempotency, "
-        "thread safety, deadlock potential."
-    ),
-    "security": (
-        "Injection vulnerabilities (SQL, XSS, command), auth bypass, "
-        "secrets in code, insecure defaults, missing input validation, "
-        "sensitive data in logs, replay attacks, CSRF/CORS issues."
-    ),
-    "reliability": (
-        "Swallowed exceptions, missing error handling, timeout issues, "
-        "resource leaks, missing observability (logging/metrics), "
-        "hardcoded config, shutdown behavior, DLQ/retry gaps."
-    ),
-    "test_coverage": (
-        "New logic without test coverage, untested failure paths, "
-        "tests that don't assert meaningful behavior, missing edge case tests, "
-        "untested concurrent/async paths."
-    ),
-}
-
-
-# Max chars per individual file diff before truncation.
-# 15KB covers ~400 lines of unified diff with context — enough for
-# most files to avoid agents needing to re-fetch via read_file.
-_MAX_FILE_DIFF_CHARS = 15_000
-# Max total chars of diffs injected into an agent prompt (~30-40K tokens).
-# Agents have 250K-600K token budgets, so this is a manageable fraction.
-_MAX_TOTAL_DIFF_CHARS = 120_000
-
-
-def _build_diffs_section(
-    files: List[ChangedFile],
-    file_diffs: Dict[str, str],
-) -> str:
-    """Build the pre-fetched diffs section for the agent prompt.
-
-    Includes diffs for the agent's scoped files, truncating large diffs
-    and capping total size to avoid blowing up the context window.
-    """
-    if not file_diffs:
-        return "(diffs not available — use git_diff to fetch as needed)"
-
-    sections = []
-    total_chars = 0
-
-    for f in files[:20]:
-        diff_text = file_diffs.get(f.path, "")
-        if not diff_text:
-            continue
-
-        # Truncate individual large diffs
-        if len(diff_text) > _MAX_FILE_DIFF_CHARS:
-            diff_text = diff_text[:_MAX_FILE_DIFF_CHARS] + \
-                f"\n... (truncated, {len(file_diffs[f.path]):,} chars total — use read_file for full content)"
-
-        # Check total budget
-        if total_chars + len(diff_text) > _MAX_TOTAL_DIFF_CHARS:
-            remaining = len(files) - len(sections)
-            sections.append(
-                f"\n... ({remaining} more file(s) omitted — use git_diff to view)"
-            )
-            break
-
-        sections.append(f"### `{f.path}`\n```diff\n{diff_text}\n```")
-        total_chars += len(diff_text)
-
-    if not sections:
-        return "(no diffs available for files in scope)"
-
-    return "\n\n".join(sections)
 
 
 def _build_agent_query(
@@ -443,61 +376,8 @@ def _build_agent_query(
 
 
 # ---------------------------------------------------------------------------
-# Finding extraction
+# Finding extraction — thin wrappers around shared.py
 # ---------------------------------------------------------------------------
-
-# Regex patterns for JSON extraction (ordered by specificity)
-# 1. JSON array inside a markdown code block
-_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\[[\s\S]*?\])\s*```")
-# 2. Bare JSON array (greedy — find the longest valid array)
-_JSON_BARE_RE = re.compile(r"\[[\s\S]*\]")
-# 3. Individual JSON objects (fallback for models that forget the array wrapper)
-_JSON_OBJECT_RE = re.compile(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}")
-
-_SEVERITY_MAP = {
-    "critical": Severity.CRITICAL,
-    "warning": Severity.WARNING,
-    "nit": Severity.NIT,
-    "praise": Severity.PRAISE,
-}
-
-
-def _raw_to_finding(raw: dict, spec: AgentSpec) -> Optional[ReviewFinding]:
-    """Convert a raw dict to a ReviewFinding, or None if invalid."""
-    if not isinstance(raw, dict):
-        return None
-    # Must have at least a title or file to be considered a finding
-    if not raw.get("title") and not raw.get("file"):
-        return None
-    severity_str = str(raw.get("severity", "warning")).lower()
-    try:
-        return ReviewFinding(
-            title=raw.get("title", "Untitled finding"),
-            category=spec.category,
-            severity=_SEVERITY_MAP.get(severity_str, Severity.WARNING),
-            confidence=float(raw.get("confidence", 0.7)),
-            file=raw.get("file", ""),
-            start_line=int(raw.get("start_line", 0)),
-            end_line=int(raw.get("end_line", 0)),
-            evidence=raw.get("evidence", []),
-            risk=raw.get("risk", ""),
-            suggested_fix=raw.get("suggested_fix", ""),
-            agent=spec.name,
-            reasoning=raw.get("reasoning", ""),
-        )
-    except (TypeError, ValueError):
-        return None
-
-
-def _try_parse_json_array(text: str) -> Optional[list]:
-    """Attempt to parse *text* as a JSON array, return None on failure."""
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, list):
-            return parsed
-    except (json.JSONDecodeError, ValueError):
-        pass
-    return None
 
 
 def _parse_findings(
@@ -506,100 +386,10 @@ def _parse_findings(
     *,
     warn_on_empty: bool = True,
 ) -> List[ReviewFinding]:
-    """Extract structured findings from an agent's answer text.
-
-    Tries multiple extraction strategies (in order):
-    1. JSON array inside a ```json ... ``` code block
-    2. Bare JSON array anywhere in the text
-    3. Individual JSON objects (for models that omit the array wrapper)
-
-    This robustness is needed because Qwen Flash models sometimes produce
-    slightly malformed output (e.g. commentary after the JSON, missing
-    array brackets, or extra whitespace).
-
-    Args:
-        warn_on_empty: If *False*, suppress the "Failed to parse" warning.
-            Used when parsing context chunks where missing JSON is expected.
-    """
-    findings: List[ReviewFinding] = []
-
-    # Strategy 1: JSON in a markdown code block (most reliable)
-    for m in _JSON_BLOCK_RE.finditer(answer):
-        raw_list = _try_parse_json_array(m.group(1))
-        if raw_list is not None:
-            for raw in raw_list:
-                f = _raw_to_finding(raw, spec)
-                if f:
-                    findings.append(f)
-            if findings:
-                return findings
-
-    # Strategy 2: Bare JSON array (try all matches, pick the one with findings)
-    for m in _JSON_BARE_RE.finditer(answer):
-        raw_list = _try_parse_json_array(m.group())
-        if raw_list is not None:
-            for raw in raw_list:
-                f = _raw_to_finding(raw, spec)
-                if f:
-                    findings.append(f)
-            if findings:
-                return findings
-
-    # Strategy 3: Individual JSON objects (last resort)
-    for m in _JSON_OBJECT_RE.finditer(answer):
-        try:
-            raw = json.loads(m.group())
-            f = _raw_to_finding(raw, spec)
-            if f:
-                findings.append(f)
-        except (json.JSONDecodeError, ValueError):
-            continue
-
-    if findings:
-        logger.info(
-            "Parsed %d findings from %s agent via individual JSON objects",
-            len(findings), spec.name,
-        )
-
-    if not findings and warn_on_empty:
-        logger.warning("Failed to parse findings JSON from %s agent", spec.name)
-
-    return findings
-
-
-# ---------------------------------------------------------------------------
-# Output repair — ask model to reformat unparseable answer as JSON
-# ---------------------------------------------------------------------------
-
-_REPAIR_PROMPT = """\
-The following text was produced by a code review agent, but it is NOT valid JSON.
-Extract the findings and reformat them as a JSON array.
-
-## Rules
-- Output ONLY a JSON array. No commentary, no markdown fences, no explanation.
-- Each element must have: title, severity, confidence, file, start_line, end_line, evidence, risk, suggested_fix
-- severity must be one of: "critical", "warning", "nit", "praise"
-- confidence must be a number 0.0–1.0
-- evidence must be an array of strings
-- If the text contains no reviewable findings, output: []
-
-## Example
-
-<input_text>
-Looking at the code, I found two issues:
-1. The cache key in utils.py line 45 doesn't include the user ID, so users can see each other's data. This is a serious security issue.
-2. Minor: the variable name `x` on line 12 is unclear.
-</input_text>
-
-<expected_output>
-[{{"title":"Cache key missing user ID allows cross-user data leak","severity":"critical","confidence":0.85,"file":"utils.py","start_line":45,"end_line":45,"evidence":["cache key at line 45 does not include user_id"],"risk":"Users can see other users cached data","suggested_fix":"Include user_id in cache key: cache_key = f'{{user_id}}:{{resource}}'"}},{{"title":"Unclear variable name","severity":"nit","confidence":0.9,"file":"utils.py","start_line":12,"end_line":12,"evidence":["variable named x at line 12"],"risk":"Reduced readability","suggested_fix":"Rename x to a descriptive name"}}]
-</expected_output>
-
-## Text to reformat
-<input_text>
-{answer}
-</input_text>
-"""
+    """Extract structured findings from an agent's answer text."""
+    return _parse_findings_shared(
+        answer, spec.name, spec.category, warn_on_empty=warn_on_empty,
+    )
 
 
 async def _repair_output(
@@ -607,89 +397,14 @@ async def _repair_output(
     spec: AgentSpec,
     provider: AIProvider,
 ) -> List[ReviewFinding]:
-    """Attempt to recover findings by asking the model to reformat the answer.
-
-    Called when the agent produced non-empty text but ``_parse_findings``
-    could not extract valid JSON.  One extra LLM call (cheap — short prompt,
-    short response).
-
-    Returns:
-        List of successfully parsed findings (may be empty).
-    """
-    prompt = _REPAIR_PROMPT.format(answer=answer[:3000])  # cap input
-    try:
-        loop = asyncio.get_event_loop()
-        repaired = await loop.run_in_executor(
-            None,
-            lambda: provider.call_model(
-                prompt=prompt, max_tokens=2048, assistant_prefix="["
-            ),
-        )
-        findings = _parse_findings(repaired, spec, warn_on_empty=False)
-        if findings:
-            logger.info(
-                "Repair loop recovered %d findings for %s agent",
-                len(findings), spec.name,
-            )
-        return findings
-    except Exception as exc:
-        logger.warning("Repair loop failed for %s agent: %s", spec.name, exc)
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Evidence gate — downgrade under-evidenced Critical findings
-# ---------------------------------------------------------------------------
-
-# Minimum requirements for a Critical finding to keep its severity
-_CRITICAL_MIN_EVIDENCE = 2       # at least 2 evidence items
-_CRITICAL_REQUIRE_FILE = True    # must have file reference
-_CRITICAL_REQUIRE_LINE = True    # must have start_line > 0
+    """Attempt to recover findings by asking the model to reformat the answer."""
+    return await _repair_output_shared(answer, spec.name, spec.category, provider)
 
 
 def _evidence_gate(findings: List[ReviewFinding], agent_result: "AgentResult") -> List[ReviewFinding]:
-    """Validate evidence quality for Critical findings.
-
-    Critical findings must meet a minimum evidence bar:
-      1. At least ``_CRITICAL_MIN_EVIDENCE`` evidence strings.
-      2. Must reference a specific file.
-      3. Must reference a specific line number.
-      4. Agent must have made ≥3 tool calls (i.e. actually investigated).
-
-    Findings that fail are downgraded to Warning with a note.
-    """
+    """Validate evidence quality for Critical findings."""
     tool_calls = agent_result.tool_calls_made if agent_result else 0
-
-    gated: List[ReviewFinding] = []
-    for f in findings:
-        if f.severity != Severity.CRITICAL:
-            gated.append(f)
-            continue
-
-        reasons: List[str] = []
-
-        if len(f.evidence) < _CRITICAL_MIN_EVIDENCE:
-            reasons.append(
-                f"only {len(f.evidence)} evidence items (need {_CRITICAL_MIN_EVIDENCE})"
-            )
-        if _CRITICAL_REQUIRE_FILE and not f.file:
-            reasons.append("no file reference")
-        if _CRITICAL_REQUIRE_LINE and f.start_line == 0:
-            reasons.append("no line number")
-        if tool_calls < 3:
-            reasons.append(f"only {tool_calls} tool calls (need ≥3)")
-
-        if reasons:
-            logger.info(
-                "Evidence gate: downgrading '%s' from critical → warning (%s)",
-                f.title, "; ".join(reasons),
-            )
-            f.severity = Severity.WARNING
-            f.evidence.append(f"[auto-downgraded: {'; '.join(reasons)}]")
-
-        gated.append(f)
-
-    return gated
+    return _evidence_gate_shared(findings, tool_calls)
 
 
 # ---------------------------------------------------------------------------

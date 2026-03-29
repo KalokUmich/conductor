@@ -174,7 +174,14 @@ def score_case(case: CaseConfig, findings: list, files_reviewed: list) -> CaseSc
 def compute_aggregate(scores: List[CaseScore]) -> Dict[str, float]:
     """Compute aggregate metrics across all cases.
 
-    Returns dict with mean scores per dimension and overall composite.
+    Args:
+        scores: List of CaseScore objects, one per evaluated case.
+
+    Returns:
+        Dict with mean scores per dimension and overall composite.
+        Keys: recall, precision, severity_accuracy, location_accuracy,
+        recommendation_score, context_depth, composite, cases_total,
+        cases_scored, cases_errored.
     """
     if not scores:
         return {"composite": 0.0}
@@ -203,6 +210,14 @@ def _match_findings(expected: list, findings: list) -> List[FindingMatch]:
 
     Uses greedy matching: each expected finding matches the best available
     actual finding. An actual finding can only be matched once.
+
+    Args:
+        expected: List of expected finding dicts from the case config.
+        findings: List of actual ReviewFinding objects from the review.
+
+    Returns:
+        List of FindingMatch objects for successfully matched pairs.
+        Unmatched expected findings indicate false negatives (missed bugs).
     """
     matches = []
     used_actual = set()
@@ -237,7 +252,19 @@ def _match_findings(expected: list, findings: list) -> List[FindingMatch]:
 
 
 def _evaluate_match(exp_idx: int, act_idx: int, expected: dict, finding) -> FindingMatch:
-    """Evaluate how well a finding matches an expected finding."""
+    """Evaluate how well a finding matches an expected finding.
+
+    Args:
+        exp_idx: Index of the expected finding in the case's expected_findings list.
+        act_idx: Index of the actual finding in the review findings list.
+        expected: Expected finding dict with title_pattern, file_pattern,
+            line_range, severity, category, and recommendation keys.
+        finding: Actual ReviewFinding object from the review.
+
+    Returns:
+        FindingMatch with boolean flags for each dimension (title, file,
+        line, severity, category, recommendation).
+    """
     m = FindingMatch(expected_index=exp_idx, actual_index=act_idx)
 
     # Title pattern match

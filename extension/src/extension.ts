@@ -515,15 +515,18 @@ async function compareLocalTools(): Promise<void> {
         try {
             const r = await execFileAsync('grep', args, { cwd: workspace, maxBuffer: 5 * 1024 * 1024 });
             return r.stdout || '';
-        } catch (e: any) {
-            return e.stdout || '';
+        } catch (e: unknown) {
+            return (e !== null && typeof e === 'object' && 'stdout' in e && typeof (e as {stdout: unknown}).stdout === 'string')
+                ? (e as {stdout: string}).stdout
+                : '';
         }
     };
 
     // ---- file_outline ----
+    interface OutlineSummary { count: number; names: string[]; lines: number[]; }
     output.appendLine('--- file_outline ---');
-    const lspOutline: any = { count: 0, names: [] as string[], lines: [] as number[] };
-    const grepOutline: any = { count: 0, names: [] as string[], lines: [] as number[] };
+    const lspOutline: OutlineSummary = { count: 0, names: [], lines: [] };
+    const grepOutline: OutlineSummary = { count: 0, names: [], lines: [] };
 
     try {
         const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
@@ -538,8 +541,9 @@ async function compareLocalTools(): Promise<void> {
                 vscode.SymbolKind.Struct, vscode.SymbolKind.Module,
                 vscode.SymbolKind.Namespace,
             ]);
-            const flatten = (syms: vscode.DocumentSymbol[], parent?: string): any[] => {
-                const result: any[] = [];
+            interface FlatSymbol { name: string; kind: string; line: number; }
+            const flatten = (syms: vscode.DocumentSymbol[], parent?: string): FlatSymbol[] => {
+                const result: FlatSymbol[] = [];
                 for (const s of syms) {
                     if (STRUCTURAL.has(s.kind)) {
                         result.push({ name: s.name, kind: vscode.SymbolKind[s.kind], line: s.range.start.line + 1 });
@@ -611,8 +615,8 @@ async function compareLocalTools(): Promise<void> {
             'vscode.executeDocumentSymbolProvider', toUri(TARGET_FILE),
         );
         if (symbols) {
-            const flatten = (syms: vscode.DocumentSymbol[]): any[] => {
-                const result: any[] = [];
+            const flatten = (syms: vscode.DocumentSymbol[]): vscode.DocumentSymbol[] => {
+                const result: vscode.DocumentSymbol[] = [];
                 for (const s of syms) {
                     result.push(s);
                     if (s.children) result.push(...flatten(s.children));
@@ -812,6 +816,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
     /** Extension URI for loading local resources. */
     private _extensionUri: vscode.Uri;
+    /** AbortController for the current AI query (allows Stop button). */
+    private _askAIAbortController: AbortController | null = null;
     /** Extension context for accessing globalState. */
     private _context: vscode.ExtensionContext;
     /** Conductor controller for driving the state machine. */
@@ -1065,6 +1071,15 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'getAiStatus':
                     console.log('[Conductor] Received getAiStatus message from WebView');
                     this._handleGetAiStatus();
+                    return;
+                case 'agentAnswer':
+                    this._handleAgentAnswer(message);
+                    return;
+                case 'stopAskAI':
+                    if (this._askAIAbortController) {
+                        console.log('[Conductor] Stopping AI investigation by user request');
+                        this._askAIAbortController.abort();
+                    }
                     return;
                 case 'diagnoseBackendConnection':
                     await this._handleDiagnoseBackendConnection(message);
@@ -1928,6 +1943,29 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 command: 'aiStatus',
                 data: { error: `Cannot connect to backend: ${msg}` }
             });
+        }
+    }
+
+    /**
+     * Submit the user's answer to a pending agent question.
+     * Called when the user responds to an ask_user question card in the WebView.
+     */
+    private async _handleAgentAnswer(message: { sessionId: string; answer: string }): Promise<void> {
+        try {
+            const backendUrl = getBackendUrl();
+            const resp = await fetch(
+                `${backendUrl}/api/context/query/${encodeURIComponent(message.sessionId)}/answer`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: message.answer }),
+                },
+            );
+            if (!resp.ok) {
+                console.warn('[Conductor][AgentAnswer] Submission failed:', resp.status);
+            }
+        } catch (err) {
+            console.error('[Conductor][AgentAnswer] Failed to submit answer:', err);
         }
     }
 
@@ -4317,11 +4355,13 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         const query = message.query;
 
         console.log(`[Conductor][AskAI] query="${query.slice(0, 80)}" room=${roomId}`);
+        let thinkingSteps: Array<Record<string, any>> = [];
 
         try {
             // Stream from the existing /api/context/query/stream endpoint
             const streamUrl = `${backendUrl}/api/context/query/stream`;
             const abortController = new AbortController();
+            this._askAIAbortController = abortController;  // expose for Stop button
             const sseTimeoutMs = 10 * 60 * 1000; // 10 minutes (multi-agent code review can take 5-8 min)
             const sseTimeoutId = setTimeout(() => abortController.abort(), sseTimeoutMs);
             const response = await fetch(streamUrl, {
@@ -4345,7 +4385,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             const decoder = new TextDecoder();
             let buffer = '';
             let finalAnswer = '';
-            let thinkingSteps: Array<Record<string, any>> = [];
+            let agentSessionId = '';
 
             // eslint-disable-next-line no-constant-condition
             while (true) {
@@ -4369,8 +4409,57 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     let data: Record<string, any>;
                     try { data = JSON.parse(eventData); } catch { continue; }
 
+                    // Collect thinking steps incrementally (for Stop button)
+                    if (['thinking', 'tool_call', 'tool_result', 'agent_dispatched', 'agent_complete'].includes(eventKind)) {
+                        thinkingSteps.push({ kind: eventKind, ...data });
+                    }
+
                     // Forward progress to WebView
-                    if (eventKind === 'start') {
+                    if (eventKind === 'session') {
+                        agentSessionId = data.session_id || '';
+                    } else if (eventKind === 'ask_user') {
+                        // Agent is asking the user a clarifying question
+                        this._view?.webview.postMessage({
+                            command: 'agentQuestion',
+                            sessionId: data.session_id || agentSessionId,
+                            question: data.question || '',
+                            context: data.context || '',
+                        });
+                    } else if (eventKind === 'ask_user_waiting') {
+                        // Keepalive while waiting for user answer
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'ask_user_waiting',
+                            message: `Waiting for your answer... (${data.elapsed_seconds || 0}s)`,
+                            detail: data,
+                        });
+                    } else if (eventKind === 'agent_dispatched') {
+                        // Brain dispatched a specialist agent
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'agent_dispatched',
+                            message: `Dispatched ${data.agent_name || 'agent'}`,
+                            detail: data,
+                        });
+                    } else if (eventKind === 'agent_complete') {
+                        // Specialist agent completed
+                        const status = data.status === 'done' ? '✓' : data.status === 'timeout' ? '⏱' : '✗';
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'agent_complete',
+                            message: `${status} ${data.agent_name || 'agent'} (${data.confidence || '?'})`,
+                            detail: data,
+                        });
+                    } else if (eventKind === 'swarm_dispatched') {
+                        // Brain dispatched a parallel swarm
+                        const agents = (data.agents || []).join(', ');
+                        this._view?.webview.postMessage({
+                            command: 'askAIProgress',
+                            phase: 'agent', kind: 'swarm_dispatched',
+                            message: `Swarm: ${data.swarm_name || 'parallel'} (${agents})`,
+                            detail: data,
+                        });
+                    } else if (eventKind === 'start') {
                         this._view?.webview.postMessage({
                             command: 'askAIProgress',
                             phase: 'agent', kind: 'start',
@@ -4408,12 +4497,18 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             detail: { tool: data.tool, success: data.success, iteration: data.iteration },
                         });
                     } else if (eventKind === 'done') {
-                        finalAnswer = data.answer || '';
+                        // Only update answer if this event has one —
+                        // the engine sends a second "done" without answer
+                        if (data.answer) {
+                            finalAnswer = data.answer;
+                        }
                         if (data.thinking_steps) {
                             thinkingSteps = data.thinking_steps;
                         }
                     } else if (eventKind === 'error') {
-                        finalAnswer = data.answer || '';
+                        if (data.answer) {
+                            finalAnswer = data.answer;
+                        }
                         if (data.thinking_steps) {
                             thinkingSteps = data.thinking_steps;
                         }
@@ -4460,12 +4555,25 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             this._view?.webview.postMessage({ command: 'askAIDone' });
 
         } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error('[Conductor][AskAI] Failed:', msg);
-            this._view?.webview.postMessage({
-                command: 'askAIDone',
-                error: msg,
-            });
+            const isAbort = error instanceof DOMException && error.name === 'AbortError';
+            if (isAbort) {
+                console.log('[Conductor][AskAI] Stopped by user');
+                this._view?.webview.postMessage({
+                    command: 'askAIDone',
+                    stopped: true,
+                    thinkingSteps: thinkingSteps,
+                });
+            } else {
+                const msg = error instanceof Error ? error.message : String(error);
+                console.error('[Conductor][AskAI] Failed:', msg);
+                this._view?.webview.postMessage({
+                    command: 'askAIDone',
+                    error: msg,
+                    thinkingSteps: thinkingSteps,
+                });
+            }
+        } finally {
+            this._askAIAbortController = null;
         }
     }
 
@@ -4618,7 +4726,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
             // Poll progress while indexing runs
             const progressUrl = `${backendUrl}/api/context/context/${encodeURIComponent(roomId)}/index-progress`;
-            let indexResult: any = {};
+            interface IndexResult { index_success?: boolean; files_indexed?: number; chunks_indexed?: number; index_duration_ms?: number; message?: string; }
+            let indexResult: IndexResult = {};
             const pollInterval = 3000; // 3 seconds
             while (true) {
                 // Check if indexing finished
@@ -4813,9 +4922,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     timeout,
                 });
                 return { stdout: result.stdout || '', stderr: result.stderr || '' };
-            } catch (e: any) {
+            } catch (e: unknown) {
                 // grep returns exit code 1 for no matches — not an error
-                if (e.code === 1 && e.stdout !== undefined) {
+                interface ExecError { code: number; stdout?: string; stderr?: string; }
+                const isExecError = (x: unknown): x is ExecError =>
+                    x !== null && typeof x === 'object' && 'code' in x;
+                if (isExecError(e) && e.code === 1 && e.stdout !== undefined) {
                     return { stdout: e.stdout || '', stderr: e.stderr || '' };
                 }
                 throw e;

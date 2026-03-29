@@ -428,10 +428,10 @@ def _make_conductor_config(
         ),
         ai_models=[
             AIModelConfig(
-                id="claude-3-haiku-bedrock",
+                id="claude-haiku-4-5-bedrock",
                 provider="aws_bedrock",
-                model_name="anthropic.claude-3-haiku-20240307-v1:0",
-                display_name="Claude 3 Haiku (Bedrock)",
+                model_name="eu.anthropic.claude-haiku-4-5-20251001-v1:0",
+                display_name="Claude Haiku 4.5 (Bedrock)",
             ),
             AIModelConfig(
                 id="claude-sonnet-4-anthropic",

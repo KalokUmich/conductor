@@ -156,10 +156,12 @@ Current prototype includes:
 - Agentic code intelligence (24 tools)
 - Multi-agent PR review pipeline (6 specialized agents, parallel dispatch, arbitration, synthesis)
 - Isolated Git workspaces per room
+- **Chat persistence**: write-through micro-batch Postgres (ChatPersistenceService) + Redis hot cache; chat history survives backend restarts
+- **Browser tools**: Playwright Chromium automation for web browsing from agents (`browse_url`, `search_web`, `screenshot`)
 - Multi-provider AI support (Bedrock, Anthropic, OpenAI)
 - Langfuse self-hosted observability (nested execution trees, cost tracking)
 - Jira integration (OAuth 3LO, create/list issues from engineering decisions)
-- 1200+ automated tests
+- 1300+ automated tests
 
 ## Roadmap
 
@@ -178,7 +180,7 @@ See [ROADMAP.md](ROADMAP.md) for full details.
 
 ```bash
 cd backend
-pytest                                        # all tests (1200+)
+pytest                                        # all tests (1300+)
 pytest tests/test_code_tools.py -v            # 24 code tools (98 tests)
 pytest tests/test_agent_loop.py -v            # agent loop + 3-layer prompt (47 tests)
 pytest tests/test_budget_controller.py -v     # token budget controller (20 tests)
@@ -191,8 +193,13 @@ pytest tests/test_compressed_tools.py -v      # compressed view tools (24 tests)
 pytest tests/test_langextract.py -v           # langextract multi-vendor (57 tests)
 pytest tests/test_repo_graph.py -v            # repo graph (72 tests)
 pytest tests/test_config_new.py -v            # config (27 tests)
+pytest tests/test_chat_persistence.py -v      # chat persistence (micro-batch Postgres)
+pytest tests/test_browser_tools.py -v         # browser tools (Playwright, mocked)
 pytest tests/test_git_workspace.py -v         # git workspace
 pytest --cov=. --cov-report=html              # coverage report
+
+# Tool parity (Python ↔ TypeScript)
+make test-parity                              # contract + shape + subprocess validation
 ```
 
 ## Contributing
@@ -297,10 +304,12 @@ npm run compile
 - Agentic 代码智能（24 个工具）
 - 多 Agent PR 代码评审（6 个专用 Agent，并行派发，仲裁，综合输出）
 - 每个房间独立的 Git 工作区
+- **聊天持久化**：写穿透 micro-batch Postgres（ChatPersistenceService）+ Redis 热缓存，重启后历史不丢失
+- **浏览器工具**：Playwright Chromium 自动化（`browse_url`、`search_web`、`screenshot`）
 - 多提供商 AI 支持（Bedrock、Anthropic、OpenAI）
 - Langfuse 自托管可观测性（嵌套执行树、成本追踪）
 - Jira 集成（OAuth 3LO，从工程决策创建/列出问题）
-- 1200+ 自动化测试
+- 1300+ 自动化测试
 
 ## Roadmap
 
@@ -319,8 +328,11 @@ npm run compile
 
 ```bash
 cd backend
-pytest                          # 所有测试 (1200+)
+pytest                          # 所有测试 (1300+)
 pytest --cov=. --cov-report=html  # 覆盖率报告
+
+# 工具一致性验证（Python ↔ TypeScript）
+make test-parity
 ```
 
 ## 配置

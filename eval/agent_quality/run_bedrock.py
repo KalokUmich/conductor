@@ -72,7 +72,7 @@ def _create_provider(model_id: str = "eu.anthropic.claude-sonnet-4-6"):
         aws_access_key_id=bedrock["access_key_id"],
         aws_secret_access_key=bedrock["secret_access_key"],
         aws_session_token=bedrock.get("session_token"),
-        region_name=bedrock.get("region", "eu-west-2"),
+        region_name="eu-west-2",  # inference profiles require eu-west-2
         model_id=model_id,
     )
     if not provider.health_check():
@@ -152,6 +152,43 @@ async def run_direct_agent(provider, workspace: str, question: str) -> dict:
         "iterations": result.iterations,
         "duration_ms": result.duration_ms,
         "error": result.error,
+    }
+
+
+async def run_brain(provider, workspace: str, question: str, explorer_provider=None) -> dict:
+    """Run Brain orchestrator mode."""
+    from app.workflow.engine import WorkflowEngine
+    from app.code_tools.executor import LocalToolExecutor
+
+    executor = LocalToolExecutor(workspace_path=workspace)
+    engine = WorkflowEngine(
+        provider=provider,
+        explorer_provider=explorer_provider or provider,
+        tool_executor=executor,
+        interactive=False,  # no ask_user in eval
+    )
+
+    brain_context = {
+        "query_text": question,
+        "query": question,
+        "workspace_path": workspace,
+    }
+
+    start = time.time()
+    answer = ""
+    total_calls = 0
+    async for event in engine.run_brain_stream(brain_context):
+        if event.kind == "done" and event.data.get("answer"):
+            answer = event.data["answer"]
+            total_calls = event.data.get("tool_calls_made", 0)
+    elapsed_ms = (time.time() - start) * 1000
+
+    return {
+        "answer": answer,
+        "tool_calls": total_calls,
+        "iterations": 0,
+        "duration_ms": elapsed_ms,
+        "error": None if answer else "No answer produced",
     }
 
 
@@ -256,8 +293,9 @@ async def main():
     parser = argparse.ArgumentParser(description="Agent quality evaluation")
     parser.add_argument("--case", help="Run specific baseline case ID")
     parser.add_argument("--workflow", action="store_true", help="Use workflow engine")
+    parser.add_argument("--brain", action="store_true", help="Use Brain orchestrator")
     parser.add_argument("--compare", action="store_true", help="Run both direct and workflow")
-    parser.add_argument("--haiku", action="store_true", help="Use Haiku as explorer, Sonnet as judge (workflow only)")
+    parser.add_argument("--haiku", action="store_true", help="Use Haiku as explorer, Sonnet as judge")
     args = parser.parse_args()
 
     baselines = load_baselines(args.case)
@@ -283,7 +321,9 @@ async def main():
 
         modes = []
         if args.compare:
-            modes = ["direct", "workflow"]
+            modes = ["direct", "workflow", "brain"]
+        elif args.brain:
+            modes = ["brain"]
         elif args.workflow:
             modes = ["workflow"]
         else:
@@ -295,6 +335,9 @@ async def main():
             if mode == "direct":
                 run_result = await run_direct_agent(provider, workspace, question)
                 label = mode
+            elif mode == "brain":
+                run_result = await run_brain(provider, workspace, question, explorer_provider=explorer_provider)
+                label = f"{mode} [haiku→sonnet]" if args.haiku else mode
             else:
                 run_result = await run_workflow(provider, workspace, question, explorer_provider=explorer_provider)
                 label = f"{mode} [haiku→sonnet]" if args.haiku else mode

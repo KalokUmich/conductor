@@ -20,7 +20,7 @@ budget:
     medium: { max_lines: 2000, factor: 1.0 }
     large:  { max_lines: 5000, factor: 1.5 }
     xl:     { max_lines: 99999, factor: 2.0 }
-  reject_above: 8000
+  reject_above: 6000
 
 core_tools:
   - grep

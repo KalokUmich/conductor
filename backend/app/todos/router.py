@@ -1,7 +1,7 @@
 """TODO tracking router — CRUD endpoints for room-scoped tasks."""
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
 from .schemas import TodoCreate, TodoUpdate
@@ -13,7 +13,10 @@ router = APIRouter(prefix="/todos", tags=["todos"])
 
 
 def _service() -> TODOService:
-    return TODOService.get_instance()
+    try:
+        return TODOService.get_instance()
+    except RuntimeError:
+        raise HTTPException(status_code=503, detail="TODO service unavailable (database not connected)")
 
 
 @router.get("/{room_id}")

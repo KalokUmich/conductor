@@ -171,7 +171,19 @@ def judge_case(
 
 
 def _parse_verdict(response: str) -> JudgeVerdict:
-    """Parse the structured verdict from the LLM response."""
+    """Parse the structured verdict from the LLM response.
+
+    Extracts <analysis> and <verdict> XML blocks. The verdict block is
+    expected to contain four scored fields: completeness, reasoning_quality,
+    actionability, and false_positive_quality, each with an integer 1-5.
+
+    Args:
+        response: Raw LLM response text containing <analysis> and <verdict> tags.
+
+    Returns:
+        JudgeVerdict with parsed scores and analysis text. Sets error field
+        if the <verdict> block is missing or malformed.
+    """
     verdict = JudgeVerdict(raw_response=response)
 
     # Extract analysis

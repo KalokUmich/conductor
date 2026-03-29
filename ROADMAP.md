@@ -1,16 +1,18 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-03-21
+Last updated: 2026-03-22
 
 ## Current State
 
 Conductor is a VS Code collaboration extension with a FastAPI backend. The project currently has working implementations of:
 
 - Real-time WebSocket chat (with reconnect, typing indicators, read receipts)
+- **Chat persistence**: write-through micro-batch Postgres (ChatPersistenceService); Redis hot cache; history survives backend restarts
 - File upload/download (20MB limit, dedup, retry)
-- Code snippet sharing + editor navigation
+- Code snippet sharing + editor navigation + **Highlight.js syntax highlighting** in WebView
 - Change review workflow (MockAgent, policy check, diff preview, audit log)
 - AI provider workflow (health check, provider selection, streaming inference)
+- **Browser tools**: Playwright Chromium automation (`browse_url`, `search_web`, `screenshot`)
 - **Git Workspace Management (Model A)**:
   - Per-room bare repo + worktree isolation
   - GIT_ASKPASS token authentication
@@ -418,6 +420,11 @@ The agent then skips basic exploration and immediately targets the relevant code
 - [ ] Inject relevant summaries into the agent's initial context
 - [ ] Incremental refresh on file change (watch worktree for edits)
 - [ ] Cache invalidation on git pull / branch switch
+- [ ] **Evaluate PowerMem integration** ([oceanbase/powermem](https://github.com/oceanbase/powermem)) — AI memory system with vector retrieval + Ebbinghaus forgetting curve + multi-agent isolation. Potential benefits:
+  - Cross-session query pattern learning (fact extraction from session traces)
+  - PR review memory (recall previous review findings for the same module)
+  - 96.5% token reduction via selective context injection vs full history
+  - Per-agent memory spaces map to Brain → sub-agent architecture
 
 ### 5.5.3 Heuristic Data Flow Tracing (COMPLETE)
 The `trace_variable` tool enables tracking how a value flows through function call boundaries:
@@ -633,6 +640,53 @@ backend/app/integrations/
 - `conductor.secrets.yaml`: `integrations.jira.client_id/client_secret`, `integrations.teams.*`, `integrations.slack.*`
 - `DatabaseSecrets.url`: `postgresql+asyncpg://langfuse:langfuse@localhost:5433/conductor`
 
+## Phase 8: Infrastructure & UI Hardening (COMPLETE)
+
+Completed 2026-03-22. Quality-of-life improvements and infrastructure fixes.
+
+### 8.1 Chat Persistence (COMPLETE)
+- [x] `chat/persistence.py` — `ChatPersistenceService` write-through micro-batch Postgres (batch=3, flush=5s)
+- [x] Postgres as source of truth; Redis as hot cache (6h TTL)
+- [x] `DELETE /chat/{room_id}` endpoint — purges history from Postgres, Redis, files, and audit logs
+- [x] History endpoint returns `codeSnippet` field for `code_snippet` messages (fixes blank code on rejoin)
+- [x] `test_chat_persistence.py` covering batch writes, flush timer, delete
+
+### 8.2 Browser Tools (COMPLETE)
+- [x] `browser/` — Playwright Chromium-based web browsing tools (`browse_url`, `search_web`, `screenshot`)
+- [x] `make browser-install` target for Playwright Chromium
+- [x] `test_browser_tools.py` with mocked Playwright service
+
+### 8.3 DuckDB Removal (COMPLETE)
+- [x] Removed `duckdb` from `requirements.txt` — all storage is now PostgreSQL via SQLAlchemy async
+- [x] Removed stale `.duckdb` / `.duckdb.wal` runtime files
+- [x] `make clean` now deletes `*.duckdb` and `*.duckdb.wal`
+
+### 8.4 Singleton Service Startup Init (COMPLETE)
+- [x] `TODOService`, `AuditLogService`, `FileStorageService` initialized in `main.py` lifespan with async engine
+- [x] Prevents `RuntimeError: requires an AsyncEngine on first call` on first request
+
+### 8.5 Tool Parity: Subprocess Validation (COMPLETE)
+- [x] `extension/tests/validate_contract.js` now validates 11 subprocess tools via Python CLI
+- [x] `runPythonTool()` uses `execFileSync` calling `python -m app.code_tools`
+- [x] `ast_search` and `run_test` warn instead of fail when CLI tool not installed
+- [x] `get_repo_graph` added to `SUBPROCESS_TOOLS` in `localToolDispatcher.ts` (was silently unreachable)
+
+### 8.6 Liquibase Connection Fix (COMPLETE)
+- [x] Connection args (`--url`, `--username`, `--password`) moved to Makefile CLI params — Java cannot parse bash `${VAR:-default}` syntax in JDBC URLs
+- [x] `database/liquibase.properties` contains only `changeLogFile` and `search-path`
+
+### 8.7 Chat UI Overhaul (COMPLETE)
+- [x] **Syntax highlighting**: Bundled Highlight.js 11.9.0 (`highlight.min.js` + `github-dark.min.css`) — no CDN
+- [x] **Message rendering**: `renderMessageByType()` dispatcher — routes history/cached messages to correct renderer per type
+- [x] **Online mode room list**: loads rooms from `/chat/rooms?email=...`, shows status dots, supports rejoin
+- [x] **chatLocalStore.ts**: local message cache for offline/reconnect history
+- [x] **Auto-workspace registration**: `_handleStartSession` registers local workspace automatically — removed "Use Local" button
+- [x] **Leave/Quit merged**: single Leave button (quit behavior — ends session for all)
+- [x] **Mermaid fallback**: shows raw source when diagram fails to parse (Qwen compatibility)
+- [x] **AI status silent retry**: up to 3 retries before showing error banner
+- [x] **Error banners**: unified `.error-banner` class with dismiss button across all 5 error containers
+- [x] **Markdown enhancements**: tables, links, italic in `inlineFormat()`, larger code blocks (`max-h-80`)
+
 ## Milestone Summary
 
 | Milestone | Status | Completed |
@@ -648,9 +702,10 @@ backend/app/integrations/
 | Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–9 |
 | Phase 5.6: Config-Driven Workflow Engine (A-D) | ✅ Complete | Sprint 9 |
 | Phase 6: Production Hardening | 🟡 Planned | Sprint 9 |
-| Phase 7.0–7.2: DB Foundation + Jira Backend | 🟢 Complete | Sprint 10 |
-| Phase 7.3–7.4: Jira Extension UI | 🟢 Complete | Sprint 11 |
+| Phase 7.0–7.2: DB Foundation + Jira Backend | ✅ Complete | Sprint 10 |
+| Phase 7.3–7.4: Jira Extension UI | ✅ Complete | Sprint 11 |
 | Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
+| Phase 8: Infrastructure & UI Hardening | ✅ Complete | Sprint 12 |
 
 ## Architecture Decision Log
 

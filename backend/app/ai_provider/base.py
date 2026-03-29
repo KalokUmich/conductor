@@ -166,6 +166,7 @@ class AIProvider(ABC):
         tools: List[Dict[str, Any]],
         max_tokens: int = 4096,
         system: str | None = None,
+        temperature: float | None = None,
     ) -> "ToolUseResponse":
         """Send messages with tool definitions and get back a response
         that may contain tool_use requests.

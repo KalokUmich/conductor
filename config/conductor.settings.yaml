@@ -151,14 +151,6 @@ ai_models:
     explorer: true    # good sub-agent — strong instruction following, no thinking override needed
     litellm: true
 
-  - id: "claude-3-haiku-bedrock"
-    provider: "aws_bedrock"
-    model_name: "anthropic.claude-3-haiku-20240307-v1:0"
-    display_name: "Claude 3 Haiku (Bedrock)"
-    enabled: true
-    classifier: true  # cheapest Claude — fallback classifier
-    litellm: true
-
   # ---- Claude (Anthropic Direct) ----
   - id: "claude-sonnet-4-anthropic"
     provider: "anthropic"

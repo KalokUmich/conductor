@@ -65,8 +65,8 @@ class BrowserService:
         if ctx:
             try:
                 ctx.close()
-            except Exception:
-                pass
+            except Exception as exc:  # TODO: narrow to playwright.sync_api.Error
+                logger.debug("Error closing browser session %s: %s", session_id, exc)
             logger.info("Closed browser session: %s", session_id)
 
     def list_sessions(self) -> list[str]:
@@ -80,20 +80,20 @@ class BrowserService:
             for sid, ctx in self._sessions.items():
                 try:
                     ctx.close()
-                except Exception:
-                    pass
+                except Exception as exc:  # TODO: narrow to playwright.sync_api.Error
+                    logger.debug("Error closing session %s during shutdown: %s", sid, exc)
             self._sessions.clear()
             if self._browser:
                 try:
                     self._browser.close()
-                except Exception:
-                    pass
+                except Exception as exc:  # TODO: narrow to playwright.sync_api.Error
+                    logger.debug("Error closing browser during shutdown: %s", exc)
                 self._browser = None
             if self._pw:
                 try:
                     self._pw.stop()
-                except Exception:
-                    pass
+                except Exception as exc:  # TODO: narrow to playwright.sync_api.Error
+                    logger.debug("Error stopping Playwright during shutdown: %s", exc)
                 self._pw = None
         logger.info("BrowserService shut down")
 

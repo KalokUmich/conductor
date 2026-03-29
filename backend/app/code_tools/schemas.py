@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 
 class GrepParams(BaseModel):
-    pattern: str = Field(..., description="Regex pattern to search for.")
+    pattern: str = Field(..., description="Python regex pattern. Use | for alternation (NOT \\|). Example: 'Foo|Bar' matches Foo or Bar.")
     path: Optional[str] = Field(None, description="Relative path within workspace to search (file or directory).")
     include_glob: Optional[str] = Field(None, description="Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files.")
     max_results: int = Field(default=50, ge=1, le=200)
@@ -216,6 +216,47 @@ class DbSchemaParams(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Interactive tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+class AskUserParams(BaseModel):
+    question: str = Field(..., description="The clarifying question to ask the user. Be specific about what information you need.")
+    context: str = Field(
+        default="",
+        description="Brief context for why you need this information, shown to the user alongside the question.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Brain orchestrator tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+class SignalBlockerParams(BaseModel):
+    reason: str = Field(..., description="Why you need direction — describe what ambiguity or choice you encountered.")
+    options: List[str] = Field(default_factory=list, description="2-4 concrete options you've identified.")
+    context: str = Field(default="", description="Brief context about what you've found so far.")
+
+
+class DispatchAgentParams(BaseModel):
+    agent_name: str = Field(..., description="Agent to dispatch (from the available agents list in your system prompt)")
+    query: str = Field(..., description="Focused question for the agent to investigate")
+    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0, description="Budget multiplier (1.0 = standard)")
+
+
+class DispatchSwarmParams(BaseModel):
+    swarm_name: str = Field(..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms.")
+    query: str = Field(..., description="Shared investigation query for all agents in the swarm")
+
+
+class TransferToBrainParams(BaseModel):
+    brain_name: str = Field(..., description="Target specialized brain (e.g. 'pr_review')")
+    workspace_path: str = Field(..., description="Workspace path for the review")
+    diff_spec: str = Field(default="", description="Git diff spec (e.g. 'main...feature/branch', 'HEAD~1..HEAD')")
+
+
+# ---------------------------------------------------------------------------
 # Browser tool parameter schemas
 # ---------------------------------------------------------------------------
 
@@ -324,6 +365,12 @@ TOOL_PARAM_MODELS: Dict[str, type] = {
     "web_fill": WebFillParams,
     "web_screenshot": WebScreenshotParams,
     "web_extract": WebExtractParams,
+    # Interactive tools
+    "ask_user": AskUserParams,
+    # Brain orchestrator tools
+    "dispatch_agent": DispatchAgentParams,
+    "dispatch_swarm": DispatchSwarmParams,
+    "signal_blocker": SignalBlockerParams,
 }
 
 
@@ -446,15 +493,24 @@ def filter_tools(names: List[str]) -> List[Dict[str, Any]]:
     return [t for t in TOOL_DEFINITIONS if t["name"] in name_set]
 
 
+def get_ask_user_tool_def() -> Dict[str, Any]:
+    """Return the ask_user tool definition dict (for interactive mode injection)."""
+    return next(t for t in TOOL_DEFINITIONS if t["name"] == "ask_user")
+
+
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "grep",
         "description": (
-            "Search for a regex pattern across files in the workspace. "
+            "Search for a Python regex pattern across files in the workspace. "
             "Returns matching lines with file paths and line numbers. "
             "Use path to scope search to a subdirectory. "
             "Only use include_glob if you know the exact file extension (e.g. '*.java', '*.py'). "
-            "Omit include_glob to search ALL file types."
+            "Omit include_glob to search ALL file types. "
+            "IMPORTANT: Uses Python regex syntax — use | for alternation (e.g. 'Foo|Bar'), "
+            "NOT \\| which matches a literal pipe character. "
+            "Pattern tips: class names 'class\\s+Approval', method calls 'approve\\(', "
+            "multiple terms 'APPROVED|REJECTED|PENDING', business concepts 'PostApproval|ApprovalData'."
         ),
         "input_schema": GrepParams.model_json_schema(),
     },
@@ -480,7 +536,9 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "Find symbol definitions (functions, classes, methods, interfaces) by name using AST parsing. "
             "Returns exact file locations with line numbers and signatures. "
-            "More precise than grep for finding where something is defined."
+            "Prefer over grep when you need a definition, not usages — "
+            "e.g. find_symbol('ApplicationDecisionService') finds the class definition, "
+            "while grep('ApplicationDecisionService') finds every mention including imports."
         ),
         "input_schema": FindSymbolParams.model_json_schema(),
     },
@@ -488,7 +546,9 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "name": "find_references",
         "description": (
             "Find all references (usages) of a symbol across the codebase. "
-            "Combines grep with AST validation for accurate results."
+            "Combines grep with AST validation for accurate results. "
+            "Use when you need to know everywhere a class, function, or constant is used — "
+            "e.g. find_references('affordability_score') shows every file that reads or writes it."
         ),
         "input_schema": FindReferencesParams.model_json_schema(),
     },
@@ -496,7 +556,9 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "name": "file_outline",
         "description": (
             "Get the structure of a file: all classes, functions, methods with line numbers. "
-            "Useful for understanding a file's organization before reading specific sections."
+            "Call this BEFORE read_file on large files — it reveals all method names so you "
+            "can read_file with targeted line ranges instead of reading 500+ lines blindly. "
+            "Also useful for answering 'what methods does this class have?' in one call."
         ),
         "input_schema": FileOutlineParams.model_json_schema(),
     },
@@ -576,7 +638,9 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "description": (
             "Find all functions/methods that call a given function. "
             "Searches across the entire codebase (or a specific path). "
-            "Useful for understanding impact and usage patterns."
+            "Essential for impact analysis — e.g. get_callers('make_decision') reveals "
+            "every path that triggers a lending decision. Also useful for verifying "
+            "that callers handle errors from the function they call."
         ),
         "input_schema": GetCallersParams.model_json_schema(),
     },
@@ -783,4 +847,90 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         ),
         "input_schema": WebExtractParams.model_json_schema(),
     },
+    # --- Interactive tool (only available in interactive mode) ---
+    {
+        "name": "ask_user",
+        "description": (
+            "Ask the user for direction when there are multiple valid approaches "
+            "and their preference would materially change your investigation. "
+            "Call this in your first iteration, before exploring the codebase. "
+            "Provide 2-4 concrete options when possible, and mark your "
+            "recommended option. The user's answer is returned as the tool "
+            "result. Use at most once per session."
+        ),
+        "input_schema": AskUserParams.model_json_schema(),
+    },
+    # --- Signal blocker (only available for Brain-dispatched sub-agents) ---
+    {
+        "name": "signal_blocker",
+        "description": (
+            "Ask the Brain orchestrator for direction when you encounter "
+            "ambiguity that you cannot resolve from the codebase alone. "
+            "Provide 2-4 concrete options. The Brain will respond with "
+            "a direction to follow. Use sparingly — only when genuinely stuck."
+        ),
+        "input_schema": SignalBlockerParams.model_json_schema(),
+    },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Brain orchestrator tool definitions (separate from TOOL_DEFINITIONS)
+#
+# These are meta-tools for the Brain agent only — they dispatch sub-agents
+# and evaluate findings. Never exposed to regular explorer/review agents,
+# never included in parity tests, never proxied to the VS Code extension.
+# ---------------------------------------------------------------------------
+
+BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
+    {
+        "name": "dispatch_agent",
+        "description": (
+            "Dispatch a specialist agent to investigate a specific aspect of "
+            "the codebase. The agent runs in an isolated context with its own "
+            "tools and budget, then returns condensed findings (answer, file "
+            "references, gaps identified). Choose the agent based on the "
+            "available agents list in your system prompt."
+        ),
+        "input_schema": DispatchAgentParams.model_json_schema(),
+    },
+    {
+        "name": "dispatch_swarm",
+        "description": (
+            "Dispatch a predefined group of parallel agents. Only use for "
+            "end-to-end business flow tracing: 'business_flow' (2-agent "
+            "flow tracing). For PR reviews use transfer_to_brain instead. "
+            "For all other tasks, use dispatch_agent."
+        ),
+        "input_schema": DispatchSwarmParams.model_json_schema(),
+    },
+    {
+        "name": "transfer_to_brain",
+        "description": (
+            "Transfer control to a specialized Brain orchestrator. "
+            "Use for PR reviews: transfer_to_brain(brain_name='pr_review'). "
+            "The specialized Brain takes over entirely with its own pipeline — "
+            "pre-computed context, parallel review agents, arbitration, and synthesis. "
+            "You will NOT get control back. One-way handoff."
+        ),
+        "input_schema": TransferToBrainParams.model_json_schema(),
+    },
+]
+
+
+SIGNAL_BLOCKER_TOOL_DEF: Dict[str, Any] = {
+    "name": "signal_blocker",
+    "description": (
+        "Ask the Brain orchestrator for direction when you encounter "
+        "ambiguity that you cannot resolve from the codebase alone. "
+        "Provide 2-4 concrete options. The Brain will respond with "
+        "a direction to follow. Use sparingly — only when genuinely stuck."
+    ),
+    "input_schema": SignalBlockerParams.model_json_schema(),
+}
+
+
+def get_brain_tool_definitions() -> List[Dict[str, Any]]:
+    """Return Brain tool definitions + ask_user for Brain's tool list."""
+    ask_user_def = next(t for t in TOOL_DEFINITIONS if t["name"] == "ask_user")
+    return BRAIN_TOOL_DEFINITIONS + [ask_user_def]

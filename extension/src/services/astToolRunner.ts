@@ -19,26 +19,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import * as treeSitter from './treeSitterService';
+import type { ToolResult } from './toolTypes';
 
 // Re-export types from repoGraphBuilder for consumers that need them.
 import type { SymbolDef, FileSymbolsData } from './repoGraphBuilder';
+
+// Re-export ToolResult so existing consumers of astToolRunner still compile.
+export type { ToolResult };
 
 /**
  * Read a file as UTF-8 text, normalizing \r\n → \n to match Python behavior.
  */
 function readFileNormalized(absPath: string): string {
     return fs.readFileSync(absPath, 'utf-8').replace(/\r\n/g, '\n');
-}
-
-// ---------------------------------------------------------------------------
-// Public result type
-// ---------------------------------------------------------------------------
-
-export interface ToolResult {
-    success: boolean;
-    data: any;
-    error?: string;
-    truncated?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +363,14 @@ const PATH_ROLE_PATTERNS: Array<[RegExp, string]> = [
 /**
  * Classify a symbol's architectural role based on decorators, file path, and name.
  * Ported from Python `_classify_symbol_role` in code_tools/tools.py.
+ *
+ * @param name - Symbol name.
+ * @param kind - Symbol kind (e.g. "function", "class").
+ * @param filePath - Absolute path to the file containing the symbol.
+ * @param signature - Symbol signature or surrounding context lines.
+ * @param workspace - Path to the workspace root.
+ * @param startLine - Zero-based line number where the symbol starts.
+ * @returns Semantic role string (e.g. "route_handler", "model", "test").
  */
 export function classifySymbolRole(
     name: string,
@@ -421,7 +422,11 @@ export function classifySymbolRole(
 // ---------------------------------------------------------------------------
 
 /**
- * Get all definitions in a file.
+ * Extract file structure (classes, functions, methods) with line numbers.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters containing the relative file path.
+ * @returns ToolResult with an array of symbol definitions on success.
  */
 export async function file_outline(
     workspace: string,
@@ -432,8 +437,8 @@ export async function file_outline(
 
     try {
         absPath = resolvePath(ws, params.path);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     try {
@@ -461,10 +466,14 @@ export async function file_outline(
 }
 
 /**
- * Find symbol definitions using a cached workspace-wide symbol index.
+ * Find symbol definitions by name using a cached workspace-wide AST index.
  *
  * Results are sorted: exact name matches come before substring matches.
  * If kind is specified, results are filtered to that kind.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: symbol name and optional kind filter.
+ * @returns ToolResult with an array of matching symbol definitions.
  */
 export function find_symbol(
     workspace: string,
@@ -514,10 +523,14 @@ export function find_symbol(
 }
 
 /**
- * Find references to a symbol via grep + AST validation.
+ * Find all usages of a symbol across the workspace via grep and AST validation.
  *
  * Searches files for lines containing the symbol name (word boundary),
  * then validates against AST-extracted references where possible.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: symbol name and optional file scope.
+ * @returns ToolResult with an array of reference locations (file, line, snippet).
  */
 export function find_references(
     workspace: string,
@@ -541,8 +554,8 @@ export function find_references(
         let absPath: string;
         try {
             absPath = resolvePath(ws, params.file);
-        } catch (e: any) {
-            return { success: false, data: null, error: e.message };
+        } catch (e: unknown) {
+            return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
         }
 
         try {
@@ -559,8 +572,9 @@ export function find_references(
                     });
                 }
             }
-        } catch (e: any) {
-            return { success: false, data: null, error: `Cannot read file: ${e.message}` };
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : String(e);
+            return { success: false, data: null, error: `Cannot read file: ${msg}` };
         }
     } else {
         walkSourceFiles(ws, (absPath, relPath) => {
@@ -617,11 +631,15 @@ export function find_references(
 }
 
 /**
- * Find all functions/methods called within a specific function body.
+ * Find functions called by a given function, scoped to its body lines only.
  *
- * Critical: scans only the function body lines (start_line to end_line),
- * NOT the entire file. This prevents false positives from other functions
+ * Scans only the function body lines (start_line to end_line),
+ * NOT the entire file, to prevent false positives from other functions
  * in the same file.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: function name and relative file path.
+ * @returns ToolResult with an array of callee names found in the function body.
  */
 export async function get_callees(
     workspace: string,
@@ -632,8 +650,8 @@ export async function get_callees(
 
     try {
         absPath = resolvePath(ws, params.file);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
@@ -647,8 +665,8 @@ export async function get_callees(
     let source: string;
     try {
         source = readFileNormalized(absPath);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     // Find the function's line range — prefer tree-sitter (matches Python backend)
@@ -722,10 +740,14 @@ export async function get_callees(
 }
 
 /**
- * Find all functions/methods that call a given function.
+ * Find functions that call a given function across the workspace.
  *
  * Walks workspace files, does a quick string check, then for matching files
  * parses definitions and checks each function body for the call pattern.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: function name and optional directory scope.
+ * @returns ToolResult with an array of caller locations (file, line, function name).
  */
 export function get_callers(
     workspace: string,
@@ -841,10 +863,14 @@ export function get_callers(
 }
 
 /**
- * Expand a symbol to its full source code.
+ * Get the full source code of a symbol definition.
  *
  * If file_path is provided, searches within that file. Otherwise walks
  * the entire workspace to find the symbol. Supports exact and substring matching.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: symbol name and optional file path scope.
+ * @returns ToolResult with the symbol's full source text and location metadata.
  */
 export async function expand_symbol(
     workspace: string,
@@ -857,8 +883,8 @@ export async function expand_symbol(
         let absPath: string;
         try {
             absPath = resolvePath(ws, params.file_path);
-        } catch (e: any) {
-            return { success: false, data: null, error: e.message };
+        } catch (e: unknown) {
+            return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
         }
 
         if (!fs.existsSync(absPath) || !fs.statSync(absPath).isFile()) {
@@ -892,8 +918,8 @@ export async function expand_symbol(
             const content = readFileNormalized(absPath);
             const lines = content.split('\n');
             source = lines.slice(sym.start_line - 1, sym.end_line).join('\n');
-        } catch (e: any) {
-            return { success: false, data: null, error: e.message };
+        } catch (e: unknown) {
+            return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
         }
 
         return {
@@ -950,8 +976,8 @@ export async function expand_symbol(
         const content = readFileNormalized(absPath);
         const lines = content.split('\n');
         source = lines.slice(sym.start_line - 1, sym.end_line).join('\n');
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     const relPath = path.relative(ws, absPath);
@@ -983,7 +1009,9 @@ export async function expand_symbol(
 // ---------------------------------------------------------------------------
 
 /**
- * Clear the symbol index cache for a workspace (or all workspaces).
+ * Clear the AST symbol cache for a workspace, or all workspaces if omitted.
+ *
+ * @param workspace - Workspace root to evict; omit to clear the entire cache.
  */
 export function invalidateSymbolCache(workspace?: string): void {
     if (workspace) {
