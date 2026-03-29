@@ -814,7 +814,7 @@ def test_sso_host_reconnect_restores_role():
     assert room_id in manager.room_sso_hosts
     assert manager.room_sso_hosts[room_id]["email"] == "alice@example.com"
 
-    # Second connection: same SSO credentials → role should be restored.
+    # Second connection: same SSO credentials → identity reclaimed + role restored.
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
         creds2 = receive_credentials(ws2)
         # Backend assigns guest by default (room_hosts was cleared on disconnect).
@@ -828,7 +828,14 @@ def test_sso_host_reconnect_restores_role():
             "ssoProvider": "aws",
         })
 
-        # role_restored is sent directly to the reconnecting client before user_joined.
+        # Identity reclamation: server sends corrected "connected" with
+        # the original user_id (not the temp one from initial connect).
+        reclaimed = ws2.receive_json()
+        assert reclaimed["type"] == "connected"
+        assert reclaimed["userId"] == creds1["userId"]  # same user_id as first session
+        assert reclaimed["role"] == "host"
+
+        # role_restored is sent after register_user (redundant but safe).
         role_msg = ws2.receive_json()
         assert role_msg["type"] == "role_restored"
         assert role_msg["role"] == "host"
@@ -837,8 +844,8 @@ def test_sso_host_reconnect_restores_role():
         joined = ws2.receive_json()
         assert joined["type"] == "user_joined"
 
-        # Manager state should reflect restored host.
-        assert manager.is_host(room_id, creds2["userId"])
+        # Manager state should reflect restored host with original user_id.
+        assert manager.is_host(room_id, creds1["userId"])
 
 
 def test_non_sso_host_disconnect_clears_history():

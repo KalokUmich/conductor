@@ -124,7 +124,7 @@ def load_agent(path: str) -> AgentConfig:
     #   Legacy (dict):   tools: {core: true, extra: [...]}
     tools_raw = frontmatter.pop("tools", {})
     if isinstance(tools_raw, list):
-        tools = tools_raw  # new Brain format: flat list
+        tools = ToolsConfig(core=False, extra=tools_raw)  # new Brain format: flat list
     elif isinstance(tools_raw, dict):
         tools = ToolsConfig(**tools_raw)  # legacy format
     else:

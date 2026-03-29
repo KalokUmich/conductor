@@ -262,6 +262,11 @@ class ConnectionManager:
         # room_id -> {"email": str, "provider": str}
         self.room_sso_hosts: Dict[str, dict] = {}
 
+        # SSO identity → user_id mapping for ALL users (not just hosts).
+        # Persists across disconnects so returning users get the same user_id.
+        # room_id -> {normalized_email -> user_id}
+        self.room_sso_users: Dict[str, Dict[str, str]] = {}
+
         # Room settings: room_id -> settings dict (e.g., {"code_style": "..."})
         self.room_settings: Dict[str, dict] = {}
 
@@ -381,6 +386,12 @@ class ConnectionManager:
             self.room_users[room_id] = {}
         self.room_users[room_id][user_id] = user
         self.websocket_to_user[websocket] = (room_id, user_id)
+
+        # Track SSO email → user_id for identity reconciliation on reconnect.
+        if sso_email:
+            if room_id not in self.room_sso_users:
+                self.room_sso_users[room_id] = {}
+            self.room_sso_users[room_id][sso_email.lower().strip()] = user_id
 
         # Store SSO identity for future reconnect recognition (host only, first time only).
         if (role == UserRole.HOST
@@ -640,6 +651,7 @@ class ConnectionManager:
         self.room_hosts.pop(room_id, None)  # SECURITY: Clear host tracking
         self.room_leads.pop(room_id, None)  # Clear lead tracking
         self.room_sso_hosts.pop(room_id, None)
+        self.room_sso_users.pop(room_id, None)
         self.room_settings.pop(room_id, None)
 
         # Clean up websocket-to-user mappings for this room
@@ -825,6 +837,68 @@ class ConnectionManager:
             )
             return True
         return False
+
+    def reclaim_user_by_sso(
+        self,
+        room_id: str,
+        temp_user_id: str,
+        sso_email: str,
+    ) -> Optional[str]:
+        """Reclaim a previous user_id for a returning SSO user.
+
+        If the same SSO email was previously registered in this room, returns
+        the original user_id so the reconnecting user keeps a consistent
+        identity (same avatar, display name slot, message history attribution).
+
+        Side-effects when a match is found:
+        - Removes stale WebSocket mappings for the old user_id
+        - Removes the old RoomUser entry (caller re-registers via register_user)
+        - Fixes room_hosts / room_leads if they point to temp_user_id
+
+        Args:
+            room_id: The room to check.
+            temp_user_id: The freshly generated user_id from connect().
+            sso_email: The SSO email of the reconnecting user.
+
+        Returns:
+            The original user_id if found, None otherwise.
+        """
+        if not sso_email:
+            return None
+
+        normalized = sso_email.lower().strip()
+        existing_user_id = self.room_sso_users.get(room_id, {}).get(normalized)
+
+        if not existing_user_id or existing_user_id == temp_user_id:
+            return None
+
+        # Fix room_hosts / room_leads if temp_user_id was assigned as host
+        # (happens when room was empty and temp_user_id became host in connect)
+        if self.room_hosts.get(room_id) == temp_user_id:
+            self.room_hosts[room_id] = existing_user_id
+        if self.room_leads.get(room_id) == temp_user_id:
+            self.room_leads[room_id] = existing_user_id
+
+        # Remove stale WebSocket mappings for the old user_id
+        stale_websockets = [
+            ws for ws, (rid, uid) in list(self.websocket_to_user.items())
+            if rid == room_id and uid == existing_user_id
+        ]
+        for ws in stale_websockets:
+            del self.websocket_to_user[ws]
+            if room_id in self.active_connections and ws in self.active_connections[room_id]:
+                self.active_connections[room_id].remove(ws)
+
+        # Remove old RoomUser entry (register_user will recreate with reclaimed id)
+        if room_id in self.room_users:
+            self.room_users[room_id].pop(existing_user_id, None)
+
+        logger.info(
+            "[Manager] SSO identity reclaimed in room %s: %s "
+            "(reusing user_id=%s, discarding temp=%s)",
+            room_id, sso_email, existing_user_id, temp_user_id,
+        )
+        return existing_user_id
 
     # =========================================================================
     # Room Settings
