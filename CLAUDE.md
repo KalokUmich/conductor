@@ -75,7 +75,7 @@ backend/app/
 │   ├── brain.py             # AgentToolExecutor — dispatch_agent/dispatch_swarm/transfer_to_brain
 │   ├── pr_brain.py          # PRBrainOrchestrator — deterministic PR review pipeline via Brain
 │   ├── budget.py            # BudgetController — token-based budget management
-│   ├── trace.py             # SessionTrace — per-session JSON trace
+│   ├── trace.py             # SessionTrace — per-session trace (Postgres + local JSON fallback)
 │   ├── query_classifier.py  # QueryClassifier — keyword + optional LLM classification
 │   ├── evidence.py          # EvidenceEvaluator — rule-based answer quality check
 │   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
@@ -182,7 +182,7 @@ tests/
 │
 │   # Infrastructure
 ├── test_budget_controller.py       # 20 tests — BudgetController token accounting
-├── test_session_trace.py           # 15 tests — SessionTrace per-session JSON trace
+├── test_session_trace.py           # 15 tests — SessionTrace (Postgres + local fallback)
 ├── test_evidence.py                # 14 tests — EvidenceEvaluator rule-based quality check
 ├── test_query_classifier.py        # 26 tests — QueryClassifier keyword + LLM classification
 ├── test_output_policy.py           # 19 tests — Per-tool truncation policies (budget-adaptive)
@@ -218,7 +218,8 @@ tests/
 
 ```
 extension/src/
-├── extension.ts             # Entry point, command registration, _handleLocalToolRequest
+├── extension.ts             # Entry point, command registration, _handleLocalToolRequest,
+│                            # _handleAskAI (unified @AI + code explanation via codeContext),
 │                            # getOnlineRooms, removeQuitRoom, auto-workspace registration
 ├── panels/                  # collabPanel.ts, workspacePanel.ts
 ├── services/
@@ -227,8 +228,6 @@ extension/src/
 │   ├── workflowPanel.ts                # Workflow visualization WebView (singleton)
 │   ├── workspaceClient.ts              # /workspace/ HTTP client
 │   ├── conductorFileSystemProvider.ts  # conductor:// URI scheme
-│   ├── explainWithContextPipeline.ts   # 8-stage code explanation pipeline
-│   │                                   # (Selection → LSP → Ranking → Plan → Execute → XML → LLM → Response)
 │   ├── lspResolver.ts                  # VS Code LSP definition + references
 │   ├── relevanceRanker.ts              # Hybrid structural + semantic relevance scoring
 │   ├── contextPlanGenerator.ts         # Deduplicated read-file operation planner
@@ -256,7 +255,7 @@ extension/grammars/          # tree-sitter .wasm grammar files (committed)
 
 ### Local Mode Tool Dispatch
 
-When the agent runs in local workspace mode, tools are proxied via WebSocket to the extension. The extension runs ALL tools natively — zero Python dependency:
+When the agent runs in local workspace mode, tools are proxied via WebSocket to the extension. The extension runs ALL tools natively — zero Python dependency. All tool output schemas are aligned with Python (same field names, same structure) so the LLM sees consistent data regardless of execution path. The TS grep uses `rg --no-ignore --no-messages` with `-E` fallback on system grep to match Python's behavior:
 
 ```
 RemoteToolExecutor → WebSocket → extension._handleLocalToolRequest
@@ -290,15 +289,17 @@ Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, transfer_to
 ```
 
 **Sub-agent prompt assembly (4-layer):**
-- **Layer 1 (system prompt)**: Built per-agent from `.md` description + instructions — defines who this agent is
-- **Layer 2 (tools)**: `brain.yaml` core_tools ∪ agent `.md` tools ∪ signal_blocker
-- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. PR review agents get `code_review_pr` skill (severity framework, DO NOT FLAG list, JSON output format).
+- **Layer 1 (system prompt)**: Built per-agent from `.md` description + instructions — defines who this agent is. Includes anti-overexploration guidance ("commit to a direction, stop when you have enough evidence").
+- **Layer 2 (tools)**: `brain.yaml` core_tools ∪ agent `.md` tools ∪ signal_blocker. Tool descriptions enriched to 3-4 sentences each (when to use, when NOT to use, what it does NOT return).
+- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. PR review agents get `code_review_pr` skill. Business flow agents get 4-step investigation skill (identify targets → domain models → service code → separate mandatory vs conditional). Includes convergence guidance ("stop at iteration 6-7 if you have strong evidence").
 - **Layer 4 (user message)**: The query from Brain + optional code_context — no role injection
+
+**Context management:** Sub-agents clear old tool results after 3 turns to prevent context rot. Only the most recent 4 turn-pairs keep full tool output; older results are replaced with a one-line summary.
 
 **Four dispatch modes:**
 - **SIMPLE** (~80%): one agent, trust result, done
 - **COMPLEX** (~15%): agent → evaluate → handoff to different specialist with previous findings
-- **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets
+- **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets. Brain must decompose queries into 3-6 search targets before dispatching.
 - **TRANSFER**: `transfer_to_brain("pr_review")` — one-way handoff to specialized Brain (PR reviews)
 
 **PR Brain** (`agent_loop/pr_brain.py`): Specialized deterministic pipeline for PR reviews. Activated via `transfer_to_brain("pr_review")`. Combines Brain's 4-layer prompts with CodeReviewService's deterministic post-processing:

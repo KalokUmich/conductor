@@ -45,16 +45,7 @@ The extension drives all state through a finite state machine persisted in `glob
 
 #### Code Intelligence
 - **Code snippet sharing** — Extract editor selection and send in chat; recipients can navigate back to the file and line range.
-- **Agentic code explanation** — `explainWithContextPipeline.ts` orchestrates 8 stages to produce a rich LLM explanation of a selected code snippet:
-  1. **Selection** — receives the highlighted code, file URI, and position
-  2. **LSP context** — gathers definitions and references via VS Code LSP commands
-  3. **Ranking** — hybrid structural + semantic relevance scoring of related files (`relevanceRanker.ts`)
-  4. **Context plan** — deduplicates and prioritises read-file operations (`contextPlanGenerator.ts`)
-  5. **Execute plan** — reads file slices via VS Code workspace API
-  6. **XML prompt** — assembles all snippets into a structured XML string (`xmlPromptAssembler.ts`)
-  7. **LLM call** — `POST /api/context/query/stream` runs the backend agent loop (up to 25 iterations, 500K token budget, 24 code tools); progress streamed via SSE
-  8. **Response** — final answer posted as a collapsible AI explanation card in the chat sidebar
-  Graceful degradation: every stage has fallbacks; failures are logged with timing so the caller always receives a result.
+- **Agentic code explanation** — Unified into `_handleAskAI()` with optional `codeContext`. When the user clicks "Explain" on a code snippet (or sends `@AI` with an attached snippet), the backend Brain orchestrator explores the codebase and returns a contextual explanation. Progress is shown via the Brain tree indicator with a Stop button. Results are posted as collapsible AI explanation cards (green styling) in the chat sidebar.
 - **Workspace search** — `conductor.searchWorkspace` command: full-text search over the active `conductor://` workspace via `POST /workspace/{room_id}/search`.
 - **Stack trace parsing** — Shares stack traces in chat with resolved file paths and line anchors.
 
@@ -127,7 +118,7 @@ extension/
 │  │  ├─ workspaceClient.ts              # /workspace/ HTTP client
 │  │  ├─ workspaceIndexer.ts             # AST symbol extraction + incremental indexing
 │  │  ├─ workflowPanel.ts               # WorkflowPanel singleton — workflow visualization WebView
-│  │  ├─ explainWithContextPipeline.ts  # 8-stage code explanation pipeline (LSP→rank→plan→XML→LLM)
+│  │  ├─ (explainWithContextPipeline.ts removed — merged into extension.ts _handleAskAI with codeContext)
 │  │  ├─ lspResolver.ts                 # VS Code LSP definition + references
 │  │  ├─ relevanceRanker.ts             # Hybrid structural + semantic relevance scoring
 │  │  ├─ contextPlanGenerator.ts        # Deduplicated read-file operation planner
@@ -253,7 +244,7 @@ Conductor 是一个 VS Code 扩展，提供基于 WebView 的协作侧边栏、G
 
 #### 代码智能
 - **代码片段共享** — 提取当前编辑器选区并发送到聊天；接收方可跳转至对应文件和行范围。
-- **Agentic 代码解释** — `explainWithContextPipeline.ts` 通过 8 个阶段生成代码选区的 LLM 解释：选区 → LSP 上下文 → 相关性排名 → 读取计划 → 执行计划 → XML 提示词 → LLM 调用（`POST /api/context/query/stream`，25 轮迭代，50 万 token）→ 响应。每个阶段有独立的降级逻辑，确保始终返回结果。
+- **Agentic 代码解释** — 已合并到 `extension.ts` 的 `_handleAskAI()` 方法中，通过 `codeContext` 参数区分普通 @AI 查询和代码解释。点击代码片段的 "Explain" 按钮或发送带代码附件的 `@AI` 消息，均通过 Brain 智能体探索代码库并返回解释。
 - **工作区搜索** — `conductor.searchWorkspace` 命令：通过 `POST /workspace/{room_id}/search` 对活跃 `conductor://` 工作区进行全文搜索。
 - **堆栈追踪解析** — 共享堆栈追踪，并解析文件路径和行号定位。
 
