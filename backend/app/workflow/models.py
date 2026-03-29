@@ -58,13 +58,15 @@ class AgentConfig(BaseModel):
 
     # --- New Brain format fields ---
     description: str = ""                     # Brain reads this to match queries to agents
-    model: Literal["explorer", "strong", "classifier"] = "explorer"
+    model: Literal["explorer", "strong"] = "explorer"
     strategy: str = ""                        # Layer 2 strategy key (e.g., "code_review")
+    skill: str = ""                            # Layer 3 investigation skill (e.g., "business_flow")
+    focus: str = ""                            # Focus directive prepended to query in swarm dispatch
     limits: AgentLimits = Field(default_factory=AgentLimits)
     quality: QualityConfig = Field(default_factory=QualityConfig)
 
     # --- Legacy format fields (kept for backward compat) ---
-    model_role: Literal["explorer", "strong", "classifier"] = "explorer"
+    model_role: Literal["explorer", "strong"] = "explorer"
 
     # Tools — new format: flat list; legacy: ToolsConfig with core+extra
     tools: Any = Field(default_factory=ToolsConfig)
@@ -132,6 +134,64 @@ class BrainConfig(BaseModel):
         "grep", "read_file", "find_symbol", "file_outline",
         "compressed_view", "expand_symbol",
     ])
+
+
+# ---------------------------------------------------------------------------
+# PR Brain config (loaded from brains/pr_review.yaml)
+# ---------------------------------------------------------------------------
+
+
+class PostProcessingConfig(BaseModel):
+    """Post-processing settings for PR Brain."""
+    min_confidence: float = 0.75
+    max_findings: int = 10
+    max_findings_per_agent: int = 3  # Per-agent cap before merge
+
+
+class SynthesisConfig(BaseModel):
+    """LLM synthesis call settings."""
+    max_tokens: int = 4096           # Max output tokens for final review
+    max_diff_chars: int = 30_000     # Total diff chars in synthesis prompt
+    max_diff_snippet_chars: int = 4000  # Per-file diff snippet cap
+
+
+class ArbitrationConfig(BaseModel):
+    """Arbitration agent settings."""
+    budget_tokens: int = 200_000     # Token budget for arbitrator agent
+    max_tokens: int = 2048           # Max output tokens for lightweight arbitration
+
+
+class PRBrainLimits(BrainLimits):
+    """Extended limits for PR Brain (adds PR-specific fields to BrainLimits)."""
+    llm_concurrency_limit: int = 2   # Max parallel LLM calls (Bedrock throttle guard)
+    small_pr_threshold: int = 100    # PRs under this skip concurrency/reliability
+    reject_above: int = 6000         # Max changed lines before rejecting PR
+
+
+class PRBrainConfig(BaseModel):
+    """PR Brain orchestrator configuration, loaded from brains/pr_review.yaml.
+
+    All tunable parameters live here — code reads from config, not hardcoded
+    constants. Edit ``config/brains/pr_review.yaml`` to tune without code changes.
+    """
+    name: str = "pr_review"
+    description: str = ""
+    model: str = "strong"
+    limits: PRBrainLimits = Field(default_factory=PRBrainLimits)
+    review_agents: List[str] = Field(default_factory=lambda: [
+        "correctness", "concurrency", "security", "reliability", "test_coverage",
+    ])
+    arbitrator: str = "pr_arbitrator"
+    budget_weights: Dict[str, float] = Field(default_factory=lambda: {
+        "correctness": 1.00,
+        "concurrency": 0.85,
+        "security": 0.75,
+        "reliability": 0.70,
+        "test_coverage": 0.55,
+    })
+    post_processing: PostProcessingConfig = Field(default_factory=PostProcessingConfig)
+    synthesis: SynthesisConfig = Field(default_factory=SynthesisConfig)
+    arbitration: ArbitrationConfig = Field(default_factory=ArbitrationConfig)
 
 
 # ---------------------------------------------------------------------------

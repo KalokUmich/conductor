@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ _DEFAULT_URL = "redis://localhost:6379/0"
 _redis = None
 
 
-def get_redis():
+def get_redis() -> Optional[Any]:
     """Return the process-wide Redis client (must call ``init_redis`` first).
 
     Returns ``None`` if Redis is not configured or unavailable.
@@ -26,7 +26,7 @@ def get_redis():
     return _redis
 
 
-async def init_redis(url: Optional[str] = None, prefix: str = "conductor:"):
+async def init_redis(url: Optional[str] = None, prefix: str = "conductor:") -> Optional[Any]:
     """Create the Redis connection pool.
 
     Args:

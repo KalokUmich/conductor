@@ -18,6 +18,8 @@
  */
 
 import * as complexTools from './complexToolRunner';
+import type { ToolResult } from './toolTypes';
+export type { ToolResult };
 
 // ---------------------------------------------------------------------------
 // Tool classification sets
@@ -87,18 +89,6 @@ const COMPLEX_TOOL_RUNNERS: Record<string, (workspace: string, params: any) => c
     detect_patterns: complexTools.detect_patterns,
     module_summary: complexTools.module_summary,
 };
-
-// ---------------------------------------------------------------------------
-// Result type
-// ---------------------------------------------------------------------------
-
-/** Standard tool result shape, matching the backend's ToolResult model. */
-export interface ToolResult {
-    success: boolean;
-    data: any;
-    error?: string;
-    truncated?: boolean;
-}
 
 // ---------------------------------------------------------------------------
 // Extension context passed by the caller
@@ -218,8 +208,8 @@ export async function executeLocalTool(
                     return result;
                 }
                 log(`${tool} → Tier 2a returned null, trying Python CLI`);
-            } catch (err: any) {
-                log(`${tool} → Tier 2a failed: ${err.message || err}`);
+            } catch (err: unknown) {
+                log(`${tool} → Tier 2a failed: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
 
@@ -240,8 +230,8 @@ export async function executeLocalTool(
                     return result;
                 }
                 log(`${tool} → Tier 3 failed: ${result.error}, trying subprocess fallback`);
-            } catch (err: any) {
-                log(`${tool} → Tier 3 error: ${err.message || err}`);
+            } catch (err: unknown) {
+                log(`${tool} → Tier 3 error: ${err instanceof Error ? err.message : String(err)}`);
             }
         }
 

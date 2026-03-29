@@ -18,7 +18,7 @@ def main() -> None:
     args = sys.argv[1:]
 
     if not args:
-        print(
+        print(  # CLI output: intentional print — stdout is parsed as JSON by the TS extension
             json.dumps({"tool_name": "", "success": False, "error": "Usage: python -m app.code_tools <tool_name> <workspace> '[json_params]'"}),
             flush=True,
         )
@@ -30,11 +30,11 @@ def main() -> None:
     if tool_name == "list":
         from app.code_tools.tools import TOOL_REGISTRY
 
-        print(json.dumps(sorted(TOOL_REGISTRY.keys())), flush=True)
+        print(json.dumps(sorted(TOOL_REGISTRY.keys())), flush=True)  # CLI output: intentional print
         sys.exit(0)
 
     if len(args) < 2:
-        print(
+        print(  # CLI output: intentional print
             json.dumps({"tool_name": tool_name, "success": False, "error": "Missing required argument: workspace"}),
             flush=True,
         )
@@ -51,7 +51,7 @@ def main() -> None:
     try:
         params = json.loads(raw_params) if raw_params.strip() else {}
     except json.JSONDecodeError as exc:
-        print(
+        print(  # CLI output: intentional print
             json.dumps({"tool_name": tool_name, "success": False, "error": f"Invalid JSON params: {exc}"}),
             flush=True,
         )
@@ -60,7 +60,7 @@ def main() -> None:
     from app.code_tools.tools import execute_tool
 
     result = execute_tool(tool_name, workspace, params)
-    print(json.dumps(result.model_dump()), flush=True)
+    print(json.dumps(result.model_dump()), flush=True)  # CLI output: intentional print — TS extension reads stdout
     sys.exit(0 if result.success else 1)
 
 

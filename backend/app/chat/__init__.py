@@ -1,2 +1,2 @@
-# Chat module for WebSocket-based chat rooms
+"""WebSocket chat management and message persistence."""
 

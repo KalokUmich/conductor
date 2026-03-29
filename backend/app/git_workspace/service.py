@@ -351,7 +351,7 @@ class GitWorkspaceService:
                 env=env,
             )
 
-        except Exception as exc:  # pylint: disable=broad-except
+        except Exception as exc:  # TODO: narrow to (RuntimeError, OSError, ValueError)
             record.status       = WorktreeStatus.ERROR
             record.error_detail = str(exc)
             logger.error("Failed to set up worktree for room %s: %s", req.room_id, exc)
@@ -458,7 +458,7 @@ class GitWorkspaceService:
             record.status      = WorktreeStatus.READY
             record.last_synced = datetime.now(timezone.utc)
             return WorkspaceSyncResult(room_id=req.room_id, success=True, message="Sync complete")
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             record.status       = WorktreeStatus.ERROR
             record.error_detail = str(exc)
             return WorkspaceSyncResult(
@@ -493,7 +493,7 @@ class GitWorkspaceService:
             return WorkspaceCommitResult(
                 room_id=req.room_id, success=True, sha=sha, message="Commit created"
             )
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             return WorkspaceCommitResult(
                 room_id=req.room_id, success=False, message=str(exc)
             )
@@ -519,7 +519,7 @@ class GitWorkspaceService:
                 pushed_sha=sha,
                 message="Push successful",
             )
-        except Exception as exc:
+        except (RuntimeError, OSError) as exc:
             return WorkspacePushResult(
                 room_id=req.room_id, success=False, message=str(exc)
             )
@@ -546,7 +546,7 @@ class GitWorkspaceService:
             try:
                 shutil.rmtree(record.worktree_path)
                 logger.info("Worktree directory removed: %s", record.worktree_path)
-            except Exception as exc:  # pylint: disable=broad-except
+            except OSError as exc:
                 logger.warning("Could not remove worktree dir: %s", exc)
         record.status = WorktreeStatus.DESTROYED
         return WorkspaceDestroyResult(
@@ -626,7 +626,7 @@ class GitWorkspaceService:
         for cb in list(self._broadcast_callbacks.get(room_id, [])):
             try:
                 await cb(event)
-            except Exception as exc:  # pylint: disable=broad-except
+            except Exception as exc:  # callbacks are user-supplied; must catch all
                 logger.warning("Broadcast callback error for room %s: %s", room_id, exc)
 
     # ------------------------------------------------------------------
@@ -662,7 +662,7 @@ class GitWorkspaceService:
                     repo_url = await self._run_git(
                         ["remote", "get-url", "origin"], cwd=bare_dir
                     )
-                except Exception:
+                except (RuntimeError, OSError):
                     pass
 
             for wt_dir in worktrees_dir.iterdir():
@@ -681,7 +681,7 @@ class GitWorkspaceService:
                     branch = await self._run_git(
                         ["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_dir
                     )
-                except Exception:
+                except (RuntimeError, OSError):
                     pass
 
                 record = _WorktreeRecord(
@@ -861,5 +861,5 @@ class GitWorkspaceService:
     async def _get_head_sha(self, cwd: Path, env: Dict[str, str]) -> Optional[str]:
         try:
             return await self._run_git(["rev-parse", "HEAD"], cwd=cwd, env=env)
-        except Exception:  # pylint: disable=broad-except
+        except (RuntimeError, OSError):
             return None

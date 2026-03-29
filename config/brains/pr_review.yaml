@@ -1,0 +1,53 @@
+# PR Brain — specialized Brain orchestrator for PR reviews.
+# Replaces the ad-hoc dispatch_swarm("pr_review") with a deterministic
+# pipeline that pre-computes context, dispatches review agents, runs
+# post-processing, arbitration, and synthesis.
+
+name: pr_review
+description: "Specialized Brain for PR reviews — deterministic pipeline with 4-layer agent prompts"
+model: strong
+
+limits:
+  total_session_tokens: 2500000
+  max_concurrent_agents: 3
+  llm_concurrency_limit: 2          # Max parallel LLM API calls (Bedrock throttle guard)
+  sub_agent_timeout: 480
+  reject_above: 6000
+  max_depth: 2
+  small_pr_threshold: 100           # PRs under this many lines skip concurrency/reliability agents
+
+# Review agents dispatched in parallel (risk-gated)
+review_agents:
+  - correctness
+  - concurrency
+  - security
+  - reliability
+  - test_coverage
+
+# Dedicated arbitration agent (has tools to verify findings)
+arbitrator: pr_arbitrator
+
+# Budget weights per agent (relative complexity)
+budget_weights:
+  correctness: 1.00
+  concurrency: 0.85
+  security: 0.75
+  reliability: 0.70
+  test_coverage: 0.55
+
+# Deterministic post-processing settings
+post_processing:
+  min_confidence: 0.75
+  max_findings: 10
+  max_findings_per_agent: 3         # Per-agent cap before merge (reduces false positives)
+
+# Synthesis LLM call settings
+synthesis:
+  max_tokens: 4096                  # Max output tokens for final review markdown
+  max_diff_chars: 30000             # Total diff chars cap in synthesis prompt
+  max_diff_snippet_chars: 4000      # Per-file diff snippet cap
+
+# Arbitration settings
+arbitration:
+  budget_tokens: 500000             # Token budget for the arbitrator agent
+  max_tokens: 2048                  # Max output tokens for lightweight arbitration

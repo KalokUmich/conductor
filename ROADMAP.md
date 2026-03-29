@@ -420,6 +420,11 @@ The agent then skips basic exploration and immediately targets the relevant code
 - [ ] Inject relevant summaries into the agent's initial context
 - [ ] Incremental refresh on file change (watch worktree for edits)
 - [ ] Cache invalidation on git pull / branch switch
+- [ ] **Evaluate PowerMem integration** ([oceanbase/powermem](https://github.com/oceanbase/powermem)) — AI memory system with vector retrieval + Ebbinghaus forgetting curve + multi-agent isolation. Potential benefits:
+  - Cross-session query pattern learning (fact extraction from session traces)
+  - PR review memory (recall previous review findings for the same module)
+  - 96.5% token reduction via selective context injection vs full history
+  - Per-agent memory spaces map to Brain → sub-agent architecture
 
 ### 5.5.3 Heuristic Data Flow Tracing (COMPLETE)
 The `trace_variable` tool enables tracking how a value flows through function call boundaries:

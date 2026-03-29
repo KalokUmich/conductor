@@ -13,34 +13,42 @@ eval/
 
 ## 1. Code Review Eval (`code_review/`)
 
-Measures `CodeReviewService` quality against 12 planted-bug cases in `requests` v2.31.0.
+Measures PR review quality against 12 planted-bug cases in `requests` v2.31.0. Supports three modes: legacy pipeline (`CodeReviewService`), Brain pipeline (`PRBrainOrchestrator`), and gold-standard (`claude` CLI).
 
 ```bash
 cd backend
 
-# Run all 12 cases
+# Legacy pipeline (CodeReviewService)
 python ../eval/code_review/run.py --provider anthropic --model claude-sonnet-4-20250514
-
-# Single case, no LLM judge
 python ../eval/code_review/run.py --filter "requests-001" --no-judge
+
+# Brain pipeline (PRBrainOrchestrator) — uses transfer_to_brain
+python ../eval/code_review/run.py --brain --provider bedrock --model eu.anthropic.claude-sonnet-4-6 \
+  --explorer-model eu.anthropic.claude-haiku-4-5-20251001-v1:0 --no-judge --verbose
+
+# Gold-standard ceiling (Claude Code CLI)
+python ../eval/code_review/run.py --gold --gold-model sonnet --save-baseline
+
+# 3-round comparison script (legacy vs brain)
+python ../eval/code_review/run_comparison.py
 
 # Save baseline for regression detection
 python ../eval/code_review/run.py --save-baseline
-
-# Gold-standard ceiling
-python ../eval/code_review/run.py --gold --gold-model opus --save-baseline
 ```
 
 **Scoring**: recall (35%), precision (20%), severity (15%), location (10%), recommendation (10%), context (10%).
 
+**Flags**: `--brain` (PR Brain mode), `--verbose` (per-finding match details), `--gold` (Claude Code CLI), `--no-judge` (skip LLM judge), `--filter` (run subset).
+
 ```
 code_review/
-├── run.py              CLI entrypoint
-├── runner.py           Workspace setup + CodeReviewService execution
+├── run.py              CLI entrypoint (legacy + brain + gold modes)
+├── run_comparison.py   Multi-round legacy vs brain comparison
+├── runner.py           Workspace setup + CodeReviewService/PRBrain execution
 ├── scorer.py           Deterministic scoring
 ├── judge.py            LLM-as-Judge qualitative evaluation
 ├── report.py           Report generation + baseline comparison
-├── gold_runner.py      Gold-standard (single-agent) runner
+├── gold_runner.py      Gold-standard (Claude Code CLI) runner
 ├── repos.yaml          Repo manifest
 ├── repos/requests/     requests v2.31.0 source tree
 ├── cases/requests/     12 case definitions + patches
@@ -58,16 +66,16 @@ Measures agentic loop answer quality by running questions against real codebases
 cd backend
 
 # Run all baselines (direct agent, ~30s per case)
-python ../eval/agent_quality/run.py
+python ../eval/agent_quality/run_bedrock.py
 
-# Compare direct agent vs workflow (multi-agent)
-python ../eval/agent_quality/run.py --compare
+# Compare direct agent vs workflow vs brain
+python ../eval/agent_quality/run_bedrock.py --all
 
-# Run specific case
-python ../eval/agent_quality/run.py --case abound_render_approval
+# Brain orchestrator only
+python ../eval/agent_quality/run_bedrock.py --brain
 
 # Workflow only
-python ../eval/agent_quality/run.py --workflow
+python ../eval/agent_quality/run_bedrock.py --workflow
 ```
 
 **Scoring**: pattern-match against `required_findings` in baseline JSON. Each finding has a weight and minimum pattern matches required.

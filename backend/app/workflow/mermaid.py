@@ -361,5 +361,5 @@ if __name__ == "__main__":
 
     for name in ["workflows/pr_review.yaml", "workflows/code_explorer.yaml"]:
         wf = load_workflow(name)
-        print(f"\n--- {wf.name} ---")
+        print(f"\n--- {wf.name} ---")  # CLI output: intentional print — dev tool for inspecting generated diagrams
         print(generate_mermaid(wf))

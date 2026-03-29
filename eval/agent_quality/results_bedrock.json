@@ -2,23 +2,29 @@
   "abound_render_approval": {
     "brain": {
       "run": {
-        "answer": "Here is the complete post-Render-approval journey for customers, synthesized from both the backend implementation and usage perspectives:\n\n---\n\n## Customer Journey After Render Approval\n\nOnce Render sends an **ACCEPT** decision, the following steps unfold in sequence:\n\n---\n\n### Step 1 \u2014 Credit Decision Recorded\n**Trigger:** `POST /callback/renderObCallBack` \u2192 `RenderCallBackServiceImpl.renderObCallback()` (line 192)\n\n- `approval_status = 1` is set on the `UserApplicationMapping`\n- `render_decision = 1` recorded in the `AdminAudit` table\n- `approval_decision_time` is stamped\n- Application enters the **`OFFER_CREATED`** state\n\n---\n\n### Step 2 \u2014 Loan Documents Generated (Async)\n**Triggered automatically after transaction commit** \u2192 `generateLoanDocumentsAndSendApprovalEmailAsync()` (`RenderCallBackServiceImpl.java`, lines 1236\u20131237)\n\nThree documents are generated via **AWS Lambda** (`LoanDocGenerationService`):\n| Doc Type | Document |\n|---|---|\n| Type 6 | PCCI \u2013 Pre-Contract Credit Information |\n| Type 7 | Credit Agreement (unsigned) |\n| Type 8 | Adequate Explanations (AE) |\n\n- A **loan record** is created if missing, with all doc IDs initialised to `0`\n- The system **polls for completion** every 10 seconds, up to 10 attempts (100s timeout)\n- If all docs are ready, they are attached to the approval email; if timeout occurs, email is sent with partial attachments\n\n---\n\n### Step 3 \u2014 Approval Email & Voice Message Sent\n- **Approval email** dispatched with document attachments once generation completes (or times out)\n- A **delayed voice message** is queued via ActiveMQ \u2192 ClickSend integration (`RenderCallBackServiceImpl.java`, lines 1240\u20131248)\n\n---\n\n### Step 4 \u2014 Identity Verification (IDV)\n**Callback:** `POST /callback/renderIdvCallBack` \u2192 `IdvServiceImpl.renderIdvCallBack()` (line 205)\n\nRender sends back an IDV result:\n\n- \u2705 **Approved:**\n  - `b_idv_process` table updated with verified identity data\n  - `idv_check = PASS` recorded\n  - Account matching validation performed\n  - `approveService.approveIdv()` called \u2192 `pre_dispersal_status = 1` (APPROVED)\n  - `post_approval_data.idv = true` flagged\n  - **State \u2192 `IDV_DECISION_APPROVED`**\n\n- \u274c **Declined:**\n  - `pre_dispersal_status = 0` (DECLINED)\n  - `idv_check = FAIL` recorded\n  - Decline email sent\n  - **State \u2192 `IDV_DECISION_DECLINE`**\n\n---\n\n### Step 5 \u2014 Open Banking (OB) Consent\n**Callback:** `POST /callback/renderObCallBack` \u2192 `RenderCallBackServiceImpl.registrationObCallback()` (line 1207)\n\n- Customer completes Open Banking account verification/consent\n- Account data is verified\n- **State \u2192 `DAPI_ACCEPTED`** (or `DAPI_DECLINED` on failure, prompting retry)\n\n---\n\n### Step 6 \u2014 Pre-Disbursement Verification\nAll of the following must pass before disbursement is triggered:\n\n| Check | Status Field |\n|---|---|\n| IDV passed | `idv_check = PASS` |\n| Account match | Account validation (line 379) |\n| Contract validated | Document signing check (line 359) |\n\n- `pre_dispersal_status` transitions: `9` (Pending) \u2192 `1` (Approved) or `0` (Declined)\n\n---\n\n### Step 7 \u2014 Disbursement (Final Step)\n- Once all pre-disbursement conditions are met and documents are signed, the loan is **disbursed**\n- Any subsequent `DISBURSED` callback from Render is **ignored** (early return at line 227), as disbursement has already been processed\n- Final loan state recorded in the `b_loan` table\n\n---\n\n## Full State Transition Summary\n\n```\nOFFER_CREATED\n    \u2193 Render ACCEPT + docs generated + email sent\nAPPROVAL_STATUS = 1  (awaiting IDV)\n    \u2193 IDV callback passes\nIDV_DECISION_APPROVED\n    \u2193 Open Banking consent completed\nDAPI_ACCEPTED\n    \u2193 Pre-disbursement checks pass + contract signed\nREADY FOR DISBURSEMENT\n    \u2193\nDISBURSED\n```\n\n---\n\n## Error / Exit Paths\n\n| Scenario | Outcome |\n|---|---|\n| Render **Decline** | `approval_status = 0`, decline email sent |\n| Render **Withdrawal** | `approval_status = 0`, PII masked, withdrawal email sent |\n| IDV **Decline** | `pre_dispersal_status = 0`, decline email sent |\n| OB **Failure** | Application stalls in post-approval; customer prompted to retry |\n\n---\n\n### Key Files\n| File | Purpose |\n|---|---|\n| `CallBackController.java` (lines 30, 42) | Callback endpoints for OB and IDV |\n| `RenderCallBackServiceImpl.java` (lines 192\u20131306) | Main orchestration of post-approval flow |\n| `IdvServiceImpl.java` (lines 181\u2013442) | IDV callback processing |\n| `PortalOfferApplicationStatus.java` | Status enum: `OFFER_CREATED`, `DAPI_ACCEPTED` |\n| `PortalApplicationDecisionStatus.java` (line 8) | Status enum: `IDV_DECISION_APPROVED` |",
-        "tool_calls": 2,
+        "answer": "## Post-Render-Approval Customer Journey\n\n### Flow Overview\n\nOnce Render sends an `ACCEPT` decision (with `finalDecision=true`) via a webhook callback, the system immediately creates a user account, sends an approval email with contract attachments, and initialises a 7-step onboarding checklist (`PostApprovalDataRequest`). The customer must complete all 7 steps \u2014 password setup, phone verification, commission consent, confirmation of payee, CPA (debit card) setup, contract signature, and identity verification \u2014 before the `isFinished` gate fires. Only when all 7 flags are `true` is the customer's application marked as fully onboarded and disbursement proceeds.\n\n---\n\n### Step-by-Step Breakdown\n\n#### \ud83d\udd14 Step 0 \u2014 Render Approval Received *(System Event)*\n- **Trigger**: Render POSTs to `POST /callback/renderObCallBack` \u2192 `RenderCallBackService.renderObCallback()`\n- Payload carries `CreditCallbackEnvelope` with `CallbackType.DECISION`, `decision=ACCEPT`, `finalDecision=true`\n- **Non-final decisions** (`REFERAL`, `AWAITING`) where `finalDecision=false` are **ignored** until a final verdict arrives\n- `RenderCallBackServiceImpl.java` processes the callback and orchestrates all downstream actions\n\n#### \ud83d\udce7 Step 0a \u2014 Approval Email Sent *(Automatic)*\n- An approval email is sent **immediately**, including the contract PDF as an attachment\n- Template varies by brand/aggregator: `ABOUND_BM_APPROVED_NOT_DISBURSED` or `CREDISPHERE_BM_APPROVED_NOT_DISBURSED`\n- Finance portal applicants receive a portal-specific template (`RenderCreditDecisionCallbackTest.java`, test: *\"approvalEmail_shouldUsePortalTemplateForFinancePortalAggregator\"*)\n\n#### \ud83d\udc64 Step 0b \u2014 User Account Created + Magic Link Sent *(Automatic)*\n- `POST /user/createDecisionUser` \u2192 creates the user account from Render decision data (`UserController.java:32\u201338`)\n- `POST /user/magicLink` \u2192 sends a magic link email for the customer's first login (`UserController.java:121\u2013124`)\n- A fresh `PostApprovalDataRequest` is initialised with **all 7 boolean flags = `false`** (`UserCreateServiceImpl.java:645`)\n\n---\n\n#### \u2705 Step 1 \u2014 Set Password (PIN)\n| | |\n|---|---|\n| **Flag** | `set_password` |\n| **API** | `POST /user/setPinCode` \u2192 `UserService.setPinCode()` |\n| **Side effects** | Timestamps `set_password_time`; calls `updateIsFinished()` |\n\n---\n\n#### \u2705 Step 2 \u2014 Phone Verification\n| | |\n|---|---|\n| **Flag** | `set_phone` |\n| **APIs** | `POST /account/sendPhoneVerifyCode` (sends SMS) \u2192 `POST /user/verifyPhone` (validates code) |\n| **Side effects** | Timestamps `set_phone_time`; calls `updateIsFinished()` |\n\n---\n\n#### \u2705 Step 3 \u2014 Commission Consent\n| | |\n|---|---|\n| **Flag** | `commission_consent` |\n| **APIs** | `GET /accountApplication/getUserCommissionInfo` (fetch disclosure) \u2192 `POST /accountApplication/confirmCommissionConsent` (customer confirms) |\n| **Side effects** | Timestamps `commission_consent_time`; calls `updateIsFinished()` |\n\n---\n\n#### \u2705 Step 4 \u2014 Confirmation of Payee\n| | |\n|---|---|\n| **Flag** | `confirmation_payee` |\n| **API** | `POST /payment/confirmationOfPayee` (`PaymentController.java:275\u2013279`) |\n| **Side effects** | Reactive flow (uses `StepVerifier`); covers confirmed, mismatch, and error cases |\n\n---\n\n#### \u2705 Step 5 \u2014 CPA Setup (Debit Card / Continuous Payment Authority)\n| | |\n|---|---|\n| **Flag** | `set_cpa` |\n| **APIs** | `GET /enhancedPayment/getPaymentProvider` \u2192 `GET /enhancedPayment/registerNewCard` \u2192 `POST /enhancedPayment/acquiredCallback` (card tokenisation) \u2192 `GET /enhancedPayment/addNewCard` |\n| **Side effects** | Card tokenised via Acquired; `set_cpa=true` written to `post_approval_data` |\n\n---\n\n#### \u2705 Step 6 \u2014 Contract Signature (HelloSign / PDF)\n| | |\n|---|---|\n| **Flag** | `signature` |\n| **APIs** | `GET /account/getPDFLink` \u2192 `GET /account/pdfSignature` \u2192 `GET /account/getSignatureUrl` (redirect) \u2192 `POST /account/signature/callback` (HelloSign webhook) or `POST /account/signature/appCallback` (mobile variant) |\n| **Side effects** | HelloSign webhook sets `signature=true`; timestamps `signature_time` |\n\n---\n\n#### \u2705 Step 7 \u2014 Identity Verification (IDV)\n| | |\n|---|---|\n| **Flag** | `idv` |\n| **APIs** | `POST /idv/idvLoginAttempt` (start IDV session) \u2192 `GET /idv/queryIdentityCheckStatus` (async long-poll) \u2192 `POST /callback/renderIdvCallBack` (Render webhook) |\n| **Side effects** | Render sends `STATUS_APPROVED` + `TYPE_IDV` \u2192 `idv=true` (`IdvServiceImpl.java:130, 939`); timestamps `idv_time` |\n\n---\n\n#### \ud83c\udfc1 Step 8 \u2014 `isFinished` Gate \u2192 Disbursement\n- Once all 7 flags are `true`, the composite gate fires (`PostApprovalDataRequest.java:103\u2013112`):\n  ```java\n  this.isFinished = setPassword && setPhone && confirmationPayee\n                  && setCpa && commissionConsent && signature && idv;\n  ```\n- `post_approval = 1` is persisted to `b_reg_one_page_flow` (`RegOnePageFlowDao.xml:31\u201333`)\n- Disbursement confirmation arrives via `POST /payment/payout/callback` (`PaymentController.java:246\u2013250`)\n- **Approved-but-not-yet-disbursed** customers (e.g. `idv=false` or `set_password=false`) are tracked via CMS queries (`CmsAdminApplicationDao.java:142`) for operational follow-up / SMS reminders\n\n---\n\n### Complete Flow Diagram\n\n```\nRender \u2500\u2500\u25ba POST /callback/renderObCallBack\n              \u2502  CreditCallbackEnvelope {ACCEPT, finalDecision=true}\n              \u2502\n              \u251c\u2500\u2500\u25ba Send approval email (PDF contract attached)\n              \u2514\u2500\u2500\u25ba POST /user/createDecisionUser  [magic link sent]\n                       \u2502  PostApprovalDataRequest {all 7 flags = false}\n                       \u2502\nStep 1:  POST /user/setPinCode                    \u2192 set_password      = true\nStep 2:  POST /user/verifyPhone                   \u2192 set_phone         = true\nStep 3:  POST /accountApplication/confirmCommissionConsent \u2192 commission_consent = true\nStep 4:  POST /payment/confirmationOfPayee        \u2192 confirmation_payee = true\nStep 5:  POST /enhancedPayment/acquiredCallback   \u2192 set_cpa           = true\nStep 6:  POST /account/signature/callback         \u2192 signature         = true\nStep 7:  POST /callback/renderIdvCallBack         \u2192 idv               = true\n                       \u2502\n              isFinished = true  \u2192  post_approval = 1 persisted\n                       \u2502\n              POST /payment/payout/callback  [disbursement confirmed \u2713]\n```\n\n---\n\n### Key Files\n\n| File | Description |\n|---|---|\n| `RenderCallBackServiceImpl.java` | Core handler for the Render approval webhook; orchestrates email, user creation, and status transitions |\n| `PostApprovalDataRequest.java:103\u2013112` | Defines the 7-flag data model and the `isFinished` composite gate |\n| `UserCreateServiceImpl.java:645` | Initialises the `PostApprovalDataRequest` with all flags = `false` on user creation |\n| `IdvServiceImpl.java:130, 939` | Handles the Render IDV callback and sets `idv=true` |\n| `EnhancedPaymentController.java` | Manages the CPA/debit card registration flow (Acquired provider) |\n| `AccountController.java` | Handles PDF contract generation, HelloSign signing session, and signature callback |\n| `PaymentController.java:246\u2013250` | Receives the final payout/disbursement confirmation callback |\n| `CmsAdminApplicationDao.java:142` | CMS query tracking approved-but-not-disbursed customers for follow-up |\n| `RegOnePageFlowDao.xml:31\u201333` | Persists `post_approval=1` once all steps are complete |\n\n---\n\n### Gaps & Uncertainties\n\n1. **Disbursement initiation**: The exact logic that *triggers* the payout after `isFinished=true` lives in `PaymentServiceImpl` \u2014 what was confirmed is the *confirmation callback* (`POST /payment/payout/callback`), not the initiation mechanism.\n2. **Step ordering**: The 7 onboarding steps are tracked independently by boolean flags; the API does not enforce a strict sequence. The actual UI ordering may differ from the flag order shown here.\n3. **`set_phone` pre-population**: In some flows, `set_phone` appears to already be `true` at account creation (seen in `IntegrationTestConstants.java:128`), suggesting phone may be collected during the application phase rather than post-approval for certain journeys.",
+        "tool_calls": 1,
         "iterations": 0,
-        "duration_ms": 93636.0375881195,
+        "duration_ms": 138781.31580352783,
         "error": null
       },
       "scoring": {
-        "total_score": 0.507,
+        "total_score": 0.85,
         "findings": [
           {
             "id": "post_approval_7_steps",
             "description": "Must find PostApprovalDataRequest.java and list all 7 customer self-service steps",
             "weight": 0.4,
-            "score": 0.14,
-            "matched": 1,
+            "score": 1.0,
+            "matched": 7,
             "min_required": 7,
             "matched_patterns": [
+              "set_password|setPassword|Set Password",
+              "set_phone|setPhone|Set Phone",
+              "commission_consent|commissionConsent|Commission Consent",
+              "confirmation_payee|confirmationPayee|Confirmation.*Payee",
+              "set_cpa|setCpa|Set CPA|CPA",
+              "signature|Signature",
               "idv|IDV|Identity Verification"
             ]
           },
@@ -27,11 +33,10 @@
             "description": "Must identify RenderCallBackServiceImpl as the entry point for the approval flow",
             "weight": 0.15,
             "score": 1.0,
-            "matched": 3,
+            "matched": 2,
             "min_required": 2,
             "matched_patterns": [
               "RenderCallBackService",
-              "registrationObCallback",
               "ACCEPT"
             ]
           },
@@ -39,33 +44,31 @@
             "id": "doc_generation",
             "description": "Must mention async document generation (PCCI, Credit Agreement, AE)",
             "weight": 0.1,
-            "score": 1.0,
-            "matched": 3,
-            "min_required": 2,
-            "matched_patterns": [
-              "PCCI|Pre-Contract|Key Facts",
-              "Credit Agreement",
-              "Adequate Explanations|AE"
-            ]
-          },
-          {
-            "id": "is_finished_gate",
-            "description": "Must explain that all 7 steps must be true for isFinished",
-            "weight": 0.15,
             "score": 0.0,
             "matched": 0,
             "min_required": 2,
             "matched_patterns": []
           },
           {
-            "id": "idv_to_disbursement",
-            "description": "Must trace the path from IDV approval to loan disbursement",
-            "weight": 0.1,
+            "id": "is_finished_gate",
+            "description": "Must explain that all 7 steps must be true for isFinished",
+            "weight": 0.15,
             "score": 1.0,
             "matched": 2,
             "min_required": 2,
             "matched_patterns": [
-              "approveIdv|IDV.*review|admin.*review",
+              "isFinished|is_finished",
+              "all.*true|all 7|all seven"
+            ]
+          },
+          {
+            "id": "idv_to_disbursement",
+            "description": "Must trace the path from IDV approval to loan disbursement",
+            "weight": 0.1,
+            "score": 0.5,
+            "matched": 1,
+            "min_required": 2,
+            "matched_patterns": [
               "disburse|disbursement|payout"
             ]
           },
@@ -87,14 +90,14 @@
   "render_credit_decision": {
     "brain": {
       "run": {
-        "answer": "Here is a comprehensive breakdown of how the credit decision engine works, synthesized from both the backend implementation and usage perspectives:\n\n---\n\n# \ud83c\udfe6 Credit Decision Engine \u2014 How It Works\n\n## Overview\n\nThe credit decision engine is a **batch-driven, rule-based auto-decisioning system** that evaluates loan/credit applications and automatically assigns Accept, Decline, or Referral outcomes. It runs on scheduled tasks, evaluates applications against feature-based rules, and writes final decisions back to each application.\n\nThere are **three decisioning paths**, each targeting a different application type and lifecycle stage.\n\n---\n\n## 1. \ud83d\udce5 Application Intake & Eligibility\n\nApplications enter the engine when they are in one of the following states:\n- **`PENDING`** \u2014 just submitted\n- **`REFERAL`** \u2014 awaiting underwriter review\n- **`AWAITING`** \u2014 waiting on more info from the applicant\n\nApplications are **excluded** from auto-decisioning if:\n- They are already **assigned** to a human underwriter\n- They already have a **final decision**\n- They don't match the configured **application types** in scope\n\n---\n\n## 2. \ud83d\udd00 Three Decisioning Paths\n\n### Path A \u2014 Open Banking (OB) Auto Decision\n**File:** `backend/src/background_worker/applications/application_tasks.py`, lines 326\u2013358\n**Schedule:** Every 15 minutes (`*/15 * * * *`)\n\n- Queries OB-connected applications in `PENDING/REFERAL/AWAITING` state\n- Checks if `decision_on_creation` is enabled for the application type\n- If enabled: defers a `create_application_decision` task immediately upon application creation\n- If not applicable (e.g., external API auto-decision is active): skips\n\n---\n\n### Path B \u2014 Credit-Only Auto Decision\n**File:** `backend/src/background_worker/applications/application_tasks.py`, lines 601\u2013678\n**Schedule:** Every 2 hours at :25 past (`25 */2 * * *`)\n\nThis is the primary path for **non-OB applications**. It:\n\n1. **Queries eligible applications** (`credit_only_auto_decision_query`, lines 501\u2013531):\n   - In `REFERAL`, `PENDING`, or `AWAITING` state\n   - Not yet assigned to an underwriter\n   - Created **more than N hours ago** (controlled by `credit_only_auto_decision_hours`)\n   - Of an application type in the configured scope\n\n2. **Refreshes features** (lines 635\u2013649):\n   - For applications where the credit-only feature is `NULL`, calls `generate_application_decision_list` \u2192 `refresh_features`\n   - This pulls the latest credit data and evaluates the configured rule\n\n3. **Classifies the outcome** using the `CreditOnlyDecisionEnum` (lines 652\u2013678):\n\n| Metric Value | Enum | Decision |\n|---|---|---|\n| `CreditOnlyDecline` | Decline | `Reject`, final |\n| `CreditOnlyAccept` | Accept | `Accept`, final |\n| `CreditOnlyReferral` | Referral | `Referral`, **not final** |\n\n---\n\n### Path C \u2014 Queue Auto Decision (\"Project SATURDAY-Y\")\n**File:** `backend/src/abound/abound_tasks/tasks.py`, lines 328\u2013407\n**Schedule:** 7am, 6pm, and 1am UTC (`0 7,18,1 * * *`)\n\nThis path targets **unassigned applications that have aged in the underwriting queue**. It:\n\n1. **Queries applications** older than a configured business-day threshold (`auto_decision_unassigned_apps_queue_business_days`)\n2. Processes in **chunks of 50**\n3. For each application:\n   - **Repulls** the credit file and open banking data\n   - **Refreshes features** with `block_refresh=False`\n   - **Evaluates rule 80050** metric:\n     - Metric = `1` \u2192 **Accept**\n     - Anything else (or exception) \u2192 **Decline**\n4. Defaults to **decline** on any exception (line 391) \u2014 fail-safe behavior\n\n---\n\n## 3. \u2699\ufe0f Rule Evaluation \u2014 The Feature Engine\n\nBoth credit-only and queue paths rely on a **feature-based rule engine**:\n\n- Each application has a set of computed **features** (financial signals derived from credit file + OB data)\n- A configured **rule ID** is evaluated against those feature metric values\n- The metric result maps to a decision bucket (Accept/Decline/Referral)\n\n| Path | Rule ID | Source |\n|---|---|---|\n| Credit-Only | `credit_only_auto_decision_rule_id` (configurable) | `worker_task_settings` |\n| Queue (SATURDAY-Y) | `80050` (hardcoded) | `tasks.py:382` |\n\n---\n\n## 4. \u2705 Decision Application (Unified)\n\nAll three paths ultimately call the same persistence function:\n\n**`batch_update_decision_for_applications`**\n**File:** `backend/src/abound/abound_tasks/tasks.py`, lines 233\u2013263\n\nThis function:\n1. **Guards against re-decisioning**: skips applications already assigned to a human (lines 249\u2013253)\n2. Calls `application_service.update_decision()` with:\n   - `decision_type`: `DecisionTypeEnum` (Accept / Reject / Referral / Withdrawn)\n   - `decision_reason`: a string reason code (e.g., `\"credit_only_auto_decline\"`, `\"saturday_auto_accept\"`)\n   - `is_auto_decision=True`\n   - `is_final_decision`: `True` for Accept/Reject, `False` for Referral\n\n**Decision reasons by path:**\n\n| Outcome | Reason Code | Final? |\n|---|---|---|\n| Credit-only decline | `credit_only_auto_decline` | \u2705 Yes |\n| Credit-only accept | `credit_only_auto_accept` | \u2705 Yes |\n| Credit-only referral | `credit_only_auto_referral` | \u274c No (goes to underwriter) |\n| Queue decline | `saturday_decline_generic` | \u2705 Yes |\n| Queue accept | `saturday_auto_accept` | \u2705 Yes |\n\n---\n\n## 5. \ud83d\udcbe Decision Persistence\n\n**`ApplicationService.update_decision()`**\n**File:** `backend/src/common/services/ApplicationService.py`, lines 1445\u20131520\n\n1. Loads the current application with its decision, features, audit steps, and rulesets\n2. Compares old decision vs. new automated decision\n3. Creates a `CaseEvent.ApplicationDecisionUpdated` audit event with full metadata\n4. Updates `audit_steps` and `rulesets_ran` relationships\n5. Persists everything via a **unit-of-work transaction**\n\n---\n\n## 6. \ud83d\udd04 Post-Decision Automation\n\nAdditional batch tasks run after decisions are applied:\n\n| Task | Behaviour |\n|---|---|\n| `batch_more_info` | Requests additional bank account info for pending applications |\n| `batch_more_info_withdraw` | Auto-withdraws if applicant hasn't provided info within threshold |\n| `batch_more_info_unassign` | Unassigns robot underwriter once more info is received |\n\n---\n\n## 7. \ud83d\uddfa\ufe0f End-to-End Flow\n\n```\nApplication Submitted (PENDING)\n        \u2502\n        \u251c\u2500\u2500[OB Connected + decision_on_creation?]\u2500\u2500\u25ba create_application_decision (immediate)\n        \u2502\n        \u251c\u2500\u2500[Credit-Only Path]\n        \u2502    Wait N hours\n        \u2502    \u2192 Query eligible apps\n        \u2502    \u2192 Refresh features (if missing)\n        \u2502    \u2192 Evaluate credit_only_auto_decision_rule_id\n        \u2502    \u2192 CreditOnlyAccept / Decline / Referral\n        \u2502    \u2192 batch_update_decision_for_applications\n        \u2502         \u2192 Accept (final) / Reject (final) / Referral (non-final \u2192 underwriter)\n        \u2502\n        \u2514\u2500\u2500[Queue Path \u2014 \"SATURDAY-Y\"]\n             Wait X business days (unassigned)\n             \u2192 Repull credit file + OB data\n             \u2192 Refresh features\n             \u2192 Evaluate rule 80050\n             \u2192 metric=1 \u2192 Accept / else \u2192 Decline\n             \u2192 batch_update_decision_for_applications\n                  \u2192 Accept (final) / Reject (final)\n\nIf Referral \u2192 Underwriter Queue \u2192 May request more info\n           \u2192 If no response within threshold \u2192 Auto-Withdraw\n           \u2192 If info received \u2192 Unassign robot \u2192 Human review\n```\n\n---\n\n## 8. \ud83d\udd27 Key Configuration Flags\n\n| Flag | Controls |\n|---|---|\n| `credit_only_auto_decision_live` | Master on/off switch for credit-only path |\n| `credit_only_auto_decision_hours` | Hours to wait before triggering credit-only decision |\n| `credit_only_auto_decision_rule_id` | Rule ID used to evaluate credit-only applications |\n| `credit_only_auto_decision_application_types` | Scopes which application types are eligible |\n| `auto_decision_unassigned_apps_queue_business_days` | Business-day age threshold for queue path |\n| `decision_on_creation` | Triggers OB auto-decision immediately at creation |\n\n---\n\n## Key Files\n\n| File | Role |\n|---|---|\n| `backend/src/background_worker/applications/application_tasks.py` | OB path (L326), credit-only path (L601), query builder (L501) |\n| `backend/src/abound/abound_tasks/tasks.py` | Queue path (L328), decision persistence (L233) |\n| `backend/src/common/services/ApplicationService.py` | Decision update & audit (L1445) |\n| `backend/src/data_models/models/enums.py` | `DecisionTypeEnum` (L825), `CreditOnlyDecisionEnum` (L1851) |",
-        "tool_calls": 2,
+        "answer": "## What I've learned so far\n\n**Domain Model (complete):**\n- `DecisionTypeEnum` (enums.py:828): 9 states \u2014 Pending, Accept, Reject, Referral, Awaiting, Withdrawn, Appeal, Disbursed, Settled \u2014 with a full state machine via `is_allowed_transition()`\n- `ApplicationDecision` (pydantic/app/application_decision.py:41): the core DTO with `decision`, `is_final_decision`, `is_auto_decision`, `assigned`, `rulesets_ran`, `audit_steps`, `eligibility`\n- `ApplicationDecisionDb` (db/app/application_decision.py:10): temporal table with same fields\n- `RulesetRan` (ruleset_ran.py:13): records which rulesets were evaluated and whether they triggered\n\n**Triggers (complete):**\n- Batch async tasks (procrastinate cron jobs): `batch_queue_auto_decisioning` (SATURDAY project), `batch_high_pd_decline`, `batch_pa_gambler_decline`, `batch_pa_bm_low_delphi_decline`, `batch_non_pa_decline`\n- `batch_iu_sweep` (hourly) \u2014 promotes PU decisions to final\n\n**Features/Scoring pipeline (partially traced):**\n- `refresh_features()` (application_data_service.py:704): pulls OB data, runs transaction classification/tagging, then calls `_features_evaluator()` which is a DAG of feature functions via `FeatureManager`\n- Key signal: feature `rule_id=80050` is the `auto_decision_project_saturday` flag (1=accept, 0=decline)\n- Rules registered in `rule_register_factory.py` and client constants (ab001, le001)\n\n**Decision application (complete):**\n- `update_decision()` (ApplicationService.py:1637): validates state transition, closes audit steps, creates a new `AuditStep(SeniorUnderwriter)` on Appeal, auto-sets `is_final_decision=True` when no pending audit steps remain\n- On final decision: generates documents, schedules email, fires callbacks to `callback_url` and `introducer_webhook_url`\n- Pushes real-time websocket update via `push_application_update()`\n\n**What's still missing:**\n1. How the initial application submission triggers the first decision (the entry point \u2014 what creates the PENDING decision and first runs features)\n2. The `FeaturesEvaluator.__call__` implementation \u2014 exactly how the DAG runs and produces `FinResult` features\n3. `get_email_source_from_final_decision_type` \u2014 what emails go out per outcome\n\n**Plan for remaining iterations:**\n1. Find initial application submission trigger \u2192 look at `external_api` for application creation endpoint and what calls `update_decision(Pending)`\n2. Read `FeaturesEvaluator.__call__` to understand how rule DAG executes and produces scores\n3. Read `get_email_source_from_final_decision_type` for outcome communications\n\nLet me read the three key remaining pieces in parallel.\n\nI have enough to provide a comprehensive answer. Let me do one final targeted read to confirm the `create_application` auto-decision flow.\n\n---\n**Files examined during analysis:**\n- `backend/src/abound/abound_tasks/tasks.py`\n- `backend/src/common/services/ApplicationService.py`\n- `backend/src/common/services/EmailService/helpers.py`\n- `backend/src/common/services/application_data_service/application_data_service.py`\n- `backend/src/common/services/application_decision_service/application_decision_service.py`\n- `backend/src/data_models/models/db/app/application_decision.py`\n- `backend/src/data_models/models/enums.py`\n- `backend/src/data_models/models/pydantic/app/application_decision.py`\n- `backend/src/data_models/models/pydantic/app/ruleset_ran.py`\n- `backend/src/external_api/endpoints/external_api/routes.py`\n- `backend/src/features/services/features/feature_manager.py`\n- `backend/src/features/services/features/features_evaluator.py`",
+        "tool_calls": 37,
         "iterations": 0,
-        "duration_ms": 88654.06036376953,
+        "duration_ms": 30862111.926555634,
         "error": null
       },
       "scoring": {
-        "total_score": 0.75,
+        "total_score": 0.85,
         "findings": [
           {
             "id": "decision_types",
@@ -115,10 +118,11 @@
             "description": "Must explain ML feature evaluation (features, severity, scoring models)",
             "weight": 0.2,
             "score": 1.0,
-            "matched": 2,
+            "matched": 3,
             "min_required": 2,
             "matched_patterns": [
               "feature|Feature",
+              "severity|score|risk",
               "XGBoost|ML|model|machine.*learn"
             ]
           },
@@ -160,6 +164,69 @@
             "id": "state_machine",
             "description": "Must describe the state machine or valid decision transitions",
             "weight": 0.1,
+            "score": 1.0,
+            "matched": 1,
+            "min_required": 1,
+            "matched_patterns": [
+              "state.*machine|transition|state.*transition|PENDING.*ACCEPT|valid.*transition"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "render_decline_flow": {
+    "brain": {
+      "run": {
+        "answer": "",
+        "tool_calls": 0,
+        "iterations": 0,
+        "duration_ms": 74.48029518127441,
+        "error": "No answer produced"
+      },
+      "scoring": {
+        "total_score": 0.0,
+        "findings": [
+          {
+            "id": "decline_triggers",
+            "description": "Must explain both automated and manual decline triggers",
+            "weight": 0.2,
+            "score": 0.0,
+            "matched": 0,
+            "min_required": 2,
+            "matched_patterns": []
+          },
+          {
+            "id": "decline_actions",
+            "description": "Must describe what happens after decline (email, documents, callback)",
+            "weight": 0.25,
+            "score": 0.0,
+            "matched": 0,
+            "min_required": 2,
+            "matched_patterns": []
+          },
+          {
+            "id": "decline_reasons",
+            "description": "Must list specific decline reasons (affordability, CCJ, fraud, etc.)",
+            "weight": 0.2,
+            "score": 0.0,
+            "matched": 0,
+            "min_required": 2,
+            "matched_patterns": []
+          },
+          {
+            "id": "appeal_process",
+            "description": "Must explain the appeal process (Reject \u2192 Appeal, senior underwriter review)",
+            "weight": 0.2,
+            "score": 0.0,
+            "matched": 0,
+            "min_required": 2,
+            "matched_patterns": []
+          },
+          {
+            "id": "decline_vs_withdrawal",
+            "description": "Must distinguish decline from withdrawal",
+            "weight": 0.15,
             "score": 0.0,
             "matched": 0,
             "min_required": 1,
@@ -169,171 +236,71 @@
       }
     }
   },
-  "render_decline_flow": {
-    "brain": {
-      "run": {
-        "answer": "Here is the complete picture of what happens when a loan application is declined, synthesized from both the backend implementation and usage/test contract perspectives:\n\n---\n\n# What Happens When a Loan Application is Declined\n\n## 1. \ud83d\udd34 Decline Triggers\n\nThere are two paths to a decline:\n\n### Automated Declines (Batch Tasks)\nScheduled batch tasks evaluate applicant features against rules and auto-decline when criteria are met (`backend/src/abound/abound_tasks/tasks.py`):\n\n| Batch Task | Rule/Reason |\n|---|---|\n| `batch_pa_gambler_decline()` (line 274) | Pre-approved applicants flagged for gambling behaviour |\n| `batch_pa_bm_low_delphi_decline()` (line 292) | Pre-approved applicants with low Delphi credit scores |\n| `batch_non_pa_decline()` (line 310) | Generic non-pre-approved declines |\n| Feature rule ID 9000 (metric=1) | Auto-decline trigger in `abound_tasks/queries.py:363` |\n\n### Manual Declines (Underwriter Decision)\nAn underwriter calls `update_decision()` in `ApplicationService.py:1613` with `DecisionTypeEnum.Reject`, optionally supplying a free-text `decision_reason` (max 250 chars).\n\n---\n\n## 2. \ud83d\udccb Decline Reason Codes\n\n### Credit/Risk Reasons (`00113_decision_reasons.sql`):\n- `qcr_currentcredit` \u2014 QCR Current Credit\n- `qcr_unsustainable` \u2014 QCR Unsustainable\n- `gambling` \u2014 Gambling\n- `unresolved_ccj` \u2014 Unresolved CCJ\n- `decline_batch_non_PA_decline`\n- `saturday_decline_generic`\n\n### High-Level Categories (`data_models/pydantic/app/decision_reason.py:18\u201326`):\n- `Financial Vulnerability`, `Wrong Credit File Debt`, `Loss of Income`, `Fraud`, `Customer Requested`, `Other`\n\n### Identity Verification (IDV) Decline Reasons (`applicant_identity.py:324\u2013335`):\n- `failed_predisb_RTR_expiry` \u2014 Right to Rent expiry\n- `failed_predisb_inadequte_docs_uk` \u2014 Inadequate UK docs\n- `failed_predisb_inadequte_docs_non_uk` \u2014 Inadequate non-UK docs\n- `failed_predisb_fraud` \u2014 Fraud detected\n- `failed_predisb_customer_withdrawal` \u2014 Customer withdrew\n- `failed_predisb_timed_out_no_response` \u2014 Timed out / no response\n- `failed_predisb_uw_decline` \u2014 Underwriting decline\n- `failed_predisb_other` \u2014 Other reason\n\n---\n\n## 3. \ud83d\udd04 State Transitions\n\nThe application moves through `DecisionTypeEnum` states (`enums.py:825\u2013836`):\n\n```\nPENDING / REFERRAL / AWAITING / ACCEPT\n         \u2193\n      DECLINE  \u2190 terminal if is_final_decision = True\n         \u2193\n      APPEAL   \u2190 optional, reopens the review\n```\n\n- A transition to `Reject` is validated via `DecisionTypeEnum.is_allowed_transition()` (`ApplicationService.py:1678`)\n- When `is_final_decision=True`, all open audit steps are **closed** (`ApplicationService.py:1717\u20131726`)\n- The decline **cannot be further transitioned** once it is final\n\n---\n\n## 4. \ud83d\udcbe How the Decision is Persisted\n\n`ApplicationService.py:1821\u20131845` orchestrates persistence:\n\n1. **`application_decision` table** \u2014 temporal record (with `valid_from`/`valid_to`) storing:\n   - `decision = \"DECLINE\"`\n   - `is_final_decision` (boolean)\n   - `is_auto_decision` (boolean)\n   - `decision_reason` (free text)\n   - `assigned` user\n2. **`audit_step` records** \u2014 marked completed with `decision`, `decision_reason`, `user_uuid`, and `completed_timestamp`\n3. **`case_event` audit trail** \u2014 `ApplicationDecisionUpdated` event with `from_value`, `to_value`, and `reason` (`ApplicationService.py:1695\u20131707`)\n\n---\n\n## 5. \u26a1 Downstream Actions (What Gets Triggered)\n\nAfter a final decline is recorded, a cascade of actions fires (`ApplicationService.py:1832\u20131923`):\n\n| Action | Detail |\n|---|---|\n| \ud83d\udcc4 **Document Generation** | `document_manager.generate_application_documents()` \u2014 produces a rejection letter for the applicant |\n| \ud83d\udce7 **Email Notification** | Template resolved via `get_email_source_from_final_decision_type()` \u2192 `ApplicationEmailSource.RejectedApplication`; brand-specific settings applied |\n| \ud83d\udd14 **WebSocket Push** | `push_application_update(..., UpdateType.ApplicationDecisionUpdate)` \u2014 real-time update to dashboard users |\n| \ud83d\udd17 **Application Callback** | If `application.callback_url` is set: fires `ApplicationCallbackModel` with type `decision` (sync or async via `execute_callback_task.defer_async()`) |\n| \ud83e\ude9d **Introducer Webhook** | If `application.introducer_webhook_url` is set (non-DAPI): fires `create_decision_callback()` with `introducer_application_id` |\n| \ud83d\udccb **Case Event / Audit Log** | Full audit trail: who declined, when, and why \u2014 visible to internal users |\n\n---\n\n## 6. \ud83d\udd01 Appeal / Reconsideration Process\n\nA declined application can be moved to the `APPEAL` state:\n\n- `is_final_decision` is reset to `False`, `is_auto_decision` to `False` (`ApplicationService.py:1762\u20131763`)\n- A **new audit step** is created and assigned to a `SeniorUnderwriter` (line 1768)\n- The previous audit step is recorded for traceability\n- The appeal reviewer can then: **Accept** (overturn), **Reject** (uphold), or transition to another state\n- `is_app_in_appeal_by_user()` tracks appeal ownership\n\n---\n\n## 7. \ud83d\udc64 What the Applicant/Borrower Sees\n\n| Channel | What They See |\n|---|---|\n| **Portal/UI** | Status shows as `\"DECLINE\"`; decline reason displayed if populated |\n| **Email** | Brand-specific rejection email sent from `RejectedApplication` template |\n| **Documents** | Rejection letter available to download (generated on final decline) |\n| **IDV Decline** | If identity check failed, one of the 8 specific IDV reason codes is shown |\n| **Appeal** | Option to appeal may be presented if `is_final_decision=True` and workflow rules permit |\n\n---\n\n## Key Files at a Glance\n\n| Concern | File | Key Lines |\n|---|---|---|\n| Decision state machine & enums | `data_models/models/enums.py` | 825\u2013846 |\n| Decision model (DB) | `data_models/models/db/app/application_decision.py` | 10\u201326 |\n| Decision model (Pydantic) | `data_models/models/pydantic/app/application_decision.py` | 41\u2013165 |\n| Core decision logic | `common/services/ApplicationService.py` | 1613, 1678, 1717\u20131923 |\n| Batch auto-decline tasks | `abound/abound_tasks/tasks.py` | 234\u2013315, 398 |\n| IDV decline reasons | `data_models/models/pydantic/idv/applicant_identity.py` | 324\u2013335 |\n| Decline reason codes (DB) | `data_models/db/changelogs/00113_decision_reasons.sql` | \u2014 |\n| Email notification | `EmailService/helpers.py` | 200\u2013201 |\n| Callbacks | `common/services/ApplicationService.py` | 1860\u20131923 |",
-        "tool_calls": 2,
-        "iterations": 0,
-        "duration_ms": 104740.74792861938,
-        "error": null
-      },
-      "scoring": {
-        "total_score": 1.0,
-        "findings": [
-          {
-            "id": "decline_triggers",
-            "description": "Must explain both automated and manual decline triggers",
-            "weight": 0.2,
-            "score": 1.0,
-            "matched": 2,
-            "min_required": 2,
-            "matched_patterns": [
-              "auto.*decline|AUTO_DECLINE|automated|automatic",
-              "manual|underwriter|Underwriter"
-            ]
-          },
-          {
-            "id": "decline_actions",
-            "description": "Must describe what happens after decline (email, documents, callback)",
-            "weight": 0.25,
-            "score": 1.0,
-            "matched": 3,
-            "min_required": 2,
-            "matched_patterns": [
-              "email|Email|notification|RejectedApplication",
-              "document|letter|generate",
-              "callback|webhook"
-            ]
-          },
-          {
-            "id": "decline_reasons",
-            "description": "Must list specific decline reasons (affordability, CCJ, fraud, etc.)",
-            "weight": 0.2,
-            "score": 1.0,
-            "matched": 3,
-            "min_required": 2,
-            "matched_patterns": [
-              "CCJ|county.*court|ccj",
-              "fraud|Fraud",
-              "gambling|Gambling|income.*mismatch|loss.*income"
-            ]
-          },
-          {
-            "id": "appeal_process",
-            "description": "Must explain the appeal process (Reject \u2192 Appeal, senior underwriter review)",
-            "weight": 0.2,
-            "score": 1.0,
-            "matched": 2,
-            "min_required": 2,
-            "matched_patterns": [
-              "appeal|Appeal",
-              "senior.*underwriter|SeniorUnderwriter|re.*review"
-            ]
-          },
-          {
-            "id": "decline_vs_withdrawal",
-            "description": "Must distinguish decline from withdrawal",
-            "weight": 0.15,
-            "score": 1.0,
-            "matched": 2,
-            "min_required": 1,
-            "matched_patterns": [
-              "withdraw|Withdrawn|WITHDRAWN",
-              "terminal|no.*transition|cannot.*appeal"
-            ]
-          }
-        ]
-      }
-    }
-  },
   "render_idv_process": {
     "brain": {
       "run": {
-        "answer": "Here is a comprehensive breakdown of the **IDV (Identity Verification)** process in your platform:\n\n---\n\n## \ud83d\udd10 IDV (Identity Verification) Process\n\n---\n\n### **Phase 1: Initiation**\n\n**Entry Point:** `POST /identity/create` \u2014 `backend/src/dashboard_api/cases/case_identity_routes.py:52\u2013131`\n\n1. The process is triggered with `application_id`, `applicant_id`, and an optional `force_new_identity_request` flag.\n2. **Channel Selection** (`case_identity_routes.py:101\u2013106`):\n   - If the applicant has a **Credisphere** tag \u2192 uses `CredisphereGlobal` channel\n   - Otherwise \u2192 uses the default channel from settings\n3. **Session Reuse Check** (`case_identity_routes.py:108\u2013122`):\n   - If `force_new_identity_request=False`, the system looks for an existing `VerificationPending` session on the same channel that is **less than 48 hours old** and reuses it.\n   - Otherwise, a new session is generated via `generate_identity_request()`.\n4. **Session Generation** (`idverse_identity_service.py:150\u2013241`):\n   - Creates a `transaction_id` in the format `{prefix}-{applicant_id}-{timestamp_ms}`\n   - Encrypts the `transaction_id` using `notification_enc_key`\n   - Builds an `IDVerseIdentityRequest` with:\n     - `notifyUrlComplete` / `notifyUrlEvent` \u2192 `/api/integrations/v1/idverse/notify`\n     - `redirectUrlSuccess` / `redirectUrlCancel` \u2192 `/api/integrations/v1/idverse/return/{transaction_id}/{token}`\n   - Calls `IDVerseClient.api_store_transaction()` to create the session\n   - Calls `IDVerseClient.api_transaction()` to obtain the redirect URL\n   - Saves an `ApplicantIdentity` record with `status=VerificationPending` to the DB\n   - Records an `IdvRequested` event\n5. **Email Sent:** An `\"email_idv_request\"` email is dispatched with the `idv_link` (redirect URL) to the applicant.\n\n---\n\n### **Phase 2: User Journey on IDVerse Portal**\n\nThe applicant:\n1. Clicks the link in the email \u2192 redirected to **IDVerse portal**\n2. Completes the guided flow: ID document capture \u2192 face match \u2192 liveness check\n3. On completion (or cancellation), IDVerse fires **two callbacks** back to the platform:\n   - **Event callback**: `POST /api/integrations/v1/idverse/notify` with intermediate events (e.g., `inprogress`, `completedPass`, `completedFlagged`)\n   - **Completion callback**: Same endpoint with the final status\n\n---\n\n### **Phase 3: Callback Processing**\n\n**Callback Endpoint:** `POST /api/integrations/v1/idverse/notify` \u2014 `backend/src/external_api/endpoints/integrations/idverse.py:31\u2013116`\n\n- **Authentication**:\n  - *API Flow*: `signature` header contains the encrypted `transaction_id`\n  - *Assisted Flow* (IDVerse portal): `Authorization` header with `Basic base64(username:password)`\n- **Retry Logic** (`idverse.py:55\u2013114`): Exponential backoff (0s, 2s, 4s) for `UniqueViolationError` or `ValidationError`\n- Calls `identity_service.process_callback()` (`idverse_identity_service.py:266\u2013364`)\n  - Validates auth token\n  - Sets request state as `idverse_callback` user\n  - Calls `reload_identity_data()` to fetch the latest result from IDVerse\n\n---\n\n### **Phase 4: Data Reload & Status Determination**\n\n**`reload_identity_data()`** \u2014 `idverse_identity_service.py:389\u2013575`\n\n1. Fetches the latest `ApplicantIdentity` from the DB\n2. Calls `IDVerseClient.api_transaction(transaction_id)` for the latest result\n3. Detects if it's an **assisted flow** (`reference=\"NA\"` \u2192 `is_assisted_flow=True`)\n4. Computes the new status from IDVerse's status mapping:\n\n| IDVerse Status | Platform Status |\n|---|---|\n| `pending`, `inprogress`, `liveness`, etc. | `VerificationPending` |\n| `completedPass` | `VerificationPassed` |\n| `completedFlagged` | `VerificationReferred` |\n| `cancelled` | `VerificationCancelled` |\n| `expired` | `VerificationExpired` |\n\n5. If status has changed (and not already `Approved`/`Rejected`), runs **Applicant Match Checks** and evaluates the **Auto-Approval Logic**:\n\n---\n\n### **Phase 5: Applicant Match Checks**\n\n**`_applicant_match_checks()`** \u2014 `idverse_identity_service.py:1130\u20131197`\n\n11+ quality checks are run against the IDVerse result vs. the applicant's stored data:\n\n| Check | Description |\n|---|---|\n| `AnyDocuments` | At least one document submitted |\n| `DocumentFraudRisk` | Fraud assessment passed |\n| `DocumentFaceMatch` | Face match fraud check passed |\n| `ApplicantLiveCheck` | Liveness fraud assessment passed |\n| `ApplicantLiveFaceCountCheck` | Exactly 1 face in liveness video |\n| `LocationFromUK` | IP/geolocation check (if `geo_check_enabled`) |\n| `DocumentExpired` | Document expiry date > today |\n| `DOBMatch` | IDV date of birth == applicant DOB |\n| `NameMatch` | Fuzzy match on first/last name |\n| `CurrentAddressMatch` | Fuzzy match on latest address |\n| `AnyAddressMatch` | Fuzzy match on any historical address |\n| `AutoApprovedNationality` / `DocumentTypeApprovalCheck` | Nationality/document type eligibility |\n\n`applicant_match = True` only if **all checks pass**.\n\n---\n\n### **Phase 6: Auto-Approval / Auto-Rejection Logic**\n\n**`idverse_identity_service.py:483\u2013502`**\n\n- **Auto-Approve** (status \u2192 `VerificationApproved`) if:\n  - IDVerse result = `completedPass`\n  - `random() > passed_manual_review_proportion` (configurable sampling rate)\n  - All applicant match checks pass\n  - No follow-up required\n- **Auto-Reject** (status \u2192 `VerificationRejected`) if:\n  - IDVerse result = `completedFlagged`\n  - `random() > referred_manual_review_proportion` (configurable sampling rate)\n- Cases that don't auto-resolve remain in **`VerificationPassed`** or **`VerificationReferred`** for manual review.\n\n---\n\n### **Phase 7: Follow-up Emails**\n\n**`idverse_identity_service.py:1199\u20131217`** & `idverse_identity_service.py:504\u2013516`\n\n- If the **`DocumentTypeApprovalCheck`** fails \u2192 a follow-up email is sent requesting the applicant to provide a **share code** (`requires_customer_action=True`, `follow_up_required=True`)\n- Template is matched by document type + country from a configured `follow_up_email` list\n- Email tokens for `ab001` flow include: `aboundBaseUrl`, `applicantId`, `externalApplicantId`, `identityCode`\n\n---\n\n### **Phase 8: Manual Review (for Referred/Passed cases)**\n\n**Endpoint:** `POST /identity/review` \u2014 `case_identity_routes.py:33\u201349`\n**Service:** `mark_request_as_reviewed()` \u2014 `idverse_identity_service.py:622\u2013681`\n\n- Accepts: `applicant_identity_id`, `target_status`, `suspected_fraud`, `idv_decline_reason`, `idv_decline_reason_comment`\n- **Validation**: Current status must be `VerificationReferred` or `VerificationPassed`; the application must have a final decision\n- **Allowed Transitions**:\n  - `VerificationReferred` \u2192 `VerificationApproved` / `VerificationRejected` / `VerificationCancelled`\n  - `VerificationPassed` \u2192 `VerificationApproved` / `VerificationRejected` / `VerificationCancelled`\n- Records an `IdvDecision` event and triggers webhook callbacks\n\n---\n\n### **Phase 9: Webhooks & Callbacks**\n\n**`_idv_callback()`** \u2014 `idverse_identity_service.py:776\u2013881`\n\nTwo webhooks may be dispatched (deferred/async):\n\n1. **Applicant-level callback** (legacy, if `applicant.callback_url` exists):\n   ```json\n   {\n     \"applicant_id\": \"...\",\n     \"type\": \"id_verification\",\n     \"data\": {\n       \"status\": \"VerificationApproved\",\n       \"applicant_identity_id\": \"...\",\n       \"idv_decline_reason\": null,\n       \"verified_identity_data\": {\n         \"share_code_required\": false,\n         \"is_assisted_flow\": false\n       }\n     }\n   }\n   ```\n\n2. **Application-level decision webhook** (if all conditions met):\n   - Application created within 14 days\n   - Has an `introducer_webhook_url`\n   - Application decision = `Accept`\n   - IDV status in `{Passed, Approved, Referred}`\n   - Not a DAPI application type\n\n---\n\n### **Phase 10: Return URL Redirect**\n\n**`GET /api/integrations/v1/idverse/return/{transaction_id}/{token}`** \u2014 `idverse.py:119\u2013148`\n\n1. Verifies the one-time token\n2. Calls `reload_identity_data()` for the latest status\n3. Redirects to journey endpoint based on outcome:\n   - \u2705 **Success**: `Pending`, `Referred`, `Passed`, `Approved`\n   - \u274c **Failure**: `Rejected`, `Cancelled`, `Expired`, `Failed`\n\n---\n\n### **Complete State Machine**\n\n```\nVerificationPending\n    \u2502\n    \u251c\u2500\u2500\u2500 (IDVerse in progress) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n    \u2502                                                 \u2502\n    \u25bc                                                 \u25bc\nVerificationPassed \u2500\u2500(auto-approve)\u2500\u2500\u2192 VerificationApproved\n    \u2502                  (manual review)\u2500\u2500\u2192 VerificationApproved\n    \u2502                  (manual review)\u2500\u2500\u2192 VerificationRejected\n    \u2502\nVerificationReferred \u2500\u2500(auto-reject)\u2500\u2500\u2192 VerificationRejected\n    \u2502                  (manual review)\u2500\u2500\u2192 VerificationApproved\n    \u2502                  (manual review)\u2500\u2500\u2192 VerificationRejected\n    \u2502\nVerificationCancelled  (user cancelled)\nVerificationExpired    (session timeout)\nVerificationFailed     (system error)\nVerificationDataError  (data mismatch)\n```\n\n---\n\n### **Decline Reasons** (`applicant_identity.py:324`)\n\n| Reason | Description |\n|---|---|\n| `RightToRentExpiry` | Right to rent document expired |\n| `InadequateDocsUK` | Insufficient documents (UK) |\n| `InadequateDocsNonUK` | Insufficient documents (Non-UK) |\n| `FraudDetected` | Fraud indicators found |\n| `CustomerWithdrawal` | Customer withdrew |\n| `TimedOutNoResponse` | No response within timeout |\n| `UnderwritingDecline` | Underwriting decision |\n| `OtherReason` | Other / free-text reason |\n\n---\n\n### **Key Files Reference**\n\n| Component | File | Lines |\n|---|---|---|\n| Domain Model | `data_models/models/pydantic/idv/applicant_identity.py` | 27\u2013354 |\n| Initiation Endpoint | `dashboard_api/cases/case_identity_routes.py` | 52\u2013131 |\n| Manual Review Endpoint | `dashboard_api/cases/case_identity_routes.py` | 33\u201349 |\n| Session Generation | `common/services/identity_service/idverse_identity_service.py` | 150\u2013241 |\n| Callback Webhook | `external_api/endpoints/integrations/idverse.py` | 31\u2013116 |\n| Callback Processing | `common/services/identity_service/idverse_identity_service.py` | 266\u2013364 |\n| Data Reload + Core Logic | `common/services/identity_service/idverse_identity_service.py` | 389\u2013575 |\n| Auto-Approval Logic | `common/services/identity_service/idverse_identity_service.py` | 483\u2013519 |\n| Applicant Match Checks | `common/services/identity_service/idverse_identity_service.py` | 1130\u20131197 |\n| Webhook Dispatch | `common/services/identity_service/idverse_identity_service.py` | 776\u2013881 |\n| Manual Review Logic | `common/services/identity_service/idverse_identity_service.py` | 622\u2013681 |\n| Return URL Redirect | `external_api/endpoints/integrations/idverse.py` | 119\u2013148 |",
-        "tool_calls": 2,
+        "answer": "",
+        "tool_calls": 0,
         "iterations": 0,
-        "duration_ms": 146932.54947662354,
-        "error": null
+        "duration_ms": 77.47173309326172,
+        "error": "No answer produced"
       },
       "scoring": {
-        "total_score": 0.95,
+        "total_score": 0.0,
         "findings": [
           {
             "id": "idv_provider",
             "description": "Must identify IDVerse as the IDV provider",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 1,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 1,
-            "matched_patterns": [
-              "IDVerse|idverse"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "idv_journey",
             "description": "Must describe the customer journey: generate link \u2192 document upload \u2192 liveness check \u2192 callback",
             "weight": 0.25,
-            "score": 1.0,
-            "matched": 4,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 3,
-            "matched_patterns": [
-              "generate.*link|generate.*request|magic.*link|redirect.*url",
-              "document|passport|driver.*license|ID.*card",
-              "liveness|biometric|face.*match|selfie",
-              "callback|webhook|notify"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "idv_quality_checks",
             "description": "Must mention quality/match checks (NameMatch, DOBMatch, fraud, etc.)",
             "weight": 0.2,
-            "score": 1.0,
-            "matched": 4,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "NameMatch|name.*match|match.*name",
-              "DOBMatch|DOB.*match|date.*birth",
-              "fraud|FraudRisk|document.*fraud",
-              "liveness.*check|live.*check|ApplicantLiveCheck"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "idv_statuses",
             "description": "Must list IDV statuses (Pending, Passed, Approved, Rejected, Referred)",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 4,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 3,
-            "matched_patterns": [
-              "VerificationPending|Pending",
-              "VerificationPassed|Passed|completedPass",
-              "VerificationApproved|Approved|auto.*approv",
-              "VerificationReferred|Referred|manual.*review"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "idv_manual_review",
             "description": "Must explain the manual review process for referred cases",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 2,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "manual.*review|review.*queue|pending.*review|underwriter",
-              "dashboard|case.*identity|identity.*review"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "idv_data_collected",
             "description": "Must mention what data is collected (documents, selfie/liveness, extracted identity data)",
             "weight": 0.1,
-            "score": 0.5,
-            "matched": 1,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "selfie|liveness|biometric|face"
-            ]
+            "matched_patterns": []
           }
         ]
       }
@@ -342,89 +309,68 @@
   "render_open_banking": {
     "brain": {
       "run": {
-        "answer": "## Open Banking in Your Business\n\nOpen Banking is a **consent-based financial data access mechanism** built into your lending platform. It allows applicants to securely share their real bank transaction history so the platform can make better, faster lending decisions. Here's a full breakdown:\n\n---\n\n### \ud83c\udfe6 What It Is & Business Purpose\n\nOpen Banking serves as an **alternative credit assessment tool** \u2014 especially valuable for applicants with thin or no traditional credit history. Instead of relying solely on credit bureau scores, the platform accesses live bank account data to evaluate:\n\n- **Affordability** \u2014 actual income vs. spending patterns\n- **Repayment capacity** \u2014 disposable income after regular outgoings\n- **Risk signals** \u2014 overdrafts, missed payments, income volatility\n\nIt sits alongside Equifax credit files, ONS data, and client-provided data as a **composable affordability data source** (`application_affordability_service.py`).\n\n---\n\n### \ud83d\udccb Data Accessed\n\n| Data Type | Details |\n|---|---|\n| **Consents** | Customer's explicit authorization to access a specific bank; expires after 90 days |\n| **Bank Accounts** | Account number, sort code, balance, overdraft limit, joint account flag |\n| **Transactions** | Amount, direction (credit/debit), date, merchant, category \u2014 up to 100,000 per account |\n\nTransactions are classified into **affordability categories** (e.g., Groceries, Rent, Utilities, Salary) and aggregated as monthly averages or totals to feed the decisioning engine.\n\n---\n\n### \u2699\ufe0f How It Feeds Lending Decisions\n\nThe flow works in three stages:\n\n1. **Consent & Data Collection** \u2014 The customer is redirected to their bank to authorise access. The platform receives a webhook (or polls as fallback) and downloads transactions.\n\n2. **Affordability Calculation** \u2014 `OpenBankingColumnCalculator` transforms transactions into per-category monthly spending averages, which are combined with ONS and client-provided data to build a full affordability picture.\n\n3. **Automated Decisioning** \u2014 The platform can trigger:\n   - `OBAutoAccept` \u2014 auto-approve if OB data shows strong affordability\n   - `OBAutoDecline` \u2014 auto-decline if OB data is adverse\n\nResults are also delivered as ML model features (40+ `OpenBanking` and `OpenBankingCredit` features) for risk scoring.\n\n---\n\n### \ud83d\udd27 Key Components\n\n| Component | Role |\n|---|---|\n| `OpenBankingConnectionManager` | Core orchestrator \u2014 manages consent creation, bank redirect, webhook handling, transaction download, expiry |\n| `IOpenBankingConnectionProvider` | Abstract interface all providers implement, making manager code provider-agnostic |\n| `CachedOpenBankingManager` | Caching wrapper to avoid repeated provider API calls |\n| `ConnectionBalancerOB` | Load-balances requests across multiple providers; reroutes if one is under maintenance |\n| `OpenBankingColumnCalculator` | Converts raw transactions into affordability category averages |\n\n---\n\n### \ud83c\udf10 Third-Party Providers\n\nThe platform integrates with **multiple Open Banking aggregators**, selected dynamically per bank:\n\n| Provider | Notes |\n|---|---|\n| **Bud** | Primary provider; OAuth 2.0, supports sandbox & production |\n| **Equifax (AccountScore)** | Credit-assessment focused OB product |\n| **D-One** | Additional aggregator |\n| **Ibancar** | Additional aggregator |\n| **Direct API** | Custom/internal integration |\n\nThe `ConnectionBalancerOB` automatically picks the best available provider for each bank, ensuring resilience if one provider has an outage or is in maintenance.\n\n---\n\n### \ud83d\udd12 Consent Governance\n\n- Consents **expire after 90 days** from authorisation\n- Expired consents cannot be re-used \u2014 a new customer authorisation is required\n- All OB events (`ObConsentStatus`, `ObAccountStatus`) are **audit-logged** for compliance\n- Sensitive IDs are **masked in logs** to protect customer data\n\n---\n\n### Summary\n\n> Open Banking in your platform is a **real-time bank data pipeline** that powers affordability analysis and automated lending decisions. Customers authorise access once, the platform downloads and classifies their transaction history, and that data feeds directly into credit risk models and decision rules \u2014 giving a more accurate picture of repayment ability than traditional credit scores alone.",
-        "tool_calls": 2,
+        "answer": "",
+        "tool_calls": 0,
         "iterations": 0,
-        "duration_ms": 102927.94466018677,
-        "error": null
+        "duration_ms": 83.78887176513672,
+        "error": "No answer produced"
       },
       "scoring": {
-        "total_score": 1.0,
+        "total_score": 0.0,
         "findings": [
           {
             "id": "ob_purpose",
             "description": "Must explain that OB is used for income verification and affordability assessment in lending decisions",
             "weight": 0.25,
-            "score": 1.0,
-            "matched": 3,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 3,
-            "matched_patterns": [
-              "income.*verif|verif.*income|income.*analysis|income.*categor|categor.*income|salary",
-              "affordability|afford",
-              "transaction|spending|spend"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "ob_providers",
             "description": "Must identify at least 2 OB providers (Bud, Equifax/AccountScore, DirectApi, DOne, etc.)",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 2,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "Bud",
-              "Equifax|AccountScore"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "ob_consent_flow",
             "description": "Must describe the consent flow: generate link \u2192 user authorizes \u2192 webhook callback \u2192 load transactions",
             "weight": 0.2,
-            "score": 1.0,
-            "matched": 4,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 3,
-            "matched_patterns": [
-              "consent|Consent",
-              "redirect|link|magic.*link|OAuth",
-              "webhook|callback",
-              "load.*transaction|transaction.*load|refresh.*transaction"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "ob_data_collected",
             "description": "Must mention what data is collected: bank accounts, transactions, balances",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 3,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "bank.*account|BankAccount",
-              "transaction|Transaction",
-              "balance|Balance"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "ob_classification",
             "description": "Must explain that transactions are classified into categories for affordability",
             "weight": 0.15,
-            "score": 1.0,
-            "matched": 2,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 2,
-            "matched_patterns": [
-              "classif|categor|tag",
-              "Income|CoreSpending|FinancialServices|Discretionary|affordability.*categor"
-            ]
+            "matched_patterns": []
           },
           {
             "id": "ob_consent_status",
             "description": "Should mention consent statuses or the state machine (Pending, Granted, DataLoaded, etc.)",
             "weight": 0.1,
-            "score": 1.0,
-            "matched": 1,
+            "score": 0.0,
+            "matched": 0,
             "min_required": 1,
-            "matched_patterns": [
-              "ConsentPending|ConsentGranted|DataLoaded|ConsentDeclined|consent.*status|status.*consent"
-            ]
+            "matched_patterns": []
           }
         ]
       }

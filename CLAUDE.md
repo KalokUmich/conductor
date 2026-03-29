@@ -49,10 +49,13 @@ cd backend
 # Code review quality (12 planted-bug cases)
 python ../eval/code_review/run.py --provider anthropic --model claude-sonnet-4-20250514
 python ../eval/code_review/run.py --filter "requests-001" --no-judge
+python ../eval/code_review/run.py --brain --no-judge --verbose   # PR Brain mode
+python ../eval/code_review/run.py --gold --gold-model sonnet     # Claude Code CLI baseline
 
 # Agent answer quality (baseline comparison)
 python ../eval/agent_quality/run_bedrock.py                  # Bedrock (Sonnet/Haiku)
 python ../eval/agent_quality/run_bedrock.py --workflow --haiku  # Haiku explorer + Sonnet judge
+python ../eval/agent_quality/run_bedrock.py --brain              # Brain orchestrator
 python ../eval/agent_quality/run_qwen.py --workflow            # Qwen (DashScope)
 
 # Tool parity (Python vs TS)
@@ -69,12 +72,15 @@ backend/app/
 ├── config.py                # Settings + Secrets from YAML
 ├── agent_loop/              # Agentic code intelligence (LLM + tools)
 │   ├── service.py           # AgentLoopService — LLM loop, tool dispatch
+│   ├── brain.py             # AgentToolExecutor — dispatch_agent/dispatch_swarm/transfer_to_brain
+│   ├── pr_brain.py          # PRBrainOrchestrator — deterministic PR review pipeline via Brain
 │   ├── budget.py            # BudgetController — token-based budget management
 │   ├── trace.py             # SessionTrace — per-session JSON trace
 │   ├── query_classifier.py  # QueryClassifier — keyword + optional LLM classification
 │   ├── evidence.py          # EvidenceEvaluator — rule-based answer quality check
 │   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
-│   ├── prompts.py           # 3-layer system prompt (Identity + Strategy + Runtime)
+│   ├── interactive.py       # ask_user coordination (register/submit/cleanup)
+│   ├── prompts.py           # 4-layer prompt architecture (Identity + Tools + Skills + Task)
 │   └── router.py            # POST /api/context/query
 ├── chat/                    # WebSocket chat + persistence
 │   ├── manager.py           # ConnectionManager — WebSocket room management
@@ -94,7 +100,8 @@ backend/app/
 │   ├── router.py            # /api/workflows/ endpoints
 │   └── observability.py     # Langfuse @observe decorator (no-op when disabled)
 ├── code_review/             # Multi-agent PR review pipeline
-│   ├── service.py           # CodeReviewService — 10-step review pipeline
+│   ├── service.py           # CodeReviewService — legacy 10-step review pipeline
+│   ├── shared.py            # Shared functions (used by both CodeReviewService + PRBrain)
 │   ├── agents.py            # Specialized review agents (parallel dispatch)
 │   ├── models.py            # PRContext, ReviewFinding, ReviewResult, RiskProfile
 │   ├── diff_parser.py       # Parse git diff into PRContext
@@ -126,27 +133,85 @@ backend/app/
 config/
 ├── conductor.settings.yaml  # Non-sensitive settings (committed)
 ├── conductor.secrets.yaml   # Secrets (gitignored)
+├── brain.yaml               # Brain orchestrator config (limits, core_tools, model)
+├── brains/                  # Specialized Brain configs
+│   └── pr_review.yaml       # PR Brain config (agents, budget_weights, post_processing)
 ├── workflows/               # pr_review.yaml (parallel_all_matching), code_explorer.yaml (first_match)
-├── agents/                  # 18 agent .md files (YAML frontmatter + Markdown body)
+├── agents/                  # 19 agent .md files (YAML frontmatter + Markdown body)
+│   └── pr_arbitrator.md     # Defense attorney for PR review (challenges findings)
+├── swarms/                  # Swarm presets (agent group + parallel/sequential)
+│   ├── pr_review.yaml       # 5-agent PR review swarm
+│   └── business_flow.yaml   # 2-agent business flow tracing
 ├── prompts/                 # review_base.md, explorer_base.md (shared templates)
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 
 tests/
-├── conftest.py              # Centralized stubs (cocoindex, litellm, etc.)
-├── test_code_tools.py       # 98 tests — 24 tools + dispatcher + multi-language
-├── test_agent_loop.py       # 47 tests — agent loop + 3-layer prompt + completeness
-├── test_query_classifier.py # 26 tests
-├── test_compressed_tools.py # 24 tests
-├── test_budget_controller.py # 20 tests
-├── test_session_trace.py    # 15 tests
-├── test_evidence.py         # 14 tests
-├── test_symbol_role.py      # 24 tests
-├── test_output_policy.py    # 19 tests
-├── test_langextract.py      # 57 tests
-├── test_repo_graph.py       # 72 tests
-├── test_config_new.py       # 27 tests
-├── test_chat_persistence.py # ChatPersistenceService — micro-batch Postgres writes
-└── test_browser_tools.py    # Browser tools (Playwright) — mocked service
+├── conftest.py                     # Centralized stubs + fixtures (cocoindex, litellm, etc.)
+│
+│   # Agent loop & Brain
+├── test_agent_loop.py              # 47 tests — AgentLoopService, 4-layer prompt, evidence check
+├── test_agent_loop_integration.py  # Integration tests — real Bedrock models (@integration marker)
+├── test_brain.py                   # 39 tests — Brain orchestrator, AgentToolExecutor, dispatch modes
+├── test_mock_agent.py              # 26 tests — MockProvider scripted responses + agent harness
+├── test_interactive.py             # 9 tests  — ask_user coordination (register/submit/cleanup)
+├── test_prompt_builder.py          # 64 tests — 4-layer prompt assembly, skill injection, tool hints
+│
+│   # Code review
+├── test_code_review.py             # 67 tests — CodeReviewService legacy pipeline
+│
+│   # Code tools
+├── test_code_tools.py              # 98 tests — 24 tools + dispatcher + multi-language
+├── test_compressed_tools.py        # 24 tests — compressed_view, trace_variable, detect_patterns
+├── test_detect_patterns.py         # 34 tests — detect_patterns tool (pattern extraction)
+│
+│   # Tool parity (Python ↔ TypeScript)
+├── test_tool_parity.py             # 68 tests — get_dependencies/get_dependents/test_outline parity
+├── test_tool_parity_ast.py         # 26 tests — AST tools parity (file_outline, find_symbol, etc.)
+├── test_tool_parity_deep.py        # 34 tests — deep parity (trace_variable, compressed_view, etc.)
+├── test_local_tools_parity.py      # 23 tests — local mode tool contract validation
+│
+│   # AI providers
+├── test_ai_provider.py             # 131 tests — AIProvider ABC, ClaudeDirectProvider, Bedrock, OpenAI
+├── test_bedrock_tool_repair.py     # 64 tests — Bedrock tool call repair + malformed response handling
+├── test_litellm_provider.py        # 42 tests — LiteLLM provider adapter
+│
+│   # Workflow + config
+├── test_config_new.py              # 27 tests — Settings + Secrets YAML loading
+├── test_config_paths.py            # 3 tests  — Path resolution for audit logs
+├── test_style_loader.py            # 22 tests — Agent .md frontmatter + body loader
+│
+│   # Infrastructure
+├── test_budget_controller.py       # 20 tests — BudgetController token accounting
+├── test_session_trace.py           # 15 tests — SessionTrace per-session JSON trace
+├── test_evidence.py                # 14 tests — EvidenceEvaluator rule-based quality check
+├── test_query_classifier.py        # 26 tests — QueryClassifier keyword + LLM classification
+├── test_output_policy.py           # 19 tests — Per-tool truncation policies (budget-adaptive)
+├── test_symbol_role.py             # 24 tests — Symbol role extraction (AST-based)
+├── test_auto_apply_policy.py       # 28 tests — Auto-apply policy enforcement
+│
+│   # Language processing
+├── test_langextract.py             # 57 tests — LangExtract + multi-vendor Bedrock integration
+├── test_repo_graph.py              # 72 tests — AST symbol extraction + dependency graph
+│
+│   # Chat
+├── test_chat.py                    # 29 tests — WebSocket chat, identity, lead transfer
+├── test_chat_persistence.py        # ChatPersistenceService — micro-batch Postgres writes
+│
+│   # Integrations
+├── test_jira_router.py             # 25 tests — Jira OAuth 3LO + REST API router
+├── test_jira_service.py            # 43 tests — JiraOAuthService token lifecycle + API calls
+├── test_auth.py                    # 38 tests — SSO ARN parsing, device auth flow
+├── test_audit.py                   # 11 tests — AuditLogService + changeset hash
+├── test_room_settings.py           # 18 tests — Room settings CRUD
+│
+│   # Git + workspace
+├── test_git_workspace.py           # 75 tests — GitWorkspaceManager, worktree lifecycle
+├── test_workspace_files.py         # 39 tests — workspace file browsing + filtering
+├── test_db.py                      # 5 tests  — SQLAlchemy engine + table creation (Postgres)
+│
+│   # Browser + misc
+├── test_browser_tools.py           # Browser tools (Playwright) — mocked service
+└── test_main.py                    # 1 test   — FastAPI app startup / lifespan smoke test
 ```
 
 ### Extension Structure
@@ -214,24 +279,47 @@ The **Brain** is an LLM orchestrator (strong model) that replaces the keyword cl
 It understands queries, dispatches specialist agents, evaluates findings, and synthesizes answers.
 
 ```
-Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, ask_user)
-  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel preset)
+Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, transfer_to_brain, ask_user)
+  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel) | TRANSFER (specialized brain)
   → dispatch_agent → AgentLoopService (Haiku, code tools, isolated context)
+    → 4-layer prompt: L1 system (agent identity) + L2 tools + L3 skills (workspace) + L4 query
     → Tool execution (up to 20 iter / 420K tokens)
-    → Evidence check + completeness check (internal retry)
+    → Evidence check (internal retry)
     → Returns condensed AgentFindings to Brain
   → Brain synthesizes final answer with file:line evidence
 ```
 
-**Three dispatch modes:**
+**Sub-agent prompt assembly (4-layer):**
+- **Layer 1 (system prompt)**: Built per-agent from `.md` description + instructions — defines who this agent is
+- **Layer 2 (tools)**: `brain.yaml` core_tools ∪ agent `.md` tools ∪ signal_blocker
+- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. PR review agents get `code_review_pr` skill (severity framework, DO NOT FLAG list, JSON output format).
+- **Layer 4 (user message)**: The query from Brain + optional code_context — no role injection
+
+**Four dispatch modes:**
 - **SIMPLE** (~80%): one agent, trust result, done
 - **COMPLEX** (~15%): agent → evaluate → handoff to different specialist with previous findings
-- **SWARM** (~5%): `dispatch_swarm("pr_review")` or `dispatch_swarm("business_flow")` — predefined parallel presets
+- **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets
+- **TRANSFER**: `transfer_to_brain("pr_review")` — one-way handoff to specialized Brain (PR reviews)
+
+**PR Brain** (`agent_loop/pr_brain.py`): Specialized deterministic pipeline for PR reviews. Activated via `transfer_to_brain("pr_review")`. Combines Brain's 4-layer prompts with CodeReviewService's deterministic post-processing:
+
+```
+transfer_to_brain("pr_review") → PRBrainOrchestrator
+  Phase 1: Pre-compute (parse_diff, classify_risk, prefetch_diffs, impact_graph)
+  Phase 2: Dispatch review agents (correctness[strong], security, reliability, concurrency, test_coverage)
+  Phase 3: Post-process (evidence_gate → post_filter → dedup → score_and_rank)
+  Phase 4: Adversarial arbitration (pr_arbitrator tries to rebut each finding)
+  Phase 5: Merge recommendation (deterministic)
+  Phase 6: Synthesis — Brain as final judge (sees sub-agent evidence + arbitrator counter-evidence)
+```
+
+Key design: The arbitrator is a **defense attorney** — it tries to rebut findings with counter-evidence and a rebuttal confidence score. It does NOT adjust severity. The synthesis LLM sees both sides (prosecution + defense) and makes the final call.
 
 **Configuration:**
-- `config/brain.yaml` — Brain limits (iterations, budget, concurrency, timeout)
-- `config/agents/*.md` — Agent templates (name, description, model, tools, limits + instructions)
-- `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode)
+- `config/brain.yaml` — Brain limits (iterations, budget, concurrency, timeout) + core_tools
+- `config/brains/pr_review.yaml` — PR Brain config (agents, budget_weights, post_processing)
+- `config/agents/*.md` — Agent definitions (name, description, model, tools, limits + identity instructions)
+- `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode + synthesis_guide)
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
@@ -241,15 +329,20 @@ Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_pa
 
 **Workflow API** (`/api/workflows/`): `GET` list/detail/mermaid/graph, `PUT /{name}/models`.
 
-### Code Review Pipeline (10 steps)
+### Code Review Pipeline
+
+**Two paths available:**
+
+1. **Legacy** (`CodeReviewService`): Hardcoded 10-step pipeline with Python `AgentSpec` definitions. Direct `POST /api/code-review/review` and `/review/stream` (SSE).
+
+2. **PR Brain** (`PRBrainOrchestrator`): Brain-based pipeline with 4-layer prompts, per-agent `.md` identity, adversarial arbitration. Activated via `transfer_to_brain("pr_review")` from the Brain chat flow.
+
+Both share the same post-processing code via `code_review/shared.py` (parse_findings, evidence_gate, dedup, ranking).
 
 ```
-git diff → parse → classify risk → dynamic budget → impact graph
-  → parallel specialized agents → dedup → adversarial verify
-  → severity arbitration → rank → synthesis → ReviewResult
+Legacy:  git diff → parse → risk → budget → impact → parallel agents → dedup → arbitration → synthesis
+PR Brain: transfer_to_brain → pre-compute → dispatch agents (4-layer) → post-process → adversarial arbitration → synthesis (judge)
 ```
-
-Endpoints: `POST /api/code-review/review` and `/review/stream` (SSE).
 
 ### Model A Git Workspace
 
@@ -403,31 +496,50 @@ eval/
 
 When creating or editing agent definitions (`config/agents/*.md`), system prompts (`prompts.py`), or workflow configs, follow these principles. Sources: [Anthropic Prompt Engineering](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/claude-4-best-practices), [Context Engineering for Agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). We also maintain a local copy of [prompts.chat](https://github.com/f/prompts.chat) (1500+ prompts) at `config/prompt-library/` — primarily used as **example references** when designing new agent roles, not as direct templates.
 
+### 4-Layer Prompt Architecture (mandatory)
+
+Every agent prompt — Brain or sub-agent — MUST follow this 4-layer structure. Each layer has a distinct purpose and MUST NOT bleed into another.
+
+| Layer | Purpose | Where it lives | What goes here |
+|-------|---------|----------------|----------------|
+| **1. System Prompt** | Who the agent is, what it cares about, how it behaves | `system` parameter in LLM call | Agent identity, perspective, behavioral rules, answer format. **Each sub-agent gets its own system prompt** — no shared "generic agent" identity. Built from agent `.md` description + instructions. |
+| **2. Tools** | What the agent can do and when to use each tool | `tools` parameter in LLM call | Tool definitions with clear descriptions. Treat tool descriptions as prompts — they guide behavior. `brain.yaml` core_tools + agent-specific tools from `.md` frontmatter. |
+| **3. Skills & Guidelines** | Project-specific knowledge and reusable patterns | Appended to system prompt, clearly separated | Workspace layout, project docs (README/CLAUDE.md), investigation patterns (domain models first, scope searches, etc.), risk signals, budget. Shared across agents — same project context for all. |
+| **4. User Messages** | The actual task plus focused context | `messages` parameter in LLM call | The query from Brain, plus any code_context snippet. Keep it specific and scoped to what the agent needs right now. **Never inject agent identity or role into user messages.** |
+
+**Key rules:**
+- Agent identity (Layer 1) MUST be in the system prompt, never in the user message. The old pattern of appending `## Your Role` to the query violates this — the agent's role defines how it processes ALL messages, not just one.
+- Layer 3 (Skills & Guidelines) is shared context, not identity. Two agents in the same workspace see the same project docs and investigation patterns, but have different system prompts.
+- Layer 2 (Tools) is curated per agent. An implementation tracer gets `get_callers` + `trace_variable`; a usage tracer gets `find_tests` + `test_outline`. The tool set IS part of the agent's capabilities.
+
 ### Anthropic Core Principles
 
 1. **Right Altitude** — Not too vague ("investigate the code"), not too prescriptive ("call get_callers on the gate method"). Target: "Trace the complete lifecycle from trigger to final outcome."
 2. **Examples over rule lists** — 3-5 diverse examples teach behavior better than a laundry list of edge-case bullets. Wrap in `<example>` tags.
 3. **Explain why, not just what** — Claude generalizes from motivation. "Output will be read by TTS, so avoid ellipses" beats "never use ellipses."
 4. **Positive framing** — Say what to do, not what not to do.
-5. **Context over instructions** — Provide workspace layout, project docs, detected project roots. Let the model decide the investigation path.
+5. **Context over instructions** — Provide workspace layout, project docs, detected project roots (Layer 3). Let the model decide the investigation path.
 6. **Dial back aggressive language** — "Use this tool when..." not "CRITICAL: You MUST use this tool." Newer models overtrigger on forceful language.
-7. **Minimal tool guidance** — If a human can't definitively say which tool to use, don't prescribe it.
+7. **Minimal tool guidance** — If a human can't definitively say which tool to use, don't prescribe it. Let tool descriptions (Layer 2) guide the model.
 
 ### Multi-Agent Workflow Rules
 
-8. **Role specialization** — Each workflow agent has a distinct perspective. NEVER add shared investigation strategies to `explorer_base.md` — this destroys role separation (proven by eval: 60% → 25% regression).
-9. **Strategy = output format only** — Layer 2 strategies are for structured output templates (code_review). Don't inject investigation procedures for open-ended queries.
+8. **Role specialization** — Each agent has a distinct identity (Layer 1 system prompt). Shared investigation patterns belong in Layer 3, not Layer 1. Never add shared strategies to individual agent identities — this destroys role separation (proven by eval: 60% → 25% regression).
+9. **Structured output via strategy** — Output format templates (e.g. code_review) are injected as a Layer 3 skill when the agent's frontmatter sets `strategy: code_review`. Don't inject investigation procedures for open-ended queries.
+10. **Adversarial arbitration for PR reviews** — Sub-agents provide evidence FOR findings (prosecution). The arbitrator provides evidence AGAINST (defense). The synthesis LLM acts as judge, seeing both sides. The arbitrator does NOT adjust severity — it provides counter-evidence and a rebuttal confidence score.
+11. **DO NOT FLAG list** — PR review agents have an explicit exclusion list: style/formatting, pre-existing issues, speculative concerns, secondary effects of the same root cause, design disagreements, generated/vendored code.
+12. **Per-agent model selection** — Critical review dimensions (correctness) use the strong model; others use the explorer model. Set `model: strong` in the agent `.md` frontmatter.
 
 ### Agent `.md` File Design (informed by prompts.chat patterns)
 
-10. **One clear role sentence** — Open with what the agent IS and what it traces. prompts.chat's "I want you to act as..." pattern works because it's unambiguous. Our equivalent: "You are investigating from the [perspective] side. Your goal is to trace [scope]."
+10. **One clear role sentence** — Open with what the agent IS and what it traces. prompts.chat's "I want you to act as..." pattern works because it's unambiguous. Our equivalent: "You are investigating from the [perspective] side. Your goal is to trace [scope]." This becomes the core of the agent's Layer 1 system prompt.
 11. **Goal, not procedure** — Define WHAT to find (domain models, service implementations, completion effects), not HOW to find it (don't say "first grep, then read_file, then get_callers").
 12. **Short** — Agent instructions should be 50-150 words. prompts.chat averages 80 words. If you need more, you're probably being too prescriptive.
 13. **Consult the prompt library** — Before writing a new agent role, search `config/prompt-library/prompts.csv` for similar roles. Study how they define constraints and scope. Use `for_devs=TRUE` filter for developer-focused prompts.
 
 ### Validation
 
-14. **Test with eval** — Any prompt change must be validated with `eval/agent_quality/run_bedrock.py`. Check both direct agent AND workflow mode — changes that help one can break the other.
+15. **Test with eval** — Any prompt change must be validated with eval. For PR review: `eval/code_review/run.py --brain --verbose`. For exploration: `eval/agent_quality/run_bedrock.py --brain`. Check multiple modes — changes that help one can break another.
 
 ## What's Next
 

@@ -249,45 +249,55 @@ class WorkflowEngine:
         workspace_path = context.get("workspace_path", "")
         inner_executor = self._tool_executor or LocalToolExecutor(workspace_path)
 
+        from app.agent_loop.config import BrainExecutorConfig
         brain_executor = AgentToolExecutor(
             inner_executor=inner_executor,
             agent_registry=agent_registry,
             swarm_registry=swarm_registry,
             agent_provider=self._explorer_provider,
-            workspace_path=workspace_path,
+            config=BrainExecutorConfig(
+                workspace_path=workspace_path,
+                current_depth=0,
+                max_depth=brain_config.limits.max_depth,
+                max_concurrent=brain_config.limits.max_concurrent_agents,
+                sub_agent_timeout=brain_config.limits.sub_agent_timeout,
+            ),
             brain_config=brain_config,
             trace_writer=self._trace_writer,
             event_sink=self._event_queue,
-            current_depth=0,
-            max_depth=brain_config.limits.max_depth,
-            max_concurrent=brain_config.limits.max_concurrent_agents,
-            sub_agent_timeout=brain_config.limits.sub_agent_timeout,
             budget_manager=budget_mgr,
             qa_cache=qa_cache,
-        )
-
-        # Propagate code_context so sub-agents can include the snippet
-        brain_executor._code_context = code_context
-
-        # Create Brain agent loop
-        brain = AgentLoopService(
-            provider=self._provider,  # strong model for Brain
-            tool_executor=brain_executor,
-            max_iterations=brain_config.limits.max_iterations,
-            budget_config=BudgetConfig(max_input_tokens=brain_config.limits.budget_tokens),
-            trace_writer=self._trace_writer,
-            interactive=True,
-            _is_brain=True,
-            brain_system_prompt=brain_prompt,
         )
 
         query = context.get("query") or context.get("query_text", "")
         code_context = context.get("code_context")
 
+        # Propagate code_context so sub-agents can include the snippet
+        brain_executor._code_context = code_context
+
+        # Create Brain agent loop
+        from app.agent_loop.config import AgentLoopConfig
+        brain = AgentLoopService(
+            provider=self._provider,  # strong model for Brain
+            config=AgentLoopConfig(
+                max_iterations=brain_config.limits.max_iterations,
+                budget_config=BudgetConfig(max_input_tokens=brain_config.limits.budget_tokens),
+                interactive=True,
+                is_brain=True,
+                brain_system_prompt=brain_prompt,
+            ),
+            tool_executor=brain_executor,
+            trace_writer=self._trace_writer,
+        )
+
         # Run Brain in background task, drain events from queue
         async def _execute():
             try:
                 async for event in brain.run_stream(query, workspace_path, code_context=code_context):
+                    if event.kind == "transfer":
+                        # Hand off to specialized brain (one-way)
+                        await self._run_specialized_brain(event.data, context)
+                        return
                     await self._event_queue.put(
                         WorkflowEvent(event.kind, event.data)
                     )
@@ -316,6 +326,54 @@ class WorkflowEngine:
         })
 
         self._event_queue = None
+
+    async def _run_specialized_brain(
+        self,
+        transfer_data: Dict[str, Any],
+        context: Dict[str, Any],
+    ) -> None:
+        """Launch a specialized brain after a transfer_to_brain handoff.
+
+        The specialized brain streams events into the same event queue,
+        so they propagate to the client via SSE.
+        """
+        brain_name = transfer_data.get("brain", "")
+        params = transfer_data.get("params", {})
+
+        if brain_name == "pr_review":
+            from app.agent_loop.pr_brain import PRBrainOrchestrator
+            from .loader import load_pr_brain_config, load_agent_registry
+            from app.code_tools.executor import LocalToolExecutor
+
+            workspace_path = params.get("workspace_path", context.get("workspace_path", ""))
+            diff_spec = params.get("diff_spec", "HEAD~1..HEAD")
+
+            orchestrator = PRBrainOrchestrator(
+                provider=self._provider,
+                explorer_provider=self._explorer_provider,
+                workspace_path=workspace_path,
+                diff_spec=diff_spec,
+                pr_brain_config=load_pr_brain_config(),
+                agent_registry=load_agent_registry(),
+                tool_executor=self._tool_executor or LocalToolExecutor(workspace_path),
+                trace_writer=self._trace_writer,
+                event_sink=self._event_queue,
+            )
+
+            try:
+                async for event in orchestrator.run_stream():
+                    await self._event_queue.put(event)
+            except Exception as exc:
+                logger.error("PR Brain failed: %s", exc, exc_info=True)
+                await self._event_queue.put(
+                    WorkflowEvent("error", {"error": f"PR Brain failed: {exc}"})
+                )
+        else:
+            await self._event_queue.put(
+                WorkflowEvent("error", {"error": f"Unknown specialized brain: {brain_name}"})
+            )
+
+        await self._event_queue.put(None)  # sentinel
 
     # -----------------------------------------------------------------
     # first_match mode (Code Explorer)
@@ -573,19 +631,27 @@ class WorkflowEngine:
         # workflow-driven classification. So we only set _is_sub_agent
         # when there's NO workflow route to use.
         use_workflow_classification = bool(route_name)
+        from app.agent_loop.config import AgentLoopConfig
         svc = AgentLoopService(
             provider=provider,
-            max_iterations=max_iterations,
-            budget_config=budget_config,
+            config=AgentLoopConfig(
+                max_iterations=max_iterations,
+                budget_config=budget_config,
+                is_sub_agent=not use_workflow_classification,
+                workflow_config=agent if use_workflow_classification else None,
+                workflow_route_name=route_name,
+                perspective=agent.instructions,     # agent role for scoped verification
+                interactive=context.get("_interactive", False),
+                agent_identity={
+                    "name": agent.name,
+                    "description": getattr(agent, "description", "") or "",
+                    "instructions": agent.instructions or "",
+                },
+            ),
             trace_writer=self._trace_writer,
-            _is_sub_agent=not use_workflow_classification,
             llm_semaphore=context.get("_llm_semaphore"),
             tool_executor=self._tool_executor,
-            workflow_config=agent if use_workflow_classification else None,
-            workflow_route_name=route_name,
             verifier_provider=self._provider,  # strong model for completeness check
-            perspective=agent.instructions,     # agent role for scoped verification
-            interactive=context.get("_interactive", False),
         )
 
         # Stream agent events to UI in real-time (required for ask_user)
@@ -686,36 +752,12 @@ class WorkflowEngine:
         workflow: WorkflowConfig,
         context: Dict[str, Any],
     ) -> str:
-        """Build the full query string for an explorer agent.
+        """Build the query string for an explorer agent (Layer 4 only).
 
-        Composes: user's original question + agent-specific instructions.
-        When interactive mode is enabled, inserts an ask_user step as part
-        of the agent's investigation flow.
+        Returns just the user's question — agent identity is now in the
+        system prompt (Layer 1) via agent_identity, not in the user message.
         """
-        parts = []
-
-        # 1. User's original question
-        query = context.get("query", "")
-        if query:
-            parts.append(query)
-
-        # 2. Agent-specific instructions (from .md file)
-        if agent.instructions:
-            instructions = agent.instructions
-            # In interactive mode, prepend ask_user guidance into the agent's
-            # instructions so it becomes part of the investigation flow.
-            if context.get("_interactive"):
-                instructions = (
-                    "Before investigating, check whether this query has multiple "
-                    "valid directions (e.g. different features to build, different "
-                    "subsystems to focus on). If so, call `ask_user` with 2-4 "
-                    "concrete options to get the user's preference. Then proceed "
-                    "with your investigation focused on their answer.\n\n"
-                    + instructions
-                )
-            parts.append(f"\n## Your Role\n\n{instructions}")
-
-        return "\n\n".join(parts) if parts else "Review the code changes."
+        return context.get("query", "") or "Review the code changes."
 
     def _build_judge_prompt(
         self,

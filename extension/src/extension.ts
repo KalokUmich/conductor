@@ -515,15 +515,18 @@ async function compareLocalTools(): Promise<void> {
         try {
             const r = await execFileAsync('grep', args, { cwd: workspace, maxBuffer: 5 * 1024 * 1024 });
             return r.stdout || '';
-        } catch (e: any) {
-            return e.stdout || '';
+        } catch (e: unknown) {
+            return (e !== null && typeof e === 'object' && 'stdout' in e && typeof (e as {stdout: unknown}).stdout === 'string')
+                ? (e as {stdout: string}).stdout
+                : '';
         }
     };
 
     // ---- file_outline ----
+    interface OutlineSummary { count: number; names: string[]; lines: number[]; }
     output.appendLine('--- file_outline ---');
-    const lspOutline: any = { count: 0, names: [] as string[], lines: [] as number[] };
-    const grepOutline: any = { count: 0, names: [] as string[], lines: [] as number[] };
+    const lspOutline: OutlineSummary = { count: 0, names: [], lines: [] };
+    const grepOutline: OutlineSummary = { count: 0, names: [], lines: [] };
 
     try {
         const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(
@@ -538,8 +541,9 @@ async function compareLocalTools(): Promise<void> {
                 vscode.SymbolKind.Struct, vscode.SymbolKind.Module,
                 vscode.SymbolKind.Namespace,
             ]);
-            const flatten = (syms: vscode.DocumentSymbol[], parent?: string): any[] => {
-                const result: any[] = [];
+            interface FlatSymbol { name: string; kind: string; line: number; }
+            const flatten = (syms: vscode.DocumentSymbol[], parent?: string): FlatSymbol[] => {
+                const result: FlatSymbol[] = [];
                 for (const s of syms) {
                     if (STRUCTURAL.has(s.kind)) {
                         result.push({ name: s.name, kind: vscode.SymbolKind[s.kind], line: s.range.start.line + 1 });
@@ -611,8 +615,8 @@ async function compareLocalTools(): Promise<void> {
             'vscode.executeDocumentSymbolProvider', toUri(TARGET_FILE),
         );
         if (symbols) {
-            const flatten = (syms: vscode.DocumentSymbol[]): any[] => {
-                const result: any[] = [];
+            const flatten = (syms: vscode.DocumentSymbol[]): vscode.DocumentSymbol[] => {
+                const result: vscode.DocumentSymbol[] = [];
                 for (const s of syms) {
                     result.push(s);
                     if (s.children) result.push(...flatten(s.children));
@@ -4722,7 +4726,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
             // Poll progress while indexing runs
             const progressUrl = `${backendUrl}/api/context/context/${encodeURIComponent(roomId)}/index-progress`;
-            let indexResult: any = {};
+            interface IndexResult { index_success?: boolean; files_indexed?: number; chunks_indexed?: number; index_duration_ms?: number; message?: string; }
+            let indexResult: IndexResult = {};
             const pollInterval = 3000; // 3 seconds
             while (true) {
                 // Check if indexing finished
@@ -4917,9 +4922,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     timeout,
                 });
                 return { stdout: result.stdout || '', stderr: result.stderr || '' };
-            } catch (e: any) {
+            } catch (e: unknown) {
                 // grep returns exit code 1 for no matches — not an error
-                if (e.code === 1 && e.stdout !== undefined) {
+                interface ExecError { code: number; stdout?: string; stderr?: string; }
+                const isExecError = (x: unknown): x is ExecError =>
+                    x !== null && typeof x === 'object' && 'code' in x;
+                if (isExecError(e) && e.code === 1 && e.stdout !== undefined) {
                     return { stdout: e.stdout || '', stderr: e.stderr || '' };
                 }
                 throw e;

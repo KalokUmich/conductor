@@ -16,6 +16,8 @@ from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from pydantic import ValidationError
+
 from .schemas import (
     AstMatch,
     BlameEntry,
@@ -94,7 +96,7 @@ def _run_git(workspace: str, args: List[str], max_output: int = 50_000) -> str:
         return "(git not found)"
     except subprocess.TimeoutExpired:
         return "(git command timed out)"
-    except Exception as exc:
+    except OSError as exc:
         return f"(git error: {exc})"
 
 
@@ -627,7 +629,7 @@ def _classify_symbol_role(
                 deco_start = max(0, start_line - 6)  # 0-indexed
                 deco_end = min(len(all_lines), start_line)  # up to (not incl.) the def line
                 context = "".join(all_lines[deco_start:deco_end]) + "\n" + signature
-        except Exception:
+        except (OSError, ValueError):
             pass
 
     for pat, role in _SIG_ROLE_PATTERNS:
@@ -769,7 +771,7 @@ def find_references(
                             line_number=m["line_number"],
                             content=m["content"],
                         ).model_dump())
-            except Exception:
+            except Exception:  # TODO: narrow once extract_definitions exception surface is known
                 # Fall back to grep matches for this file
                 for m in file_matches:
                     validated.append(ReferenceLocation(
@@ -3559,7 +3561,7 @@ def run_test(
             tool_name="run_test", success=False,
             error=f"Test runner not found: {e}",
         )
-    except Exception as exc:
+    except OSError as exc:
         return ToolResult(
             tool_name="run_test", success=False,
             error=f"Test execution failed: {exc}",
@@ -4430,12 +4432,12 @@ def execute_tool(tool_name: str, workspace: str, params: Dict[str, Any]) -> Tool
         try:
             validated = param_model.model_validate(params)
             params = validated.model_dump(exclude_none=True)
-        except Exception as ve:
+        except ValidationError as ve:
             logger.warning("Tool %s param validation failed: %s", tool_name, ve)
             return ToolResult(tool_name=tool_name, success=False, error=f"Invalid parameters: {ve}")
 
     try:
         return fn(workspace=workspace, **params)
-    except Exception as exc:
+    except Exception as exc:  # tool functions can raise any exception; must catch all
         logger.exception("Tool %s failed", tool_name)
         return ToolResult(tool_name=tool_name, success=False, error=str(exc))

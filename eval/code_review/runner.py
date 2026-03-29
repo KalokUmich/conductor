@@ -140,8 +140,127 @@ async def run_case(
             cleanup_workspace(workspace)
 
 
+async def run_case_brain(
+    case: CaseConfig,
+    source_dir: str,
+    patch_dir: str,
+    provider: AIProvider,
+    explorer_provider: Optional[AIProvider] = None,
+) -> RunResult:
+    """Set up workspace, run PR Brain review via PRBrainOrchestrator, and return results.
+
+    This is the Brain-pipeline equivalent of ``run_case()``.  It uses
+    ``PRBrainOrchestrator`` instead of ``CodeReviewService`` so that the two
+    pipelines can be compared directly on the same eval cases.
+
+    Args:
+        case: Case configuration with patch path and expected findings.
+        source_dir: Path to the repo source directory.
+        patch_dir: Directory containing patch files.
+        provider: Strong AI provider used for synthesis (Brain's LLM).
+        explorer_provider: Optional lighter model for review sub-agents;
+            falls back to ``provider`` if not supplied.
+
+    Returns:
+        RunResult with the review output or error.
+    """
+    patch_path = os.path.join(patch_dir, case.patch)
+    if not os.path.exists(patch_path):
+        return RunResult(case_id=case.id, error=f"Patch not found: {patch_path}")
+
+    workspace = None
+    try:
+        workspace = setup_workspace(source_dir, patch_path)
+
+        from app.agent_loop.pr_brain import PRBrainOrchestrator
+        from app.workflow.loader import load_pr_brain_config, load_agent_registry
+        from app.code_tools.executor import LocalToolExecutor
+
+        pr_brain_config = load_pr_brain_config()
+        agent_registry = load_agent_registry()
+        tool_executor = LocalToolExecutor(workspace)
+
+        orchestrator = PRBrainOrchestrator(
+            provider=provider,
+            explorer_provider=explorer_provider or provider,
+            workspace_path=workspace,
+            diff_spec="HEAD~1..HEAD",
+            pr_brain_config=pr_brain_config,
+            agent_registry=agent_registry,
+            tool_executor=tool_executor,
+        )
+
+        # Collect events from the pipeline
+        findings = []
+        synthesis = ""
+        merge_rec = ""
+        files_reviewed = []
+        total_tokens = 0
+
+        async for event in orchestrator.run_stream():
+            if event.kind == "done":
+                data = event.data
+                synthesis = data.get("answer", "")
+                findings_data = data.get("findings", [])
+                merge_rec = data.get("merge_recommendation", "")
+                files_reviewed = data.get("files_reviewed", [])
+
+                # Convert finding dicts back to ReviewFinding objects
+                from app.code_review.models import ReviewFinding, Severity, FindingCategory
+                for fd in findings_data:
+                    try:
+                        findings.append(ReviewFinding(
+                            title=fd.get("title", ""),
+                            category=FindingCategory(fd.get("category", "correctness")),
+                            severity=Severity(fd.get("severity", "warning")),
+                            confidence=fd.get("confidence", 0.7),
+                            file=fd.get("file", ""),
+                            start_line=fd.get("start_line", 0),
+                            end_line=fd.get("end_line", 0),
+                            evidence=fd.get("evidence", []),
+                            risk=fd.get("risk", ""),
+                            suggested_fix=fd.get("suggested_fix", ""),
+                            agent=fd.get("agent", ""),
+                        ))
+                    except (ValueError, KeyError):
+                        continue
+
+        review_result = ReviewResult(
+            diff_spec="HEAD~1..HEAD",
+            findings=findings,
+            files_reviewed=files_reviewed,
+            synthesis=synthesis,
+            merge_recommendation=merge_rec,
+        )
+
+        return RunResult(
+            case_id=case.id,
+            review_result=review_result,
+            workspace_path=workspace,
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return RunResult(case_id=case.id, error=str(e))
+    finally:
+        if workspace:
+            cleanup_workspace(workspace)
+
+
 def _run_git(cwd: str, *args: str) -> str:
-    """Run a git command in the given directory."""
+    """Run a git command in the given directory.
+
+    Args:
+        cwd: Working directory for the git command.
+        *args: Git sub-command and arguments (e.g. ``"add"``, ``"-A"``).
+
+    Returns:
+        Captured stdout from the git process.
+
+    Raises:
+        RuntimeError: If the git command exits with a non-zero return code.
+    """
     result = subprocess.run(
         ["git"] + list(args),
         cwd=cwd,

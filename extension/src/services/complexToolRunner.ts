@@ -21,17 +21,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as treeSitter from './treeSitterService';
+import type { ToolResult } from './toolTypes';
 
-// ---------------------------------------------------------------------------
-// Public result type (matches astToolRunner.ts)
-// ---------------------------------------------------------------------------
-
-export interface ToolResult {
-    success: boolean;
-    data: any;
-    error?: string;
-    truncated?: boolean;
-}
+// Re-export ToolResult so existing consumers of complexToolRunner still compile.
+export type { ToolResult };
 
 // ---------------------------------------------------------------------------
 // Constants (shared with astToolRunner.ts)
@@ -276,6 +269,13 @@ function resolveImportPath(
     return null;
 }
 
+/**
+ * Find files that a given file imports or depends on.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters containing the relative file path.
+ * @returns ToolResult with an array of relative paths this file imports.
+ */
 export function get_dependencies(
     workspace: string,
     params: { file_path: string },
@@ -288,8 +288,8 @@ export function get_dependencies(
     let absPath: string;
     try {
         absPath = resolvePath(workspace, filePath);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     const content = readFileText(absPath);
@@ -310,6 +310,13 @@ export function get_dependencies(
 // Tool 2: get_dependents
 // =========================================================================
 
+/**
+ * Find files that import or depend on a given file.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters containing the relative file path.
+ * @returns ToolResult with an array of relative paths that import this file.
+ */
 export function get_dependents(
     workspace: string,
     params: { file_path: string },
@@ -665,6 +672,13 @@ function rustTestOutline(lines: string[]): TestOutlineEntry[] {
     return entries;
 }
 
+/**
+ * Extract test structure from a test file (classes, functions, mocks, assertions).
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters containing the relative path to a test file.
+ * @returns ToolResult with structured test metadata (suites, cases, mock usage).
+ */
 export function test_outline(
     workspace: string,
     params: { path: string },
@@ -677,8 +691,8 @@ export function test_outline(
     let absPath: string;
     try {
         absPath = resolvePath(workspace, filePath);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     const content = readFileText(absPath);
@@ -877,6 +891,15 @@ function extractRaises(bodyText: string): string[] {
     return result;
 }
 
+/**
+ * Generate a token-efficient summary of a file (signatures, callees, side effects).
+ *
+ * Achieves approximately 80% token savings compared to reading the full file source.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: file path and optional focus symbol name.
+ * @returns ToolResult with a compressed representation of the file's structure.
+ */
 export function compressed_view(
     workspace: string,
     params: { file_path?: string; path?: string; focus?: string },
@@ -889,8 +912,8 @@ export function compressed_view(
     let absPath: string;
     try {
         absPath = resolvePath(workspace, filePath);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     const content = readFileText(absPath);
@@ -1166,6 +1189,13 @@ function findFunctionDefs(lines: string[]): Array<{ name: string; kind: string; 
     return defs;
 }
 
+/**
+ * Trace data flow for a variable in the forward or backward direction.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: variable name, file, optional function scope, and direction.
+ * @returns ToolResult with aliases, flows_to, sinks, and sources for the variable.
+ */
 export function trace_variable(
     workspace: string,
     params: { variable_name: string; file: string; function_name?: string; direction?: string },
@@ -1178,8 +1208,8 @@ export function trace_variable(
     let absPath: string;
     try {
         absPath = resolvePath(workspace, file);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     const content = readFileText(absPath);
@@ -1289,6 +1319,13 @@ function extractModuleSymbols(content: string, lang: string | null): { classes: 
     return { classes, functions };
 }
 
+/**
+ * Generate a high-level module overview with approximately 95% token savings.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: module directory or file path (accepts multiple aliases).
+ * @returns ToolResult with a concise summary of the module's exported symbols and purpose.
+ */
 export async function module_summary(
     workspace: string,
     params: { module_path?: string; path?: string; file_path?: string },
@@ -1301,8 +1338,8 @@ export async function module_summary(
     let absPath: string;
     try {
         absPath = resolvePath(workspace, modulePath);
-    } catch (e: any) {
-        return { success: false, data: null, error: e.message };
+    } catch (e: unknown) {
+        return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
     }
 
     let stat: fs.Stats;
@@ -1502,6 +1539,13 @@ const PATTERN_CATEGORIES: Record<string, PatternEntry[]> = {
     ],
 };
 
+/**
+ * Find architectural patterns (webhook, queue, retry, etc.) in the codebase.
+ *
+ * @param workspace - Path to the workspace root.
+ * @param params - Tool parameters: optional directory scope, pattern categories, and result limit.
+ * @returns ToolResult with matched patterns grouped by category and file location.
+ */
 export function detect_patterns(
     workspace: string,
     params: { path?: string; categories?: string[]; max_results?: number },
@@ -1513,8 +1557,8 @@ export function detect_patterns(
     if (params.path) {
         try {
             scanRoot = resolvePath(workspace, params.path);
-        } catch (e: any) {
-            return { success: false, data: null, error: e.message };
+        } catch (e: unknown) {
+            return { success: false, data: null, error: e instanceof Error ? e.message : String(e) };
         }
     } else {
         scanRoot = ws;

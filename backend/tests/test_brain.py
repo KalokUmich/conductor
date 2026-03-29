@@ -324,6 +324,232 @@ class TestBrainPrompt:
 
 
 # ---------------------------------------------------------------------------
+# 4-Layer Prompt Architecture
+# ---------------------------------------------------------------------------
+
+
+class TestSubAgentSystemPrompt:
+    """Tests for build_sub_agent_system_prompt (4-layer architecture)."""
+
+    def test_includes_agent_identity(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="explore_architecture",
+            agent_description="Maps module structure and dependencies",
+            agent_instructions="Map the architecture. Find all modules.",
+            workspace_path=str(tmp_path),
+        )
+        assert "explore_architecture" in prompt
+        assert "Maps module structure" in prompt
+        assert "Map the architecture" in prompt
+
+    def test_includes_workspace_context(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="test_agent",
+            agent_description="Test agent",
+            agent_instructions="Do testing.",
+            workspace_path=str(tmp_path),
+        )
+        assert "Workspace" in prompt
+        assert str(tmp_path) in prompt
+
+    def test_does_not_contain_generic_identity(self, tmp_path):
+        """Sub-agent prompt must NOT use the old shared CORE_IDENTITY opener."""
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="security",
+            agent_description="Detects vulnerabilities",
+            agent_instructions="Find security issues.",
+            workspace_path=str(tmp_path),
+        )
+        assert "You are a code intelligence agent" not in prompt
+        assert "security" in prompt
+        assert "Detects vulnerabilities" in prompt
+
+    def test_includes_strategy_when_specified(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="correctness",
+            agent_description="Finds logic errors",
+            agent_instructions="Check correctness.",
+            workspace_path=str(tmp_path),
+            strategy_key="code_review",
+        )
+        assert "Code Review" in prompt
+
+    def test_no_strategy_when_not_specified(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="explore_usage",
+            agent_description="Traces user flows",
+            agent_instructions="Find usage patterns.",
+            workspace_path=str(tmp_path),
+            strategy_key=None,
+        )
+        assert "## Strategy" not in prompt
+
+    def test_includes_signal_blocker_hint(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="test",
+            agent_description="Test",
+            agent_instructions="Test.",
+            workspace_path=str(tmp_path),
+            has_signal_blocker=True,
+        )
+        assert "signal_blocker" in prompt
+
+    def test_no_signal_blocker_when_disabled(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="test_agent",
+            agent_description="Test",
+            agent_instructions="Test.",
+            workspace_path="/tmp/workspace",
+            has_signal_blocker=False,
+        )
+        assert "signal_blocker" not in prompt
+
+    def test_includes_code_context(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="test",
+            agent_description="Test",
+            agent_instructions="Test.",
+            workspace_path=str(tmp_path),
+            code_context={
+                "code": "def hello(): pass",
+                "file_path": "hello.py",
+                "language": "python",
+                "start_line": 1,
+                "end_line": 1,
+            },
+        )
+        assert "Code Under Discussion" in prompt
+        assert "hello.py" in prompt
+        assert "def hello(): pass" in prompt
+
+    def test_includes_risk_context(self, tmp_path):
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="test",
+            agent_description="Test",
+            agent_instructions="Test.",
+            workspace_path=str(tmp_path),
+            risk_context="### Risk signals\n- **security**: 3 files",
+        )
+        assert "Risk signals" in prompt
+
+    def test_layer_separation(self, tmp_path):
+        """Layer 1 (identity) should come before Layer 3 (skills)."""
+        from app.agent_loop.prompts import build_sub_agent_system_prompt
+        prompt = build_sub_agent_system_prompt(
+            agent_name="explore_implementation",
+            agent_description="Traces lifecycles",
+            agent_instructions="Trace the complete lifecycle.",
+            workspace_path=str(tmp_path),
+        )
+        # Identity should appear before workspace section
+        identity_pos = prompt.index("explore_implementation")
+        workspace_pos = prompt.index("Workspace")
+        assert identity_pos < workspace_pos
+
+
+class TestQueryNotContaminatedByRole:
+    """Verify that dispatch_agent passes clean queries (no ## Your Role)."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_does_not_inject_role_in_query(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+    ):
+        """The query passed to AgentLoopService must NOT contain agent instructions."""
+        captured_kwargs = {}
+
+        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
+
+        def capture_init(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            original_init(self, *args, **kwargs)
+
+        with patch("app.agent_loop.service.AgentLoopService.__init__", capture_init):
+            with patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream:
+                async def empty_stream(*a, **kw):
+                    from app.agent_loop.service import AgentEvent
+                    yield AgentEvent(kind="done", data={
+                        "answer": "test", "tool_calls_made": 0,
+                        "iterations": 0, "duration_ms": 0,
+                        "thinking_steps": [],
+                    })
+                mock_stream.side_effect = empty_stream
+
+                executor = AgentToolExecutor(
+                    inner_executor=mock_inner_executor,
+                    agent_registry=agent_registry,
+                    swarm_registry=swarm_registry,
+                    agent_provider=mock_provider,
+                    workspace_path="/tmp/test",
+                    event_sink=asyncio.Queue(),
+                )
+                await executor.execute("dispatch_agent", {
+                    "agent_name": "explore_architecture",
+                    "query": "How does auth work?",
+                })
+
+                # Verify the query passed to run_stream is clean
+                call_args = mock_stream.call_args
+                query_arg = call_args[1].get("query", call_args[0][0] if call_args[0] else "")
+                assert "## Your Role" not in query_arg
+                assert "Map the architecture" not in query_arg  # agent instructions
+
+    @pytest.mark.asyncio
+    async def test_dispatch_passes_agent_identity(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+    ):
+        """dispatch_agent must pass agent_identity dict to AgentLoopService via config."""
+        captured_kwargs = {}
+
+        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
+
+        def capture_init(self, *args, **kwargs):
+            captured_kwargs.update(kwargs)
+            original_init(self, *args, **kwargs)
+
+        with patch("app.agent_loop.service.AgentLoopService.__init__", capture_init):
+            with patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream:
+                async def empty_stream(*a, **kw):
+                    from app.agent_loop.service import AgentEvent
+                    yield AgentEvent(kind="done", data={
+                        "answer": "test", "tool_calls_made": 0,
+                        "iterations": 0, "duration_ms": 0,
+                        "thinking_steps": [],
+                    })
+                mock_stream.side_effect = empty_stream
+
+                executor = AgentToolExecutor(
+                    inner_executor=mock_inner_executor,
+                    agent_registry=agent_registry,
+                    swarm_registry=swarm_registry,
+                    agent_provider=mock_provider,
+                    workspace_path="/tmp/test",
+                    event_sink=asyncio.Queue(),
+                )
+                await executor.execute("dispatch_agent", {
+                    "agent_name": "explore_architecture",
+                    "query": "How does auth work?",
+                })
+
+                # Verify agent_identity was passed via AgentLoopConfig
+                loop_config = captured_kwargs.get("config")
+                assert loop_config is not None, "AgentLoopService must receive an AgentLoopConfig"
+                identity = loop_config.agent_identity
+                assert identity is not None
+                assert identity["name"] == "explore_architecture"
+                assert identity["description"] == "Maps module structure"
+                assert identity["instructions"] == "Map the architecture."
+
+
+# ---------------------------------------------------------------------------
 # Config Loading
 # ---------------------------------------------------------------------------
 

@@ -148,8 +148,11 @@ def build_report(
 def save_baseline(report: EvalReport) -> str:
     """Save the report as a timestamped self-baseline.
 
+    Args:
+        report: Completed EvalReport to persist as a baseline.
+
     Returns:
-        Path to the saved baseline file.
+        Absolute path to the saved baseline JSON file.
     """
     BASELINES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -164,7 +167,11 @@ def save_baseline(report: EvalReport) -> str:
 
 
 def load_latest_baseline() -> Optional[dict]:
-    """Load the most recent self-baseline file."""
+    """Load the most recent self-baseline file.
+
+    Returns:
+        Parsed JSON dict of the latest baseline, or None if no baselines exist.
+    """
     if not BASELINES_DIR.exists():
         return None
 
@@ -182,7 +189,17 @@ def detect_regressions(
 ) -> List[RegressionResult]:
     """Compare current scores against a self-baseline.
 
-    Flags regressions when composite drops by > REGRESSION_THRESHOLD.
+    Flags regressions when composite drops by more than REGRESSION_THRESHOLD
+    (10%). Only cases present in both the baseline and the current run are
+    compared — new or removed cases are silently ignored.
+
+    Args:
+        current_scores: List of CaseScore objects from the current run.
+        baseline: Parsed baseline dict (from load_latest_baseline).
+
+    Returns:
+        List of RegressionResult, one per case present in both runs.
+        Check result.is_regression to identify failing cases.
     """
     baseline_scores = {}
     for cs in baseline.get("case_scores", []):
@@ -215,8 +232,11 @@ def detect_regressions(
 def save_gold_baseline(report: EvalReport) -> str:
     """Save the report as a timestamped gold-standard baseline.
 
+    Args:
+        report: Completed EvalReport from a gold-standard run to persist.
+
     Returns:
-        Path to the saved baseline file.
+        Absolute path to the saved gold baseline JSON file.
     """
     GOLD_BASELINES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -231,7 +251,12 @@ def save_gold_baseline(report: EvalReport) -> str:
 
 
 def load_latest_gold_baseline() -> Optional[dict]:
-    """Load the most recent gold-standard baseline file."""
+    """Load the most recent gold-standard baseline file.
+
+    Returns:
+        Parsed JSON dict of the latest gold baseline, or None if no gold
+        baselines exist in the gold_baselines/ directory.
+    """
     if not GOLD_BASELINES_DIR.exists():
         return None
 
@@ -249,7 +274,14 @@ def compare_to_gold(
 ) -> List[GoldComparison]:
     """Compare pipeline scores against the gold-standard baseline.
 
-    Returns a GoldComparison for each case present in both.
+    Args:
+        current_scores: List of CaseScore objects from the current pipeline run.
+        gold_baseline: Parsed gold baseline dict (from load_latest_gold_baseline).
+
+    Returns:
+        List of GoldComparison, one per case present in both the current
+        run and the gold baseline. Each entry reports the absolute delta
+        and the pipeline score as a percentage of the gold ceiling.
     """
     gold_scores = {}
     for cs in gold_baseline.get("case_scores", []):
@@ -280,7 +312,14 @@ def compare_to_gold(
 # ---------------------------------------------------------------------------
 
 def print_report(report: EvalReport) -> None:
-    """Print a human-readable report to stdout."""
+    """Print a human-readable report to stdout.
+
+    Outputs per-case scores, aggregate metrics, optional LLM judge verdicts,
+    self-baseline regression detection, and gold-standard comparison table.
+
+    Args:
+        report: Completed EvalReport from build_report().
+    """
     mode_label = "Gold-Standard" if report.mode == "gold" else "Pipeline"
 
     print(f"\n{'=' * 70}")
