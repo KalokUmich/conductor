@@ -125,8 +125,8 @@ run-backend-port: ensure-backend-deps
 # ===========================
 .PHONY: test test-backend test-extension test-parity integration-test
 
-## Run all tests
-test: test-backend test-extension
+## Run all tests (backend + extension + parity)
+test: test-backend test-extension test-parity
 	@echo "All tests passed!"
 
 ## Run backend tests
@@ -156,7 +156,7 @@ test-parity: ensure-backend-deps
 	cd extension && npm run compile
 	cd extension && node tests/validate_contract.js
 	@echo "Step 3: Run cross-language parity tests..."
-	cd backend && $(PYTHON) -m pytest tests/test_tool_parity_deep.py tests/test_tool_parity_ast.py -v
+	cd backend && $(PYTHON) -m pytest tests/test_tool_parity_subprocess.py tests/test_tool_parity_deep.py tests/test_tool_parity_ast.py -v
 	@echo "All parity checks passed."
 
 # ===========================
