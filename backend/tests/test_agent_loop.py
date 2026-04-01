@@ -888,3 +888,161 @@ class TestBuildSystemPrompt:
 
 # TestMultiPerspective removed — multi-perspective exploration is now
 # handled by Brain's dispatch_swarm("business_flow"), not AgentLoopService.
+
+
+# ---------------------------------------------------------------------------
+# _clear_old_tool_results with ToolMetadata-driven summaries
+# ---------------------------------------------------------------------------
+
+
+class TestClearOldToolResults:
+    """Tests for the metadata-driven context compaction."""
+
+    def test_clears_old_results_beyond_cutoff(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        messages = self._build_messages(8)  # 4 turn-pairs
+        _clear_old_tool_results(messages, keep_recent=2)
+        # First 2 turn-pairs should be cleared, last 2 kept
+        cleared = [m for m in messages if m.get("role") == "user"
+                   and isinstance(m.get("content"), list)
+                   and any(b.get("toolResult", {}).get("content", [{}])[0].get("text", "").startswith("[cleared]")
+                           for b in m["content"] if "toolResult" in b)]
+        assert len(cleared) == 2
+
+    def test_preserves_recent_results(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        messages = self._build_messages(8)
+        _clear_old_tool_results(messages, keep_recent=2)
+        # Last 2 user messages should NOT be cleared
+        last_user = [m for m in messages[-4:] if m.get("role") == "user"]
+        for m in last_user:
+            for block in m.get("content", []):
+                tr = block.get("toolResult", {})
+                inner = tr.get("content", [{}])
+                if inner:
+                    assert not inner[0].get("text", "").startswith("[cleared]")
+
+    def test_metadata_summary_used_for_grep(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        messages = self._build_messages_with_tool("grep", {"pattern": "auth", "path": "src/"}, 6)
+        _clear_old_tool_results(messages, keep_recent=1)
+        # Check that the cleared message uses the summary template
+        user_msg = messages[1]  # first user message (should be cleared)
+        text = user_msg["content"][0]["toolResult"]["content"][0]["text"]
+        assert text.startswith("[cleared]")
+        assert "grep" in text
+        assert "auth" in text
+
+    def test_fallback_when_no_tool_use_match(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        # Build messages without matching assistant tool_use blocks
+        messages = [
+            {"role": "user", "content": [{"toolResult": {
+                "toolUseId": "orphan-id",
+                "content": [{"text": '{"some": "data"}'}],
+            }}]},
+            {"role": "assistant", "content": [{"text": "reply"}]},
+            {"role": "user", "content": [{"text": "next question"}]},
+            {"role": "assistant", "content": [{"text": "next reply"}]},
+        ]
+        _clear_old_tool_results(messages, keep_recent=1)
+        text = messages[0]["content"][0]["toolResult"]["content"][0]["text"]
+        assert text.startswith("[cleared]")
+        # Fallback: should use first_line + chars pattern
+        assert "chars)" in text
+
+    def test_too_few_messages_no_clearing(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        messages = self._build_messages(4)  # 2 turn-pairs
+        original_texts = []
+        for m in messages:
+            if m.get("role") == "user":
+                for b in m.get("content", []):
+                    tr = b.get("toolResult", {})
+                    inner = tr.get("content", [])
+                    if inner:
+                        original_texts.append(inner[0].get("text", ""))
+        _clear_old_tool_results(messages, keep_recent=4)
+        # Nothing should be cleared
+        for m in messages:
+            if m.get("role") == "user":
+                for b in m.get("content", []):
+                    tr = b.get("toolResult", {})
+                    inner = tr.get("content", [])
+                    if inner:
+                        assert not inner[0].get("text", "").startswith("[cleared]")
+
+    def test_already_cleared_not_double_cleared(self):
+        from app.agent_loop.service import _clear_old_tool_results
+        messages = self._build_messages(8)
+        _clear_old_tool_results(messages, keep_recent=2)
+        # Get the cleared text
+        cleared_text = messages[1]["content"][0]["toolResult"]["content"][0]["text"]
+        # Run again — should not re-clear
+        _clear_old_tool_results(messages, keep_recent=2)
+        assert messages[1]["content"][0]["toolResult"]["content"][0]["text"] == cleared_text
+
+    # --- Helper methods ---
+
+    @staticmethod
+    def _build_messages(count: int) -> list:
+        """Build alternating assistant/user messages for testing."""
+        messages = []
+        for i in range(count):
+            if i % 2 == 0:
+                # Assistant message with tool_use
+                messages.append({
+                    "role": "assistant",
+                    "content": [{
+                        "toolUse": {
+                            "toolUseId": f"tu-{i}",
+                            "name": "grep",
+                            "input": {"pattern": "test", "path": "."},
+                        }
+                    }],
+                })
+            else:
+                # User message with toolResult
+                messages.append({
+                    "role": "user",
+                    "content": [{
+                        "toolResult": {
+                            "toolUseId": f"tu-{i-1}",
+                            "content": [{"text": json.dumps([
+                                {"file_path": f"file{i}.py", "line_number": i, "content": f"match {i}"},
+                            ])}],
+                        }
+                    }],
+                })
+        return messages
+
+    @staticmethod
+    def _build_messages_with_tool(tool_name: str, params: dict, count: int) -> list:
+        """Build messages with a specific tool for summary testing."""
+        messages = []
+        for i in range(count):
+            if i % 2 == 0:
+                messages.append({
+                    "role": "assistant",
+                    "content": [{
+                        "toolUse": {
+                            "toolUseId": f"tu-{i}",
+                            "name": tool_name,
+                            "input": params,
+                        }
+                    }],
+                })
+            else:
+                messages.append({
+                    "role": "user",
+                    "content": [{
+                        "toolResult": {
+                            "toolUseId": f"tu-{i-1}",
+                            "content": [{"text": json.dumps([
+                                {"file_path": "src/auth.py", "line_number": 10, "content": "def authenticate()"},
+                                {"file_path": "src/auth.py", "line_number": 20, "content": "def verify_token()"},
+                            ])}],
+                        }
+                    }],
+                })
+        return messages

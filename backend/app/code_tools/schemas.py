@@ -1,6 +1,7 @@
 """Pydantic schemas for code intelligence tools."""
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -16,6 +17,20 @@ class GrepParams(BaseModel):
     path: Optional[str] = Field(None, description="Relative path within workspace to search (file or directory).")
     include_glob: Optional[str] = Field(None, description="Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files.")
     max_results: int = Field(default=50, ge=1, le=200)
+    output_mode: str = Field(
+        default="content",
+        description="Output format: 'content' (matching lines, default), 'files_only' (just file paths), 'count' (match count per file).",
+    )
+    context_lines: int = Field(
+        default=0, ge=0, le=10,
+        description="Lines of context to show before and after each match (0 = match line only).",
+    )
+    case_insensitive: bool = Field(default=False, description="Case-insensitive matching.")
+    multiline: bool = Field(default=False, description="Match across line boundaries (re.DOTALL).")
+    file_type: Optional[str] = Field(
+        None,
+        description="Language shortcut for file filtering: py, js, ts, java, go, rust, c, cpp. Maps to include_glob automatically.",
+    )
 
 
 class ReadFileParams(BaseModel):
@@ -28,6 +43,11 @@ class ListFilesParams(BaseModel):
     directory: str = Field(default=".", description="Relative directory within workspace.")
     max_depth: Optional[int] = Field(default=3, ge=1, le=10)
     include_glob: Optional[str] = Field(None, description="Glob to filter, e.g. '*.py'.")
+
+
+class GlobParams(BaseModel):
+    pattern: str = Field(..., description="Glob pattern to match files (e.g. '**/*.py', 'src/**/*.ts', '**/test_*.py').")
+    path: Optional[str] = Field(None, description="Directory to search in (relative to workspace). Defaults to workspace root.")
 
 
 class FindSymbolParams(BaseModel):
@@ -222,6 +242,10 @@ class DbSchemaParams(BaseModel):
 
 class AskUserParams(BaseModel):
     question: str = Field(..., description="The clarifying question to ask the user. Be specific about what information you need.")
+    options: List[str] = Field(
+        default_factory=list,
+        description="2-4 concrete options for the user to choose from. Each option is a short label (e.g. 'Focus on authentication flow'). The user can also type a free-form answer instead of picking an option.",
+    )
     context: str = Field(
         default="",
         description="Brief context for why you need this information, shown to the user alongside the question.",
@@ -332,6 +356,7 @@ TOOL_PARAM_MODELS: Dict[str, type] = {
     "grep": GrepParams,
     "read_file": ReadFileParams,
     "list_files": ListFilesParams,
+    "glob": GlobParams,
     "find_symbol": FindSymbolParams,
     "find_references": FindReferencesParams,
     "file_outline": FileOutlineParams,
@@ -499,56 +524,93 @@ def get_ask_user_tool_def() -> Dict[str, Any]:
 
 
 TOOL_DEFINITIONS: List[Dict[str, Any]] = [
+    # ------------------------------------------------------------------
+    # Code Search & Navigation
+    # ------------------------------------------------------------------
     {
         "name": "grep",
         "description": (
-            "Search for a Python regex pattern across files in the workspace. "
-            "Returns matching lines with file paths and line numbers. "
-            "Use path to scope search to a subdirectory — this dramatically reduces "
-            "search time and noise on large repos. "
+            "Search for a regex pattern across files in the workspace.\n\n"
+            "Usage:\n"
+            "- Use grep for text/pattern searches across multiple files.\n"
+            "- Use path to scope search to a subdirectory — dramatically reduces time and noise.\n"
+            "- Use find_symbol instead when you need a definition (class, function, method).\n"
+            "- Use find_references instead when you need all usages of a specific symbol "
+            "(it filters out comments, strings, and partial matches).\n"
+            "- Use ast_search instead for structural code patterns (e.g. all if-else blocks, "
+            "all method calls on a specific object).\n\n"
+            "Pattern tips (Python regex syntax):\n"
+            "- Class names: 'class\\s+Approval'\n"
+            "- Method calls: 'approve\\('\n"
+            "- Multiple terms: 'APPROVED|REJECTED|PENDING'\n"
+            "- Literal pipe: '\\|' (escape with backslash)\n\n"
+            "If you get 0 results, try a simpler substring pattern (drop regex metacharacters) "
+            "or use find_symbol instead.\n"
+            "If you get 40+ results, narrow with path or include_glob.\n"
             "Only use include_glob if you know the exact file extension (e.g. '*.java', '*.py'). "
-            "Omit include_glob to search all file types. "
-            "Uses Python regex syntax — | for alternation (e.g. 'Foo|Bar'), "
-            "\\| matches a literal pipe. "
-            "Pattern tips: class names 'class\\s+Approval', method calls 'approve\\(', "
-            "multiple terms 'APPROVED|REJECTED|PENDING', business concepts 'PostApproval|ApprovalData'. "
-            "If you get 0 results, try a simpler substring pattern or use find_symbol instead. "
-            "If you get 40+ results, narrow with path or include_glob."
+            "Omit include_glob to search all file types."
         ),
         "input_schema": GrepParams.model_json_schema(),
     },
     {
         "name": "read_file",
         "description": (
-            "Read file contents with optional line range. Returns the file text, "
-            "total line count, and the file path. Use start_line/end_line to read a "
-            "specific section of a large file — avoid reading 300+ line files in full. "
-            "Prefer file_outline or compressed_view first to discover method locations, "
-            "then read_file with a targeted range. Does not return AST structure or "
-            "symbol definitions — use file_outline for that."
+            "Read file contents with optional line range.\n\n"
+            "Usage:\n"
+            "- Prefer calling file_outline or compressed_view first on files over 100 lines "
+            "— saves tokens by revealing method locations so you can read_file with a targeted range.\n"
+            "- Avoid reading 300+ line files in full — use start_line/end_line to save tokens.\n"
+            "- Use file_outline instead if you only need the list of classes/functions in a file.\n"
+            "- Use compressed_view instead if you need signatures + call relationships + side effects.\n"
+            "- Use expand_symbol instead if you need one specific function's source code.\n\n"
+            "Returns the file text, total line count, and file path. "
+            "Does not return AST structure or symbol definitions — use file_outline for that."
         ),
         "input_schema": ReadFileParams.model_json_schema(),
     },
     {
         "name": "list_files",
         "description": (
-            "List files and directories under a path, with recursive depth control. "
-            "Use this to understand project layout before diving into specific files — "
-            "e.g. list_files('src/services') reveals all service files. "
-            "Use include_glob to filter (e.g. '*.java'). Returns paths only, not file "
-            "contents. For understanding what a module does, prefer module_summary "
-            "which also shows classes, functions, and dependencies."
+            "List files and directories under a path, with recursive depth control.\n\n"
+            "Usage:\n"
+            "- Use this to understand project layout before diving into specific files — "
+            "e.g. list_files('src/services') reveals all service files.\n"
+            "- Use include_glob to filter by extension (e.g. '*.java').\n"
+            "- Use module_summary instead when you need to understand what a directory contains "
+            "(classes, functions, imports, dependencies) — not just file names.\n\n"
+            "Returns paths only, not file contents."
         ),
         "input_schema": ListFilesParams.model_json_schema(),
     },
     {
+        "name": "glob",
+        "description": (
+            "Fast file pattern matching — returns file paths sorted by modification time "
+            "(most recently modified first).\n\n"
+            "Usage:\n"
+            "- Use when you know the filename pattern but not the exact directory "
+            "(e.g. glob('**/test_*.py') finds all test files).\n"
+            "- Supports glob patterns: '**/*.py', 'src/**/*.ts', '**/Dockerfile'.\n"
+            "- Use list_files instead to browse a directory tree with depth control.\n"
+            "- Use grep instead to search file contents (not file names).\n"
+            "- Use find_symbol instead to find where a class/function is defined."
+        ),
+        "input_schema": GlobParams.model_json_schema(),
+    },
+    {
         "name": "find_symbol",
         "description": (
-            "Find symbol definitions (functions, classes, methods, interfaces) by name using AST parsing. "
-            "Returns exact file locations with line numbers and signatures. "
-            "Prefer over grep when you need a definition, not usages — "
-            "e.g. find_symbol('ApplicationDecisionService') finds the class definition, "
-            "while grep('ApplicationDecisionService') finds every mention including imports."
+            "Find symbol definitions (functions, classes, methods, interfaces) by name "
+            "using AST parsing. Returns exact file locations with line numbers and signatures.\n\n"
+            "Usage:\n"
+            "- Prefer find_symbol when you need to locate where a class or function "
+            "is defined — it is exact and filters out usages/imports.\n"
+            "- Use grep instead for text patterns, error messages, config keys, or string literals.\n"
+            "- Use find_references instead when you need all places a symbol is used (not where it's defined).\n\n"
+            "Example: find_symbol('ApplicationDecisionService') finds the class definition; "
+            "grep('ApplicationDecisionService') finds every mention including imports.\n\n"
+            "If you get 0 results, the name may be misspelled or use a different convention. "
+            "Try grep with a partial name to discover the correct spelling."
         ),
         "input_schema": FindSymbolParams.model_json_schema(),
     },
@@ -556,263 +618,327 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "name": "find_references",
         "description": (
             "Find all references (usages) of a symbol across the codebase. "
-            "Combines grep with AST validation for accurate results — filters out "
-            "comments, strings, and partial matches. Use when you need to know every "
-            "place a class, function, or constant is used — e.g. "
-            "find_references('affordability_score') shows every file that reads or "
-            "writes it. Different from find_symbol (which finds definitions) and "
-            "get_dependents (which works at file/module level). Use the file parameter "
-            "to scope results when the symbol has many references."
+            "Combines grep with AST validation — filters out comments, strings, "
+            "and partial matches for accurate results.\n\n"
+            "Usage:\n"
+            "- Use this when you need to know every place a class, function, or constant is used.\n"
+            "- Different from find_symbol (which finds definitions only).\n"
+            "- Different from get_dependents (which works at file/module level, not symbol level).\n"
+            "- Use the file parameter to scope results when the symbol has many references.\n\n"
+            "Example: find_references('affordability_score') shows every file that reads or writes it."
         ),
         "input_schema": FindReferencesParams.model_json_schema(),
     },
     {
         "name": "file_outline",
         "description": (
-            "Get the structure of a file: all classes, functions, methods with line numbers. "
-            "Call this BEFORE read_file on large files — it reveals all method names so you "
-            "can read_file with targeted line ranges instead of reading 500+ lines blindly. "
-            "Also useful for answering 'what methods does this class have?' in one call."
+            "Get the structure of a file: all classes, functions, methods with line numbers "
+            "and signatures.\n\n"
+            "Usage:\n"
+            "- Prefer calling this before read_file on files >100 lines "
+            "— reveals method names and line ranges so you can target specific sections.\n"
+            "- Use compressed_view instead if you also need call relationships, side effects, "
+            "and exceptions (richer but slightly more output).\n"
+            "- Use module_summary instead if you need an overview of an entire directory.\n\n"
+            "Useful for answering 'what methods does this class have?' in one call."
         ),
         "input_schema": FileOutlineParams.model_json_schema(),
     },
+    # ------------------------------------------------------------------
+    # Dependency Analysis
+    # ------------------------------------------------------------------
     {
         "name": "get_dependencies",
         "description": (
-            "Find what files a given file imports or references (downstream dependencies). "
-            "Uses the static dependency graph built from import statements. Set max_depth=2 "
-            "or 3 to find transitive dependencies (A imports B imports C). Each result "
-            "includes the dependency path and depth. Use this to answer 'what does this "
-            "file rely on?' — e.g. get_dependencies('PaymentService.java') shows all "
-            "models, clients, and utilities it imports. Does not find runtime dependencies "
-            "or reflection-based usage — use grep for those."
+            "Find what files a given file imports (downstream dependencies). "
+            "Uses the static dependency graph built from import statements.\n\n"
+            "Usage:\n"
+            "- Use this to answer 'what does this file rely on?' — e.g. "
+            "get_dependencies('PaymentService.java') shows all models, clients, and utilities it imports.\n"
+            "- Set max_depth=2 or 3 to find transitive dependencies (A imports B imports C).\n"
+            "- Use get_dependents (reverse) to find what depends ON this file.\n"
+            "- Does NOT find runtime dependencies or reflection-based usage — use grep for those."
         ),
         "input_schema": GetDependenciesParams.model_json_schema(),
     },
     {
         "name": "get_dependents",
         "description": (
-            "Find what files depend on (import) a given file — the reverse of "
-            "get_dependencies. Use this for blast radius analysis: 'if I change this "
-            "file, what else is affected?' Set max_depth=2 or 3 for transitive dependents. "
-            "Different from find_references: get_dependents works at the file/module level "
-            "(import graph), while find_references finds individual symbol usages. "
-            "Use get_dependents for broad impact, find_references for specific symbol tracking."
+            "Find what files depend on (import) a given file — the reverse of get_dependencies.\n\n"
+            "Usage:\n"
+            "- Use this for blast radius analysis: 'if I change this file, what else is affected?'\n"
+            "- Set max_depth=2 or 3 for transitive dependents.\n"
+            "- Different from find_references: get_dependents works at file/module level (import graph), "
+            "while find_references finds individual symbol usages.\n"
+            "- Use get_dependents for broad file-level impact; find_references for specific symbol tracking."
         ),
         "input_schema": GetDependentsParams.model_json_schema(),
     },
+    # ------------------------------------------------------------------
+    # Git & Version Control
+    # ------------------------------------------------------------------
     {
         "name": "git_log",
         "description": (
-            "Show recent git commits with hash, author, date, and message. "
-            "Optionally filter to a specific file path or search commit messages. "
-            "Use search= to find commits mentioning specific terms (e.g. 'CVE', "
-            "'timeout', 'fix'). Returns commit metadata only — does not include "
-            "diffs. Follow up with git_show on specific commits to see the actual "
-            "changes and full commit message."
+            "Show recent git commits with hash, author, date, and message.\n\n"
+            "Usage:\n"
+            "- Use file= to filter commits touching a specific file.\n"
+            "- Use search= to find commits mentioning specific terms (e.g. 'CVE', 'timeout', 'fix').\n"
+            "- Returns commit metadata only — does NOT include diffs.\n"
+            "- Follow up with git_show on specific commits to see the actual changes.\n"
+            "- Use git_hotspots instead if you want to find frequently-changed files."
         ),
         "input_schema": GitLogParams.model_json_schema(),
     },
     {
         "name": "git_diff",
         "description": (
-            "Show the full unified diff between two git refs (commits, branches). "
-            "Use the file parameter to limit to a single file — reviewing one file "
-            "at a time prevents context overflow. For large PRs, use git_diff_files "
-            "first to see the list of changed files, then git_diff with file= for "
-            "each file you want to review. Returns raw diff text, not parsed "
-            "structures. Use context_lines to control surrounding context (default 10)."
+            "Show the full unified diff between two git refs (commits, branches).\n\n"
+            "Usage:\n"
+            "- ALWAYS use file= to limit to a single file — reviewing one file at a time "
+            "prevents context overflow.\n"
+            "- For large PRs, use git_diff_files FIRST to get the file list, then git_diff "
+            "with file= for each file you want to review.\n"
+            "- Do NOT diff entire large PRs without file= — the output will be truncated.\n"
+            "- Use context_lines to control surrounding context (default 10).\n"
+            "- Returns raw diff text, not parsed structures."
         ),
         "input_schema": GitDiffParams.model_json_schema(),
     },
     {
         "name": "git_diff_files",
         "description": (
-            "List files changed between two git refs with status and line counts. "
-            "Returns a structured list: path, status (added/modified/deleted/renamed), "
-            "additions, deletions. Supports three-dot syntax for PR diffs: "
-            "'master...feature/xxx'. Use this FIRST in code review to get an overview, "
-            "then use git_diff with file= to review individual files."
+            "List files changed between two git refs with status and line counts.\n\n"
+            "Usage:\n"
+            "- ALWAYS use this FIRST in code review to get an overview before reading diffs.\n"
+            "- Supports three-dot syntax for PR diffs: 'master...feature/xxx'.\n"
+            "- Returns: path, status (added/modified/deleted/renamed), additions, deletions.\n"
+            "- Follow up with git_diff with file= to review individual files."
         ),
         "input_schema": GitDiffFilesParams.model_json_schema(),
-    },
-    {
-        "name": "ast_search",
-        "description": (
-            "Structural AST search using ast-grep patterns — matches code structure, "
-            "not text. More precise than grep for finding specific code patterns: "
-            "catches all variations regardless of whitespace, comments, or formatting. "
-            "Use $VAR for single nodes, $$$VAR for multiple nodes. "
-            "Examples: 'def $F($$$ARGS)', 'if $COND: $$$BODY', '$OBJ.$METHOD($$$ARGS)'. "
-            "Requires ast-grep-cli. Prefer grep for simple text/name searches — "
-            "ast_search is for structural patterns only."
-        ),
-        "input_schema": AstSearchParams.model_json_schema(),
-    },
-    {
-        "name": "get_callees",
-        "description": (
-            "Find all functions/methods called within a specific function body. "
-            "Requires the function name and file path. "
-            "ESSENTIAL for tracing business flows: after finding an entry point, "
-            "call get_callees to discover ALL downstream services it invokes "
-            "(e.g. email, payment, verification). This reveals the complete "
-            "chain of steps without reading the entire file."
-        ),
-        "input_schema": GetCalleesParams.model_json_schema(),
-    },
-    {
-        "name": "get_callers",
-        "description": (
-            "Find all functions/methods that call a given function. "
-            "Searches across the entire codebase (or a specific path). "
-            "Essential for impact analysis — e.g. get_callers('make_decision') reveals "
-            "every path that triggers a lending decision. Also useful for verifying "
-            "that callers handle errors from the function they call."
-        ),
-        "input_schema": GetCallersParams.model_json_schema(),
     },
     {
         "name": "git_blame",
         "description": (
             "Run git blame on a file to see who last changed each line, with commit hash, "
-            "author, and date. Optionally limit to a line range. "
-            "Use this to trace when and by whom specific code was introduced or modified. "
-            "Follow up with git_show on interesting commit hashes to understand WHY."
+            "author, and date.\n\n"
+            "Usage:\n"
+            "- Use start_line/end_line to limit to a specific region.\n"
+            "- Use this to trace when and by whom specific code was introduced.\n"
+            "- Follow up with git_show on interesting commit hashes to understand WHY the change was made."
         ),
         "input_schema": GitBlameParams.model_json_schema(),
     },
     {
         "name": "git_show",
         "description": (
-            "Show full details of a specific git commit: author, date, full commit "
-            "message (including body/PR description), and the diff. Use after git_log "
-            "or git_blame to understand the motivation behind a change. Use the file "
-            "parameter to limit the diff to a single file when the commit touches many "
-            "files. Returns the complete diff — for commit metadata only, use git_log."
+            "Show full details of a specific git commit: author, date, full commit message "
+            "(including body/PR description), and the diff.\n\n"
+            "Usage:\n"
+            "- Use after git_log or git_blame to understand the motivation behind a change.\n"
+            "- Use file= to limit the diff to a single file when the commit touches many files.\n"
+            "- For commit metadata only (no diff), use git_log instead."
         ),
         "input_schema": GitShowParams.model_json_schema(),
     },
     {
+        "name": "git_hotspots",
+        "description": (
+            "Find frequently changed files (hotspots) and recently active areas in git history.\n\n"
+            "Usage:\n"
+            "- Hotspots indicate code that changes often — likely complex, risky, or under active development.\n"
+            "- Use to prioritize investigation in large codebases.\n"
+            "- Use days= to control the lookback window (default 90 days).\n"
+            "- Use git_log instead if you need specific commit details, not aggregate frequency."
+        ),
+        "input_schema": GitHotspotsParams.model_json_schema(),
+    },
+    # ------------------------------------------------------------------
+    # Code Analysis & Tracing
+    # ------------------------------------------------------------------
+    {
+        "name": "ast_search",
+        "description": (
+            "Structural AST search using ast-grep patterns — matches code structure, not text.\n\n"
+            "Usage:\n"
+            "- Use for structural patterns that grep cannot express reliably: catches all variations "
+            "regardless of whitespace, comments, or formatting.\n"
+            "- Use grep instead for simple text/name searches — ast_search is for structural patterns only.\n"
+            "- Use $VAR for single nodes, $$$VAR for multiple nodes.\n\n"
+            "Examples:\n"
+            "- Function definitions: 'def $F($$$ARGS)'\n"
+            "- Conditionals: 'if $COND: $$$BODY'\n"
+            "- Method calls: '$OBJ.$METHOD($$$ARGS)'\n"
+            "- Try-except: 'try: $$$BODY except $EXC: $$$HANDLER'\n\n"
+            "Requires ast-grep-cli. If ast_search fails or returns unexpected results, "
+            "fall back to grep with a regex pattern."
+        ),
+        "input_schema": AstSearchParams.model_json_schema(),
+    },
+    {
+        "name": "get_callees",
+        "description": (
+            "Find all functions/methods called within a specific function body.\n\n"
+            "Usage:\n"
+            "- ESSENTIAL for tracing business flows: after finding an entry point, call get_callees "
+            "to discover ALL downstream services it invokes (e.g. email, payment, verification).\n"
+            "- Requires both function_name and file path.\n"
+            "- Use get_callers (reverse) to find who calls a given function.\n"
+            "- Use trace_variable instead if you need to track a specific value through the call chain.\n\n"
+            "Reveals the complete chain of steps without reading the entire file."
+        ),
+        "input_schema": GetCalleesParams.model_json_schema(),
+    },
+    {
+        "name": "get_callers",
+        "description": (
+            "Find all functions/methods that call a given function across the codebase.\n\n"
+            "Usage:\n"
+            "- Essential for impact analysis: 'if I change this function, who is affected?'\n"
+            "- Use path= to scope the search to a subdirectory.\n"
+            "- Use get_callees (reverse) to find what a function calls downstream.\n"
+            "- Different from find_references: get_callers finds the enclosing function that makes "
+            "the call; find_references finds every mention including imports and type annotations.\n\n"
+            "Example: get_callers('make_decision') reveals every path that triggers a lending decision."
+        ),
+        "input_schema": GetCallersParams.model_json_schema(),
+    },
+    {
+        "name": "trace_variable",
+        "description": (
+            "Trace a variable's data flow through function calls.\n\n"
+            "Forward: finds where the value goes — aliases, argument-to-parameter mapping, "
+            "and sinks (ORM filters, SQL parameters, HTTP bodies, return statements).\n"
+            "Backward: finds where the value comes from — callers that pass this parameter, "
+            "and sources (HTTP requests, config, DB results).\n\n"
+            "Usage:\n"
+            "- Use to answer 'how does loan_id flow from the HTTP request into the SQL WHERE clause?'\n"
+            "- Chain forward hops: the flows_to output of one call becomes the input of the next.\n"
+            "- Use get_callees/get_callers instead for function-level call chains (not value-level).\n\n"
+            "Example: trace_variable('loan_id', 'services/lending.py', direction='forward')"
+        ),
+        "input_schema": TraceVariableParams.model_json_schema(),
+    },
+    # ------------------------------------------------------------------
+    # Testing
+    # ------------------------------------------------------------------
+    {
         "name": "find_tests",
         "description": (
-            "Find test functions that test a given function or class. Searches test files "
-            "(test_*.py, *_test.py, *.test.ts, *.spec.ts, *_test.go, *Test.java, *_test.rs) "
-            "for references to the target and returns the enclosing test function with context. "
-            "Use to check if a function has tests, or to find test examples that document "
-            "expected behavior. Returns test file paths and function names — follow up with "
-            "test_outline for details about what each test mocks and asserts."
+            "Find test functions that test a given function or class.\n\n"
+            "Usage:\n"
+            "- Use to check if a function has tests, or to find test examples that document expected behavior.\n"
+            "- Searches test files (test_*.py, *_test.py, *.test.ts, *.spec.ts, *_test.go, *Test.java, *_test.rs).\n"
+            "- Returns test file paths and function names.\n"
+            "- Follow up with test_outline for details about what each test mocks and asserts.\n"
+            "- Follow up with run_test to execute and verify."
         ),
         "input_schema": FindTestsParams.model_json_schema(),
     },
     {
         "name": "test_outline",
         "description": (
-            "Get the detailed structure of a test file: test classes/suites, test functions, "
-            "what they mock (patch/MagicMock/jest.fn/vi.mock), what they assert, and fixtures "
-            "used. Richer than file_outline — understands test semantics for pytest, jest, "
-            "mocha, vitest, and Go. Use to understand what a test file covers without reading "
-            "every line. Does not execute tests — use run_test for that."
+            "Get the detailed structure of a test file: test classes, test functions, mocks, "
+            "assertions, and fixtures.\n\n"
+            "Usage:\n"
+            "- Use this to understand what a test file covers without reading every line.\n"
+            "- Richer than file_outline — understands test semantics (patch/MagicMock/jest.fn/vi.mock, "
+            "assert patterns, fixtures) for pytest, jest, mocha, vitest, and Go.\n"
+            "- Use file_outline instead for non-test files.\n"
+            "- Does NOT execute tests — use run_test for that."
         ),
         "input_schema": TestOutlineParams.model_json_schema(),
     },
     {
-        "name": "trace_variable",
+        "name": "run_test",
         "description": (
-            "Trace a variable's data flow through function calls. "
-            "Forward: finds where the value goes — aliases, function call argument-to-parameter mapping, "
-            "and sinks (ORM filters, SQL parameters, HTTP bodies, return statements). "
-            "Backward: finds where the value comes from — callers that pass this parameter, "
-            "and sources (HTTP requests, config, DB results). "
-            "Use this to answer 'how does loan_id flow from the HTTP request into the SQL WHERE clause?' "
-            "by chaining forward hops across function boundaries."
+            "Run a specific test file or test function and return the result.\n\n"
+            "Usage:\n"
+            "- Use as a VERIFICATION step to prove a bug exists or confirm a fix works.\n"
+            "- Only use AFTER you have identified a likely finding and want to confirm it "
+            "with evidence from actual test execution.\n"
+            "- Returns pass/fail status, output, and failure details.\n"
+            "- Use find_tests first to discover which tests cover the code in question."
         ),
-        "input_schema": TraceVariableParams.model_json_schema(),
+        "input_schema": RunTestParams.model_json_schema(),
     },
+    # ------------------------------------------------------------------
+    # Compression & Summary (token-efficient exploration)
+    # ------------------------------------------------------------------
     {
         "name": "compressed_view",
         "description": (
-            "Return a compressed view of a file: function/class signatures with line "
-            "numbers, call relationships between functions, side effects (DB writes, "
-            "HTTP calls, file I/O), and exceptions raised. Saves ~80% tokens vs "
-            "read_file while showing the same structural information. Use this as "
-            "the default way to understand a file before deciding what to read in "
-            "detail. Does not show function bodies or logic — use read_file with a "
-            "line range or expand_symbol when you need the actual implementation. "
-            "Use the focus parameter to filter to a specific class or function."
+            "Compressed view of a file: function/class signatures, call relationships, "
+            "side effects (DB writes, HTTP calls, file I/O), and exceptions raised. "
+            "Saves ~80%% tokens vs read_file.\n\n"
+            "Usage:\n"
+            "- Use this as the DEFAULT first step to understand any file — before read_file.\n"
+            "- Use the focus parameter to filter to a specific class or function.\n"
+            "- Use read_file with start_line/end_line or expand_symbol when you need the actual "
+            "implementation (function bodies, logic).\n"
+            "- Use file_outline instead if you only need names and line numbers (lighter output).\n"
+            "- Use module_summary instead for a directory-level overview."
         ),
         "input_schema": CompressedViewParams.model_json_schema(),
     },
     {
         "name": "module_summary",
         "description": (
-            "Return a high-level summary of a module/directory: classes, functions, "
-            "imports, dependencies, and file list. Saves ~95% tokens vs reading all "
-            "files. Use this as your first step when exploring an unfamiliar directory — "
-            "it reveals the major components and their relationships so you can target "
-            "specific files. Does not show function bodies, line-level detail, or test "
-            "coverage. Follow up with compressed_view on specific files of interest."
+            "High-level summary of a module/directory: classes, functions, imports, "
+            "dependencies, and file list. Saves ~95%% tokens vs reading all files.\n\n"
+            "Usage:\n"
+            "- Use this as your FIRST step when exploring an unfamiliar directory.\n"
+            "- Reveals the major components and their relationships so you can target specific files.\n"
+            "- Follow up with compressed_view on specific files of interest.\n"
+            "- Use list_files instead if you only need file names without code structure.\n"
+            "- Does NOT show function bodies, line-level detail, or test coverage."
         ),
         "input_schema": ModuleSummaryParams.model_json_schema(),
     },
     {
         "name": "expand_symbol",
         "description": (
-            "Expand a symbol to its full source code with line numbers. Use after "
-            "compressed_view or file_outline when you need the complete implementation "
-            "of a specific function or class — avoids reading the entire file. "
-            "Provide file_path for faster lookup, or omit to search the workspace. "
-            "Returns only the symbol body, not the surrounding file. Prefer read_file "
-            "with start_line/end_line when you need surrounding context (e.g. nearby "
-            "comments, adjacent methods, or class-level fields)."
+            "Expand a symbol to its full source code with line numbers.\n\n"
+            "Usage:\n"
+            "- Use after compressed_view or file_outline when you need the complete "
+            "implementation of a specific function or class.\n"
+            "- Avoids reading the entire file — returns only the symbol body.\n"
+            "- Provide file_path for faster lookup, or omit to search the workspace.\n"
+            "- Use read_file with start_line/end_line instead when you need surrounding "
+            "context (nearby comments, adjacent methods, class-level fields)."
         ),
         "input_schema": ExpandSymbolParams.model_json_schema(),
     },
+    # ------------------------------------------------------------------
+    # Pattern Detection & Extraction
+    # ------------------------------------------------------------------
     {
         "name": "detect_patterns",
         "description": (
             "Scan files for architectural patterns: webhook/callback endpoints, "
             "queue consumer/producer, retry/backoff logic, lock/mutex usage, "
             "check-then-act anti-patterns, transaction boundaries, token lifecycle, "
-            "and side-effect chains. Returns structured matches with file, line, "
-            "pattern category, and a snippet. Use this to quickly identify risky "
-            "code patterns before diving into detailed review. Use the categories "
-            "parameter to focus on specific patterns (e.g. 'retry,transaction') "
-            "rather than scanning everything. Does not verify correctness — it "
-            "finds pattern instances that warrant deeper investigation."
+            "and side-effect chains.\n\n"
+            "Usage:\n"
+            "- Use to quickly identify risky code patterns before diving into detailed review.\n"
+            "- Use the categories parameter to focus on specific patterns "
+            "(e.g. categories=['retry','transaction']) rather than scanning everything.\n"
+            "- Returns structured matches with file, line, pattern category, and snippet.\n"
+            "- Does NOT verify correctness — it finds pattern instances that warrant deeper investigation.\n"
+            "- Follow up with read_file or compressed_view on flagged files to verify."
         ),
         "input_schema": DetectPatternsParams.model_json_schema(),
     },
     {
-        "name": "run_test",
-        "description": (
-            "Run a specific test file or test function and return the result. "
-            "Use this as a VERIFICATION step to prove a bug exists — e.g. run "
-            "the test that covers a changed function to see if it fails. "
-            "Returns pass/fail status, output, and failure details. "
-            "Only use after you have identified a likely finding and want to "
-            "confirm it with evidence from actual test execution."
-        ),
-        "input_schema": RunTestParams.model_json_schema(),
-    },
-    # --- New analysis tools ---
-    {
-        "name": "git_hotspots",
-        "description": (
-            "Analyze git history to find frequently changed files (hotspots) "
-            "and recently active areas. Hotspots indicate code that changes often — "
-            "likely complex, risky, or under active development. Use to prioritize "
-            "investigation in large codebases."
-        ),
-        "input_schema": GitHotspotsParams.model_json_schema(),
-    },
-    {
         "name": "list_endpoints",
         "description": (
-            "Extract all API endpoints/routes from the codebase. Detects patterns "
-            "for FastAPI, Flask, Django, Spring, Express, and Go. Returns method, "
-            "path, file, and line for each endpoint. Use as a starting point when "
-            "investigating API flows or understanding the service surface."
+            "Extract all API endpoints/routes from the codebase.\n\n"
+            "Usage:\n"
+            "- Use as a starting point when investigating API flows or understanding the service surface.\n"
+            "- Detects patterns for FastAPI, Flask, Django, Spring, Express, and Go.\n"
+            "- Returns method, path, file, and line for each endpoint.\n"
+            "- Follow up with get_callees on the handler function to trace the request flow.\n"
+            "- Use grep instead if you need to search for a specific endpoint path."
         ),
         "input_schema": ListEndpointsParams.model_json_schema(),
     },
@@ -820,77 +946,96 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "name": "extract_docstrings",
         "description": (
             "Extract function/class-level documentation (docstrings, JSDoc, Javadoc, "
-            "Go doc comments) from a file. Use when compressed_view isn't enough and "
-            "you need to understand what a function is supposed to do without reading "
-            "its full implementation."
+            "Go doc comments) from a file.\n\n"
+            "Usage:\n"
+            "- Use when you need to understand what a function is supposed to do without reading "
+            "its full implementation.\n"
+            "- Use compressed_view instead if you need signatures + side effects + call relationships.\n"
+            "- Use symbol_name parameter to extract docs for a specific symbol only."
         ),
         "input_schema": ExtractDocstringsParams.model_json_schema(),
     },
     {
         "name": "db_schema",
         "description": (
-            "Extract database schema from ORM models (SQLAlchemy, Django, JPA, TypeORM). "
-            "Returns model names, table names, and field definitions. Use to understand "
-            "the data layer — what tables exist, what columns they have, and how models "
-            "relate to each other."
+            "Extract database schema from ORM models (SQLAlchemy, Django, JPA, TypeORM).\n\n"
+            "Usage:\n"
+            "- Use to understand the data layer: what tables exist, what columns they have, "
+            "and how models relate to each other.\n"
+            "- Returns model names, table names, and field definitions.\n"
+            "- Use grep instead to find specific column names or table references in code.\n"
+            "- Use trace_variable to trace how data flows from models into queries."
         ),
         "input_schema": DbSchemaParams.model_json_schema(),
     },
-    # --- Browser tools ---
+    # ------------------------------------------------------------------
+    # Browser tools
+    # ------------------------------------------------------------------
     {
         "name": "web_search",
         "description": (
-            "Search the web using Google and return structured results. "
-            "Each result includes title, URL, and snippet. Use this to look up "
-            "external library documentation, error messages, API references, "
-            "or best practices. Follow up with web_navigate on interesting URLs."
+            "Search the web and return structured results with title, URL, and snippet.\n\n"
+            "Usage:\n"
+            "- Use to look up external library documentation, error messages, API references, "
+            "or best practices.\n"
+            "- Follow up with web_navigate on interesting URLs to read the full page.\n"
+            "- Use grep instead when searching the local codebase — web_search is for external resources."
         ),
         "input_schema": WebSearchParams.model_json_schema(),
     },
     {
         "name": "web_navigate",
         "description": (
-            "Navigate a headless browser to a URL and return the page content. "
-            "Returns the page title, final URL (after redirects), visible text, "
-            "and a list of links. The browser session persists across calls so "
-            "you can navigate, click, fill forms, and extract data in sequence."
+            "Navigate a headless browser to a URL and return the page content.\n\n"
+            "Usage:\n"
+            "- Use after web_search to read full pages of interest.\n"
+            "- Returns page title, final URL (after redirects), visible text, and links.\n"
+            "- The browser session persists across calls — you can navigate, click, fill, "
+            "and extract in sequence.\n"
+            "- Use web_extract after navigating for targeted data extraction."
         ),
         "input_schema": WebNavigateParams.model_json_schema(),
     },
     {
         "name": "web_click",
         "description": (
-            "Click an element on the current browser page by CSS selector or "
-            "visible text. Returns the page state after the click (URL, title, "
-            "and nearby text). Use after web_navigate to interact with buttons, "
-            "links, tabs, and other clickable elements."
+            "Click an element on the current browser page by CSS selector or visible text.\n\n"
+            "Usage:\n"
+            "- Use after web_navigate to interact with buttons, links, tabs, and other clickable elements.\n"
+            "- Returns the page state after the click (URL, title, nearby text)."
         ),
         "input_schema": WebClickParams.model_json_schema(),
     },
     {
         "name": "web_fill",
         "description": (
-            "Fill a form input on the current browser page. Clears the field "
-            "first, then types the value. Optionally press Enter after filling "
-            "(useful for search boxes). Use after web_navigate to submit forms."
+            "Fill a form input on the current browser page.\n\n"
+            "Usage:\n"
+            "- Clears the field first, then types the value.\n"
+            "- Set press_enter=true for search boxes that submit on Enter.\n"
+            "- Use after web_navigate to interact with forms."
         ),
         "input_schema": WebFillParams.model_json_schema(),
     },
     {
         "name": "web_screenshot",
         "description": (
-            "Take a screenshot of the current browser page (or a specific element). "
-            "Returns the path to the saved PNG file. Use to capture visual state "
-            "when text extraction is insufficient."
+            "Take a screenshot of the current browser page or a specific element.\n\n"
+            "Usage:\n"
+            "- Returns the path to the saved PNG file.\n"
+            "- Use when text extraction is insufficient and you need the visual layout.\n"
+            "- Use web_extract instead when you can target elements by CSS selector."
         ),
         "input_schema": WebScreenshotParams.model_json_schema(),
     },
     {
         "name": "web_extract",
         "description": (
-            "Extract text or attributes from elements matching a CSS selector "
-            "on the current browser page. Use to scrape structured data like "
-            "tables, lists, or specific sections. Returns an array of matches."
+            "Extract text or attributes from elements matching a CSS selector on the current page.\n\n"
+            "Usage:\n"
+            "- Use to scrape structured data: tables, lists, or specific sections.\n"
+            "- Returns an array of matches.\n"
+            "- Use after web_navigate to target specific page content."
         ),
         "input_schema": WebExtractParams.model_json_schema(),
     },
@@ -901,9 +1046,10 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "Ask the user for direction when there are multiple valid approaches "
             "and their preference would materially change your investigation. "
             "Call this in your first iteration, before exploring the codebase. "
-            "Provide 2-4 concrete options when possible, and mark your "
-            "recommended option. The user's answer is returned as the tool "
-            "result. Use at most once per session."
+            "Provide 2-4 concrete options in the 'options' array — these are "
+            "rendered as clickable buttons for the user. Mark your recommended "
+            "option with '(recommended)' suffix. The user can also type a "
+            "free-form answer. Use at most once per session."
         ),
         "input_schema": AskUserParams.model_json_schema(),
     },
@@ -919,6 +1065,112 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "input_schema": SignalBlockerParams.model_json_schema(),
     },
 ]
+
+
+# ---------------------------------------------------------------------------
+# Tool metadata — structured properties for concurrency, context compaction,
+# and future deferred loading.  Does NOT affect the LLM API contract; this is
+# backend-only infrastructure.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ToolMetadata:
+    """Per-tool metadata for agent loop infrastructure."""
+    is_read_only: bool = True
+    is_concurrent_safe: bool = True
+    summary_template: str = ""        # Python format string for context compaction
+    category: str = "search"          # search | navigate | git | analysis | test | browser
+
+
+TOOL_METADATA: Dict[str, ToolMetadata] = {
+    # --- Search & Navigation ---
+    "grep":              ToolMetadata(category="search",   summary_template="grep '{pattern}' in {path}: {_count} matches"),
+    "read_file":         ToolMetadata(category="navigate", summary_template="read {path} lines {start_line}-{end_line}"),
+    "list_files":        ToolMetadata(category="navigate", summary_template="listed {directory}: {_count} entries"),
+    "glob":              ToolMetadata(category="navigate", summary_template="glob '{pattern}': {_count} files"),
+    "find_symbol":       ToolMetadata(category="search",   summary_template="find_symbol '{name}': {_count} definitions"),
+    "find_references":   ToolMetadata(category="search",   summary_template="find_references '{symbol_name}': {_count} usages"),
+    "file_outline":      ToolMetadata(category="navigate", summary_template="outline {path}: {_count} symbols"),
+    "compressed_view":   ToolMetadata(category="navigate", summary_template="compressed_view {file_path}"),
+    "module_summary":    ToolMetadata(category="navigate", summary_template="module_summary {module_path}"),
+    "expand_symbol":     ToolMetadata(category="navigate", summary_template="expand {symbol_name} in {file_path}"),
+    # --- Dependency Analysis ---
+    "get_dependencies":  ToolMetadata(category="analysis", summary_template="dependencies of {file_path}: {_count} files"),
+    "get_dependents":    ToolMetadata(category="analysis", summary_template="dependents of {file_path}: {_count} files"),
+    # --- Call Graph ---
+    "get_callees":       ToolMetadata(category="analysis", summary_template="callees of {function_name}: {_count} calls"),
+    "get_callers":       ToolMetadata(category="analysis", summary_template="callers of {function_name}: {_count} callers"),
+    "trace_variable":    ToolMetadata(category="analysis", summary_template="trace {variable_name} {direction}: {_count} flows"),
+    # --- Git ---
+    "git_log":           ToolMetadata(category="git", summary_template="git_log: {_count} commits"),
+    "git_diff":          ToolMetadata(category="git", summary_template="git_diff {ref1}..{ref2} {file}"),
+    "git_diff_files":    ToolMetadata(category="git", summary_template="changed files {ref}: {_count} files"),
+    "git_blame":         ToolMetadata(category="git", summary_template="blame {file}: {_count} lines"),
+    "git_show":          ToolMetadata(category="git", summary_template="git_show {commit}"),
+    "git_hotspots":      ToolMetadata(category="git", summary_template="hotspots (last {days}d): {_count} files"),
+    # --- Code Analysis ---
+    "ast_search":        ToolMetadata(category="analysis", summary_template="ast_search '{pattern}': {_count} matches"),
+    "detect_patterns":   ToolMetadata(category="analysis", summary_template="detect_patterns in {path}: {_count} patterns"),
+    "list_endpoints":    ToolMetadata(category="analysis", summary_template="endpoints: {_count} routes"),
+    "extract_docstrings": ToolMetadata(category="analysis", summary_template="docstrings in {path}: {_count} docs"),
+    "db_schema":         ToolMetadata(category="analysis", summary_template="db_schema: {_count} models"),
+    # --- Testing ---
+    "find_tests":        ToolMetadata(category="test", summary_template="tests for '{name}': {_count} tests"),
+    "test_outline":      ToolMetadata(category="test", summary_template="test_outline {path}: {_count} tests"),
+    "run_test":          ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="test",
+                                      summary_template="ran {test_file}: {_status}"),
+    # --- Browser ---
+    "web_search":        ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="web_search '{query}': {_count} results"),
+    "web_navigate":      ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="navigated to {url}"),
+    "web_click":         ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="clicked '{selector}'"),
+    "web_fill":          ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="filled '{selector}'"),
+    "web_screenshot":    ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="screenshot taken"),
+    "web_extract":       ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
+                                      summary_template="extracted '{selector}': {_count} elements"),
+}
+
+
+def get_tool_metadata(tool_name: str) -> ToolMetadata:
+    """Return metadata for a tool, defaulting to read-only/concurrent-safe."""
+    return TOOL_METADATA.get(tool_name, ToolMetadata())
+
+
+def format_tool_summary(tool_name: str, params: Dict[str, Any], result_data: Any) -> str:
+    """Format a one-line summary of a tool call for context compaction.
+
+    Uses the tool's summary_template, filling in params and a computed _count.
+    Falls back to a generic summary if the template is missing or formatting fails.
+    """
+    meta = TOOL_METADATA.get(tool_name)
+    if not meta or not meta.summary_template:
+        return f"{tool_name}()"
+
+    # Compute _count from result data
+    _count = len(result_data) if isinstance(result_data, list) else 0
+    # Compute _status for run_test
+    _status = "unknown"
+    if isinstance(result_data, dict):
+        _status = result_data.get("status", result_data.get("result", "done"))
+
+    template_vars = {**params, "_count": _count, "_status": _status}
+    # Fill missing keys with empty strings to avoid KeyError
+    try:
+        return meta.summary_template.format_map(
+            {k: template_vars.get(k, "") for k in _extract_format_keys(meta.summary_template)}
+        )
+    except (KeyError, ValueError, IndexError):
+        return f"{tool_name}()"
+
+
+def _extract_format_keys(template: str) -> List[str]:
+    """Extract {key} names from a format string."""
+    import re as _re
+    return _re.findall(r'\{(\w+)\}', template)
 
 
 # ---------------------------------------------------------------------------

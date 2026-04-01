@@ -45,8 +45,9 @@ _TOOL_POLICIES: dict[str, OutputPolicy] = {
     "file_outline": OutputPolicy(max_results=100, max_chars=20_000, truncate_unit="results"),
     "test_outline": OutputPolicy(max_results=50, max_chars=20_000, truncate_unit="results"),
 
-    # Directory listing — limit entries
+    # Directory listing & file matching — limit entries
     "list_files": OutputPolicy(max_results=100, max_chars=15_000, truncate_unit="results"),
+    "glob": OutputPolicy(max_results=100, max_chars=15_000, truncate_unit="results"),
 
     # Dependency tools — moderate
     "get_dependencies": OutputPolicy(max_results=50, max_chars=15_000, truncate_unit="results"),

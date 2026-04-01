@@ -21,3 +21,4 @@ core_tools:
   - file_outline
   - compressed_view
   - expand_symbol
+  - glob

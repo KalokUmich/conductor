@@ -42,6 +42,45 @@
             "minimum": 1,
             "title": "Max Results",
             "type": "integer"
+          },
+          "output_mode": {
+            "default": "content",
+            "description": "Output format: 'content' (matching lines, default), 'files_only' (just file paths), 'count' (match count per file).",
+            "title": "Output Mode",
+            "type": "string"
+          },
+          "context_lines": {
+            "default": 0,
+            "description": "Lines of context to show before and after each match (0 = match line only).",
+            "maximum": 10,
+            "minimum": 0,
+            "title": "Context Lines",
+            "type": "integer"
+          },
+          "case_insensitive": {
+            "default": false,
+            "description": "Case-insensitive matching.",
+            "title": "Case Insensitive",
+            "type": "boolean"
+          },
+          "multiline": {
+            "default": false,
+            "description": "Match across line boundaries (re.DOTALL).",
+            "title": "Multiline",
+            "type": "boolean"
+          },
+          "file_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Language shortcut for file filtering: py, js, ts, java, go, rust, c, cpp. Maps to include_glob automatically.",
+            "title": "File Type"
           }
         },
         "required": [
@@ -205,6 +244,40 @@
         "title": "FileEntry",
         "type": "object"
       }
+    },
+    "glob": {
+      "input_schema": {
+        "properties": {
+          "pattern": {
+            "description": "Glob pattern to match files (e.g. '**/*.py', 'src/**/*.ts', '**/test_*.py').",
+            "title": "Pattern",
+            "type": "string"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "Directory to search in (relative to workspace). Defaults to workspace root.",
+            "title": "Path"
+          }
+        },
+        "required": [
+          "pattern"
+        ],
+        "title": "GlobParams",
+        "type": "object"
+      },
+      "output_type": "list",
+      "output_item_fields": [
+        "path",
+        "size"
+      ]
     },
     "find_symbol": {
       "input_schema": {

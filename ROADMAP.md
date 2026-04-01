@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-03-22
+Last updated: 2026-04-01
 
 ## Current State
 
@@ -626,11 +626,101 @@ backend/app/integrations/
   - [ ] `/conductor ask` triggers AgentLoopService, posts answer
   - [ ] Webhook URL configurable per channel
 
+### 7.7 Intelligent Jira Agent (PLANNED)
+
+Context-aware Jira integration via `@AI /jira` — the agent understands user intent from conversation context and takes the appropriate action (create ticket, explain ticket, update ticket).
+
+#### Intent Detection & Routing
+
+`@AI /jira` uses Brain-like context classification to decide next step:
+
+```
+User: "@AI /jira I need to add retry logic to the payment webhook"
+  → Agent detects: task description → CREATE flow
+  → ask_user: "Would you like me to create a Jira ticket for this?"
+  → User: Yes
+  → Agent auto-fills: summary, description, story points, priority
+  → ask_user only for: project, assignee (things agent can't infer)
+  → Creates ticket → returns clickable link
+
+User: "@AI /jira PROJ-123"
+  → Agent detects: ticket reference → CONSULT flow
+  → Fetches ticket details via Jira API
+  → Reads related code (using code tools) to understand context
+  → Explains: what the ticket requires, affected files, suggested approach
+
+User: "@AI /jira what's the status of the auth refactor?"
+  → Agent detects: status query → SEARCH flow
+  → JQL search for relevant tickets
+  → Summarizes: open tickets, blockers, progress
+```
+
+#### 7.7.1 Intent Classifier (PLANNED)
+- [ ] Classify `/jira` input into: CREATE, CONSULT, SEARCH, UPDATE
+- [ ] CREATE triggers: task description, "I need to...", "we should...", "add feature..."
+- [ ] CONSULT triggers: ticket ID pattern (PROJ-123), "explain", "what does ... mean"
+- [ ] SEARCH triggers: "status of", "what's open", "blockers", "sprint"
+- [ ] UPDATE triggers: "close", "move to done", "assign to", "change priority"
+
+#### 7.7.2 Smart Ticket Creation (PLANNED)
+- [ ] Agent analyzes conversation context + codebase to auto-fill:
+  - **Summary**: extracted from user's description
+  - **Description**: enriched with code references (files, functions, dependencies affected)
+  - **Story points / effort estimate**: agent uses compressed_view + get_dependencies to assess scope
+  - **Priority**: inferred from keywords (urgent, blocker, nice-to-have)
+  - **Issue type**: Story vs Bug vs Task (inferred from context)
+  - **Labels/Components**: matched from existing Jira project metadata
+- [ ] ask_user for confirmation with pre-filled preview (editable before submit)
+- [ ] Only ask_user for genuinely unknown fields (project selection, assignee)
+- [ ] POST to Jira API → return clickable ticket link in chat
+
+#### 7.7.3 Ticket Consultation (PLANNED)
+- [ ] Fetch ticket details via `GET /api/integrations/jira/issue/{key}`
+- [ ] Parse ticket description, acceptance criteria, comments
+- [ ] Use code tools (grep, find_symbol, compressed_view) to find relevant code
+- [ ] Synthesize: "This ticket asks you to [summary]. The relevant code is in [files]. Here's a suggested approach: [steps]."
+- [ ] If ticket has subtasks, explain each and suggest priority order
+
+#### 7.7.4 Status Query & Search (PLANNED)
+- [ ] JQL search with intelligent query construction from natural language
+- [ ] "My tickets" query: `assignee = currentUser() AND status != Done` — shows all tickets assigned to the user
+- [ ] "My sprint" query: `assignee = currentUser() AND sprint in openSprints()`
+- [ ] Priority view: group by priority (Blocker → Critical → Major → Minor)
+- [ ] Workload summary: "You have 8 tickets: 2 blockers, 3 in progress, 3 to do. Suggested focus: PROJ-456 (blocker, due tomorrow)"
+- [ ] Agent can cross-reference tickets with code: "PROJ-789 touches auth module — you also have PROJ-790 in the same area, consider batching"
+- [ ] Render as compact summary cards in chat
+- [ ] "3 open, 1 blocked, 2 in review" style overview
+
+#### 7.7.5 Ticket Update (PLANNED)
+- [ ] Status transitions: "move PROJ-123 to In Progress"
+- [ ] Add comments: "add a comment to PROJ-123: found the root cause at auth.py:42"
+- [ ] Change fields: priority, assignee, labels
+- [ ] ask_user confirmation before any write operation
+
+#### Design Principles
+- **Agent-first**: agent fills as much as possible, only asks user when genuinely uncertain
+- **Code-aware**: ticket descriptions enriched with codebase context (affected files, dependencies, complexity)
+- **Conversational**: natural language in, structured Jira action out
+- **Safe**: all write operations (create, update) require ask_user confirmation
+
+#### Files to Modify
+- `extension/media/chat.html` — enhanced `/jira` slash command routing
+- `extension/src/extension.ts` — intent classification + Brain dispatch
+- `backend/app/integrations/jira/service.py` — new endpoints: GET issue details, PUT transitions
+- `backend/app/integrations/jira/router.py` — new routes
+- `backend/app/agent_loop/brain.py` — Jira-aware dispatch (optional: dedicated Jira skill)
+- `config/agents/jira_assistant.md` — new agent identity for Jira tasks (optional)
+
+#### Depends on
+- Phase 7.1-7.4 (Jira OAuth + API + UI) — ✅ COMPLETE
+- Phase 9 tool enhancements — ✅ COMPLETE (improved tool descriptions help agent analyze code)
+
 ### Dependency Graph
 ```
 7.0 (DB Foundation) ──> 7.1 (Jira OAuth) ──┬──> 7.2 (Jira API) ──┬──> 7.4 (Ticket UI)
                                             │                      │
-                                            ├──> 7.3 (Auth UI) ────┘
+                                            ├──> 7.3 (Auth UI) ────┤
+                                            │                      └──> 7.7 (Intelligent Jira Agent)
                                             ├──> 7.5 (Teams) [parallel]
                                             └──> 7.6 (Slack) [parallel]
 ```
@@ -687,6 +777,217 @@ Completed 2026-03-22. Quality-of-life improvements and infrastructure fixes.
 - [x] **Error banners**: unified `.error-banner` class with dismiss button across all 5 error containers
 - [x] **Markdown enhancements**: tables, links, italic in `inlineFormat()`, larger code blocks (`max-h-80`)
 
+## Phase 9: Claude Code Pattern Adoption (IN PROGRESS)
+
+**Reference**: `reference/claude-code/` — Anthropic's official CLI source (~205K lines TypeScript). Extracted from npm sourcemaps 2026-03-31. Read-only study material.
+
+The goal is to systematically learn from Claude Code's production-grade patterns and integrate the most impactful ones into Conductor. Each sub-phase focuses on one architectural pattern, studied from the reference code and adapted to our Python/TypeScript stack.
+
+### 9.1 Agent Loop Recovery & Resilience (PLANNED)
+Learn from `query.ts` — Claude Code's 4-layer recovery mechanism for robust agent execution.
+
+**Reference files**: `query.ts` (1729 lines), `query/tokenBudget.ts`, `services/tools/StreamingToolExecutor.ts`
+
+**What Claude Code does**:
+- Immutable state transitions per iteration (`while(true)` + state reassignment)
+- 4-layer recovery: Context Collapse Drain → Reactive Compact (full summarization) → Max Output Recovery (3 retries with escalation) → Stop Hook Blocking
+- Model fallback: `FallbackTriggeredError` triggers clean state transition to backup model
+- Circuit breakers: `hasAttemptedReactiveCompact` prevents infinite retry loops
+
+**What to adopt in Conductor**:
+- [ ] Structured recovery in `AgentLoopService.run_stream()` — currently no recovery on context overflow
+- [ ] Reactive compact: summarize conversation when tokens exceed threshold (today we just stop)
+- [ ] Max output recovery: inject "Resume directly…" message on truncation (currently loses partial output)
+- [ ] Model fallback: if primary model 429s, fall back to secondary (e.g., Sonnet → Haiku for sub-agents)
+- [ ] Circuit breaker pattern for all retry paths
+
+### 9.2 Streaming Tool Execution (PLANNED)
+Learn from `StreamingToolExecutor.ts` — execute tools concurrently during model streaming.
+
+**Reference files**: `services/tools/StreamingToolExecutor.ts` (530 lines), `services/tools/toolOrchestration.ts` (188 lines)
+
+**What Claude Code does**:
+- Tools added to executor as `tool_use` blocks arrive during streaming
+- Each tool declares `isConcurrencySafe(input)` — same tool, different inputs may be safe or not
+- Read-only tools run in parallel (max 10 concurrent), write tools serialize
+- Results buffered per tool, yielded in call order (preserves transcript consistency)
+- Abort handling: synthetic `tool_result` for every orphaned `tool_use` on interrupt
+
+**What to adopt in Conductor**:
+- [ ] Add `is_concurrent_safe` flag to tool definitions in `schemas.py`
+- [ ] Parallel tool execution in `AgentLoopService` for read-only tools (grep, read_file, list_files, find_symbol, etc.)
+- [ ] Result ordering guarantee (buffer + yield in call order)
+- [ ] Abort handling: generate synthetic tool results on timeout/interrupt
+
+### 9.3 Prompt Cache Sharing for Sub-Agents (PLANNED)
+Learn from `forkSubagent.ts` — share prompt cache across Brain → sub-agent dispatch.
+
+**Reference files**: `tools/AgentTool/forkSubagent.ts`, `tools/AgentTool/runAgent.ts`
+
+**What Claude Code does**:
+- `CacheSafeParams` shared between parent and forked agents (model, max_tokens, system_prompt_cache_type)
+- Avoids re-tokenizing full system prompt per sub-agent (saves ~40K tokens per fork)
+- Subagents inherit parent's static prompt prefix, only dynamic parts differ
+
+**What to adopt in Conductor**:
+- [ ] Use Anthropic API prompt caching (`cache_control`) for Brain's system prompt
+- [ ] Share cache prefix across sub-agent dispatches (same system prompt prefix → cache hit)
+- [ ] Measure token savings in eval (expected ~30-50% reduction in input tokens for multi-agent queries)
+
+### 9.4 Dream System — Cross-Session Memory (PLANNED)
+Learn from `services/autoDream/` — background memory consolidation for cross-session learning.
+
+**Reference files**: `services/autoDream/` (dream agent prompt + trigger logic), `memdir/` (memory directory management)
+
+**What Claude Code does**:
+- 3-gate trigger: time gate (24h since last dream) → session gate (5 sessions) → PID lock gate
+- Gates checked cheapest-first to minimize overhead
+- 4-phase dream: Orient (ls memory dir) → Gather Signal (new info from logs, drifted memories) → Consolidate (write/update memory files with absolute dates) → Prune & Index (keep under 200 lines, ~25KB, resolve contradictions)
+- Dream runs as forked subagent with read-only bash access
+- Memory stored as markdown files with YAML frontmatter (type, name, description)
+- MEMORY.md index file for fast relevance lookup
+
+**What to adopt in Conductor**:
+- [ ] Design memory schema for Conductor (session trace summaries, effective tool strategies, common code patterns per workspace)
+- [ ] Background consolidation job triggered by session count threshold
+- [ ] Memory injection into Brain's context for warm-start on repeat queries
+- [ ] Maps directly to Phase 5.5 Cross-Session Query Patterns + Phase 5.5.2 Persistent Codebase Memory
+
+### 9.5 Hook Event System (PLANNED)
+Learn from `hooks/`, `utils/hooks/` — extensible event-driven tool pipeline.
+
+**Reference files**: `utils/hooks/hookEvents.ts`, `services/tools/toolHooks.ts` (650 lines), `types/hooks.ts`
+
+**What Claude Code does**:
+- 20+ hook events: SessionStart, PreToolUse, PostToolUse, FileChanged, PermissionRequest, etc.
+- 3 registration sources: settings-based (JSON config), plugin (loaded from directory), SDK callbacks
+- Hook response schema: continue/block decision, reason, system message, hookSpecificOutput
+- Pre-tool hooks can modify input, deny execution, or inject synthetic results
+- Post-tool hooks can react to results, trigger side effects
+- Stop hooks can prevent turn completion (force continuation)
+
+**What to adopt in Conductor**:
+- [ ] Define hook events for Conductor agent loop (PreToolUse, PostToolUse, PreAnswer, PostAnswer)
+- [ ] Hook registration in config (conductor.settings.yaml)
+- [ ] Pre-tool hooks: input validation, tool routing override
+- [ ] Post-tool hooks: result logging, evidence tracking, memory extraction
+- [ ] Stop hooks: answer quality gate (replaces current EvidenceEvaluator hardcoding)
+
+### 9.6 Permission System (PLANNED)
+Learn from `tools/permissions/`, `hooks/toolPermission/` — multi-layer tool access control.
+
+**Reference files**: `hooks/useCanUseTool.tsx` (40KB), `hooks/toolPermission/PermissionContext.ts`
+
+**What Claude Code does**:
+- 5 permission modes: default (rule-based), plan (browser approval), acceptEdits, bypassPermissions, auto (ML classifier)
+- Cascade: config rules → hook system → ML classifier → user confirmation
+- Protected file list (.gitconfig, .bashrc, etc.)
+- Permission rules from 4 sources: default, project, user, policy (enterprise)
+- Path traversal prevention (URL-encoded, Unicode normalization, backslash injection)
+
+**What to adopt in Conductor**:
+- [ ] Tool permission framework for `run_test`, `git_*` tools (currently unrestricted)
+- [ ] Read-only vs write tool classification
+- [ ] Workspace-scoped path restrictions (prevent tools from accessing files outside workspace)
+- [ ] Permission config in conductor.settings.yaml
+
+### 9.7 MCP Integration (PLANNED)
+Learn from `services/mcp/` — Model Context Protocol for ecosystem tool plugins.
+
+**Reference files**: `services/mcp/client.ts` (119KB), `services/mcp/config.ts` (51KB), `services/mcp/auth.ts` (88KB)
+
+**What Claude Code does**:
+- 4 transport types: stdio (subprocess), SSE, WebSocket, HTTP
+- MCP tools exposed as generic `MCPTool` wrappers
+- MCP resources via `ListMcpResourcesTool` + `ReadMcpResourceTool`
+- Config from 5 cascading sources: managed (enterprise), global, project, plugins, claude.ai sync
+- OAuth + elicitation-based auth for remote MCP servers
+- Background health monitoring with exponential backoff reconnection
+
+**What to adopt in Conductor**:
+- [ ] MCP client in Python (use `mcp` Python SDK)
+- [ ] Expose MCP tools alongside native code tools in agent loop
+- [ ] MCP server config in conductor.settings.yaml (stdio + HTTP transports initially)
+- [ ] Enables integration with external tools (databases, APIs, custom analyzers) without modifying core
+
+### 9.8 Advanced Tool Metadata (PLANNED)
+Learn from `Tool.ts` — richer tool definitions for better agent behavior.
+
+**Reference files**: `Tool.ts` (792 lines), `tools.ts` (tool registry)
+
+**What Claude Code does**:
+- `shouldDefer` — tool search defers loading until explicitly selected (reduces prompt size)
+- `maxResultSizeChars` — persist large results to disk, inject summary to LLM
+- `interruptBehavior` — 'cancel' vs 'block' on user interrupt
+- `isOpenWorld` — flags tools whose output contains unsanitized user input
+- `getToolUseSummary()` — one-line summary for compact transcript display
+- `inputsEquivalent()` — detect cache-equivalent calls (avoid redundant execution)
+
+**What to adopt in Conductor**:
+- [ ] Tool deferred loading: only include tool definitions when classifier suggests relevance (extends current `filter_tools()`)
+- [ ] Large result persistence: write grep/read_file results to temp file when >100KB, inject summary
+- [ ] Tool call dedup: detect equivalent consecutive calls (common in agent loops)
+- [ ] Summary generation for context compaction (replaces current 3-turn clearing)
+
+### Dependency Graph
+```
+9.1 (Recovery) ──────────────────────────────────> standalone
+9.2 (Streaming Tools) ──────────────────────────> standalone
+9.3 (Prompt Cache) ─────────────────────────────> standalone
+9.4 (Dream/Memory) ─────> depends on 5.5 design > extends Phase 5.5
+9.5 (Hook System) ──────────────────────────────> standalone
+9.6 (Permissions) ──────> benefits from 9.5 ────> can use hooks
+9.7 (MCP) ──────────────────────────────────────> standalone
+9.8 (Tool Metadata) ────> benefits from 9.2 ────> enhances streaming
+```
+
+### Reference Study Process
+For each sub-phase:
+1. **Read** the reference files listed above (deep study, not skim)
+2. **Design** the Conductor adaptation (Python/TS, respect existing architecture)
+3. **Implement** with tests (backend + extension parity where applicable)
+4. **Validate** with eval (`make test` + relevant eval suite)
+
+## Phase 10: Companion & Developer Experience (PLANNED)
+
+Interactive companion system in the VS Code extension WebView — a visual mascot that provides ambient presence, emotional feedback, and personality during collaboration sessions. Inspired by Claude Code's BUDDY system but adapted for VS Code WebView capabilities (CSS/SVG animations instead of ASCII art).
+
+### 10.1 Core Companion System (PLANNED)
+- [ ] Companion data model: species, rarity, stats, personality, visual traits
+- [ ] Deterministic gacha: hash(userId + salt) → Mulberry32 PRNG → species/rarity/stats roll (same user always gets same companion)
+- [ ] Rarity tiers: Common (60%), Uncommon (25%), Rare (10%), Epic (4%), Legendary (1%)
+- [ ] Soul generation: LLM generates name + personality on first hatch
+- [ ] Persistence: soul stored in VS Code globalState, bones regenerated from userId
+
+### 10.2 Visual & Animation (PLANNED)
+- [ ] Pixel art or SVG sprites for each species (CSS-animated, not ASCII)
+- [ ] Idle animation loop (breathing, blinking, fidgeting)
+- [ ] Reaction animations: happy (PR approved), thinking (agent running), panic (tests failing), celebration (task complete)
+- [ ] Speech bubble system: companion reacts to events with short messages
+- [ ] Placement: chat panel footer area, collapsible, responsive to panel width
+
+### 10.3 Agent Integration (PLANNED)
+- [ ] Companion reacts to agent events: tool calls, findings, errors
+- [ ] Mood system tied to session state: idle → investigating → found something → done
+- [ ] Optional: each agent persona has a companion form (PM agent = owl, Backend Dev = dragon, etc.)
+- [ ] Companion expressions reflect CI/review status (green checks → happy, red X → worried)
+
+### 10.4 Social & Team Features (PLANNED)
+- [ ] Companion visible to other team members in shared chat rooms
+- [ ] Team companion gallery: see everyone's companion species + rarity
+- [ ] Companion stats displayed on hover card (DEBUGGING, PATIENCE, CHAOS, WISDOM, SNARK)
+
+### Design Decisions (Open)
+- Companion location: chat panel footer vs floating overlay vs sidebar
+- One companion per user vs one per agent role
+- Purely decorative vs functional feedback (CI status, review results)
+- Interaction: click/hover vs slash commands vs both
+- Art style: pixel art vs SVG illustration vs emoji-based
+
+### Reference
+- Claude Code BUDDY system (`reference/claude-code/buddy/`): deterministic gacha, Mulberry32 PRNG, 18 species, 5-stat system, ASCII sprites, speech bubbles
+- Key differences: VS Code WebView allows richer visuals (CSS animations, SVG, canvas) vs terminal ASCII
+
 ## Milestone Summary
 
 | Milestone | Status | Completed |
@@ -706,6 +1007,8 @@ Completed 2026-03-22. Quality-of-life improvements and infrastructure fixes.
 | Phase 7.3–7.4: Jira Extension UI | ✅ Complete | Sprint 11 |
 | Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
 | Phase 8: Infrastructure & UI Hardening | ✅ Complete | Sprint 12 |
+| Phase 9: Claude Code Pattern Adoption | 🟢 In Progress | Sprint 13+ |
+| Phase 10: Companion & Developer Experience | 🟡 Planned | Sprint 14+ |
 
 ## Architecture Decision Log
 
@@ -748,6 +1051,11 @@ Completed 2026-03-22. Quality-of-life improvements and infrastructure fixes.
 **Decision**: Replace the vector search → rerank → graph RAG pipeline with an LLM agent loop (`AgentLoopService`) that iteratively calls code-intelligence tools to gather context.
 **Rationale**: RAG pipelines are passive — they retrieve pre-indexed chunks and hope the relevant code was indexed at the right granularity. An agent is active: it decides what to read next based on what it has already seen, follows import chains, reads function implementations, and checks who calls what. This enables cross-file reasoning (e.g. tracing a Protocol to its concrete implementation, or finding where a DI container resolves a dependency) that vector similarity cannot replicate. The trade-off is higher latency (up to 10–15 LLM calls per query) vs. a single retrieval + generation pass — acceptable for an on-demand "Explain" action where depth matters more than speed. The RepoMap (ADR-009) is retained as a structural index powering the `find_symbol`, `file_outline`, and dependency tools used by the agent.
 **Status**: Implemented in Phase 4.6.
+
+### ADR-016: Claude Code Source as Primary Architecture Reference
+**Decision**: Use the Claude Code source code (extracted from npm sourcemaps, `reference/claude-code/`) as the primary reference for production-grade AI agent patterns.
+**Rationale**: Claude Code is the most mature production AI coding agent available (~205K lines TypeScript, 40+ tools, 6 task types, multi-agent orchestration, memory consolidation). Its patterns for agent loop recovery, streaming tool execution, prompt cache sharing, and permission systems are directly applicable to Conductor's architecture. Studying a real production system provides better guidance than academic papers alone — we can see how theoretical patterns (context management, multi-agent coordination, tool safety) are actually implemented at scale.
+**Status**: In Progress (Phase 9).
 
 ### ADR-015: Integration Token Store — Postgres with SQLAlchemy async
 **Decision**: Store OAuth tokens for external integrations (Jira, Teams, Slack) in a shared Postgres instance (the Langfuse database server, port 5433) using SQLAlchemy async, with an `integration_tokens` table keyed by `(user_email, provider)`.

@@ -324,7 +324,6 @@ class AIProviderSettingsConfig(BaseModel):
     openai_enabled:         bool = False
     alibaba_enabled:        bool = False
     moonshot_enabled:       bool = False
-    litellm_fallback:       bool = False
 
 
 class AIModelConfig(BaseModel):
@@ -338,9 +337,6 @@ class AIModelConfig(BaseModel):
         (sub-agent) for iterative tool-calling loops.  Explorer models
         have thinking/reasoning disabled to maximise content output and
         reduce token waste.  (Typically a fast/cheap model like Flash or Haiku.)
-      - ``litellm``: If True, this model can be used via LiteLLM fallback.
-        When the native provider fails, the resolver will try LiteLLM
-        for models that have this flag set.
     """
     id:           str  = ""
     provider:     str  = ""
@@ -349,7 +345,6 @@ class AIModelConfig(BaseModel):
     enabled:      bool = True
     classifier:   bool = False
     explorer:     bool = False
-    litellm:      bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +564,6 @@ def load_config(
         openai_enabled=aps_data.get("openai_enabled", False),
         alibaba_enabled=aps_data.get("alibaba_enabled", False),
         moonshot_enabled=aps_data.get("moonshot_enabled", False),
-        litellm_fallback=aps_data.get("litellm_fallback", False),
     )
 
     ap_sec = secrets_raw.get("ai_providers", {})

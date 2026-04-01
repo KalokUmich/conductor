@@ -23,6 +23,7 @@ from app.code_tools.tools import (
     git_diff,
     git_log,
     git_show,
+    glob_files,
     grep,
     invalidate_graph_cache,
     list_files,
@@ -1174,3 +1175,265 @@ class TestTraceVariable:
         })
         assert result.success
         assert result.data["variable"] == "loan_id"
+
+
+# ---------------------------------------------------------------------------
+# grep — enhanced parameters (Phase B)
+# ---------------------------------------------------------------------------
+
+
+class TestGrepEnhanced:
+    """Tests for new grep parameters: output_mode, context_lines, case_insensitive, multiline, file_type."""
+
+    def test_output_mode_content_default(self, ws):
+        result = grep(ws, "MyService")
+        assert result.success
+        assert len(result.data) > 0
+        # Default mode returns full match info
+        assert result.data[0]["line_number"] > 0
+        assert result.data[0]["content"] != ""
+
+    def test_output_mode_files_only(self, ws):
+        result = grep(ws, "MyService", output_mode="files_only")
+        assert result.success
+        assert len(result.data) > 0
+        # files_only: line_number=0, content=""
+        for m in result.data:
+            assert m["line_number"] == 0
+            assert m["content"] == ""
+        # Should deduplicate files
+        paths = [m["file_path"] for m in result.data]
+        assert len(paths) == len(set(paths))
+
+    def test_output_mode_count(self, ws):
+        result = grep(ws, r"def\s+\w+", output_mode="count")
+        assert result.success
+        assert len(result.data) > 0
+        # count mode: content contains "{N} matches"
+        for m in result.data:
+            assert "matches" in m["content"]
+            assert m["line_number"] == 0
+
+    def test_context_lines_zero(self, ws):
+        result = grep(ws, "class MyService", context_lines=0)
+        assert result.success
+        if result.data:
+            # No context → single line, no prefix markers
+            assert "\n" not in result.data[0]["content"]
+
+    def test_context_lines_positive(self, ws):
+        result = grep(ws, "class MyService", context_lines=2)
+        assert result.success
+        if result.data:
+            content = result.data[0]["content"]
+            # Should have multiple lines with "> " marker on match line
+            assert "> " in content
+            lines = content.split("\n")
+            assert len(lines) >= 2  # at least match line + some context
+
+    def test_case_insensitive(self, ws):
+        # Exact case
+        result_exact = grep(ws, "myservice", case_insensitive=False)
+        # Case insensitive
+        result_ci = grep(ws, "myservice", case_insensitive=True)
+        assert result_ci.success
+        # CI should find more (or equal) results than exact
+        assert len(result_ci.data) >= len(result_exact.data)
+
+    def test_case_insensitive_finds_mixed_case(self, ws):
+        result = grep(ws, "myservice", case_insensitive=True, output_mode="files_only")
+        assert result.success
+        paths = {m["file_path"] for m in result.data}
+        assert "app/service.py" in paths  # contains "MyService"
+
+    def test_file_type_py(self, ws):
+        result = grep(ws, "class", file_type="py")
+        assert result.success
+        for m in result.data:
+            assert m["file_path"].endswith(".py")
+
+    def test_file_type_ts(self, ws):
+        result = grep(ws, "function", file_type="ts")
+        assert result.success
+        for m in result.data:
+            assert m["file_path"].endswith(".ts")
+
+    def test_file_type_unknown(self, ws):
+        result = grep(ws, "test", file_type="brainfuck")
+        assert not result.success
+        assert "Unknown file_type" in result.error
+
+    def test_file_type_overridden_by_include_glob(self, ws):
+        # When include_glob is set, file_type should not override
+        result = grep(ws, "class", include_glob="*.py", file_type="ts")
+        assert result.success
+        # include_glob takes precedence — should find .py files
+        for m in result.data:
+            assert m["file_path"].endswith(".py")
+
+    def test_invalid_output_mode_falls_back(self, ws):
+        result = grep(ws, "class", output_mode="invalid_mode")
+        assert result.success  # Should fall back to "content" mode
+        if result.data:
+            assert result.data[0]["content"] != ""
+
+    def test_multiline_basic(self, ws):
+        result = grep(ws, r"class.*\n.*def", multiline=True)
+        assert result.success
+        # Should find matches spanning class + first method
+
+    def test_combined_params(self, ws):
+        result = grep(
+            ws, "service", path="app",
+            case_insensitive=True, output_mode="files_only", file_type="py",
+        )
+        assert result.success
+        for m in result.data:
+            assert m["file_path"].startswith("app/")
+            assert m["file_path"].endswith(".py")
+
+    def test_execute_tool_dispatch(self, ws):
+        result = execute_tool("grep", ws, {
+            "pattern": "MyService",
+            "output_mode": "count",
+            "case_insensitive": True,
+        })
+        assert result.success
+        assert len(result.data) > 0
+        assert "matches" in result.data[0]["content"]
+
+
+# ---------------------------------------------------------------------------
+# glob
+# ---------------------------------------------------------------------------
+
+
+class TestGlob:
+    def test_basic_pattern(self, ws):
+        result = glob_files(ws, "**/*.py")
+        assert result.success
+        assert len(result.data) > 0
+        for m in result.data:
+            assert m["path"].endswith(".py")
+            assert "size" in m
+
+    def test_pattern_with_path(self, ws):
+        result = glob_files(ws, "*.py", path="app")
+        assert result.success
+        for m in result.data:
+            assert m["path"].startswith("app/")
+
+    def test_specific_filename_pattern(self, ws):
+        result = glob_files(ws, "**/service.py")
+        assert result.success
+        paths = {m["path"] for m in result.data}
+        assert "app/service.py" in paths
+
+    def test_excludes_node_modules(self, ws):
+        result = glob_files(ws, "**/*.js")
+        assert result.success
+        for m in result.data:
+            assert "node_modules" not in m["path"]
+
+    def test_nonexistent_path(self, ws):
+        result = glob_files(ws, "*.py", path="nonexistent")
+        assert not result.success
+
+    def test_path_is_file_not_dir(self, ws):
+        result = glob_files(ws, "*.py", path="app/main.py")
+        assert not result.success
+        assert "Not a directory" in result.error
+
+    def test_empty_result(self, ws):
+        result = glob_files(ws, "**/*.xyz_nonexistent")
+        assert result.success
+        assert len(result.data) == 0
+
+    def test_sorted_by_mtime(self, ws):
+        # Just verify the result is a list of dicts with path and size
+        result = glob_files(ws, "**/*.py")
+        assert result.success
+        assert isinstance(result.data, list)
+        if len(result.data) > 1:
+            # All entries should have path and size
+            for m in result.data:
+                assert "path" in m
+                assert "size" in m
+
+    def test_execute_tool_dispatch(self, ws):
+        result = execute_tool("glob", ws, {"pattern": "**/*.py"})
+        assert result.success
+        assert len(result.data) > 0
+
+    def test_ts_files(self, ws):
+        result = glob_files(ws, "**/*.ts")
+        assert result.success
+        for m in result.data:
+            assert m["path"].endswith(".ts")
+
+
+# ---------------------------------------------------------------------------
+# ToolMetadata (Phase D)
+# ---------------------------------------------------------------------------
+
+
+class TestToolMetadata:
+    """Verify ToolMetadata covers all registered tools."""
+
+    def test_every_registry_tool_has_metadata(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        from app.code_tools.tools import TOOL_REGISTRY
+        for tool_name in TOOL_REGISTRY:
+            assert tool_name in TOOL_METADATA, (
+                f"Tool '{tool_name}' is in TOOL_REGISTRY but missing from TOOL_METADATA"
+            )
+
+    def test_metadata_categories_valid(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        valid = {"search", "navigate", "git", "analysis", "test", "browser"}
+        for name, meta in TOOL_METADATA.items():
+            assert meta.category in valid, (
+                f"Tool '{name}' has invalid category '{meta.category}'"
+            )
+
+    def test_run_test_not_concurrent_safe(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        assert not TOOL_METADATA["run_test"].is_concurrent_safe
+
+    def test_run_test_not_read_only(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        assert not TOOL_METADATA["run_test"].is_read_only
+
+    def test_grep_is_concurrent_safe(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        assert TOOL_METADATA["grep"].is_concurrent_safe
+        assert TOOL_METADATA["grep"].is_read_only
+
+    def test_summary_template_not_empty_for_key_tools(self):
+        from app.code_tools.schemas import TOOL_METADATA
+        key_tools = ["grep", "read_file", "find_symbol", "git_log", "glob"]
+        for name in key_tools:
+            meta = TOOL_METADATA[name]
+            assert meta.summary_template, f"Tool '{name}' has empty summary_template"
+
+    def test_format_tool_summary_grep(self):
+        from app.code_tools.schemas import format_tool_summary
+        s = format_tool_summary("grep", {"pattern": "auth", "path": "src/"}, [1, 2, 3])
+        assert "auth" in s
+        assert "3" in s
+
+    def test_format_tool_summary_read_file(self):
+        from app.code_tools.schemas import format_tool_summary
+        s = format_tool_summary("read_file", {"path": "main.py", "start_line": 1, "end_line": 50}, {})
+        assert "main.py" in s
+
+    def test_format_tool_summary_unknown_tool(self):
+        from app.code_tools.schemas import format_tool_summary
+        s = format_tool_summary("unknown_tool_xyz", {}, [])
+        assert s == "unknown_tool_xyz()"
+
+    def test_format_tool_summary_missing_params_no_crash(self):
+        from app.code_tools.schemas import format_tool_summary
+        # grep template expects {pattern} and {path}, but we provide neither
+        s = format_tool_summary("grep", {}, [1, 2])
+        assert isinstance(s, str)  # Should not crash

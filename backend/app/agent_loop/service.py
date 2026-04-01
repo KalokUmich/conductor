@@ -27,7 +27,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
 from app.ai_provider.base import AIProvider, ToolUseResponse
 from app.code_tools.executor import LocalToolExecutor, ToolExecutor
 from app.code_tools.output_policy import apply_policy
-from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools
+from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools, format_tool_summary
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
 from .config import AgentLoopConfig
@@ -1088,6 +1088,7 @@ class AgentLoopService:
         tc = ask_user_calls[0]
         question_text = tc.input.get("question", "")
         question_ctx = tc.input.get("context", "")
+        question_options = tc.input.get("options", [])
 
         pq = register_question(trace.session_id, question_text, question_ctx)
 
@@ -1095,6 +1096,7 @@ class AgentLoopService:
             "session_id": trace.session_id,
             "question": question_text,
             "context": question_ctx,
+            "options": question_options,
             "tool_use_id": tc.id,
         })
 
@@ -1706,11 +1708,25 @@ def _clear_old_tool_results(
     Only messages older than ``keep_recent`` user/assistant turn-pairs are
     cleared.  The function mutates ``messages`` in place.
 
-    A "turn-pair" is one assistant message + the following user message
-    containing toolResults.  We count backward from the end of the list.
+    Uses ToolMetadata.summary_template for readable summaries when available,
+    falling back to a generic first-line truncation.
     """
     if len(messages) <= keep_recent * 2:
         return  # too few messages to clear anything
+
+    # Build a lookup: toolUseId → (tool_name, params) from assistant messages
+    tool_use_lookup: Dict[str, Tuple[str, Dict[str, Any]]] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and "toolUse" in block:
+                tu = block["toolUse"]
+                tid = tu.get("toolUseId", "")
+                tool_use_lookup[tid] = (tu.get("name", ""), tu.get("input", {}))
 
     cutoff = len(messages) - keep_recent * 2
     for i in range(cutoff):
@@ -1731,10 +1747,26 @@ def _clear_old_tool_results(
             # Skip if already cleared (starts with our marker)
             if text.startswith("[cleared]"):
                 continue
-            # Build a brief marker from first line or character count
-            first_line = text.split("\n", 1)[0][:80]
-            chars = len(text)
-            inner[0] = {"text": f"[cleared] {first_line}… ({chars} chars)"}
+
+            # Try to build a metadata-driven summary
+            tool_use_id = tr.get("toolUseId", "")
+            summary = None
+            if tool_use_id in tool_use_lookup:
+                tool_name, params = tool_use_lookup[tool_use_id]
+                # Try to parse result data for _count
+                try:
+                    result_data = json.loads(text)
+                except (json.JSONDecodeError, TypeError):
+                    result_data = text
+                summary = format_tool_summary(tool_name, params, result_data)
+
+            if summary and summary != f"{tool_use_lookup.get(tool_use_id, ('',))[0]}()":
+                inner[0] = {"text": f"[cleared] {summary}"}
+            else:
+                # Fallback: first line + char count
+                first_line = text.split("\n", 1)[0][:80]
+                chars = len(text)
+                inner[0] = {"text": f"[cleared] {first_line}… ({chars} chars)"}
 
 
 def _top_directory(fpath: str, depth: int = 2) -> str:

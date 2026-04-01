@@ -31,7 +31,6 @@ def _stub(name: str, **attrs) -> types.ModuleType:
 _stub("cocoindex")
 _stub("sentence_transformers", SentenceTransformer=MagicMock)
 _stub("sqlite_vec")
-_stub("litellm")
 
 # ---------------------------------------------------------------------------
 # Real imports

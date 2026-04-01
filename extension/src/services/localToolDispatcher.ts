@@ -30,6 +30,7 @@ const SUBPROCESS_TOOLS = new Set([
     'grep',
     'read_file',
     'list_files',
+    'glob',
     'git_log',
     'git_diff',
     'git_diff_files',

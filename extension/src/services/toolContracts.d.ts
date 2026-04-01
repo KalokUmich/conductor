@@ -106,6 +106,11 @@ export interface ReadFileResult {
     content: string;
 }
 
+export interface GlobItem {
+    path: string;
+    size: string;
+}
+
 export interface GitDiffResult {
     diff: string;
 }
@@ -173,6 +178,11 @@ export interface GrepParams {
     path?: string;
     include_glob?: string;
     max_results?: number;
+    output_mode?: string;
+    context_lines?: number;
+    case_insensitive?: boolean;
+    multiline?: boolean;
+    file_type?: string;
 }
 
 export interface ReadFileParams {
@@ -185,6 +195,11 @@ export interface ListFilesParams {
     directory?: string;
     max_depth?: number;
     include_glob?: string;
+}
+
+export interface GlobParams {
+    pattern: string;
+    path?: string;
 }
 
 export interface FindSymbolParams {
@@ -304,6 +319,7 @@ export interface ToolOutputMap {
     grep: GrepMatch[];
     read_file: ReadFileResult;
     list_files: FileEntry[];
+    glob: GlobItem[];
     find_symbol: SymbolLocation[];
     find_references: ReferenceLocation[];
     file_outline: SymbolLocation[];

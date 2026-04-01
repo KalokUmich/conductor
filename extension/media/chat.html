@@ -1897,7 +1897,7 @@
                                 </div>
                             </div>
 
-                            <!-- Agent Models: Brain + Explorer + LiteLLM -->
+                            <!-- Agent Models: Brain + Explorer -->
                             <div id="ai-code-intel-section" class="space-y-3">
                                 <!-- Brain Model (also used for AI Summary) -->
                                 <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
@@ -1944,26 +1944,6 @@
                                 <input type="checkbox" id="ai-classifier-toggle" class="hidden">
                                 <select id="ai-classifier-select" class="hidden"></select>
 
-                                <!-- LiteLLM Fallback -->
-                                <div class="rounded-xl border border-gray-700/40 bg-gray-900/30 p-3.5">
-                                    <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-2.5">
-                                            <div class="h-7 w-7 rounded-lg bg-sky-500/10 flex items-center justify-center">
-                                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-sky-400" viewBox="0 0 20 20" fill="currentColor">
-                                                    <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd" />
-                                                </svg>
-                                            </div>
-                                            <div>
-                                                <span class="text-gray-200 text-xs font-medium block">LiteLLM Fallback</span>
-                                                <span id="ai-litellm-hint" class="text-[0.6rem] text-gray-500">Auto-retry via LiteLLM when native providers fail</span>
-                                            </div>
-                                        </div>
-                                        <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                                            <input type="checkbox" id="ai-litellm-toggle" class="sr-only peer">
-                                            <div class="w-8 h-[18px] bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-[14px] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-[14px] after:w-[14px] after:transition-all peer-checked:bg-sky-600"></div>
-                                        </label>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -2597,8 +2577,6 @@
         const aiClassifierToggle = document.getElementById('ai-classifier-toggle');
         const aiExplorerSelect = document.getElementById('ai-explorer-select');
         const aiExplorerToggle = document.getElementById('ai-explorer-toggle');
-        const aiLiteLLMToggle = document.getElementById('ai-litellm-toggle');
-        const aiLiteLLMHint = document.getElementById('ai-litellm-hint');
 
         // Track models state
         let aiModelsState = [];
@@ -3936,10 +3914,6 @@
                 case 'setExplorerResult':
                     console.log('[WebView] Received setExplorerResult:', message.data);
                     handleSetExplorerResult(message.data);
-                    break;
-                case 'setLiteLLMFallbackResult':
-                    console.log('[WebView] Received setLiteLLMFallbackResult:', message.data);
-                    handleSetLiteLLMFallbackResult(message.data);
                     break;
                 case 'summarizeResult':
                     // Received summarize result from extension
@@ -5524,9 +5498,72 @@
             el.className = 'flex justify-start gap-2 mt-2 mb-2';
 
             const qId = 'agent-q-input-' + Date.now();
+            const options = event.options || [];
+            const hasOptions = options.length > 0;
+
             const ctxHtml = event.context
                 ? '<div style="font-size:0.65rem; color:rgba(217,119,6,0.7); margin:4px 0 8px 0;">' + escapeHtml(event.context) + '</div>'
                 : '';
+
+            // Build option buttons HTML
+            let optionsHtml = '';
+            if (hasOptions) {
+                optionsHtml = '<div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">';
+                options.forEach(function(opt, idx) {
+                    const num = idx + 1;
+                    const isRecommended = opt.toLowerCase().includes('(recommended)');
+                    const borderColor = isRecommended ? 'rgba(217,119,6,0.6)' : 'rgba(75,85,99,0.6)';
+                    const bgColor = isRecommended ? 'rgba(217,119,6,0.1)' : 'rgba(55,65,81,0.3)';
+                    optionsHtml +=
+                        '<button class="agent-q-option" data-option="' + escapeHtml(opt) + '" ' +
+                            'style="display:flex; align-items:center; gap:8px; width:100%; text-align:left; ' +
+                            'background:' + bgColor + '; border:1px solid ' + borderColor + '; border-radius:6px; ' +
+                            'padding:7px 10px; cursor:pointer; transition:background 0.15s, border-color 0.15s;">' +
+                            '<span style="width:22px; height:22px; background:rgba(217,119,6,0.8); border-radius:50%; ' +
+                                'display:flex; align-items:center; justify-content:center; color:white; ' +
+                                'font-size:0.65rem; font-weight:700; flex-shrink:0;">' + num + '</span>' +
+                            '<span style="font-size:0.75rem; color:#e5e7eb;">' + escapeHtml(opt) + '</span>' +
+                        '</button>';
+                });
+                // "Other" toggle button
+                optionsHtml +=
+                    '<button id="' + qId + '-other-toggle" ' +
+                        'style="display:flex; align-items:center; gap:8px; width:100%; text-align:left; ' +
+                        'background:rgba(55,65,81,0.3); border:1px solid rgba(75,85,99,0.4); border-radius:6px; ' +
+                        'padding:7px 10px; cursor:pointer; transition:background 0.15s, border-color 0.15s;">' +
+                        '<span style="width:22px; height:22px; background:#4b5563; border-radius:50%; ' +
+                            'display:flex; align-items:center; justify-content:center; color:#9ca3af; ' +
+                            'font-size:0.7rem; flex-shrink:0;">&#9998;</span>' +
+                        '<span style="font-size:0.75rem; color:#9ca3af;">Other (type your own answer)</span>' +
+                    '</button>';
+                optionsHtml += '</div>';
+                // Hidden free-text input (shown when "Other" is clicked)
+                optionsHtml +=
+                    '<div id="' + qId + '-other-input" style="display:none; margin-top:8px;">' +
+                        '<div style="display:flex; gap:8px;">' +
+                            '<input id="' + qId + '" type="text" ' +
+                                'style="flex:1; background:#1f2937; border:1px solid #4b5563; border-radius:4px; padding:5px 8px; font-size:0.8rem; color:#e5e7eb; outline:none;" ' +
+                                'placeholder="Type your answer..." />' +
+                            '<button id="' + qId + '-btn" ' +
+                                'style="background:#d97706; color:white; font-size:0.7rem; padding:5px 12px; border-radius:4px; font-weight:600; border:none; cursor:pointer;">Send</button>' +
+                        '</div>' +
+                    '</div>';
+            }
+
+            // Fallback: plain text input when no options provided
+            let plainInputHtml = '';
+            if (!hasOptions) {
+                plainInputHtml =
+                    '<div style="display:flex; gap:8px; margin-top:8px;">' +
+                        '<input id="' + qId + '" type="text" ' +
+                            'style="flex:1; background:#1f2937; border:1px solid #4b5563; border-radius:4px; padding:5px 8px; font-size:0.8rem; color:#e5e7eb; outline:none;" ' +
+                            'placeholder="Type your answer..." />' +
+                        '<button id="' + qId + '-btn" ' +
+                            'style="background:#d97706; color:white; font-size:0.7rem; padding:5px 12px; border-radius:4px; font-weight:600; border:none; cursor:pointer;">Send</button>' +
+                        '<button id="' + qId + '-skip" ' +
+                            'style="background:#374151; color:#9ca3af; font-size:0.7rem; padding:5px 10px; border-radius:4px; border:none; cursor:pointer;">Skip</button>' +
+                    '</div>';
+            }
 
             el.innerHTML =
                 '<div style="width:28px; height:28px; background:rgba(217,119,6,0.8); border-radius:50%; display:flex; align-items:center; justify-content:center; color:white; font-size:12px; font-weight:600; flex-shrink:0; margin-top:4px;">?</div>' +
@@ -5535,24 +5572,13 @@
                         '<div style="font-size:0.7rem; color:#f59e0b; font-weight:600;">AI needs your input</div>' +
                         '<div style="font-size:0.8rem; color:#e5e7eb; margin-top:4px;">' + escapeHtml(event.question) + '</div>' +
                         ctxHtml +
-                        '<div style="display:flex; gap:8px; margin-top:8px;">' +
-                            '<input id="' + qId + '" type="text" ' +
-                                'style="flex:1; background:#1f2937; border:1px solid #4b5563; border-radius:4px; padding:5px 8px; font-size:0.8rem; color:#e5e7eb; outline:none;" ' +
-                                'placeholder="Type your answer..." />' +
-                            '<button id="' + qId + '-btn" ' +
-                                'style="background:#d97706; color:white; font-size:0.7rem; padding:5px 12px; border-radius:4px; font-weight:600; border:none; cursor:pointer;">Send</button>' +
-                            '<button id="' + qId + '-skip" ' +
-                                'style="background:#374151; color:#9ca3af; font-size:0.7rem; padding:5px 10px; border-radius:4px; border:none; cursor:pointer;">Skip</button>' +
-                        '</div>' +
+                        optionsHtml +
+                        plainInputHtml +
                     '</div>' +
                 '</div>';
 
             messagesContainer.appendChild(el);
             smartScroll(false);
-
-            const input = document.getElementById(qId);
-            const sendBtn = document.getElementById(qId + '-btn');
-            const skipBtn = document.getElementById(qId + '-skip');
 
             function submitAnswer(answer) {
                 vscode.postMessage({
@@ -5582,16 +5608,61 @@
                 }
             }
 
-            if (sendBtn) sendBtn.addEventListener('click', () => submitAnswer(input?.value?.trim() || ''));
-            if (skipBtn) skipBtn.addEventListener('click', () => submitAnswer(''));
+            // Option buttons — click to submit directly
+            if (hasOptions) {
+                el.querySelectorAll('.agent-q-option').forEach(function(btn) {
+                    btn.addEventListener('mouseenter', function() {
+                        btn.style.borderColor = 'rgba(217,119,6,0.8)';
+                        btn.style.background = 'rgba(217,119,6,0.15)';
+                    });
+                    btn.addEventListener('mouseleave', function() {
+                        const isRec = btn.dataset.option.toLowerCase().includes('(recommended)');
+                        btn.style.borderColor = isRec ? 'rgba(217,119,6,0.6)' : 'rgba(75,85,99,0.6)';
+                        btn.style.background = isRec ? 'rgba(217,119,6,0.1)' : 'rgba(55,65,81,0.3)';
+                    });
+                    btn.addEventListener('click', function() {
+                        submitAnswer(btn.dataset.option);
+                    });
+                });
+
+                // "Other" toggle — show/hide the text input
+                const otherToggle = document.getElementById(qId + '-other-toggle');
+                const otherInput = document.getElementById(qId + '-other-input');
+                if (otherToggle && otherInput) {
+                    otherToggle.addEventListener('mouseenter', function() {
+                        otherToggle.style.borderColor = 'rgba(217,119,6,0.8)';
+                        otherToggle.style.background = 'rgba(217,119,6,0.15)';
+                    });
+                    otherToggle.addEventListener('mouseleave', function() {
+                        otherToggle.style.borderColor = 'rgba(75,85,99,0.4)';
+                        otherToggle.style.background = 'rgba(55,65,81,0.3)';
+                    });
+                    otherToggle.addEventListener('click', function() {
+                        otherInput.style.display = '';
+                        otherToggle.style.display = 'none';
+                        const inp = document.getElementById(qId);
+                        if (inp) setTimeout(function() { inp.focus(); }, 100);
+                    });
+                }
+            }
+
+            // Text input handlers (both plain mode and "Other" mode)
+            const input = document.getElementById(qId);
+            const sendBtn = document.getElementById(qId + '-btn');
+            const skipBtn = document.getElementById(qId + '-skip');
+
+            if (sendBtn) sendBtn.addEventListener('click', function() { submitAnswer(input?.value?.trim() || ''); });
+            if (skipBtn) skipBtn.addEventListener('click', function() { submitAnswer(''); });
             if (input) {
-                input.addEventListener('keydown', (e) => {
+                input.addEventListener('keydown', function(e) {
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         submitAnswer(input.value?.trim() || '');
                     }
                 });
-                setTimeout(() => input.focus(), 100);
+                if (!hasOptions) {
+                    setTimeout(function() { input.focus(); }, 100);
+                }
             }
         }
 
@@ -9130,8 +9201,8 @@
             // Update model selection dropdown
             updateModelSelect(data.models || [], data.active_model);
 
-            // Update code intelligence section (classifier + LiteLLM fallback)
-            updateCodeIntelSection(data.models || [], data.classifier_enabled, data.active_classifier, data.explorer_enabled, data.active_explorer, data.litellm_fallback);
+            // Update code intelligence section (classifier)
+            updateCodeIntelSection(data.models || [], data.classifier_enabled, data.active_classifier, data.explorer_enabled, data.active_explorer);
 
             // Update last updated timestamp
             const now = new Date();
@@ -9300,13 +9371,12 @@
         }
 
         /**
-         * Update the Code Intelligence section (classifier + LiteLLM fallback).
+         * Update the Code Intelligence section (classifier).
          * @param {Array} models - All model status objects
          * @param {boolean} classifierEnabled - Whether LLM classification is enabled
          * @param {string|null} activeClassifier - Currently active classifier model ID
-         * @param {boolean} litellmFallback - Whether LiteLLM fallback is enabled
          */
-        function updateCodeIntelSection(models, classifierEnabled, activeClassifier, explorerEnabled, activeExplorer, litellmFallback) {
+        function updateCodeIntelSection(models, classifierEnabled, activeClassifier, explorerEnabled, activeExplorer) {
             if (!aiCodeIntelSection) return;
 
             // --- Classifier sub-section ---
@@ -9373,16 +9443,6 @@
                 }
             }
 
-            // --- LiteLLM Fallback sub-section ---
-            if (aiLiteLLMToggle) {
-                aiLiteLLMToggle.checked = !!litellmFallback;
-            }
-
-            if (aiLiteLLMHint) {
-                const eligible = models.filter(m => m.litellm).length;
-                const total = models.length;
-                aiLiteLLMHint.textContent = `When native providers fail, eligible models fall back to LiteLLM. ${eligible} of ${total} models eligible.`;
-            }
         }
 
         /**
@@ -9451,18 +9511,6 @@
         }
 
         /**
-         * Handle LiteLLM fallback toggle change.
-         */
-        function handleLiteLLMToggle(enabled) {
-            console.log('[WebView] Changing LiteLLM fallback:', enabled);
-            if (aiLiteLLMToggle) aiLiteLLMToggle.disabled = true;
-            vscode.postMessage({
-                command: 'setLiteLLMFallback',
-                enabled: enabled,
-            });
-        }
-
-        /**
          * Handle result of setting classifier.
          */
         function handleSetClassifierResult(data) {
@@ -9492,21 +9540,6 @@
             }
             console.log('[WebView] Explorer set successfully:', data.message);
             if (aiExplorerToggle) aiExplorerToggle.checked = data.explorer_enabled;
-        }
-
-        /**
-         * Handle result of setting LiteLLM fallback.
-         */
-        function handleSetLiteLLMFallbackResult(data) {
-            if (aiLiteLLMToggle) aiLiteLLMToggle.disabled = false;
-
-            if (data.error) {
-                console.error('[WebView] Failed to set LiteLLM fallback:', data.error);
-                fetchAiStatus();
-                return;
-            }
-            console.log('[WebView] LiteLLM fallback set successfully:', data.message);
-            if (aiLiteLLMToggle) aiLiteLLMToggle.checked = data.litellm_fallback;
         }
 
         // Workflow visualization button
@@ -9560,12 +9593,6 @@
                 }
             });
         }
-        if (aiLiteLLMToggle) {
-            aiLiteLLMToggle.addEventListener('change', (e) => {
-                handleLiteLLMToggle(e.target.checked);
-            });
-        }
-
         // Close modal on Escape key
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && !aiConfigModal.classList.contains('hidden')) {

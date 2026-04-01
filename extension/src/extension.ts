@@ -1096,10 +1096,6 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     console.log('[Conductor] Received setExplorer message from WebView:', message.enabled, message.modelId);
                     this._handleSetExplorer(message.enabled, message.modelId);
                     return;
-                case 'setLiteLLMFallback':
-                    console.log('[Conductor] Received setLiteLLMFallback message from WebView:', message.enabled);
-                    this._handleSetLiteLLMFallback(message.enabled);
-                    return;
                 case 'summarize':
                     this._handleSummarizeAndPost(message.messages);
                     return;
@@ -1935,11 +1931,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 active_provider: string | null;
                 active_model: string | null;
                 providers: Array<{ name: string; enabled: boolean; configured: boolean; healthy: boolean }>;
-                models: Array<{ id: string; provider: string; display_name: string; available: boolean; classifier: boolean; litellm: boolean }>;
+                models: Array<{ id: string; provider: string; display_name: string; available: boolean; classifier: boolean }>;
                 default_model: string;
                 classifier_enabled: boolean;
                 active_classifier: string | null;
-                litellm_fallback: boolean;
             };
             console.log('[Conductor] AI status received:', data);
 
@@ -2141,47 +2136,6 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             console.error('[Conductor] Failed to set explorer:', msg);
             this._view?.webview.postMessage({
                 command: 'setExplorerResult',
-                data: { error: `Cannot connect to backend: ${msg}` },
-            });
-            this._handleGetAiStatus();
-        }
-    }
-
-    /**
-     * Handle request to enable/disable LiteLLM fallback.
-     */
-    private async _handleSetLiteLLMFallback(enabled: boolean): Promise<void> {
-        try {
-            console.log('[Conductor] Setting LiteLLM fallback:', enabled);
-            const response = await fetch(`${getBackendUrl()}/ai/litellm-fallback`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled }),
-            });
-
-            if (!response.ok) {
-                const errorText = await response.text();
-                console.warn('[Conductor] Set LiteLLM fallback failed:', response.status, errorText);
-                this._view?.webview.postMessage({
-                    command: 'setLiteLLMFallbackResult',
-                    data: { error: `Failed to set LiteLLM fallback: ${response.status}` },
-                });
-                this._handleGetAiStatus();
-                return;
-            }
-
-            const data = await response.json();
-            console.log('[Conductor] LiteLLM fallback set successfully:', data);
-            this._view?.webview.postMessage({
-                command: 'setLiteLLMFallbackResult',
-                data,
-            });
-            this._handleGetAiStatus();
-        } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error);
-            console.error('[Conductor] Failed to set LiteLLM fallback:', msg);
-            this._view?.webview.postMessage({
-                command: 'setLiteLLMFallbackResult',
                 data: { error: `Cannot connect to backend: ${msg}` },
             });
             this._handleGetAiStatus();
@@ -4244,6 +4198,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             sessionId: data.session_id || agentSessionId,
                             question: data.question || '',
                             context: data.context || '',
+                            options: data.options || [],
                         });
                     } else if (eventKind === 'ask_user_waiting') {
                         // Keepalive while waiting for user answer
@@ -4958,6 +4913,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         '--no-ignore',        // don't skip files via .gitignore
                         '--no-messages',      // suppress error messages (prevents exit code 2 on permission/binary issues)
                         '--glob', '!.git',
+                        '--glob', '!.conductor',
                         '--glob', '!node_modules',
                         '--glob', '!__pycache__',
                         '--glob', '!*.min.js',

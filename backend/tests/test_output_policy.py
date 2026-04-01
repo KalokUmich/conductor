@@ -30,6 +30,11 @@ class TestGetPolicy:
         p = get_policy("list_files")
         assert p.max_results == 100
 
+    def test_glob_policy(self):
+        p = get_policy("glob")
+        assert p.max_results == 100
+        assert p.truncate_unit == "results"
+
 
 class TestApplyPolicyResultTruncation:
     def test_list_under_limit_not_truncated(self):

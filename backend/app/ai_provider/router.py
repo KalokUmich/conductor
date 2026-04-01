@@ -45,7 +45,6 @@ class ModelStatusResponse(BaseModel):
     available: bool
     classifier: bool = False
     explorer: bool = False
-    litellm: bool = False
 
 
 class AIStatusResponse(BaseModel):
@@ -60,7 +59,6 @@ class AIStatusResponse(BaseModel):
     active_classifier: Optional[str] = None
     explorer_enabled: bool = False
     active_explorer: Optional[str] = None
-    litellm_fallback: bool = False
 
 
 class MessageInput(BaseModel):
@@ -219,11 +217,6 @@ async def get_ai_status() -> AIStatusResponse:
     explorer_provider = getattr(app.state, "explorer_provider", None)
     active_explorer_id = getattr(app.state, "active_explorer_model_id", None)
 
-    # Read litellm_fallback from config
-    from app.config import get_config
-    config = get_config()
-    litellm_fallback = config.ai_provider_settings.litellm_fallback
-
     return AIStatusResponse(
         summary_enabled=status.summary_enabled,
         active_provider=status.active_provider,
@@ -245,7 +238,6 @@ async def get_ai_status() -> AIStatusResponse:
                 available=m.available,
                 classifier=m.classifier,
                 explorer=m.explorer,
-                litellm=m.litellm,
             )
             for m in status.models
         ],
@@ -254,7 +246,6 @@ async def get_ai_status() -> AIStatusResponse:
         active_classifier=active_classifier_id,
         explorer_enabled=explorer_provider is not None,
         active_explorer=active_explorer_id,
-        litellm_fallback=litellm_fallback,
     )
 
 
@@ -462,33 +453,6 @@ async def set_explorer(request: SetExplorerRequest) -> SetExplorerResponse:
             active_explorer=active_id,
             message=f"Explorer enabled with model: {active_id}",
         )
-
-
-class SetLiteLLMFallbackRequest(BaseModel):
-    """Request model for POST /ai/litellm-fallback endpoint."""
-    enabled: bool
-
-
-class SetLiteLLMFallbackResponse(BaseModel):
-    """Response model for POST /ai/litellm-fallback endpoint."""
-    success: bool
-    litellm_fallback: bool
-    message: str
-
-
-@router.post("/litellm-fallback", response_model=SetLiteLLMFallbackResponse)
-async def set_litellm_fallback(request: SetLiteLLMFallbackRequest) -> SetLiteLLMFallbackResponse:
-    """Enable/disable LiteLLM fallback for eligible models."""
-    from app.config import get_config
-
-    config = get_config()
-    config.ai_provider_settings.litellm_fallback = request.enabled
-
-    return SetLiteLLMFallbackResponse(
-        success=True,
-        litellm_fallback=request.enabled,
-        message=f"LiteLLM fallback {'enabled' if request.enabled else 'disabled'}.",
-    )
 
 
 @router.post("/summarize", response_model=DecisionSummaryResponse)

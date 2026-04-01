@@ -23,7 +23,6 @@ from unittest.mock import MagicMock  # noqa: E402
 
 _stub("tree_sitter_languages")
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)
-_stub("litellm", completion=MagicMock(), drop_params=False)
 
 # Playwright stubs — browser tools tests mock the service layer, so we only
 # need the module structure to exist for import resolution.

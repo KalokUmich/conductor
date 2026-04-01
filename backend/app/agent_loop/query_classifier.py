@@ -33,12 +33,14 @@ _ALL_TOOLS = [
     "git_diff", "git_diff_files", "ast_search", "get_callees", "get_callers",
     "git_blame", "git_show", "find_tests", "test_outline", "trace_variable",
     "compressed_view", "module_summary", "expand_symbol", "detect_patterns",
+    "run_test", "git_hotspots", "list_endpoints", "extract_docstrings", "db_schema",
+    "glob",
 ]
 
 # Core tools always included regardless of query type
 _CORE_TOOLS = [
     "grep", "read_file", "find_symbol", "file_outline",
-    "compressed_view", "expand_symbol",
+    "compressed_view", "expand_symbol", "glob",
 ]
 
 
@@ -73,6 +75,7 @@ QUERY_TYPES: Dict[str, dict] = {
         ],
         "tools": _CORE_TOOLS + [
             "find_references", "get_callees", "list_files",
+            "list_endpoints",
         ],
     },
     "business_flow_tracing": {
@@ -101,8 +104,8 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "find_references", "get_callers", "get_callees",
             "trace_variable", "git_log", "git_diff", "git_blame",
-            "git_show", "find_tests", "detect_patterns",
-            "web_search", "web_navigate",
+            "git_show", "find_tests", "run_test", "detect_patterns",
+            "git_hotspots", "web_search", "web_navigate",
         ],
     },
     "impact_analysis": {
@@ -114,8 +117,8 @@ QUERY_TYPES: Dict[str, dict] = {
         ],
         "tools": _CORE_TOOLS + [
             "find_references", "get_dependents", "get_dependencies",
-            "find_tests", "test_outline", "get_callers",
-            "detect_patterns",
+            "find_tests", "test_outline", "run_test", "get_callers",
+            "detect_patterns", "git_hotspots",
         ],
     },
     "architecture_question": {
@@ -127,8 +130,8 @@ QUERY_TYPES: Dict[str, dict] = {
         ],
         "tools": _CORE_TOOLS + [
             "module_summary", "list_files", "get_dependencies",
-            "get_dependents", "detect_patterns",
-            "web_search", "web_navigate",
+            "get_dependents", "detect_patterns", "list_endpoints",
+            "extract_docstrings", "web_search", "web_navigate",
         ],
     },
     "config_analysis": {
@@ -152,7 +155,7 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "trace_variable", "find_references", "get_callees",
             "get_callers", "get_dependencies", "ast_search",
-            "web_search", "web_navigate",
+            "db_schema", "web_search", "web_navigate",
         ],
     },
     "code_review": {
@@ -167,7 +170,8 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "git_diff_files", "git_diff", "git_log", "git_show",
             "git_blame", "find_references", "get_callers", "get_callees",
-            "find_tests", "test_outline", "list_files", "detect_patterns",
+            "find_tests", "test_outline", "run_test", "list_files",
+            "detect_patterns", "git_hotspots",
         ],
     },
     "recent_changes": {
@@ -182,7 +186,7 @@ QUERY_TYPES: Dict[str, dict] = {
         ],
         "tools": _CORE_TOOLS + [
             "git_log", "git_diff", "git_blame", "git_show",
-            "find_references", "list_files",
+            "git_hotspots", "find_references", "list_files",
         ],
     },
     "web_browsing": {

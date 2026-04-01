@@ -43,6 +43,7 @@ _EXCLUDED_DIRS = {
     ".git", ".hg", ".svn", "__pycache__", "node_modules", "target",
     "dist", "vendor", ".venv", "venv", ".mypy_cache", ".pytest_cache",
     ".tox", "build", ".next", ".nuxt", ".yarn", ".pnp",
+    ".conductor",
 }
 
 _MAX_FILE_SIZE = 512_000  # 500 KB — skip larger files in search/parse
@@ -147,20 +148,55 @@ def _walk_files(
     return files, skipped_size, skipped_glob, dirs_excluded
 
 
+_FILE_TYPE_MAP = {
+    "py": "*.py", "js": "*.js", "ts": "*.ts", "tsx": "*.tsx",
+    "java": "*.java", "go": "*.go", "rust": "*.rs", "rs": "*.rs",
+    "c": "*.c", "cpp": "*.cpp", "h": "*.h", "rb": "*.rb",
+    "php": "*.php", "swift": "*.swift", "kt": "*.kt", "scala": "*.scala",
+    "css": "*.css", "html": "*.html", "json": "*.json", "yaml": "*.yaml",
+    "yml": "*.yml", "xml": "*.xml", "sql": "*.sql", "sh": "*.sh",
+    "md": "*.md", "txt": "*.txt",
+}
+
+
 def grep(
     workspace: str,
     pattern: str,
     path: Optional[str] = None,
     include_glob: Optional[str] = None,
     max_results: int = 50,
+    output_mode: str = "content",
+    context_lines: int = 0,
+    case_insensitive: bool = False,
+    multiline: bool = False,
+    file_type: Optional[str] = None,
 ) -> ToolResult:
     """Search for a regex pattern using subprocess grep/rg."""
     search_root = _resolve(workspace, path or ".")
     if not search_root.exists():
         return ToolResult(tool_name="grep", success=False, error=f"Path not found: {path}")
 
+    # Resolve file_type to include_glob if not already set
+    if file_type and not include_glob:
+        include_glob = _FILE_TYPE_MAP.get(file_type.lower())
+        if not include_glob:
+            return ToolResult(
+                tool_name="grep", success=False,
+                error=f"Unknown file_type '{file_type}'. Supported: {', '.join(sorted(_FILE_TYPE_MAP))}",
+            )
+
+    # Validate output_mode
+    if output_mode not in ("content", "files_only", "count"):
+        output_mode = "content"
+
+    re_flags = 0
+    if case_insensitive:
+        re_flags |= re.IGNORECASE
+    if multiline:
+        re_flags |= re.DOTALL
+
     try:
-        re.compile(pattern)
+        re.compile(pattern, re_flags)
     except re.error as exc:
         return ToolResult(tool_name="grep", success=False, error=f"Invalid regex: {exc}")
 
@@ -198,35 +234,105 @@ def grep(
                 len(files_to_search),
             )
 
-    compiled = re.compile(pattern)
+    compiled = re.compile(pattern, re_flags)
     matches: List[Dict] = []
+    file_counts: Dict[str, int] = {}  # for count mode
+    seen_files: List[str] = []        # for files_only mode
     read_errors = 0
+
     for fp in files_to_search:
-        if len(matches) >= max_results:
+        if output_mode == "content" and len(matches) >= max_results:
             break
+        if output_mode == "files_only" and len(seen_files) >= max_results:
+            break
+        if output_mode == "count" and len(file_counts) >= max_results:
+            break
+
         try:
             text = fp.read_text(errors="replace")
         except (OSError, UnicodeDecodeError):
             read_errors += 1
             continue
-        for i, line in enumerate(text.split("\n"), 1):
+
+        rel_path = str(fp.relative_to(ws))
+
+        if multiline:
+            # Multiline: search entire file text at once
+            if compiled.search(text):
+                if output_mode == "files_only":
+                    seen_files.append(rel_path)
+                elif output_mode == "count":
+                    file_counts[rel_path] = len(compiled.findall(text))
+                else:
+                    # Find line numbers of each match
+                    lines = text.split("\n")
+                    for m in compiled.finditer(text):
+                        line_num = text[:m.start()].count("\n") + 1
+                        match_line = lines[line_num - 1] if line_num <= len(lines) else ""
+                        matches.append(GrepMatch(
+                            file_path=rel_path,
+                            line_number=line_num,
+                            content=match_line.rstrip()[:500],
+                        ).model_dump())
+                        if len(matches) >= max_results:
+                            break
+            continue
+
+        # Standard per-line search
+        lines = text.split("\n")
+        file_match_count = 0
+        for i, line in enumerate(lines):
             if compiled.search(line):
-                matches.append(GrepMatch(
-                    file_path=str(fp.relative_to(ws)),
-                    line_number=i,
-                    content=line.rstrip()[:500],
-                ).model_dump())
-                if len(matches) >= max_results:
-                    break
+                file_match_count += 1
+                if output_mode == "files_only":
+                    if rel_path not in seen_files:
+                        seen_files.append(rel_path)
+                    break  # one match per file is enough
+                elif output_mode == "count":
+                    pass  # just counting
+                else:
+                    # Build content with optional context lines
+                    if context_lines > 0:
+                        start = max(0, i - context_lines)
+                        end = min(len(lines), i + context_lines + 1)
+                        ctx_parts = []
+                        for j in range(start, end):
+                            prefix = "> " if j == i else "  "
+                            ctx_parts.append(f"{prefix}{lines[j].rstrip()}")
+                        content = "\n".join(ctx_parts)[:1000]
+                    else:
+                        content = line.rstrip()[:500]
+                    matches.append(GrepMatch(
+                        file_path=rel_path,
+                        line_number=i + 1,
+                        content=content,
+                    ).model_dump())
+                    if len(matches) >= max_results:
+                        break
+
+        if output_mode == "count" and file_match_count > 0:
+            file_counts[rel_path] = file_match_count
+
+    # Build result based on output_mode
+    if output_mode == "files_only":
+        data = [GrepMatch(file_path=f, line_number=0, content="").model_dump() for f in seen_files]
+        truncated = len(seen_files) >= max_results
+    elif output_mode == "count":
+        data = [GrepMatch(file_path=f, line_number=0, content=f"{c} matches").model_dump()
+                for f, c in file_counts.items()]
+        truncated = len(file_counts) >= max_results
+    else:
+        data = matches
+        truncated = len(matches) >= max_results
 
     logger.info(
-        "grep: pattern=%r matches=%d read_errors=%d glob_dropped=%s",
-        pattern, len(matches), read_errors, glob_dropped,
+        "grep: pattern=%r matches=%d read_errors=%d glob_dropped=%s mode=%s",
+        pattern, len(data), read_errors, glob_dropped, output_mode,
     )
     return ToolResult(
         tool_name="grep",
-        data=matches,
-        truncated=len(matches) >= max_results,
+        data=data,
+        truncated=truncated,
     )
 
 
@@ -658,6 +764,59 @@ def _classify_symbol_role(
         return "utility"
 
     return "unknown"
+
+
+def glob_files(
+    workspace: str,
+    pattern: str,
+    path: Optional[str] = None,
+) -> ToolResult:
+    """Fast file pattern matching, returns paths sorted by modification time."""
+    search_root = _resolve(workspace, path or ".")
+    if not search_root.exists():
+        return ToolResult(tool_name="glob", success=False, error=f"Path not found: {path}")
+    if not search_root.is_dir():
+        return ToolResult(tool_name="glob", success=False, error=f"Not a directory: {path}")
+
+    ws = Path(workspace).resolve()
+    results: List[Dict] = []
+
+    for match in search_root.glob(pattern):
+        if not match.is_file():
+            continue
+        # Skip excluded directories
+        try:
+            rel = match.relative_to(ws)
+        except ValueError:
+            continue
+        if any(part in _EXCLUDED_DIRS for part in rel.parts):
+            continue
+        # Skip binary files
+        if match.suffix.lower() in _BINARY_EXTENSIONS:
+            continue
+        try:
+            stat = match.stat()
+        except OSError:
+            continue
+        results.append({
+            "path": str(rel),
+            "size": stat.st_size,
+        })
+
+    # Sort by modification time descending (most recent first)
+    results.sort(key=lambda r: -Path(ws / r["path"]).stat().st_mtime)
+
+    # Cap results
+    max_results = 100
+    truncated = len(results) > max_results
+    if truncated:
+        results = results[:max_results]
+
+    return ToolResult(
+        tool_name="glob",
+        data=results,
+        truncated=truncated,
+    )
 
 
 def find_symbol(
@@ -4287,6 +4446,7 @@ TOOL_REGISTRY = {
     "grep": grep,
     "read_file": read_file,
     "list_files": list_files,
+    "glob": glob_files,
     "find_symbol": find_symbol,
     "find_references": find_references,
     "file_outline": file_outline,
