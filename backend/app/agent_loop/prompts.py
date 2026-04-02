@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
@@ -168,8 +169,245 @@ discover method names and line numbers before reading specific sections.
 {investigation_skill}"""
 
 
-# --- Layer 3 investigation skills (injected per agent based on skill key) ---
+# ═══════════════════════════════════════════════════════════════════════
+# Skill system: SKILL_METADATA + INVESTIGATION_SKILLS
+#
+# Two dicts work together to define each investigation skill:
+#
+#   SKILL_METADATA  → Brain-facing: WHEN to use this skill (use cases,
+#                     tools, budget). Consumed by _build_skill_catalog()
+#                     to generate Brain's system prompt.
+#
+#   INVESTIGATION_SKILLS → Agent-facing: HOW to investigate (step-by-step
+#                          methodology). Injected into the sub-agent's
+#                          Layer 3 prompt by build_sub_agent_system_prompt().
+#
+# ┌─────────────────────────────────────────────────────────────────┐
+# │  Adding a new skill — TWO steps:                                │
+# │                                                                 │
+# │  1. Add a SkillMeta entry to SKILL_METADATA:                    │
+# │     - description: one-line summary                             │
+# │     - when_to_use: 3-5 example user queries (quoted strings)    │
+# │     - when_not: 1-2 queries that LOOK similar but aren't        │
+# │     - tools: recommended tool names from schemas.py             │
+# │     - budget: token budget (e.g. 200_000)                       │
+# │     - iterations: max loop iterations (e.g. 15)                 │
+# │     - model: "explorer" (Haiku) or "strong" (Sonnet)            │
+# │                                                                 │
+# │  2. Add a matching entry to INVESTIGATION_SKILLS:               │
+# │     - Markdown string with the investigation methodology        │
+# │     - Teaches the sub-agent HOW to investigate (steps, what     │
+# │       to look for, what to check, answer format)                │
+# │     - Key must match the SKILL_METADATA key exactly             │
+# │                                                                 │
+# │  That's it. Brain's prompt auto-updates via _build_skill_catalog()│
+# └─────────────────────────────────────────────────────────────────┘
+#
+# Data flow example for skill="root_cause":
+#
+#   1. User asks: "Why do payment callbacks fail silently?"
+#
+#   2. Brain reads its system prompt which contains (auto-generated):
+#      │  ### root_cause
+#      │  Build evidence chain from symptom to cause...
+#      │  When to use: "Why does X fail", "Debug this error"...
+#      │  Tools: grep, read_file, get_callers, ...
+#      │  Budget: 400K tokens, 20 iterations, model: strong
+#
+#   3. Brain calls:
+#      │  dispatch_agent(
+#      │      query="Investigate silent failures in payment callbacks...",
+#      │      tools=["grep", "read_file", "get_callers", "git_blame", ...],
+#      │      skill="root_cause",
+#      │      model="strong",
+#      │      budget_tokens=400000,
+#      │  )
+#
+#   4. AgentToolExecutor builds sub-agent with:
+#      │  Layer 1 (identity): perspective from Brain's dispatch
+#      │  Layer 2 (tools): the tools list Brain specified
+#      │  Layer 3 (skill): INVESTIGATION_SKILLS["root_cause"]
+#      │    → "Build evidence chain from symptom to root cause:
+#      │       - Start from the error message or symptom...
+#      │       - Check for systemic causes: concurrency races..."
+#      │  Layer 4 (query): the query from Brain
+#
+# ═══════════════════════════════════════════════════════════════════════
 
+
+@dataclass
+class SkillMeta:
+    """Metadata for one investigation skill — describes WHEN to use it.
+
+    Brain reads these fields (via the auto-generated skill catalog) to decide
+    which skill matches the user's query. The actual investigation methodology
+    (HOW to investigate) lives separately in INVESTIGATION_SKILLS.
+
+    Attributes:
+        description: One-line summary shown in Brain's skill catalog.
+            Should answer "what does this skill do?" in ≤15 words.
+        when_to_use: Concrete user query examples that match this skill.
+            Brain pattern-matches the user's query against these. Use
+            quoted strings, 3-5 diverse examples. More examples = better
+            matching accuracy.
+        when_not: Queries that LOOK similar but should use a different skill.
+            Prevents the most common mismatches. Include which skill to use
+            instead (e.g. "that's root_cause — symptom-driven").
+        tools: Recommended tool names for agents using this skill. Brain
+            passes these to dispatch_agent(tools=[...]). Names must match
+            tool definitions in schemas.py.
+        budget: Suggested token budget in raw count (e.g. 400_000 = 400K).
+            Brain can override, but this is the default shown in the catalog.
+        iterations: Suggested max tool-calling loop iterations. Simple lookups
+            need ~12; deep analysis needs ~20.
+        model: "explorer" (Haiku — fast, cheap, good for straightforward
+            searches) or "strong" (Sonnet — slower, smarter, needed for
+            complex reasoning like root cause analysis or architecture).
+    """
+    description: str
+    when_to_use: str
+    when_not: str
+    tools: List[str]
+    budget: int
+    iterations: int
+    model: str = "explorer"
+
+
+# SKILL_METADATA — Brain-facing skill descriptions.
+#
+# Each key is a skill name that Brain can pass to dispatch_agent(skill="...").
+# The value is a SkillMeta that _build_skill_catalog() renders into Brain's
+# system prompt. Brain reads the "When to use" examples to match queries.
+#
+# To add a new skill, add an entry here AND a matching entry in
+# INVESTIGATION_SKILLS below. The keys must match exactly.
+SKILL_METADATA: Dict[str, SkillMeta] = {
+    "entry_point": SkillMeta(
+        description="Find where requests enter the system — route handlers, endpoints, event listeners.",
+        when_to_use='"Find the /api/users endpoint", "Where is the handler for X", "Which file processes webhook callbacks"',
+        when_not='"How does the login flow work" (traces beyond entry — use code_explanation)',
+        tools=["grep", "find_symbol", "read_file", "find_references", "list_endpoints"],
+        budget=150_000,
+        iterations=12,
+    ),
+    "root_cause": SkillMeta(
+        description="Build evidence chain from symptom to cause — error messages, call chains, systemic issues, git history.",
+        when_to_use='"Why does X fail", "Debug this error", "What causes the crash", "This API returns 500 sometimes", "Payment callbacks fail silently"',
+        when_not='"What changed recently" (that\'s recent_changes — no symptom to trace)',
+        tools=["grep", "read_file", "get_callers", "get_callees", "trace_variable", "git_blame", "git_show", "find_tests", "detect_patterns"],
+        budget=400_000,
+        iterations=20,
+        model="strong",
+    ),
+    "architecture": SkillMeta(
+        description="Map module organization, responsibilities, and dependencies top-down.",
+        when_to_use='"How is the project structured", "Show module organization", "What are the main components", "Draw me the architecture"',
+        when_not='"How does feature X work" (that\'s code_explanation — specific, not structural)',
+        tools=["module_summary", "detect_patterns", "get_dependencies", "get_dependents", "list_files", "list_endpoints", "extract_docstrings"],
+        budget=250_000,
+        iterations=15,
+    ),
+    "impact": SkillMeta(
+        description="Map blast radius of a change — direct dependents, transitive callers, amplification risks.",
+        when_to_use='"What breaks if I change X", "Impact of renaming Y", "What depends on this service", "Is it safe to remove Z"',
+        when_not='"Why did X break" (that\'s root_cause — backward from symptom)',
+        tools=["find_references", "get_callers", "get_dependents", "get_dependencies", "find_tests", "test_outline", "run_test", "detect_patterns"],
+        budget=300_000,
+        iterations=18,
+    ),
+    "data_lineage": SkillMeta(
+        description="Trace data from source to sink through every transformation.",
+        when_to_use='"How does data flow from X to Y", "Where is this field stored", "What transformations happen to the input", "Trace the customer data path"',
+        when_not='"Where is the config for X" (that\'s config_analysis)',
+        tools=["trace_variable", "find_references", "get_callers", "get_callees", "get_dependencies", "ast_search", "db_schema"],
+        budget=350_000,
+        iterations=20,
+    ),
+    "recent_changes": SkillMeta(
+        description="Investigate git history — who changed what, when, and why.",
+        when_to_use='"What changed in auth last 2 weeks", "Who modified this file", "Show recent commits to the payment module", "When was this line added"',
+        when_not='"Why does auth fail" (that\'s root_cause — symptom-driven)',
+        tools=["git_log", "git_diff", "git_diff_files", "git_blame", "git_show", "git_hotspots", "read_file"],
+        budget=200_000,
+        iterations=12,
+    ),
+    "code_explanation": SkillMeta(
+        description="Explain code across three dimensions: business context, mechanism, design decisions.",
+        when_to_use='"Explain how X works", "What does this class do", "Why is this implemented this way", "Walk me through this function"',
+        when_not='"Find the endpoint for X" (that\'s entry_point — location, not explanation)',
+        tools=["read_file", "file_outline", "get_callers", "get_callees", "find_references", "find_tests", "get_dependencies"],
+        budget=250_000,
+        iterations=15,
+    ),
+    "config_analysis": SkillMeta(
+        description="Trace config values from definition to consumers to behavioral effect.",
+        when_to_use='"What does this config do", "Where is the timeout configured", "What controls feature flag X", "How is the cache TTL set"',
+        when_not='"How does data flow through the system" (that\'s data_lineage)',
+        tools=["grep", "read_file", "find_references", "trace_variable", "list_files"],
+        budget=150_000,
+        iterations=12,
+    ),
+    "issue_tracking": SkillMeta(
+        description="Create, search, or manage tickets with code-aware context.",
+        when_to_use='"Create a Jira ticket for this bug", "Search for related tickets", "Update ticket DEV-123", "Break this work into sub-tasks"',
+        when_not='"Find the bug in the code" (that\'s root_cause — investigate first)',
+        tools=["jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects", "grep", "read_file", "git_log", "git_diff"],
+        budget=200_000,
+        iterations=15,
+    ),
+}
+
+
+def _build_skill_catalog() -> str:
+    """Generate Brain's skill catalog from SKILL_METADATA.
+
+    Produces a Markdown section that Brain uses to match user queries to skills.
+    Each entry shows: description, "When to use" examples, "When NOT to use",
+    recommended tools, budget, and model.
+
+    Example output for one skill::
+
+        ### entry_point
+        Find where requests enter the system — route handlers, endpoints, event listeners.
+        When to use: "Find the /api/users endpoint", "Where is the handler for X"
+        When NOT to use: "How does the login flow work" (use code_explanation)
+        Tools: grep, find_symbol, read_file, find_references, list_endpoints
+        Budget: 150K tokens, 12 iterations, model: explorer
+    """
+    lines = ["## Investigation skills (inject via skill= parameter)\n"]
+    for key, meta in SKILL_METADATA.items():
+        budget_k = f"{meta.budget // 1000}K"
+        lines.append(f"### {key}")
+        lines.append(meta.description)
+        lines.append(f"When to use: {meta.when_to_use}")
+        lines.append(f"When NOT to use: {meta.when_not}")
+        lines.append(f"Tools: {', '.join(meta.tools)}")
+        lines.append(f"Budget: {budget_k} tokens, {meta.iterations} iterations, model: {meta.model}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# INVESTIGATION_SKILLS — Agent-facing investigation methodology.
+#
+# Each key matches a SKILL_METADATA key. The value is a Markdown string
+# injected into the sub-agent's Layer 3 (Skills & Guidelines) prompt by
+# build_sub_agent_system_prompt(). It teaches the agent HOW to investigate:
+# step-by-step approach, what to look for, what to check, answer format.
+#
+# These are NOT shown to Brain — Brain only sees SKILL_METADATA (via the
+# auto-generated skill catalog). The sub-agent sees ONLY its skill's
+# methodology, not the full catalog.
+#
+# To add a new skill, add an entry here AND a matching entry in
+# SKILL_METADATA above. The keys must match exactly.
+#
+# Guidelines for writing a good skill methodology:
+#   - 5-10 bullet points, each a concrete action (not vague advice)
+#   - Name specific tools when relevant ("Use git_blame on...")
+#   - Include what to check for that's NOT obvious (systemic causes,
+#     amplification risks, transaction boundaries)
+#   - Keep it under 200 words — the agent also receives workspace layout,
+#     project docs, and budget guidance in Layer 3
 INVESTIGATION_SKILLS: Dict[str, str] = {
 
     "business_flow": """\
@@ -225,6 +463,9 @@ Build an evidence chain from symptom to root cause:
 - Start from the error message or symptom — grep for exact error text
 - Trace the call chain backward: who calls the failing method?
 - Check error handling: empty catch blocks, swallowed exceptions, missing retries
+- Check for systemic causes: concurrency races (check-then-act without locks), \
+missing retry/backoff logic, transaction boundary gaps (partial commits), \
+resource leaks (unclosed connections, streams)
 - Check configuration: timeouts, retry limits, feature flags that control behavior
 - Use git_blame on the relevant lines to understand when and why they changed
 """,
@@ -238,12 +479,17 @@ Map the blast radius systematically:
 - Search for the name in config files, tests, and documentation
 - Check API contracts: is this exposed in REST endpoints, gRPC services?
 - Find all tests that exercise this code — they'll break too
+- Check amplification risks: does the change affect code in retry loops, \
+queue consumers, webhook handlers, or transaction boundaries? These can \
+turn a small change into a wide-reaching failure.
 """,
 
     "architecture": """\
 ## Investigation skill: Architecture Overview
 
 Map the system top-down:
+- Start from documentation: read README.md, CLAUDE.md, or architecture docs \
+before diving into code — they provide the mental model
 - Use module_summary on top-level directories to understand structure
 - Look for project markers (pom.xml, package.json) to identify subprojects
 - Use detect_patterns to find architectural patterns (DI, event-driven, etc.)
@@ -273,12 +519,57 @@ Use git tools systematically:
     "code_explanation": """\
 ## Investigation skill: Code Explanation
 
+Explain code across three dimensions:
+- **Business context**: What real-world problem does this solve? Where does it \
+sit in the user journey? What business rules does it encode?
+- **Mechanism**: What are the inputs, transformations, outputs? What state \
+changes occur? What are the control flow branches and error paths?
+- **Design decisions**: What tradeoffs were made? What alternatives exist? \
+What constraints or invariants does the design enforce?
+
 Build understanding from context outward:
 - Read the code under discussion first
 - Use file_outline to see the surrounding class/module structure
 - Use get_callers to understand who uses this code and why
 - Use get_callees to understand what this code depends on
 - Check tests for usage examples and expected behavior
+""",
+
+    "config_analysis": """\
+## Investigation skill: Configuration Analysis
+
+Trace config values from definition to effect:
+- Locate the definition: config files (YAML, JSON, properties), environment \
+variables, constants, feature flags
+- Find all consumers: grep for the config key name across the codebase
+- Trace how the value propagates: is it read at startup (cached) or per-request \
+(dynamic)? Does it pass through layers of abstraction?
+- Determine the behavioral effect: what changes when this value changes?
+
+Answer with: definition location, list of consumers, behavior each consumer \
+derives from the value.
+""",
+
+    "issue_tracking": """\
+## Investigation skill: Issue Tracking
+
+### Reading existing tickets
+- Use jira_get_issue to fetch full details (description, comments, acceptance criteria)
+- Map ticket requirements to specific code locations (file:line)
+- Produce actionable plan with complexity estimate
+
+### Creating new tickets
+- Analyse the relevant code first — gather evidence (affected files, \
+dependencies, complexity) before writing the ticket
+- Assess complexity: Small (1 task, ≤1 week), Medium (1 epic + sub-tasks), \
+Large (1 project + epics with sub-tasks)
+- Description MUST include: code context with file:line references, \
+affected components, acceptance criteria
+- Check for duplicate tickets before creating (use jira_search)
+- Sub-tasks should each be ≤1 week and independently testable
+- Always confirm with user (ask_user) before creating or updating tickets
+
+{jira_project_guide}
 """,
 
     "code_review_pr": """\
@@ -472,6 +763,9 @@ def build_sub_agent_system_prompt(
     # Resolve investigation skill for this agent
     inv_skill = INVESTIGATION_SKILLS.get(skill_key or "", "")
     if inv_skill:
+        # Inject dynamic content into skill templates
+        if "{jira_project_guide}" in inv_skill:
+            inv_skill = inv_skill.replace("{jira_project_guide}", _load_jira_project_guide())
         inv_skill = "\n" + inv_skill
 
     skills = SKILLS_AND_GUIDELINES.format(
@@ -631,6 +925,33 @@ _DEFAULT_STRATEGY = ""
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════
+
+_jira_project_guide_cache: Optional[str] = None
+
+
+def _load_jira_project_guide() -> str:
+    """Load jira_project_guide.yaml from config directory."""
+    global _jira_project_guide_cache
+    if _jira_project_guide_cache is not None:
+        return _jira_project_guide_cache
+
+    # Try to find the config directory
+    from app.workflow.loader import _find_config_dir
+    try:
+        config_dir = _find_config_dir()
+        guide_path = config_dir / "jira_project_guide.yaml"
+        if guide_path.is_file():
+            content = guide_path.read_text(encoding="utf-8", errors="replace")
+            if len(content) > 3000:
+                content = content[:3000] + "\n... (truncated)"
+            _jira_project_guide_cache = f"\n### Jira Project Guide\n```yaml\n{content}\n```\n"
+        else:
+            _jira_project_guide_cache = ""
+    except Exception:
+        _jira_project_guide_cache = ""
+
+    return _jira_project_guide_cache
+
 
 def _read_key_docs(workspace_path: str) -> str:
     """Read key documentation files from the workspace root(s)."""
@@ -963,9 +1284,11 @@ needs, dispatch specialist agents to explore the codebase, evaluate \
 their findings, and synthesize comprehensive answers with file:line \
 evidence. You never read code directly — your specialists do that.
 
-## Available agents
+{tool_catalog}
 
-{agent_catalog}
+{skill_catalog}
+
+{template_catalog}
 
 ## Available swarms
 
@@ -973,40 +1296,43 @@ evidence. You never read code directly — your specialists do that.
 
 ## How to coordinate
 
-Read the query, decide what kind of investigation it needs, and dispatch \
-the right agent or swarm directly:
+Read the query, detect the intent, then compose and dispatch the right agent:
+
+1. **Identify intent** — match the query against skill catalog "When to use" entries
+2. **Select skill + tools + budget** — use the recommended values from the skill entry
+3. **Compose agent** — dispatch_agent with tools=, skill=, model=, budget_tokens=
+4. **Synthesize** — read findings and produce the final answer with evidence
 
 **Simple** (~80% of queries — single perspective is enough): \
-Pick the best agent → dispatch → synthesize. Done in 1 dispatch.
+Compose one dynamic agent with the matching skill → dispatch → synthesize.
 
 **Complex** (~15% — needs depth or multiple perspectives sequentially): \
-Dispatch agent → evaluate findings → if gaps remain, handoff to a \
-different specialist with previous findings. Maximum 2-3 dispatches.
+Dispatch agent → evaluate findings → if gaps remain, dispatch a second \
+agent with a different skill and include previous findings. Maximum 2-3 dispatches.
 
 **Swarm** (~5% — end-to-end journeys): \
 Before dispatching, decompose the user's question into 3-6 specific search \
-targets (integration points, domain models, state transitions, gating steps). \
-Pass these as a structured query to dispatch_swarm so agents know exactly \
-where to look — never just forward the user's question verbatim.
+targets. Use dispatch_swarm("business_flow") — never just forward the query verbatim.
 
-**PR Review** — use transfer_to_brain("pr_review"). This hands off to a \
-specialized Brain with pre-computed context, parallel agents, arbitration, \
-and synthesis. One-way handoff — you will not get control back.
+**PR Review** — use transfer_to_brain("pr_review"). One-way handoff to the \
+specialized PR Brain with pre-computed context, parallel agents, and arbitration.
 
-Decision guide:
-- "Find endpoint X" / "where is handler for Y" → explore_entry_point (SIMPLE)
-- "What happens when X" (single event) → explore_implementation (SIMPLE)
-- "How does the full journey from A to Z work" → dispatch_swarm("business_flow")
-- "Review PR #123" / "review this diff" → transfer_to_brain("pr_review")
-- "Why does X fail" / "debug this error" → explore_root_cause (SIMPLE)
-- "What breaks if I change X" → explore_impact (SIMPLE)
-- "How is the project structured" → explore_architecture (SIMPLE)
-- "What changed recently" → explore_recent_changes (SIMPLE)
-- "Explain this code" → explore_code_explanation (SIMPLE)
-- Open-ended / ambiguous → ask_user for clarification first
+**Templates** — use dispatch_agent(template=...) ONLY for agents in the template \
+catalog (PR review swarm, business flow swarm, synthesis, arbitration). For all \
+other queries, compose agents dynamically.
 
 When handing off, always include the previous agent's key findings, \
 files already checked, and the new direction in the query.
+
+## Planning — always plan before dispatching
+
+Before your first dispatch, call create_plan to declare your approach. \
+This records your reasoning so the investigation is auditable. Include \
+which mode you chose (simple/complex/swarm/transfer), which agent(s), \
+and WHY — what about the query led to this decision.
+
+create_plan and dispatch can be called in the same turn (parallel tool \
+calls) — planning adds no extra round trip.
 
 ## Synthesis — your most important job
 
@@ -1036,95 +1362,150 @@ for synthesis. Agent depth limit is 2 levels \
 
 # Decision examples — teach Brain the full range of orchestration patterns.
 # These follow CLAUDE.md principle #2: "Examples over rule lists"
+# and Anthropic's pattern of <example> + <commentary> for teaching decisions.
 _BRAIN_EXAMPLES = """\
 <example>
 Query: "Find the /api/users endpoint"
-This is entry point discovery — one agent is enough.
-dispatch_agent("explore_entry_point", "Find the handler for /api/users — \
-identify the controller class, method, and exact file:line")
+<commentary>
+Keywords "find" + "endpoint" → entry_point skill. Simple lookup, one agent.
+Use explorer model — no deep reasoning needed. Low budget (150K).
+</commentary>
+create_plan(mode="simple", reasoning="Single endpoint lookup — entry_point skill")
+dispatch_agent(query="Find the handler for /api/users — identify the controller \
+class, method, and exact file:line",
+  tools=["grep", "find_symbol", "read_file", "find_references", "list_endpoints"],
+  skill="entry_point", budget_tokens=150000, max_iterations=12)
 Result: Agent returns the endpoint location. Brain synthesizes. Done.
 </example>
 
 <example>
 Query: "What happens when a loan application is declined?"
-Single event, not an end-to-end journey — use explore_implementation, not swarm.
-dispatch_agent("explore_implementation", "Trace what happens when a loan \
-application is declined: triggers (auto vs manual), state transitions, actions \
-taken (email, documents, callbacks), decline reasons, and any appeal process.")
+<commentary>
+"What happens when" + single event → code_explanation skill, not business_flow.
+Business_flow swarm is for end-to-end multi-step journeys across multiple
+integration points. This traces one event's consequences — a single agent
+with code_explanation skill is sufficient.
+</commentary>
+create_plan(mode="simple", reasoning="Single event trace — code_explanation skill")
+dispatch_agent(query="Trace what happens when a loan application is declined: \
+triggers, state transitions, actions taken, decline reasons, appeal process.",
+  tools=["grep", "read_file", "get_callers", "get_callees", "trace_variable", \
+"find_references", "module_summary"],
+  skill="code_explanation", budget_tokens=300000, max_iterations=18)
 Result: Agent traces the decline flow. Brain synthesizes. Done.
 </example>
 
 <example>
 Query: "I want to build an MCP server for our backend"
-Open-ended, ambiguous — ask user before dispatching.
+<commentary>
+Open-ended, ambiguous — ask user before dispatching. Need to understand
+scope before choosing skill and tools.
+</commentary>
 ask_user(
   question: "What capabilities should the MCP server expose?",
-  context: "1. Code navigation — search symbols, read files, trace references\\n\
-2. Data flow analysis — trace how data moves from API input to database\\n\
-3. Architecture overview — module structure, dependencies, service map\\n\
-4. All of the above (recommended — I'll design a phased approach)")
-Then dispatch agents based on the user's answer.
+  options: ["Code navigation", "Data flow analysis", "Architecture overview",
+    "All of the above (recommended)"])
+Then create_plan and dispatch agents based on the user's answer.
 </example>
 
 <example>
 Query: "Review PR #142 which changes the payment processing flow"
-PR review → transfer to the specialized PR Brain.
+<commentary>
+PR review → transfer to specialized PR Brain. Never compose PR review agents
+dynamically — the PR Brain has pre-computed context, parallel agents,
+adversarial arbitration, and synthesis that cannot be replicated ad-hoc.
+</commentary>
+create_plan(mode="transfer", reasoning="PR review — hand off to PR Brain")
 transfer_to_brain(brain_name="pr_review", workspace_path="/path/to/ws", \
 diff_spec="main...feature/payment-rework")
-Result: PR Brain takes over — pre-computes context, dispatches 5 review agents, \
-runs arbitration, and produces a polished review. You do not get control back.
 </example>
 
 <example>
-Query: "After being approved by Render, what steps must a customer finish to get their loan disbursed?"
-End-to-end multi-step journey → business_flow swarm.
-Before dispatching, decompose the question into specific search targets so agents \
-know exactly WHERE to look:
-dispatch_swarm("business_flow", "Trace the complete customer journey from Render \
-loan approval to loan disbursement.\n\
-Search targets:\n\
-1. Render integration — look for Render callbacks/webhooks in external/ directories, \
-find the approval callback handler\n\
-2. Post-approval state model — find domain classes (Request/DTO) with boolean flag \
-groups or completion checklists that gate disbursement\n\
-3. State transitions — find enums or constants defining application states between \
-APPROVED and DISBURSED\n\
-4. Gating steps — identify each action the customer must complete: agreement signing, \
-identity verification (IDV), bank account linking, direct debit mandate setup\n\
-5. Disbursement trigger — what checks run before money is released, which service \
-initiates the transfer\n\
+Query: "After Render approval, what steps must a customer complete to get their loan?"
+<commentary>
+"Complete journey from A to Z" → business_flow swarm. This is end-to-end with
+multiple integration points — needs parallel investigation from complementary
+perspectives (implementation + usage). Decompose into search targets first.
+</commentary>
+create_plan(mode="swarm", reasoning="End-to-end customer journey — business_flow",
+  query_decomposition=["Render approval callback", "Post-approval state model",
+    "Gating steps (IDV, bank, mandate)", "Disbursement trigger"])
+dispatch_swarm("business_flow", "Trace the complete customer journey from \
+Render approval to disbursement.\\nSearch targets:\\n\
+1. Render callbacks/webhooks — find the approval callback handler\\n\
+2. Post-approval state model — domain classes with completion checklists\\n\
+3. Gating steps — IDV, bank account linking, direct debit mandate\\n\
+4. Disbursement trigger — final checks before money is released\\n\
 Focus on what the CUSTOMER must do, not internal system processes.")
-Result: Two agents return complementary perspectives — implementation traces the \
-domain models and service handlers, usage traces the test journey and API contracts. \
-Brain merges into unified step-by-step flow.
 </example>
 
 <example>
 Query: "Why do payment callbacks from Clearer sometimes fail silently?"
-Root cause analysis — start with one agent, handoff if gaps remain.
-Step 1: dispatch_agent("explore_root_cause", "Investigate why payment callbacks \
-from Clearer sometimes fail silently. Check error handling, retry logic, catch blocks.")
-Result: Agent finds empty catch block but notes gap: "retry config not found."
-Step 2 (handoff): dispatch_agent("explore_config", "Find retry config for Clearer.\n\
-Previous findings: empty catch at ClearerCallbackService:45, already checked \
-ClearerClient.java and PaymentService.java.")
+<commentary>
+"Why" + "fail" → root_cause skill. Use strong model — root cause analysis
+needs deep reasoning across error handling, systemic causes, and git history.
+May need followup: if agent finds config-related gap, dispatch a second
+agent with config_analysis skill.
+</commentary>
+create_plan(mode="complex", reasoning="Root cause may need config followup",
+  fallback="If root cause agent cannot find retry config, dispatch config_analysis")
+Step 1: dispatch_agent(query="Investigate why payment callbacks from Clearer \
+fail silently. Check error handling, retry logic, catch blocks, systemic causes.",
+  tools=["grep", "read_file", "get_callers", "trace_variable", "git_blame", \
+"git_show", "detect_patterns"],
+  skill="root_cause", model="strong", budget_tokens=400000, max_iterations=20)
+Result: Agent finds empty catch block, notes gap: "retry config not found."
+Step 2: dispatch_agent(query="Find retry config for Clearer payment callbacks.\\n\
+Previous findings: empty catch at ClearerCallbackService:45.",
+  tools=["grep", "read_file", "find_references", "trace_variable", "list_files"],
+  skill="config_analysis", budget_tokens=150000, max_iterations=12)
 Result: Brain synthesizes root cause + contributing factor + fix.
 </example>
 
 <example>
 Query: "What changed in the authentication module in the last 2 weeks?"
-Recent changes — one specialized agent.
-dispatch_agent("explore_recent_changes", "Show git changes to \
-authentication-related files in the last 14 days.")
+<commentary>
+"What changed" + "last 2 weeks" → recent_changes skill. Scoped history query,
+one agent with git tools. Low budget.
+</commentary>
+create_plan(mode="simple", reasoning="Scoped recent-changes query")
+dispatch_agent(query="Show git changes to authentication-related files in \
+the last 14 days.",
+  tools=["git_log", "git_diff", "git_diff_files", "git_blame", "git_show", \
+"read_file"],
+  skill="recent_changes", budget_tokens=200000, max_iterations=12)
 Result: Brain synthesizes. Done.
 </example>
 
 <example>
 Query: "If I rename UserService to AccountService, what breaks?"
-Impact analysis — one specialized agent.
-dispatch_agent("explore_impact", "Assess impact of renaming \
-UserService to AccountService. Find all callers, imports, config refs, tests.")
+<commentary>
+"What breaks if I change" → impact skill. Need to trace all references,
+dependents, tests, and check for amplification risks (retry loops, queues).
+</commentary>
+create_plan(mode="simple", reasoning="Impact analysis of a single rename")
+dispatch_agent(query="Assess impact of renaming UserService to AccountService. \
+Find all callers, imports, config refs, tests, and amplification risks.",
+  tools=["find_references", "get_callers", "get_dependents", "find_tests", \
+"test_outline", "detect_patterns", "grep", "read_file"],
+  skill="impact", budget_tokens=300000, max_iterations=18)
 Result: Brain synthesizes. Done.
+</example>
+
+<example>
+Query: "Create a Jira ticket for the auth token expiry bug"
+<commentary>
+Jira action with code context — needs code investigation tools + Jira tools.
+Use issue_tracking skill. Must investigate the bug first (gather evidence),
+then create ticket with code references.
+</commentary>
+create_plan(mode="simple", reasoning="Jira creation with code analysis")
+dispatch_agent(query="Investigate the auth token expiry bug, gather evidence \
+(affected files, root cause), then create a Jira ticket with code references.",
+  tools=["grep", "read_file", "git_log", "git_diff", "find_references", \
+"jira_list_projects", "jira_search", "jira_create_issue"],
+  skill="issue_tracking", budget_tokens=200000, max_iterations=15)
+Result: Agent investigates, confirms with user, creates ticket. Done.
 </example>"""
 
 
@@ -1147,20 +1528,44 @@ def build_brain_prompt(
     qa_cache:
         Session-scoped Q&A cache. Injected so Brain can reuse answers.
     """
-    # Build agent catalog from registry descriptions
-    # Build agent catalog — exclude judge/synthesizer agents.
-    # Brain does its own arbitration and synthesis.
-    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer"}
-    catalog_lines = []
+    # --- Tool catalog (grouped by category) ---
+    tool_catalog = """\
+## Available tools (select per agent)
+
+**Search**: grep (content search with regex), find_symbol (find definitions), \
+find_references (find all usages), ast_search (AST pattern matching)
+**Navigate**: read_file, list_files, glob, file_outline (class/method structure), \
+compressed_view (condensed file view), module_summary (directory overview), \
+expand_symbol (show full definition)
+**Analysis**: get_dependencies, get_dependents, get_callers, get_callees, \
+trace_variable (follow data flow), detect_patterns (architectural patterns), \
+list_endpoints, extract_docstrings, db_schema
+**Git**: git_log, git_diff, git_diff_files, git_blame, git_show, git_hotspots
+**Test**: find_tests, test_outline, run_test
+**Integration**: jira_search, jira_get_issue, jira_create_issue, \
+jira_update_issue, jira_list_projects
+**Browser**: web_search, web_navigate, web_click, web_fill, web_screenshot, \
+web_extract
+**Edit**: file_edit (partial edit), file_write (full file write)"""
+
+    # --- Skill catalog (dynamically generated from SKILL_METADATA) ---
+    skill_catalog = _build_skill_catalog()
+
+    # --- Template catalog (only for swarms/synthesis/arbitration) ---
+    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer",
+                    "pr_arbitrator"}
+    template_lines = []
     for name, config in sorted(agent_registry.items()):
         if name in _JUDGE_NAMES:
             continue
-        desc = getattr(config, "description", "") or config.instructions[:80]
+        desc = getattr(config, "description", "") or getattr(config, "instructions", "")[:80]
         if desc:
-            catalog_lines.append(f"- {name}: {desc}")
-        else:
-            catalog_lines.append(f"- {name}")
-    agent_catalog = "\n".join(catalog_lines) if catalog_lines else "(no agents configured)"
+            template_lines.append(f"- **{name}**: {desc}")
+    template_catalog = (
+        "## Pre-defined templates (for swarms and complex workflows only)\n\n"
+        "Use dispatch_agent(template=...) for these. Do NOT compose dynamically.\n\n"
+        + ("\n".join(template_lines) if template_lines else "(no templates configured)")
+    )
 
     # Build swarm catalog
     swarm_lines = []
@@ -1179,7 +1584,9 @@ def build_brain_prompt(
         qa_context = "\n".join(qa_lines)
 
     return BRAIN_IDENTITY.format(
-        agent_catalog=agent_catalog,
+        tool_catalog=tool_catalog,
+        skill_catalog=skill_catalog,
+        template_catalog=template_catalog,
         swarm_catalog=swarm_catalog,
         decision_examples=_BRAIN_EXAMPLES,
         qa_context=qa_context,

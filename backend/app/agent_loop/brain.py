@@ -232,7 +232,8 @@ class AgentToolExecutor(ToolExecutor):
         inner_executor: ToolExecutor,
         agent_registry: Dict[str, Any],       # name → AgentConfig
         swarm_registry: Dict[str, Any],        # name → SwarmConfig
-        agent_provider,                        # AIProvider for sub-agents
+        agent_provider,                        # AIProvider for sub-agents (explorer/Haiku)
+        strong_provider=None,                  # AIProvider for strong model (Sonnet)
         config: Optional[BrainExecutorConfig] = None,
         brain_config: Optional[Any] = None,    # BrainConfig
         trace_writer=None,
@@ -252,6 +253,7 @@ class AgentToolExecutor(ToolExecutor):
         self._agent_registry = agent_registry
         self._swarm_registry = swarm_registry
         self._agent_provider = agent_provider
+        self._strong_provider = strong_provider or agent_provider
         self._brain_config = brain_config
         self._trace_writer = trace_writer
         self._event_sink = event_sink
@@ -278,10 +280,13 @@ class AgentToolExecutor(ToolExecutor):
         self._sub_agent_timeout = config.sub_agent_timeout
 
         self._code_context: Optional[Dict[str, Any]] = None
+        self._plan: Optional[Dict[str, Any]] = None
 
     async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
-        """Execute a tool. Intercepts dispatch_agent, dispatch_swarm, and transfer_to_brain."""
-        if tool_name == "dispatch_agent":
+        """Execute a tool. Intercepts create_plan, dispatch_agent, dispatch_swarm, and transfer_to_brain."""
+        if tool_name == "create_plan":
+            return await self._create_plan(params)
+        elif tool_name == "dispatch_agent":
             return await self._dispatch_agent(params)
         elif tool_name == "dispatch_swarm":
             return await self._dispatch_swarm(params)
@@ -289,6 +294,35 @@ class AgentToolExecutor(ToolExecutor):
             return await self._transfer_to_brain(params)
         # All other tools (grep, read_file, ask_user, etc.) pass through
         return await self._inner.execute(tool_name, params)
+
+    # -----------------------------------------------------------------
+    # create_plan — record the Brain's investigation plan
+    # -----------------------------------------------------------------
+
+    async def _create_plan(self, params: Dict[str, Any]) -> ToolResult:
+        """Record the Brain's investigation plan and emit it for UI display."""
+        self._plan = {
+            "mode": params.get("mode", "simple"),
+            "reasoning": params.get("reasoning", ""),
+            "agents": params.get("agents", []),
+            "query_decomposition": params.get("query_decomposition", []),
+            "risk": params.get("risk", ""),
+            "fallback": params.get("fallback", ""),
+        }
+        logger.info(
+            "[Brain] Plan created: mode=%s, agents=%s",
+            self._plan["mode"], self._plan["agents"],
+        )
+
+        if self._event_sink:
+            from app.workflow.engine import WorkflowEvent
+            await self._event_sink.put(WorkflowEvent("plan_created", self._plan))
+
+        return ToolResult(
+            tool_name="create_plan",
+            success=True,
+            data={"status": "plan_recorded", **self._plan},
+        )
 
     # -----------------------------------------------------------------
     # transfer_to_brain — hand off to a specialized brain
@@ -330,9 +364,33 @@ class AgentToolExecutor(ToolExecutor):
     # dispatch_agent — run one agent-as-tool
     # -----------------------------------------------------------------
 
+    def _build_dynamic_config(self, params: Dict[str, Any]) -> Any:
+        """Build an ephemeral AgentConfig from dynamic dispatch params."""
+        from app.workflow.models import AgentConfig, AgentLimits
+        skill = params.get("skill", "")
+        return AgentConfig(
+            name=f"dynamic_{skill or 'explorer'}",
+            description=params.get("perspective", "Dynamic investigation agent"),
+            model=params.get("model", "explorer"),
+            instructions=params.get("perspective", ""),
+            skill=skill,
+            tools=params.get("tools", []),  # list format → tool_list property returns it directly
+            limits=AgentLimits(
+                max_iterations=params.get("max_iterations", 20),
+                budget_tokens=params.get("budget_tokens", 300_000),
+                evidence_retries=1,
+            ),
+        )
+
     async def _dispatch_agent(self, params: Dict[str, Any]) -> ToolResult:
-        """Run a single specialist agent and return condensed findings."""
-        agent_name = params.get("agent_name", "")
+        """Run a single specialist agent and return condensed findings.
+
+        Supports two modes:
+        - Template mode: ``template`` (or legacy ``agent_name``) looks up a
+          pre-defined agent from the registry.
+        - Dynamic mode: ``tools`` + optional ``perspective``, ``skill``,
+          ``model``, ``budget_tokens`` compose an agent on the fly.
+        """
         query = params.get("query", "")
         weight = params.get("budget_weight", 1.0)
 
@@ -345,19 +403,39 @@ class AgentToolExecutor(ToolExecutor):
                       f"Use your available code tools to investigate directly.",
             )
 
-        # Resolve agent config
-        agent_config = self._agent_registry.get(agent_name)
-        if agent_config is None:
-            available = ", ".join(sorted(self._agent_registry.keys()))
+        # Resolve agent config: template mode vs dynamic mode
+        template = params.get("template") or params.get("agent_name")
+        if template:
+            # Template mode: lookup in registry (existing behavior)
+            agent_config = self._agent_registry.get(template)
+            if agent_config is None:
+                available = ", ".join(sorted(self._agent_registry.keys()))
+                return ToolResult(
+                    tool_name="dispatch_agent",
+                    success=False,
+                    error=f"Unknown agent template '{template}'. Available: {available}",
+                )
+            agent_name = template
+            resolved_model = getattr(agent_config, "model", "explorer") or "explorer"
+        elif params.get("tools"):
+            # Dynamic mode: Brain composes the agent on the fly
+            agent_config = self._build_dynamic_config(params)
+            agent_name = agent_config.name
+            resolved_model = params.get("model", "explorer")
+        else:
             return ToolResult(
                 tool_name="dispatch_agent",
                 success=False,
-                error=f"Unknown agent '{agent_name}'. Available: {available}",
+                error="Either 'template' or 'tools' must be provided. "
+                      "Use template= for pre-defined agents, or tools= to "
+                      "compose an agent dynamically.",
             )
 
         logger.info(
-            "[Brain] Dispatching agent '%s' (depth=%d, query='%s')",
-            agent_name, self._current_depth + 1, query[:80],
+            "[Brain] Dispatching agent '%s' (depth=%d, mode=%s, model=%s, query='%s')",
+            agent_name, self._current_depth + 1,
+            "template" if template else "dynamic",
+            resolved_model, query[:80],
         )
 
         # Emit dispatch event for UI
@@ -367,7 +445,11 @@ class AgentToolExecutor(ToolExecutor):
                 "agent_name": agent_name,
                 "query": query,
                 "depth": self._current_depth + 1,
+                "mode": "template" if template else "dynamic",
             }))
+
+        # Select provider based on resolved model
+        provider = self._strong_provider if resolved_model == "strong" else self._agent_provider
 
         # Allocate budget — respect agent's own budget_tokens as cap
         from .budget import BudgetConfig  # lazy: avoids circular import (brain ↔ budget)
@@ -384,6 +466,7 @@ class AgentToolExecutor(ToolExecutor):
             agent_registry=self._agent_registry,
             swarm_registry=self._swarm_registry,
             agent_provider=self._agent_provider,
+            strong_provider=self._strong_provider,
             config=BrainExecutorConfig(
                 workspace_path=self._workspace_path,
                 current_depth=self._current_depth + 1,
@@ -413,7 +496,7 @@ class AgentToolExecutor(ToolExecutor):
         from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
         from .config import AgentLoopConfig
         svc = AgentLoopService(
-            provider=self._agent_provider,
+            provider=provider,
             config=AgentLoopConfig(
                 max_iterations=agent_config.limits.max_iterations,
                 max_evidence_retries=1,
@@ -427,8 +510,8 @@ class AgentToolExecutor(ToolExecutor):
                     "instructions": agent_config.instructions,
                     "skill": getattr(agent_config, "skill", "") or "",
                 },
-                forced_strategy=agent_config.strategy or "",
-                forced_skill=agent_config.skill or "",
+                forced_strategy=getattr(agent_config, "strategy", "") or "",
+                forced_skill=getattr(agent_config, "skill", "") or "",
             ),
             tool_executor=sub_executor,
             trace_writer=self._trace_writer,
@@ -437,7 +520,8 @@ class AgentToolExecutor(ToolExecutor):
         # Per-agent overrides from template
         if agent_config.limits.temperature is not None:
             svc._temperature = agent_config.limits.temperature
-        svc._quality_config = agent_config.quality
+        if hasattr(agent_config, "quality"):
+            svc._quality_config = agent_config.quality
 
         # 4-layer: query stays clean — agent identity is in system prompt (Layer 1),
         # not in the user message (Layer 4).

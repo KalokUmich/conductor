@@ -263,10 +263,46 @@ class SignalBlockerParams(BaseModel):
     context: str = Field(default="", description="Brief context about what you've found so far.")
 
 
+class CreatePlanParams(BaseModel):
+    mode: str = Field(..., description="Dispatch mode: 'simple', 'complex', 'swarm', or 'transfer'")
+    reasoning: str = Field(..., description="Why this mode and agent(s) — what about the query led to this decision")
+    agents: List[str] = Field(default_factory=list, description="Agent(s) to dispatch, in order")
+    query_decomposition: List[str] = Field(default_factory=list, description="For swarm/complex: how the query breaks into sub-questions")
+    risk: str = Field(default="", description="Key risks or ambiguities in this investigation")
+    fallback: str = Field(default="", description="What to try if the primary approach finds insufficient evidence")
+
+
 class DispatchAgentParams(BaseModel):
-    agent_name: str = Field(..., description="Agent to dispatch (from the available agents list in your system prompt)")
     query: str = Field(..., description="Focused question for the agent to investigate")
-    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0, description="Budget multiplier (1.0 = standard)")
+
+    # Mode 1: Template (pre-defined agent from registry)
+    template: Optional[str] = Field(default=None,
+        description="Pre-defined agent template name (e.g. 'correctness', "
+        "'explore_implementation'). Use for PR review and business flow swarm agents.")
+
+    # Mode 2: Dynamic composition (Brain assembles the agent)
+    tools: Optional[List[str]] = Field(default=None,
+        description="Tools for this agent (e.g. ['grep', 'read_file', "
+        "'find_symbol']). Required when no template is specified.")
+    perspective: Optional[str] = Field(default=None,
+        description="1-3 sentences defining the agent's investigation focus "
+        "and what to look for.")
+    skill: Optional[str] = Field(default=None,
+        description="Investigation skill key from the skill catalog "
+        "(e.g. 'entry_point', 'root_cause', 'architecture', 'impact', "
+        "'data_lineage', 'recent_changes', 'code_explanation', "
+        "'config_analysis', 'issue_tracking').")
+    model: str = Field(default="explorer",
+        description="'explorer' (Haiku, default) or 'strong' (Sonnet, "
+        "for complex reasoning like root cause analysis).")
+    budget_tokens: Optional[int] = Field(default=None, ge=50000, le=500000,
+        description="Token budget override. Defaults based on skill type.")
+    max_iterations: Optional[int] = Field(default=None, ge=5, le=30,
+        description="Iteration limit override. Default: 20.")
+
+    # Shared
+    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0,
+        description="Budget multiplier (1.0 = standard)")
 
 
 class DispatchSwarmParams(BaseModel):
@@ -283,6 +319,60 @@ class TransferToBrainParams(BaseModel):
 # ---------------------------------------------------------------------------
 # Browser tool parameter schemas
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Jira integration tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# File editing tool parameter schemas
+# ---------------------------------------------------------------------------
+
+
+class FileEditParams(BaseModel):
+    path: str = Field(..., description="Relative path to the file within the workspace.")
+    old_string: str = Field(..., description="Exact string to find in the file. Must match the file content precisely (including whitespace/indentation). Use read_file first to see the exact content.")
+    new_string: str = Field(..., description="Replacement string. Can be empty to delete the matched text.")
+    replace_all: bool = Field(default=False, description="If true, replace ALL occurrences. If false (default), the old_string must be unique in the file.")
+
+
+class FileWriteParams(BaseModel):
+    path: str = Field(..., description="Relative path for the file. Parent directories are created automatically.")
+    content: str = Field(..., description="Complete file content to write. For existing files, this overwrites the entire content — use file_edit for partial changes.")
+
+
+class JiraSearchParams(BaseModel):
+    query: str = Field(..., description="JQL query or natural language search text (e.g. 'project = DEV AND status = \"In Progress\"', 'auth refactor').")
+    max_results: int = Field(default=10, ge=1, le=50, description="Max issues to return.")
+
+
+class JiraGetIssueParams(BaseModel):
+    issue_key: str = Field(..., description="Jira issue key (e.g. 'DEV-123', 'HELP-42').")
+
+
+class JiraCreateIssueParams(BaseModel):
+    project_key: str = Field(..., description="Jira project key (e.g. 'DEV', 'HELP'). Use jira_list_projects to discover available projects.")
+    summary: str = Field(..., description="Issue title / summary.")
+    description: str = Field(default="", description="Issue description with context. Include affected files, code snippets, and steps to reproduce where relevant.")
+    issue_type: str = Field(default="Software Task", description="Issue type: 'Software Task' (small work), 'Bug' (defect fix), 'Epic' (medium project, will contain sub-tasks), 'Project' (large initiative).")
+    priority: str = Field(default="", description="Priority: Highest, High, Medium, Low, Lowest. Empty = project default.")
+    components: List[str] = Field(default_factory=list, description="Component names (e.g. ['JBE', 'Render API']). Use jira_list_projects to see available components.")
+    team: str = Field(default="", description="Team name (e.g. 'Platform', 'FinOps'). Empty = unassigned.")
+    parent_key: str = Field(default="", description="Parent issue key for sub-tasks under an Epic (e.g. 'DEV-100'). Required when creating child tickets of an Epic.")
+
+
+class JiraUpdateIssueParams(BaseModel):
+    issue_key: str = Field(..., description="Jira issue key (e.g. 'DEV-123').")
+    transition_to: str = Field(default="", description="Target status name to transition to (e.g. 'To Do', 'In Progress'). Agent CANNOT set Done/Closed/Resolved — those require manual user action. Use empty string to skip.")
+    comment: str = Field(default="", description="Comment to add to the issue. Include code references and findings.")
+    priority: str = Field(default="", description="New priority: Highest, High, Medium, Low, Lowest. Empty = no change.")
+    labels_add: List[str] = Field(default_factory=list, description="Labels to add (e.g. ['needs-review', 'backend']).")
+
+
+class JiraListProjectsParams(BaseModel):
+    pass  # No params — returns all allowed projects with metadata
 
 
 class WebSearchParams(BaseModel):
@@ -383,6 +473,15 @@ TOOL_PARAM_MODELS: Dict[str, type] = {
     "list_endpoints": ListEndpointsParams,
     "extract_docstrings": ExtractDocstringsParams,
     "db_schema": DbSchemaParams,
+    # File editing tools
+    "file_edit": FileEditParams,
+    "file_write": FileWriteParams,
+    # Jira integration tools
+    "jira_search": JiraSearchParams,
+    "jira_get_issue": JiraGetIssueParams,
+    "jira_create_issue": JiraCreateIssueParams,
+    "jira_list_projects": JiraListProjectsParams,
+    "jira_update_issue": JiraUpdateIssueParams,
     # Browser tools
     "web_search": WebSearchParams,
     "web_navigate": WebNavigateParams,
@@ -969,6 +1068,95 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "input_schema": DbSchemaParams.model_json_schema(),
     },
     # ------------------------------------------------------------------
+    # File editing tools
+    # ------------------------------------------------------------------
+    {
+        "name": "file_edit",
+        "description": (
+            "Edit an existing file by replacing an exact string match.\n\n"
+            "Usage:\n"
+            "- You MUST use read_file on the file first — editing a file you haven't read will fail.\n"
+            "- old_string must match the file content exactly, including whitespace and indentation.\n"
+            "- If old_string appears multiple times, set replace_all=true or provide more context to make it unique.\n"
+            "- Returns a unified diff of the changes for user review.\n"
+            "- Cannot edit files in .git/, node_modules/, or .env files."
+        ),
+        "input_schema": FileEditParams.model_json_schema(),
+    },
+    {
+        "name": "file_write",
+        "description": (
+            "Create a new file or completely overwrite an existing file.\n\n"
+            "Usage:\n"
+            "- For new files: provide the full content. Parent directories are created automatically.\n"
+            "- For existing files: you MUST read_file first. This overwrites the entire file.\n"
+            "- Prefer file_edit for partial changes to existing files — it's safer and generates cleaner diffs.\n"
+            "- Cannot write to .git/, node_modules/, or .env files."
+        ),
+        "input_schema": FileWriteParams.model_json_schema(),
+    },
+    # ------------------------------------------------------------------
+    # Jira integration tools
+    # ------------------------------------------------------------------
+    {
+        "name": "jira_search",
+        "description": (
+            "Search Jira issues using JQL or free text.\n\n"
+            "Usage:\n"
+            "- Use JQL for structured queries: 'project = DEV AND status = \"In Progress\"'\n"
+            "- Use free text for keyword search: 'auth refactor'\n"
+            "- Returns issue key, summary, status, priority, assignee, and browse URL.\n"
+            "- Use to check for duplicate tickets before creating, or to find related work."
+        ),
+        "input_schema": JiraSearchParams.model_json_schema(),
+    },
+    {
+        "name": "jira_get_issue",
+        "description": (
+            "Get full details of a Jira issue by key.\n\n"
+            "Usage:\n"
+            "- Returns description, status, priority, assignee, comments, and subtasks.\n"
+            "- Use to understand what a ticket requires before suggesting code changes.\n"
+            "- Use jira_search first if you don't have the exact issue key."
+        ),
+        "input_schema": JiraGetIssueParams.model_json_schema(),
+    },
+    {
+        "name": "jira_create_issue",
+        "description": (
+            "Create a new Jira ticket. Requires ask_user confirmation before calling.\n\n"
+            "Usage:\n"
+            "- Always search for duplicates with jira_search before creating.\n"
+            "- Use jira_list_projects to discover available projects and components.\n"
+            "- Enrich descriptions with code context: affected files, functions, dependencies.\n"
+            "- The agent MUST use ask_user to confirm the ticket details before calling this tool."
+        ),
+        "input_schema": JiraCreateIssueParams.model_json_schema(),
+    },
+    {
+        "name": "jira_update_issue",
+        "description": (
+            "Update a Jira issue: transition status, add comment, or change fields.\n\n"
+            "Usage:\n"
+            "- Use transition_to to move a ticket between statuses (e.g. 'To Do' → 'In Progress').\n"
+            "- SAFETY: Agent CANNOT transition to Done/Closed/Resolved — these require manual user action.\n"
+            "- Add comments with code context to document investigation findings.\n"
+            "- When picking up a ticket to work on, transition it to 'To Do' or 'In Progress'."
+        ),
+        "input_schema": JiraUpdateIssueParams.model_json_schema(),
+    },
+    {
+        "name": "jira_list_projects",
+        "description": (
+            "List available Jira projects, their issue types, and components.\n\n"
+            "Usage:\n"
+            "- Call once to discover project keys, names, and available components.\n"
+            "- Results are filtered to active projects configured by the team.\n"
+            "- Use before jira_create_issue to pick the right project and component."
+        ),
+        "input_schema": JiraListProjectsParams.model_json_schema(),
+    },
+    # ------------------------------------------------------------------
     # Browser tools
     # ------------------------------------------------------------------
     {
@@ -1119,6 +1307,19 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
     "test_outline":      ToolMetadata(category="test", summary_template="test_outline {path}: {_count} tests"),
     "run_test":          ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="test",
                                       summary_template="ran {test_file}: {_status}"),
+    # --- File Editing ---
+    "file_edit":         ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="edit",
+                                      summary_template="file_edit {path}: {replacements} replacement(s)"),
+    "file_write":        ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="edit",
+                                      summary_template="file_write {path}: {action}"),
+    # --- Jira Integration ---
+    "jira_search":       ToolMetadata(category="integration", summary_template="jira_search '{query}': {_count} issues"),
+    "jira_get_issue":    ToolMetadata(category="integration", summary_template="jira_get_issue {issue_key}"),
+    "jira_create_issue": ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="integration",
+                                      summary_template="jira_create_issue: created {_result}"),
+    "jira_list_projects": ToolMetadata(category="integration", summary_template="jira_list_projects: {_count} projects"),
+    "jira_update_issue": ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="integration",
+                                      summary_template="jira_update_issue {issue_key}: {_action}"),
     # --- Browser ---
     "web_search":        ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
                                       summary_template="web_search '{query}': {_count} results"),
@@ -1183,13 +1384,24 @@ def _extract_format_keys(template: str) -> List[str]:
 
 BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
+        "name": "create_plan",
+        "description": (
+            "Create an investigation plan before dispatching agents. "
+            "Call this FIRST to declare your dispatch mode, which agents "
+            "to use, and why. The plan is shown to the user for transparency."
+        ),
+        "input_schema": CreatePlanParams.model_json_schema(),
+    },
+    {
         "name": "dispatch_agent",
         "description": (
-            "Dispatch a specialist agent to investigate a specific aspect of "
-            "the codebase. The agent runs in an isolated context with its own "
-            "tools and budget, then returns condensed findings (answer, file "
-            "references, gaps identified). Choose the agent based on the "
-            "available agents list in your system prompt."
+            "Dispatch an agent to investigate the codebase. Two modes:\n"
+            "1. Template mode: set template= to use a pre-defined agent "
+            "(for PR review swarm and business flow swarm agents only).\n"
+            "2. Dynamic mode: set tools= and optionally perspective=, skill=, "
+            "model=, budget_tokens= to compose an agent on the fly. "
+            "Use the skill catalog and tool catalog in your system prompt "
+            "to select the right combination."
         ),
         "input_schema": DispatchAgentParams.model_json_schema(),
     },

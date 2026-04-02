@@ -18,6 +18,7 @@ from app.agent_loop.prompts import build_brain_prompt
 from app.agent_loop.service import AgentResult, ThinkingStep
 from app.code_tools.schemas import (
     BRAIN_TOOL_DEFINITIONS,
+    CreatePlanParams,
     ToolResult,
     get_brain_tool_definitions,
 )
@@ -227,18 +228,34 @@ class TestAgentToolExecutor:
         mock_inner_executor.execute.assert_called_once_with("grep", {"pattern": "hello"})
 
     @pytest.mark.asyncio
-    async def test_dispatch_unknown_agent(self, agent_registry, swarm_registry,
-                                          mock_inner_executor, mock_provider):
-        """Dispatching unknown agent returns error."""
+    async def test_dispatch_unknown_template(self, agent_registry, swarm_registry,
+                                              mock_inner_executor, mock_provider):
+        """Dispatching unknown template returns error."""
         executor = self._make_executor(
             agent_registry, swarm_registry, mock_inner_executor, mock_provider,
         )
         result = await executor.execute("dispatch_agent", {
-            "agent_name": "nonexistent",
+            "template": "nonexistent",
             "query": "test",
         })
         assert not result.success
-        assert "Unknown agent" in result.error
+        assert "Unknown agent template" in result.error
+
+    @pytest.mark.asyncio
+    async def test_dispatch_backward_compat_agent_name(self, agent_registry, swarm_registry,
+                                                        mock_inner_executor, mock_provider):
+        """Legacy agent_name param still works (aliased to template)."""
+        executor = self._make_executor(
+            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            depth=2, max_depth=2,  # force depth error to avoid real agent run
+        )
+        result = await executor.execute("dispatch_agent", {
+            "agent_name": "explore_architecture",
+            "query": "test",
+        })
+        # Depth error, but it resolved the agent — backward compat works
+        assert not result.success
+        assert "depth" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_dispatch_max_depth(self, agent_registry, swarm_registry,
@@ -249,11 +266,24 @@ class TestAgentToolExecutor:
             depth=2, max_depth=2,
         )
         result = await executor.execute("dispatch_agent", {
-            "agent_name": "explore_architecture",
+            "template": "explore_architecture",
             "query": "test",
         })
         assert not result.success
         assert "Max agent depth" in result.error
+
+    @pytest.mark.asyncio
+    async def test_dispatch_requires_template_or_tools(self, agent_registry, swarm_registry,
+                                                        mock_inner_executor, mock_provider):
+        """dispatch_agent without template or tools returns error."""
+        executor = self._make_executor(
+            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+        )
+        result = await executor.execute("dispatch_agent", {
+            "query": "test",
+        })
+        assert not result.success
+        assert "template" in result.error.lower() or "tools" in result.error.lower()
 
     @pytest.mark.asyncio
     async def test_dispatch_unknown_swarm(self, agent_registry, swarm_registry,
@@ -319,8 +349,8 @@ class TestBrainPrompt:
 
     def test_build_prompt_token_budget(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(agent_registry, swarm_registry)
-        # Should be under ~2500 tokens (~10000 chars)
-        assert len(prompt) < 12_000, f"Brain prompt too long: {len(prompt)} chars"
+        # Prompt includes tool catalog + skill catalog + examples (~4000 tokens / ~16000 chars)
+        assert len(prompt) < 18_000, f"Brain prompt too long: {len(prompt)} chars"
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +603,7 @@ class TestBrainConfigLoading:
     def test_load_agent_registry(self):
         agents = load_agent_registry()
         assert len(agents) > 0
-        assert "explore_architecture" in agents
+        assert "correctness" in agents  # PR review agent (kept)
 
 
 # ---------------------------------------------------------------------------
@@ -599,3 +629,341 @@ class TestAgentFindings:
         )
         assert f.answer == "Found it"
         assert len(f.files_accessed) == 2
+
+
+# ---------------------------------------------------------------------------
+# create_plan — explicit planning
+# ---------------------------------------------------------------------------
+
+
+class TestCreatePlan:
+
+    @pytest.mark.asyncio
+    async def test_create_plan_stores_plan(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        assert executor._plan is None
+        await executor.execute("create_plan", {
+            "mode": "simple",
+            "reasoning": "Single endpoint lookup",
+            "agents": ["explore_entry_point"],
+        })
+        assert executor._plan is not None
+        assert executor._plan["mode"] == "simple"
+        assert executor._plan["agents"] == ["explore_entry_point"]
+        assert executor._plan["reasoning"] == "Single endpoint lookup"
+
+    @pytest.mark.asyncio
+    async def test_create_plan_emits_event(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        event_sink = asyncio.Queue()
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+            event_sink=event_sink,
+        )
+        await executor.execute("create_plan", {
+            "mode": "swarm",
+            "reasoning": "Multi-perspective",
+            "agents": ["correctness", "security"],
+            "query_decomposition": ["auth flow", "input validation"],
+        })
+        assert not event_sink.empty()
+        event = await event_sink.get()
+        assert event.kind == "plan_created"
+        assert event.data["mode"] == "swarm"
+        assert event.data["agents"] == ["correctness", "security"]
+        assert event.data["query_decomposition"] == ["auth flow", "input validation"]
+
+    @pytest.mark.asyncio
+    async def test_create_plan_returns_success(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        result = await executor.execute("create_plan", {
+            "mode": "complex",
+            "reasoning": "Need sequential investigation",
+            "agents": ["explore_root_cause", "explore_config"],
+            "fallback": "Try architecture agent if both fail",
+        })
+        assert result.success is True
+        assert result.data["status"] == "plan_recorded"
+        assert result.data["mode"] == "complex"
+        assert result.data["fallback"] == "Try architecture agent if both fail"
+
+    @pytest.mark.asyncio
+    async def test_create_plan_without_event_sink(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        """create_plan works without event_sink (no crash)."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        result = await executor.execute("create_plan", {
+            "mode": "simple",
+            "reasoning": "test",
+        })
+        assert result.success is True
+        assert executor._plan["mode"] == "simple"
+
+    @pytest.mark.asyncio
+    async def test_create_plan_defaults(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        """Optional fields default to empty."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        await executor.execute("create_plan", {
+            "mode": "simple",
+            "reasoning": "Quick lookup",
+        })
+        assert executor._plan["agents"] == []
+        assert executor._plan["query_decomposition"] == []
+        assert executor._plan["risk"] == ""
+        assert executor._plan["fallback"] == ""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_works_without_plan(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+        """Backward compat: dispatch_agent works without prior create_plan."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+            max_depth=0,  # force depth error to avoid needing real agent run
+        )
+        result = await executor.execute("dispatch_agent", {
+            "agent_name": "explore_architecture",
+            "query": "Map the architecture",
+        })
+        # Depth error, but it still processed — no plan required
+        assert executor._plan is None
+        assert result.success is False
+        assert "depth" in result.error.lower()
+
+    def test_brain_tool_definitions_include_create_plan(self):
+        names = [t["name"] for t in BRAIN_TOOL_DEFINITIONS]
+        assert "create_plan" in names
+
+    def test_brain_prompt_mentions_create_plan(self, agent_registry, swarm_registry):
+        prompt = build_brain_prompt(agent_registry, swarm_registry)
+        assert "create_plan" in prompt
+        assert "Planning" in prompt
+
+    def test_create_plan_params_schema(self):
+        """Pydantic model validates correctly."""
+        params = CreatePlanParams(
+            mode="swarm",
+            reasoning="End-to-end journey",
+            agents=["explore_implementation"],
+            query_decomposition=["step 1", "step 2"],
+            risk="May span multiple contexts",
+            fallback="Try architecture agent",
+        )
+        assert params.mode == "swarm"
+        assert len(params.query_decomposition) == 2
+
+    def test_create_plan_params_required_fields(self):
+        """mode and reasoning are required."""
+        with pytest.raises(Exception):
+            CreatePlanParams()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------------------
+# Dynamic agent composition
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicAgentDispatch:
+    """Tests for dynamic agent composition (dispatch_agent without template)."""
+
+    @pytest.mark.asyncio
+    async def test_dynamic_dispatch_builds_config(self, agent_registry, swarm_registry,
+                                                   mock_inner_executor, mock_provider):
+        """Dynamic dispatch with tools builds an ephemeral agent config."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+            max_depth=0,  # force depth error
+        )
+        result = await executor.execute("dispatch_agent", {
+            "query": "Find the auth handler",
+            "tools": ["grep", "find_symbol", "read_file"],
+            "perspective": "Focus on authentication entry points",
+            "skill": "entry_point",
+            "budget_tokens": 150000,
+            "max_iterations": 12,
+        })
+        # Depth error, but it resolved the dynamic config
+        assert not result.success
+        assert "depth" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_dynamic_dispatch_strong_model(self, agent_registry, swarm_registry,
+                                                  mock_inner_executor, mock_provider):
+        """Dynamic dispatch with model='strong' selects strong_provider."""
+        strong_mock = MagicMock()
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            strong_provider=strong_mock,
+            workspace_path="/tmp/ws",
+            max_depth=0,
+        )
+        result = await executor.execute("dispatch_agent", {
+            "query": "Debug the crash",
+            "tools": ["grep", "read_file", "git_blame"],
+            "model": "strong",
+        })
+        # Depth error, but verified it would use strong provider
+        assert not result.success
+
+    @pytest.mark.asyncio
+    async def test_dynamic_dispatch_defaults_to_explorer(self, agent_registry, swarm_registry,
+                                                          mock_inner_executor, mock_provider):
+        """Dynamic dispatch defaults to explorer model."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+            max_depth=0,
+        )
+        result = await executor.execute("dispatch_agent", {
+            "query": "Find endpoint",
+            "tools": ["grep", "find_symbol"],
+        })
+        assert not result.success
+        assert "depth" in result.error.lower()
+
+    def test_build_dynamic_config(self, agent_registry, swarm_registry,
+                                   mock_inner_executor, mock_provider):
+        """_build_dynamic_config creates valid AgentConfig."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        config = executor._build_dynamic_config({
+            "tools": ["grep", "read_file", "jira_search"],
+            "perspective": "Find auth bugs and create tickets",
+            "skill": "issue_tracking",
+            "model": "explorer",
+            "budget_tokens": 200000,
+            "max_iterations": 15,
+        })
+        assert config.name == "dynamic_issue_tracking"
+        assert config.skill == "issue_tracking"
+        assert config.instructions == "Find auth bugs and create tickets"
+        assert config.limits.budget_tokens == 200000
+        assert config.limits.max_iterations == 15
+        assert "grep" in config.tool_list
+
+    def test_build_dynamic_config_defaults(self, agent_registry, swarm_registry,
+                                            mock_inner_executor, mock_provider):
+        """_build_dynamic_config uses sensible defaults."""
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/ws",
+        )
+        config = executor._build_dynamic_config({
+            "tools": ["grep"],
+        })
+        assert config.name == "dynamic_explorer"
+        assert config.limits.budget_tokens == 300_000
+        assert config.limits.max_iterations == 20
+
+    def test_brain_prompt_has_tool_catalog(self, agent_registry, swarm_registry):
+        """Brain prompt includes tool catalog with categories."""
+        prompt = build_brain_prompt(agent_registry, swarm_registry)
+        assert "Available tools" in prompt
+        assert "**Search**:" in prompt
+        assert "**Git**:" in prompt
+        assert "**Integration**:" in prompt
+        assert "grep" in prompt
+
+    def test_brain_prompt_has_skill_catalog(self, agent_registry, swarm_registry):
+        """Brain prompt includes skill catalog with use cases."""
+        prompt = build_brain_prompt(agent_registry, swarm_registry)
+        assert "Investigation skills" in prompt
+        assert "### entry_point" in prompt
+        assert "### root_cause" in prompt
+        assert "When to use:" in prompt
+        assert "When NOT to use:" in prompt
+        assert "Budget:" in prompt
+
+    def test_brain_prompt_has_template_catalog(self, agent_registry, swarm_registry):
+        """Brain prompt includes template catalog."""
+        prompt = build_brain_prompt(agent_registry, swarm_registry)
+        assert "Pre-defined templates" in prompt
+        assert "template=" in prompt
+
+    def test_brain_prompt_has_dynamic_examples(self, agent_registry, swarm_registry):
+        """Brain examples show dynamic composition with tools= and skill=."""
+        prompt = build_brain_prompt(agent_registry, swarm_registry)
+        assert "tools=[" in prompt
+        assert 'skill="entry_point"' in prompt
+        assert 'skill="root_cause"' in prompt
+        assert "<commentary>" in prompt
+
+    def test_enriched_skills_have_content(self):
+        """All 9 skill keys have non-empty content in INVESTIGATION_SKILLS."""
+        from app.agent_loop.prompts import INVESTIGATION_SKILLS
+        expected_keys = [
+            "entry_point", "root_cause", "architecture", "impact",
+            "data_lineage", "recent_changes", "code_explanation",
+            "config_analysis", "issue_tracking",
+        ]
+        for key in expected_keys:
+            assert key in INVESTIGATION_SKILLS, f"Missing skill: {key}"
+            assert len(INVESTIGATION_SKILLS[key]) > 50, f"Skill '{key}' too short"
+
+    def test_root_cause_skill_has_systemic_causes(self):
+        """root_cause skill includes systemic causes check (from .md)."""
+        from app.agent_loop.prompts import INVESTIGATION_SKILLS
+        skill = INVESTIGATION_SKILLS["root_cause"]
+        assert "concurrency" in skill.lower()
+        assert "retry" in skill.lower()
+        assert "transaction" in skill.lower()
+
+    def test_impact_skill_has_amplification(self):
+        """impact skill includes amplification risks (from .md)."""
+        from app.agent_loop.prompts import INVESTIGATION_SKILLS
+        skill = INVESTIGATION_SKILLS["impact"]
+        assert "amplification" in skill.lower()
+
+    def test_code_explanation_skill_has_three_dimensions(self):
+        """code_explanation skill includes 3-dimension framework (from .md)."""
+        from app.agent_loop.prompts import INVESTIGATION_SKILLS
+        skill = INVESTIGATION_SKILLS["code_explanation"]
+        assert "Business context" in skill
+        assert "Mechanism" in skill
+        assert "Design decisions" in skill

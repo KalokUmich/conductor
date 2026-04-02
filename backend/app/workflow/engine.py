@@ -255,6 +255,7 @@ class WorkflowEngine:
             agent_registry=agent_registry,
             swarm_registry=swarm_registry,
             agent_provider=self._explorer_provider,
+            strong_provider=self._provider,
             config=BrainExecutorConfig(
                 workspace_path=workspace_path,
                 current_depth=0,

@@ -626,7 +626,7 @@ backend/app/integrations/
   - [ ] `/conductor ask` triggers AgentLoopService, posts answer
   - [ ] Webhook URL configurable per channel
 
-### 7.7 Intelligent Jira Agent (PLANNED)
+### 7.7 Intelligent Jira Agent (IN PROGRESS)
 
 Context-aware Jira integration via `@AI /jira` — the agent understands user intent from conversation context and takes the appropriate action (create ticket, explain ticket, update ticket).
 
@@ -655,65 +655,120 @@ User: "@AI /jira what's the status of the auth refactor?"
   → Summarizes: open tickets, blockers, progress
 ```
 
-#### 7.7.1 Intent Classifier (PLANNED)
-- [ ] Classify `/jira` input into: CREATE, CONSULT, SEARCH, UPDATE
-- [ ] CREATE triggers: task description, "I need to...", "we should...", "add feature..."
-- [ ] CONSULT triggers: ticket ID pattern (PROJ-123), "explain", "what does ... mean"
-- [ ] SEARCH triggers: "status of", "what's open", "blockers", "sprint"
-- [ ] UPDATE triggers: "close", "move to done", "assign to", "change priority"
+#### 7.7.1 Intent Classifier & Jira Tools (COMPLETE)
+- [x] Query classifier: `issue_tracking` query type with Jira-specific keywords
+- [x] 4 agent tools: `jira_search`, `jira_get_issue`, `jira_create_issue`, `jira_list_projects`
+- [x] Tools registered in TOOL_REGISTRY, TOOL_DEFINITIONS, TOOL_METADATA
+- [x] Backend-only tools (RemoteToolExecutor bypass) — no extension proxy needed
+- [x] `GET /api/integrations/jira/issue/{key}` — full issue details with ADF→text conversion
+- [x] `POST /api/integrations/jira/refresh` — token refresh for extension local persistence
+- [x] `GET /api/integrations/jira/tokens` — token retrieval for extension persistence after OAuth
+- [x] Extension: `JiraTokenStore` (SecretStorage + `.conductor/jira.json`) with auto-refresh
+- [x] Extension: restore Jira connection from local tokens on startup
+- [x] `jira_assistant.md` agent config — complexity assessment (ticket/epic/project), code-first workflow
+- [x] `jira_project_guide.yaml` — repo/path→project/component mapping for abound-server + render
+- [x] `allowed_projects` setting filter (DEV, FN, FO, HELP, PT, REN)
+- [x] Static teams config (Platform, UPL, Data Science, FinOps, Support, Mortgages, IT & Security, Customer Operations)
 
-#### 7.7.2 Smart Ticket Creation (PLANNED)
-- [ ] Agent analyzes conversation context + codebase to auto-fill:
-  - **Summary**: extracted from user's description
-  - **Description**: enriched with code references (files, functions, dependencies affected)
-  - **Story points / effort estimate**: agent uses compressed_view + get_dependencies to assess scope
-  - **Priority**: inferred from keywords (urgent, blocker, nice-to-have)
-  - **Issue type**: Story vs Bug vs Task (inferred from context)
-  - **Labels/Components**: matched from existing Jira project metadata
-- [ ] ask_user for confirmation with pre-filled preview (editable before submit)
-- [ ] Only ask_user for genuinely unknown fields (project selection, assignee)
-- [ ] POST to Jira API → return clickable ticket link in chat
+#### 7.7.2 Smart Ticket Creation (IN PROGRESS)
+- [x] Complexity assessment: Small→Task, Medium→Epic+sub-tasks, Large→Project (in agent config)
+- [x] `parent_key` field for creating sub-tasks under Epics
+- [x] ADF description with code block support
+- [ ] Wire `/jira create` slash command → Brain dispatch → jira_assistant agent
+- [ ] ask_user confirmation with pre-filled preview before creation
+- [ ] Return clickable ticket link in chat after creation
 
 #### 7.7.3 Ticket Consultation (PLANNED)
-- [ ] Fetch ticket details via `GET /api/integrations/jira/issue/{key}`
-- [ ] Parse ticket description, acceptance criteria, comments
-- [ ] Use code tools (grep, find_symbol, compressed_view) to find relevant code
-- [ ] Synthesize: "This ticket asks you to [summary]. The relevant code is in [files]. Here's a suggested approach: [steps]."
-- [ ] If ticket has subtasks, explain each and suggest priority order
+- [x] `jira_get_issue` tool with full details (description, comments, subtasks)
+- [ ] Wire `/jira PROJ-123` → agent fetches ticket + reads related code → explains approach
+- [ ] Chat rendering: ticket detail card with status badge, priority, components
 
 #### 7.7.4 Status Query & Search (PLANNED)
-- [ ] JQL search with intelligent query construction from natural language
-- [ ] "My tickets" query: `assignee = currentUser() AND status != Done` — shows all tickets assigned to the user
-- [ ] "My sprint" query: `assignee = currentUser() AND sprint in openSprints()`
-- [ ] Priority view: group by priority (Blocker → Critical → Major → Minor)
-- [ ] Workload summary: "You have 8 tickets: 2 blockers, 3 in progress, 3 to do. Suggested focus: PROJ-456 (blocker, due tomorrow)"
-- [ ] Agent can cross-reference tickets with code: "PROJ-789 touches auth module — you also have PROJ-790 in the same area, consider batching"
-- [ ] Render as compact summary cards in chat
-- [ ] "3 open, 1 blocked, 2 in review" style overview
+- [x] `jira_search` tool with JQL auto-detection vs free text
+- [ ] Convenience queries: "my tickets", "my sprint", "blockers"
+- [ ] Priority view: group by priority
+- [ ] Workload summary with suggested focus
+- [ ] Compact summary cards in chat
 
 #### 7.7.5 Ticket Update (PLANNED)
-- [ ] Status transitions: "move PROJ-123 to In Progress"
-- [ ] Add comments: "add a comment to PROJ-123: found the root cause at auth.py:42"
-- [ ] Change fields: priority, assignee, labels
+- [ ] `jira_update_issue` tool — status transitions, comments, field changes
+- [ ] `PUT /api/integrations/jira/issue/{key}` endpoint
 - [ ] ask_user confirmation before any write operation
+
+#### 7.7.6 Direct `/jira` Agent Dispatch (PLANNED)
+- [ ] `/jira` slash command bypasses Brain, directly starts jira_assistant agent
+- [ ] Saves one LLM round-trip vs Brain dispatch
+- [ ] Natural language Jira queries still go through Brain → dispatch
+
+#### 7.7.7 TODO ↔ Ticket Bidirectional Sync (PLANNED)
+Generic ticket system integration — designed to work with Jira now, extensible to other systems.
+
+- [ ] `ticketing.enabled` setting switch — controls visibility of all sync UI
+- [ ] `ITicketProvider` interface — abstract ticket fetch/status check (Jira implements first)
+- [ ] TODO scanner: detect ticket key pattern in `TODO_DESC` (e.g. `DEV-123`)
+- [ ] On TODO load with ticket key + valid token → fetch status from provider
+  - [ ] Status = Done → show "Jira says complete, confirm to remove TODO?" prompt
+  - [ ] User confirms → delete TODO + TODO_DESC lines via `updateWorkspaceTodoInFile`
+  - [ ] Status = other → display current status badge on TODO card
+- [ ] On TODO load with ticket key + invalid token → "Connect Jira?" prompt (Yes→OAuth, No→skip)
+- [ ] On TODO load without ticket key → show "Start task" button
+  - [ ] User clicks → Brain analyses code context → jira_assistant creates ticket
+  - [ ] Ticket key written back to `TODO_DESC` via `updateWorkspaceTodoInFile`
+
+#### 7.7.8 Ticket Creation UI Enhancement (PLANNED)
+- [ ] Component multi-select (chip/tag UI, replace single `<select>`)
+- [ ] Ticket preview/edit confirmation modal before submit
+- [ ] agent pre-fills all fields, user can edit any before confirming
 
 #### Design Principles
 - **Agent-first**: agent fills as much as possible, only asks user when genuinely uncertain
 - **Code-aware**: ticket descriptions enriched with codebase context (affected files, dependencies, complexity)
 - **Conversational**: natural language in, structured Jira action out
 - **Safe**: all write operations (create, update) require ask_user confirmation
+- **Generic**: ticket integration abstracted behind `ITicketProvider` for future systems (Linear, GitHub Issues, Azure DevOps)
 
-#### Files to Modify
-- `extension/media/chat.html` — enhanced `/jira` slash command routing
-- `extension/src/extension.ts` — intent classification + Brain dispatch
-- `backend/app/integrations/jira/service.py` — new endpoints: GET issue details, PUT transitions
-- `backend/app/integrations/jira/router.py` — new routes
-- `backend/app/agent_loop/brain.py` — Jira-aware dispatch (optional: dedicated Jira skill)
-- `config/agents/jira_assistant.md` — new agent identity for Jira tasks (optional)
+#### 7.7.9 Cross-Workspace Investigation (PLANNED)
+When investigating a Jira ticket that belongs to a different repo than the current workspace, automatically switch context:
+- [ ] **Local mode**: detect target repo from jira_project_guide.yaml component mapping → open target folder in VS Code → re-initialize extension workspace context → resume investigation. Requires session state migration (workspace root, tree-sitter cache, repo graph, .conductor/ config).
+- [ ] **Online mode**: close current room → create new room bound to target workspace → resume investigation in new room. Requires preserving investigation context (Jira ticket info, agent state) across room transitions.
+- [ ] Fallback: if auto-switch fails, show user a one-click "Open workspace: /path/to/repo" button in chat.
+- [ ] Investigation context handoff: serialize current agent findings + ticket data so the new workspace session can continue where the old one left off.
+
+#### 7.7.10 Jira Webhook Auto-Investigate (PLANNED)
+When a Jira ticket is created/assigned to the user, auto-trigger investigation without manual action.
+- [ ] `POST /api/webhooks/jira` — receiver endpoint for Jira webhooks (issue_created, issue_updated events)
+- [ ] Jira webhook config: register URL in Jira project settings (admin), filter by assignee + event type
+- [ ] On webhook: match assignee to Conductor user → determine workspace from jira_project_guide component mapping
+- [ ] Background agent: run jira_assistant investigate in headless mode (no user session needed)
+- [ ] Store investigation results in DB → surface in Task Board when user opens VS Code ("1 new plan ready")
+- [ ] Cost control: configurable rate limit (e.g. max 5 auto-investigations per hour), skip low-priority tickets
+- [ ] Opt-in via `conductor.settings.yaml`: `jira.webhook_auto_investigate: true`
+
+#### 7.7.11 MCP Server for Jira Tools (PLANNED)
+Expose Conductor's Jira tools as an MCP (Model Context Protocol) server so other AI tools (Claude Desktop, external agents) can use our Jira integration.
+- [ ] MCP server endpoint: stdio or HTTP transport (following Anthropic MCP spec)
+- [ ] Register all 5 Jira tools as MCP tools: jira_search, jira_get_issue, jira_create_issue, jira_update_issue, jira_list_projects
+- [ ] Also expose file_edit/file_write as MCP tools for code modifications
+- [ ] Authentication: reuse existing OAuth token store (no re-auth needed)
+- [ ] Benefit: any MCP-compatible client (Claude Code, Claude Desktop, third-party agents) can use our Jira + code tools
+- [ ] Reference: Atlassian's official Remote MCP Server pattern (Cloudflare-hosted)
+
+#### 7.7.12 Auto Branch + PR Creation (PLANNED)
+After investigate → apply completes, automatically create a git branch and pull request.
+- [ ] Branch creation: use `jira.branch_formats` config (e.g. `feature/DEV-123-add-retry-logic`)
+- [ ] Slugify ticket summary for branch name (lowercase, hyphens, max 50 chars)
+- [ ] `git checkout -b {branch}` → `git add` changed files → `git commit` with ticket key in message
+- [ ] Commit message format: `{ticket_key}: {summary}` (e.g. `DEV-123: Add retry logic to payment webhook`)
+- [ ] PR creation: `gh pr create` or backend GitWorkspaceManager API → returns PR URL
+- [ ] PR description: auto-generated from investigation plan + diff summary
+- [ ] Post PR link back to Jira ticket as comment (via jira_update_issue)
+- [ ] Update ticket status: transition to "In Review" after PR created
+- [ ] Safety: require ask_user confirmation before push ("Create branch and PR for DEV-123?")
 
 #### Depends on
 - Phase 7.1-7.4 (Jira OAuth + API + UI) — ✅ COMPLETE
-- Phase 9 tool enhancements — ✅ COMPLETE (improved tool descriptions help agent analyze code)
+- Phase 9 tool enhancements — ✅ COMPLETE
+- Token local persistence — ✅ COMPLETE
 
 ### Dependency Graph
 ```
@@ -946,7 +1001,37 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 9.6 (Permissions) ──────> benefits from 9.5 ────> can use hooks
 9.7 (MCP) ──────────────────────────────────────> standalone
 9.8 (Tool Metadata) ────> benefits from 9.2 ────> enhances streaming
+9.9 (Brain Planning) ───> standalone ───────────> enhances auditability
 ```
+
+### 9.9 Brain Explicit Planning & Dynamic Agent Composition (COMPLETE)
+
+**Goal**: Make Brain's dispatch decisions visible and auditable; replace static agent templates with dynamic composition.
+
+#### 9.9.1 Explicit Planning (COMPLETE)
+
+- [x] `create_plan` meta-tool: Brain declares mode, agents, reasoning before dispatching
+- [x] `plan_created` SSE event for UI display
+- [x] All decision examples updated to show `create_plan` before dispatch
+- [x] Advisory mode — Brain is guided but not forced to plan
+- [x] Tests for plan creation, event emission, backward compatibility
+
+#### 9.9.2 Dynamic Agent Composition (COMPLETE)
+
+- [x] `dispatch_agent` supports dual mode: `template=` (pre-defined) or `tools=` + `skill=` (dynamic)
+- [x] Brain prompt restructured: tool catalog + skill catalog (with Anthropic-style use cases) + template catalog
+- [x] 9 INVESTIGATION_SKILLS enriched with content from deleted agent .md files (systemic causes, amplification, 3-dim framework, config_analysis added)
+- [x] Dual provider support: `strong_provider` for complex reasoning, `agent_provider` for exploration
+- [x] 10 standalone agent .md files deleted (explore_entry_point, explore_root_cause, etc.); 10 kept (PR swarm, business flow, synthesis, arbitration)
+- [x] `<example>` + `<commentary>` decision examples (Anthropic pattern) teach Brain skill selection
+- [x] Backward compatibility: `agent_name` param aliased to `template`
+
+#### 9.9.3 Structured Note-Taking (PLANNED)
+
+- [ ] `update_notes` tool for sub-agents to maintain persistent findings/hypothesis/open_questions
+- [ ] Notes survive `_clear_old_tool_results()` context clearing (pinned message)
+- [ ] Notes injected into system prompt or as a persistent user message
+- [ ] Evidence quality improves for long investigations (8+ iterations)
 
 ### Reference Study Process
 For each sub-phase:
