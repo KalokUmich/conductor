@@ -762,6 +762,30 @@
         .toast-error { background: rgba(239,68,68,0.85); color: #fff; border: 1px solid rgba(239,68,68,0.3); }
         .toast-success { background: rgba(34,197,94,0.85); color: #fff; border: 1px solid rgba(34,197,94,0.3); }
         .toast-info { background: rgba(59,130,246,0.85); color: #fff; border: 1px solid rgba(59,130,246,0.3); }
+
+        /* === Drag and drop for AI Working Space === */
+        .backlog-card { cursor: grab; }
+        .backlog-card:active { cursor: grabbing; }
+        .backlog-card.dragging { opacity: 0.4; }
+        .ai-workspace-dropzone.drag-over {
+            border-color: rgba(52,211,153,0.6) !important;
+            background: rgba(52,211,153,0.05) !important;
+        }
+        .backlog-card .source-badge-code { background: rgba(139,92,246,0.2); color: rgb(167,139,250); border: 1px solid rgba(139,92,246,0.3); }
+        .backlog-card .source-badge-ticket { background: rgba(59,130,246,0.2); color: rgb(96,165,250); border: 1px solid rgba(59,130,246,0.3); }
+        .workspace-card .investigate-btn { transition: all 0.15s; }
+        .workspace-card .investigate-btn:hover { transform: translateY(-1px); }
+        .workspace-card .implement-btn-disabled { opacity: 0.35; cursor: not-allowed; }
+        /* Accordion sections */
+        .backlog-section-btn { cursor: pointer; }
+        .backlog-section-btn:hover { opacity: 0.8; }
+        .comp-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 4px;
+            background: rgba(139,92,246,0.2); color: rgb(167,139,250); border: 1px solid rgba(139,92,246,0.3);
+            font-size: 0.65rem; white-space: nowrap; }
+        .comp-chip .chip-x { cursor: pointer; opacity: 0.6; font-size: 0.8em; margin-left: 2px; }
+        .comp-chip .chip-x:hover { opacity: 1; }
+        #jira-components-dropdown .comp-option { padding: 4px 8px; font-size: 0.7rem; color: #d1d5db; cursor: pointer; }
+        #jira-components-dropdown .comp-option:hover { background: rgba(139,92,246,0.15); }
     </style>
 </head>
 <body class="bg-gray-900 bg-conductor text-gray-100 h-screen overflow-hidden">
@@ -1376,6 +1400,7 @@
                         <path fill-rule="evenodd" d="M18 10c0 3.866-3.582 7-8 7a8.841 8.841 0 01-4.083-.98L2 17l1.338-3.123C2.493 12.767 2 11.434 2 10c0-3.866 3.582-7 8-7s8 3.134 8 7zM7 9H5v2h2V9zm8 0h-2v2h2V9zM9 9h2v2H9V9z" clip-rule="evenodd"/>
                     </svg>
                     Chat
+                    <span id="chat-unread-dot" class="hidden w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0"></span>
                 </button>
                 <button id="tab-tasks" class="chat-tab flex-1 text-xs py-1.5 rounded-md font-medium transition-all duration-200 flex items-center justify-center gap-1.5 text-gray-500 hover:text-gray-400">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
@@ -1476,32 +1501,124 @@
                 <div class="text-xs text-gray-600 text-center py-6">No tasks yet. They'll appear here from AI summaries or when you add them manually.</div>
             </div>
 
-            <!-- Workspace TODOs Section -->
+            <!-- Unified Task Board -->
             <div class="mt-3 border-t border-gray-700/40 pt-3">
+                <!-- Header -->
                 <div class="flex items-center justify-between mb-2">
-                    <button id="btn-toggle-workspace-todos" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors">
-                        <svg id="workspace-todos-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                    <button id="btn-toggle-task-board" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors">
+                        <svg id="task-board-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
                             <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                         </svg>
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h7a1 1 0 110 2H4a1 1 0 01-1-1z" clip-rule="evenodd"/>
-                        </svg>
-                        <span class="font-medium">Code TODOs</span>
-                        <span id="workspace-todo-count" class="hidden text-[0.6rem] bg-violet-600/40 text-violet-300 px-1.5 rounded-full">0</span>
+                        <span class="font-medium">Task Board</span>
+                        <span id="task-board-count" class="hidden text-[0.6rem] bg-violet-600/40 text-violet-300 px-1.5 rounded-full">0</span>
                     </button>
-                    <button id="btn-scan-workspace-todos" class="flex items-center gap-1 text-[0.65rem] text-violet-400 hover:text-violet-300 transition-colors" title="Scan workspace for TODO comments">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
-                        </svg>
-                        Scan
-                    </button>
-                </div>
-                <div id="workspace-todos-panel" class="hidden flex flex-col gap-1.5">
-                    <div id="workspace-todos-empty" class="text-xs text-gray-600 text-center py-3">
-                        Click Scan to find TODO comments in your workspace.<br>
-                        <span class="text-gray-700">Format: <code class="text-violet-500">// TODO: title</code> + optional <code class="text-violet-500">// TODO_DESC: description</code></span>
+                    <div class="flex items-center gap-2">
+                        <button id="btn-load-jira-tickets" class="flex items-center gap-1 text-[0.65rem] text-blue-400 hover:text-blue-300 transition-colors" title="Load your Jira tickets">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/>
+                            </svg>
+                            Jira
+                        </button>
+                        <button id="btn-scan-workspace-todos" class="flex items-center gap-1 text-[0.65rem] text-violet-400 hover:text-violet-300 transition-colors" title="Scan code for TODO comments">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                            </svg>
+                            Scan
+                        </button>
                     </div>
-                    <div id="workspace-todos-list" class="flex flex-col gap-1"></div>
+                </div>
+
+                <div id="task-board-panel" class="hidden flex flex-col gap-3">
+                    <!-- Backlog: 3 collapsible sections -->
+                    <div id="backlog-empty" class="text-xs text-gray-600 text-center py-3">
+                        <strong>Scan</strong> for code TODOs or <strong>Jira</strong> for your tickets.
+                    </div>
+
+                    <!-- Section: Linked (TODO + Jira) -->
+                    <div id="backlog-linked-section" class="hidden">
+                        <button id="btn-toggle-linked" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-emerald-400 font-medium mb-1">
+                            <svg id="linked-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                            Linked
+                            <span id="linked-count" class="text-[0.55rem] bg-emerald-600/30 text-emerald-300 px-1.5 rounded-full">0</span>
+                        </button>
+                        <div id="backlog-linked-list" class="flex flex-col gap-1"></div>
+                    </div>
+
+                    <!-- Section: Code TODOs -->
+                    <div id="backlog-code-section" class="hidden">
+                        <button id="btn-toggle-code-todos" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-violet-400 font-medium mb-1">
+                            <svg id="code-todos-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                            Code TODOs
+                            <span id="code-todos-count" class="text-[0.55rem] bg-violet-600/30 text-violet-300 px-1.5 rounded-full">0</span>
+                        </button>
+                        <div id="backlog-code-list" class="hidden flex flex-col gap-1"></div>
+                    </div>
+
+                    <!-- Section: Jira Tickets -->
+                    <div id="backlog-jira-section" class="hidden">
+                        <button id="btn-toggle-jira-tickets" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-blue-400 font-medium mb-1">
+                            <svg id="jira-tickets-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                            Jira Tickets
+                            <span id="jira-tickets-count" class="text-[0.55rem] bg-blue-600/30 text-blue-300 px-1.5 rounded-full">0</span>
+                        </button>
+                        <div id="backlog-jira-list" class="hidden flex flex-col gap-1"></div>
+                    </div>
+
+                    <!-- AI Working Space -->
+                    <div class="border-t border-gray-700/30 pt-2">
+                        <div class="flex items-center gap-1.5 mb-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-emerald-400" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/>
+                            </svg>
+                            <span class="text-xs font-medium text-emerald-400">AI Working Space</span>
+                            <span id="ai-workspace-count" class="hidden text-[0.6rem] bg-emerald-600/40 text-emerald-300 px-1.5 rounded-full">0</span>
+                        </div>
+                        <div id="ai-workspace-drop"
+                             class="ai-workspace-dropzone min-h-[48px] border-2 border-dashed border-gray-700/40 rounded-lg p-2 flex flex-col gap-1 transition-colors">
+                            <div id="ai-workspace-empty" class="text-[0.65rem] text-gray-600 text-center py-2">
+                                Drag linked items here for AI investigation
+                            </div>
+                            <div id="ai-workspace-list" class="flex flex-col gap-1"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Jira Ticket Info Popup -->
+            <div id="jira-ticket-popup" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                <div class="bg-gray-900 border border-gray-700 rounded-xl p-4 w-[90%] max-w-sm shadow-2xl flex flex-col gap-3">
+                    <div class="flex items-center justify-between">
+                        <span id="jira-popup-key" class="text-sm font-mono font-bold text-blue-400"></span>
+                        <button id="btn-close-jira-popup" class="text-gray-500 hover:text-white p-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p id="jira-popup-summary" class="text-xs text-gray-200 leading-snug"></p>
+                    <div class="flex items-center gap-2">
+                        <span id="jira-popup-status" class="text-[0.65rem] px-2 py-0.5 rounded-full bg-blue-600/20 text-blue-400 border border-blue-600/30"></span>
+                        <span id="jira-popup-priority" class="text-[0.65rem] text-gray-400"></span>
+                        <span id="jira-popup-type" class="text-[0.65rem] text-gray-500"></span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-1">
+                        <a id="jira-popup-link" href="#" target="_blank" class="flex items-center gap-1 text-[0.7rem] font-medium bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-600/30 px-3 py-1.5 rounded-md transition-colors">
+                            Open in Jira
+                        </a>
+                        <button id="jira-popup-investigate" class="flex items-center gap-1 text-[0.7rem] font-medium bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-600/30 px-3 py-1.5 rounded-md transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                            </svg>
+                            Investigate
+                        </button>
+                        <button id="btn-close-jira-popup-2" class="text-[0.7rem] text-gray-500 hover:text-gray-300 px-3 py-1.5 transition-colors">Close</button>
+                    </div>
                 </div>
             </div>
 
@@ -2404,11 +2521,13 @@
                             <option value="">Select team...</option>
                         </select>
                     </div>
-                    <div class="jira-field" id="jira-components-field">
-                        <label for="jira-components">Components</label>
-                        <select id="jira-components">
-                            <option value="">Select component...</option>
-                        </select>
+                    <div class="jira-field" id="jira-components-field" style="position:relative;">
+                        <label>Components</label>
+                        <div id="jira-components-chips" class="flex flex-wrap gap-1 min-h-[32px] p-1.5 bg-gray-800 border border-gray-700 rounded-md cursor-pointer">
+                            <input id="jira-components-input" type="text" placeholder="Add component..."
+                                class="flex-1 min-w-[100px] bg-transparent text-xs text-gray-200 outline-none border-none placeholder-gray-600 px-1">
+                        </div>
+                        <div id="jira-components-dropdown" class="hidden absolute z-50 mt-1 max-h-40 overflow-y-auto bg-gray-800 border border-gray-700 rounded-md shadow-lg" style="left:0;right:0;"></div>
                     </div>
                 </div>
                 <div class="jira-field">
@@ -3077,9 +3196,25 @@
             },
             {
                 name: '/jira',
-                description: 'Create or search Jira tickets',
-                hint: 'create Fix login bug | search auth issues',
-                transform: null,  // handled specially below
+                description: 'Create, search, or consult Jira tickets',
+                hint: 'create Fix login bug | DEV-123 | search auth issues | my tickets',
+                transform: (args) => {
+                    if (!args.trim()) return '[jira] List my current Jira tickets and show a summary of what I should focus on.';
+                    // Ticket key pattern → consultation
+                    if (/^[A-Z]+-\d+$/i.test(args.trim())) return `[jira] Fetch Jira ticket ${args.trim()}, read the related code, and explain what needs to be done with a suggested approach.`;
+                    // Subcommands
+                    const sub = args.match(/^(create|search|my\s+tickets|my\s+sprint)\s*(.*)/i);
+                    if (sub) {
+                        const cmd = sub[1].toLowerCase();
+                        const rest = sub[2].trim();
+                        if (cmd === 'create') return `[jira] Create a Jira ticket for: ${rest || 'the task I describe'}. Analyze the relevant code first, assess complexity (ticket vs epic vs project), draft the ticket with code context, and ask me to confirm before creating.`;
+                        if (cmd === 'search') return `[jira] Search Jira for: ${rest}`;
+                        if (cmd.startsWith('my ticket')) return `[jira] Show all Jira tickets assigned to me. Group by priority and suggest what to focus on.`;
+                        if (cmd.startsWith('my sprint')) return `[jira] Show my current sprint tickets. Group by status and highlight blockers.`;
+                    }
+                    // Default: let the agent figure out intent
+                    return `[jira] ${args}`;
+                },
             },
         ];
         const slashMenu = document.getElementById('slash-command-menu');
@@ -3782,9 +3917,11 @@
                     break;
                 case 'askAIProgress':
                     _updateAskAIThinking(message);
+                    notifyChatUnread();
                     break;
                 case 'agentQuestion':
                     _showAgentQuestion(message);
+                    notifyChatUnread();
                     break;
                 case 'askAIDone':
                     _removeAskAIThinking();
@@ -3795,6 +3932,11 @@
                         renderSystemMessage('AI: ' + message.error);
                         if (message.thinkingSteps && message.thinkingSteps.length > 0) {
                             _showStoppedThinking(message.thinkingSteps);
+                        }
+                    } else {
+                        // Success — auto-switch to chat tab so user sees the AI answer
+                        if (!_chatTabActive && tabChat) {
+                            tabChat.click();
                         }
                     }
                     break;
@@ -4071,9 +4213,10 @@
                         document.getElementById('jira-team-field')?.classList.add('hidden');
                     }
                     if (message.components?.length) {
-                        populateSelect('jira-components', message.components, c => c.name);
+                        _jiraAvailableComponents = message.components.map(c => c.name);
                         document.getElementById('jira-components-field')?.classList.remove('hidden');
                     } else {
+                        _jiraAvailableComponents = [];
                         document.getElementById('jira-components-field')?.classList.add('hidden');
                     }
                     break;
@@ -4121,6 +4264,12 @@
                     break;
                 case 'workspaceTodosScanned':
                     handleWorkspaceTodosScanned(message);
+                    break;
+                case 'jiraTicketsLoaded':
+                    handleJiraTicketsLoaded(message);
+                    break;
+                case 'todoDoneConfirmed':
+                    showToast('TODO removed from code', 'success');
                     break;
                 case 'workspaceTodoUpdated':
                     handleWorkspaceTodoUpdated(message);
@@ -5911,6 +6060,21 @@
                         <div id="${bodyId}" class="explain-body">
                             ${thinkingSection}
                             <div class="px-3 py-2.5 text-xs text-gray-200 leading-relaxed break-words">${renderExplanationMarkdown(msg.content || '')}</div>
+                            ${aiData.planMode ? `
+                            <div class="plan-apply-bar flex items-center gap-2 px-3 py-2 border-t border-blue-800/30 bg-blue-900/10">
+                                <button class="plan-apply-btn flex items-center gap-1.5 text-[0.7rem] font-medium
+                                    bg-emerald-600/30 hover:bg-emerald-600/50 text-emerald-400
+                                    border border-emerald-600/40 hover:border-emerald-500/60
+                                    px-3 py-1.5 rounded-md transition-all">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                                    </svg>
+                                    Apply Changes
+                                </button>
+                                <button class="plan-dismiss-btn text-[0.65rem] text-gray-500 hover:text-gray-400 px-2 py-1.5 transition-colors">
+                                    Dismiss
+                                </button>
+                            </div>` : ''}
                         </div>
                     </div>
                     <div class="text-xs text-gray-500 mt-0.5 ml-1">${formatTime(msg.ts)}</div>
@@ -5956,6 +6120,68 @@
             // Render any mermaid diagrams in the newly added message
             renderMermaidDiagrams(div);
             highlightCodeBlocks(div);
+
+            // Plan mode: Apply / Dismiss buttons
+            const applyBtn = div.querySelector('.plan-apply-btn');
+            const dismissBtn = div.querySelector('.plan-dismiss-btn');
+            if (applyBtn) {
+                applyBtn.addEventListener('click', () => {
+                    if (!session.roomId) { showToast('No active session', 'error'); return; }
+                    const planBar = div.querySelector('.plan-apply-bar');
+                    const planText = msg.content || '';
+
+                    // Detect ticket creation plans — open preview modal instead of auto-applying
+                    const isTicketPlan = /create.*ticket|create.*jira|jira.*create/i.test(query)
+                        || /^\[jira\].*create/i.test(query);
+                    if (isTicketPlan) {
+                        // Try to extract ticket draft from agent's response
+                        const draft = _parseTicketDraft(planText);
+                        showJiraModal(draft);
+                        if (planBar) {
+                            planBar.innerHTML = `<span class="text-[0.65rem] text-blue-400 px-3 py-2">Review ticket in the form above</span>`;
+                        }
+                        return;
+                    }
+
+                    // For code changes — send apply request with file_edit/file_write
+                    applyBtn.disabled = true;
+                    applyBtn.innerHTML = `<svg class="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Applying...`;
+
+                    // Detect if this is an investigation plan (needs TODO markers) vs a code change plan
+                    const isInvestigation = /investigate|investigation|findings|jira.*ticket/i.test(query);
+                    const ticketKeyMatch = planText.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+                    const ticketTag = ticketKeyMatch ? `{jira:${ticketKeyMatch[1]}}` : '';
+
+                    const applyQuery = isInvestigation
+                        ? `[apply] Based on the investigation below, add TODO comments at each identified code location. ` +
+                          `For each file mentioned in the plan:\n` +
+                          `1. Use read_file to read the file\n` +
+                          `2. Use file_edit to add a TODO comment at or near the identified line\n` +
+                          `3. Format: "// TODO: [short description of what needs to change]"\n` +
+                          `4. Add a TODO_DESC line: "// TODO_DESC: ${ticketTag} [details from the plan]"\n` +
+                          `Do NOT re-investigate or re-analyze. Just add TODO markers at the locations identified below.\n` +
+                          `After all TODOs are added, list what was marked.\n\n---\n\n${planText}`
+                        : `[apply] Execute the following plan. Use file_edit and file_write tools to make the changes. ` +
+                          `Apply all changes described below. For each file, use read_file first, then file_edit for precise changes. ` +
+                          `After all changes, summarize what was modified.\n\n---\n\n${planText}`;
+
+                    vscode.postMessage({
+                        command: 'askAI',
+                        roomId: session.roomId,
+                        query: applyQuery,
+                    });
+
+                    if (planBar) {
+                        planBar.innerHTML = `<span class="text-[0.65rem] text-emerald-400 px-3 py-2">Applying changes...</span>`;
+                    }
+                });
+            }
+            if (dismissBtn) {
+                dismissBtn.addEventListener('click', () => {
+                    const planBar = div.querySelector('.plan-apply-bar');
+                    if (planBar) planBar.remove();
+                });
+            }
 
             smartScroll(true);
         }
@@ -7250,6 +7476,7 @@
                         if (!isDuplicateMessage(data.id)) {
                             renderAiAnswerMessage(data);
                             updateLastMessageTimestamp(data.ts);
+                            notifyChatUnread();
                         }
                     } else if (data.type === 'role_restored') {
                         session.sessionRole = data.role;
@@ -7429,22 +7656,6 @@
                     const cmdName = '/' + cmdMatch[1].toLowerCase();
                     const cmdArgs = cmdMatch[2].trim();
 
-                    // /jira is handled specially — does not go through AI agent
-                    if (cmdName === '/jira') {
-                        const subMatch = cmdArgs.match(/^(create|search)\s*(.*)/i);
-                        if (subMatch && subMatch[1].toLowerCase() === 'search' && subMatch[2].trim()) {
-                            vscode.postMessage({ command: 'jiraSearch', query: subMatch[2].trim() });
-                        } else {
-                            // Open Jira modal, optionally pre-fill summary
-                            if (typeof showJiraModal === 'function') showJiraModal();
-                            const summaryInput = document.getElementById('jira-summary');
-                            if (summaryInput && subMatch && subMatch[1].toLowerCase() === 'create' && subMatch[2].trim()) {
-                                summaryInput.value = subMatch[2].trim();
-                            }
-                        }
-                        return;
-                    }
-
                     const cmd = SLASH_COMMANDS.find(c => c.name === cmdName);
                     if (cmd && cmd.transform) {
                         query = cmd.transform(cmdArgs);
@@ -7452,11 +7663,15 @@
                     // Unknown /commands pass through as-is
                 }
 
-                console.log('[WebView] @AI detected, sending askAI command:', query);
+                // Detect plan mode for known actionable flows
+                const isPlanMode = /^\[jira\]\s*(create|investigate)/i.test(query);
+
+                console.log('[WebView] @AI detected, sending askAI command:', query, isPlanMode ? '(plan mode)' : '');
                 const askMsg = {
                     command: 'askAI',
                     roomId: session.roomId,
                     query: query,
+                    planMode: isPlanMode,
                 };
                 // If a code snippet was attached, forward it as codeContext
                 if (snippetForAI) {
@@ -7546,13 +7761,26 @@
             inactiveBtn.classList.add('text-gray-500');
         }
 
+        const chatUnreadDot = document.getElementById('chat-unread-dot');
+        let _chatTabActive = true;
+
+        /** Show red dot on chat tab when user is on tasks tab */
+        function notifyChatUnread() {
+            if (!_chatTabActive && chatUnreadDot) {
+                chatUnreadDot.classList.remove('hidden');
+            }
+        }
+
         tabChat.addEventListener('click', () => {
+            _chatTabActive = true;
+            if (chatUnreadDot) chatUnreadDot.classList.add('hidden');
             activatePillTab(tabChat, tabTasks);
             tabPanelChat.classList.remove('hidden');
             tabPanelTasks.classList.add('hidden');
         });
 
         tabTasks.addEventListener('click', () => {
+            _chatTabActive = false;
             activatePillTab(tabTasks, tabChat);
             tabPanelTasks.classList.remove('hidden');
             tabPanelChat.classList.add('hidden');
@@ -7861,21 +8089,39 @@
         }
 
         // ============================================================
-        // Workspace TODO Scanner
+        // Task Board: Backlog + AI Working Space
         // ============================================================
 
-        /** @type {Array<{id:string,filePath:string,relativePath:string,lineNumber:number,title:string,description?:string,descriptionLine?:number,commentPrefix:string}>} */
+        /** @type {Array<{id:string,filePath:string,relativePath:string,lineNumber:number,title:string,description?:string,descriptionLine?:number,commentPrefix:string,ticketKey?:string}>} */
         let workspaceTodos = [];
+        /** @type {Array<{key:string,summary:string,status:string,priority:string,issuetype:string,isDone:boolean,browseUrl:string,source:string,linkedTodo?:object}>} */
+        let jiraTickets = [];
+        /** @type {Array<object>} Items in AI Working Space */
+        let aiWorkspaceItems = [];
         /** Currently edited workspace todo item */
         let _editingWorkspaceTodo = null;
 
         const btnScanWorkspaceTodos      = document.getElementById('btn-scan-workspace-todos');
-        const btnToggleWorkspaceTodos    = document.getElementById('btn-toggle-workspace-todos');
-        const workspaceTodosChevron      = document.getElementById('workspace-todos-chevron');
-        const workspaceTodosPanel        = document.getElementById('workspace-todos-panel');
-        const workspaceTodosEmpty        = document.getElementById('workspace-todos-empty');
-        const workspaceTodosList         = document.getElementById('workspace-todos-list');
-        const workspaceTodoCount         = document.getElementById('workspace-todo-count');
+        const btnToggleTaskBoard         = document.getElementById('btn-toggle-task-board');
+        const taskBoardChevron           = document.getElementById('task-board-chevron');
+        const taskBoardPanel             = document.getElementById('task-board-panel');
+        const backlogEmpty               = document.getElementById('backlog-empty');
+        const taskBoardCount             = document.getElementById('task-board-count');
+        const btnLoadJira               = document.getElementById('btn-load-jira-tickets');
+        const aiWorkspaceDrop           = document.getElementById('ai-workspace-drop');
+        const aiWorkspaceList           = document.getElementById('ai-workspace-list');
+        const aiWorkspaceEmpty          = document.getElementById('ai-workspace-empty');
+        const aiWorkspaceCount          = document.getElementById('ai-workspace-count');
+        // Section elements
+        const backlogLinkedSection       = document.getElementById('backlog-linked-section');
+        const backlogLinkedList          = document.getElementById('backlog-linked-list');
+        const linkedCountEl              = document.getElementById('linked-count');
+        const backlogCodeSection         = document.getElementById('backlog-code-section');
+        const backlogCodeList            = document.getElementById('backlog-code-list');
+        const codeTodosCountEl           = document.getElementById('code-todos-count');
+        const backlogJiraSection         = document.getElementById('backlog-jira-section');
+        const backlogJiraList            = document.getElementById('backlog-jira-list');
+        const jiraTicketsCountEl         = document.getElementById('jira-tickets-count');
 
         const workspaceTodoEditModal     = document.getElementById('workspace-todo-edit-modal');
         const workspaceTodoEditLocation  = document.getElementById('workspace-todo-edit-location');
@@ -7885,7 +8131,7 @@
         const btnWorkspaceTodoCancel     = document.getElementById('btn-workspace-todo-cancel');
         const btnWorkspaceTodoSave       = document.getElementById('btn-workspace-todo-save');
 
-        let _workspaceTodosExpanded = false;
+        let _taskBoardExpanded = false;
 
         /** Tracks whether workspace has been set up (hides setup button, shows rebuild). */
         let _workspaceSetupDone = false;
@@ -7908,10 +8154,30 @@
             if (_scanOverlayTimeout) { clearTimeout(_scanOverlayTimeout); _scanOverlayTimeout = null; }
         }
 
-        btnToggleWorkspaceTodos.addEventListener('click', () => {
-            _workspaceTodosExpanded = !_workspaceTodosExpanded;
-            workspaceTodosPanel.classList.toggle('hidden', !_workspaceTodosExpanded);
-            workspaceTodosChevron.style.transform = _workspaceTodosExpanded ? 'rotate(90deg)' : '';
+        btnToggleTaskBoard.addEventListener('click', () => {
+            _taskBoardExpanded = !_taskBoardExpanded;
+            taskBoardPanel.classList.toggle('hidden', !_taskBoardExpanded);
+            taskBoardChevron.style.transform = _taskBoardExpanded ? 'rotate(90deg)' : '';
+        });
+
+        // Toggle accordion sections
+        document.getElementById('btn-toggle-linked')?.addEventListener('click', () => {
+            const list = document.getElementById('backlog-linked-list');
+            const chevron = document.getElementById('linked-chevron');
+            list.classList.toggle('hidden');
+            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
+        });
+        document.getElementById('btn-toggle-code-todos')?.addEventListener('click', () => {
+            const list = document.getElementById('backlog-code-list');
+            const chevron = document.getElementById('code-todos-chevron');
+            list.classList.toggle('hidden');
+            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
+        });
+        document.getElementById('btn-toggle-jira-tickets')?.addEventListener('click', () => {
+            const list = document.getElementById('backlog-jira-list');
+            const chevron = document.getElementById('jira-tickets-chevron');
+            list.classList.toggle('hidden');
+            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
         });
 
         btnScanWorkspaceTodos.addEventListener('click', () => {
@@ -7920,52 +8186,410 @@
             vscode.postMessage({ command: 'scanWorkspaceTodos' });
         });
 
-        function renderWorkspaceTodoList() {
-            workspaceTodosList.innerHTML = '';
-            if (workspaceTodos.length === 0) {
-                workspaceTodosEmpty.classList.remove('hidden');
-                workspaceTodoCount.classList.add('hidden');
+        if (btnLoadJira) {
+            btnLoadJira.addEventListener('click', () => {
+                btnLoadJira.innerHTML = '...';
+                btnLoadJira.disabled = true;
+                vscode.postMessage({ command: 'loadJiraTickets' });
+            });
+        }
+
+        // ------- Drag & Drop for AI Working Space -------
+        if (aiWorkspaceDrop) {
+            aiWorkspaceDrop.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                aiWorkspaceDrop.classList.add('drag-over');
+            });
+            aiWorkspaceDrop.addEventListener('dragleave', () => {
+                aiWorkspaceDrop.classList.remove('drag-over');
+            });
+            aiWorkspaceDrop.addEventListener('drop', (e) => {
+                e.preventDefault();
+                aiWorkspaceDrop.classList.remove('drag-over');
+                const itemJson = e.dataTransfer?.getData('text/plain');
+                if (!itemJson) return;
+                try {
+                    const item = JSON.parse(itemJson);
+                    // Avoid duplicates
+                    if (aiWorkspaceItems.some(i => i.id === item.id)) return;
+                    aiWorkspaceItems.push(item);
+                    renderAIWorkspace();
+                    renderBacklog(); // Update backlog to hide dragged item
+                } catch {}
+            });
+        }
+
+        function renderWorkspaceTodoList() { renderBacklog(); }
+
+        function renderBacklog() {
+            // Clear all section lists
+            backlogLinkedList.innerHTML = '';
+            backlogCodeList.innerHTML = '';
+            backlogJiraList.innerHTML = '';
+
+            // Build unified backlog: categorize into 3 groups
+            const wsItemIds = new Set(aiWorkspaceItems.map(i => i.id));
+            const linkedItems = [];
+            const codeItems = [];
+            const jiraItems = [];
+
+            // Gather TODO ticket keys for dedup
+            const todoTicketKeys = new Set(workspaceTodos.filter(t => t.ticketKey).map(t => t.ticketKey));
+
+            // Code TODOs — split into linked vs code-only
+            for (const todo of workspaceTodos) {
+                const itemId = 'todo:' + todo.id;
+                if (wsItemIds.has(itemId)) continue;
+                const ts = todo.ticketKey ? _ticketStatuses[todo.ticketKey] : null;
+                const item = { id: itemId, source: 'code', title: todo.title, description: todo.description,
+                    ticketKey: todo.ticketKey, ticketStatus: ts, filePath: todo.filePath,
+                    relativePath: todo.relativePath, lineNumber: todo.lineNumber,
+                    commentPrefix: todo.commentPrefix, descriptionLine: todo.descriptionLine,
+                    priority: ts?.priority || null, browseUrl: ts?.browseUrl || null, raw: todo };
+                if (todo.ticketKey) {
+                    linkedItems.push(item);
+                } else {
+                    codeItems.push(item);
+                }
+            }
+
+            // Jira tickets not already linked to a TODO
+            for (const ticket of jiraTickets) {
+                if (ticket.isDone) continue;
+                const itemId = 'ticket:' + ticket.key;
+                if (wsItemIds.has(itemId)) continue;
+                if (todoTicketKeys.has(ticket.key)) continue;
+                jiraItems.push({ id: itemId, source: 'ticket', title: ticket.summary, description: null,
+                    ticketKey: ticket.key, ticketStatus: { key: ticket.key, summary: ticket.summary, status: ticket.status, isDone: false, browseUrl: ticket.browseUrl },
+                    filePath: ticket.linkedTodo?.filePath || null, relativePath: ticket.linkedTodo?.relativePath || null,
+                    lineNumber: ticket.linkedTodo?.lineNumber || null, priority: ticket.priority,
+                    browseUrl: ticket.browseUrl, raw: ticket });
+            }
+
+            const totalCount = linkedItems.length + codeItems.length + jiraItems.length;
+            if (totalCount === 0 && aiWorkspaceItems.length === 0) {
+                backlogEmpty.classList.remove('hidden');
+                taskBoardCount.classList.add('hidden');
+                backlogLinkedSection.classList.add('hidden');
+                backlogCodeSection.classList.add('hidden');
+                backlogJiraSection.classList.add('hidden');
+                renderAIWorkspace();
                 return;
             }
-            workspaceTodosEmpty.classList.add('hidden');
-            workspaceTodoCount.textContent = workspaceTodos.length;
-            workspaceTodoCount.classList.remove('hidden');
+            backlogEmpty.classList.add('hidden');
+            taskBoardCount.textContent = totalCount;
+            if (totalCount > 0) taskBoardCount.classList.remove('hidden');
+            else taskBoardCount.classList.add('hidden');
 
             // Auto-expand when results arrive
-            if (!_workspaceTodosExpanded) {
-                _workspaceTodosExpanded = true;
-                workspaceTodosPanel.classList.remove('hidden');
-                workspaceTodosChevron.style.transform = 'rotate(90deg)';
+            if (!_taskBoardExpanded) {
+                _taskBoardExpanded = true;
+                taskBoardPanel.classList.remove('hidden');
+                taskBoardChevron.style.transform = 'rotate(90deg)';
             }
 
-            workspaceTodos.forEach(todo => {
-                const el = document.createElement('div');
-                el.className = 'bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 cursor-pointer hover:border-violet-500/30 transition-colors group';
-                el.innerHTML = `
+            // --- Render Linked section ---
+            if (linkedItems.length > 0) {
+                backlogLinkedSection.classList.remove('hidden');
+                linkedCountEl.textContent = linkedItems.length;
+                linkedItems.forEach(item => {
+                    backlogLinkedList.appendChild(_buildLinkedCard(item));
+                });
+            } else {
+                backlogLinkedSection.classList.add('hidden');
+            }
+
+            // --- Render Code TODOs section ---
+            if (codeItems.length > 0) {
+                backlogCodeSection.classList.remove('hidden');
+                codeTodosCountEl.textContent = codeItems.length;
+                codeItems.forEach(item => {
+                    backlogCodeList.appendChild(_buildCodeTodoCard(item));
+                });
+            } else {
+                backlogCodeSection.classList.add('hidden');
+            }
+
+            // --- Render Jira Tickets section ---
+            if (jiraItems.length > 0) {
+                backlogJiraSection.classList.remove('hidden');
+                jiraTicketsCountEl.textContent = jiraItems.length;
+                jiraItems.forEach(item => {
+                    backlogJiraList.appendChild(_buildJiraTicketCard(item));
+                });
+            } else {
+                backlogJiraSection.classList.add('hidden');
+            }
+
+            // Render AI workspace
+            renderAIWorkspace();
+        }
+
+        /** Build a draggable linked (TODO+Jira) card */
+        function _buildLinkedCard(item) {
+            const el = document.createElement('div');
+            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-emerald-500/30 transition-colors group';
+            el.draggable = true;
+            el.dataset.itemId = item.id;
+
+            const ts = item.ticketStatus;
+            const ticketBadge = ts ? `<a href="${escapeHtml(ts.browseUrl)}" class="inline-flex items-center gap-1 text-[0.6rem] font-mono px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-600/30" title="${escapeHtml(ts.summary)}" onclick="event.stopPropagation();">${escapeHtml(item.ticketKey)} · ${escapeHtml(ts.status)}</a>` : '';
+            const locationInfo = item.relativePath ? `<span class="text-[0.6rem] text-blue-400/70 font-mono truncate">${escapeHtml(item.relativePath)}</span><span class="text-[0.6rem] text-gray-600 flex-shrink-0">:${item.lineNumber}</span>` : '';
+
+            el.innerHTML = `
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                        <span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>
+                        <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
+                    </div>
+                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    ${locationInfo}
+                    ${ticketBadge}
+                    ${item.priority ? `<span class="text-[0.55rem] text-gray-500 uppercase">${escapeHtml(item.priority)}</span>` : ''}
+                </div>`;
+
+            // Drag start
+            el.addEventListener('dragstart', (e) => {
+                el.classList.add('dragging');
+                e.dataTransfer.setData('text/plain', JSON.stringify(item));
+                e.dataTransfer.effectAllowed = 'move';
+            });
+            el.addEventListener('dragend', () => el.classList.remove('dragging'));
+
+            // Click → navigate to file
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('.workspace-todo-edit-btn, a')) return;
+                if (item.relativePath) vscode.postMessage({ command: 'navigateToCode', relativePath: item.relativePath, startLine: item.lineNumber, endLine: item.lineNumber });
+            });
+
+            // Edit button
+            const editBtn = el.querySelector('.workspace-todo-edit-btn');
+            if (editBtn) {
+                editBtn.addEventListener('click', (e) => { e.stopPropagation(); openWorkspaceTodoEdit(item.raw); });
+            }
+
+            return el;
+        }
+
+        /** Build a code TODO card (clickable, not draggable) */
+        function _buildCodeTodoCard(item) {
+            const el = document.createElement('div');
+            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-violet-500/30 transition-colors group cursor-pointer';
+            el.dataset.itemId = item.id;
+
+            const locationInfo = item.relativePath ? `<span class="text-[0.6rem] text-blue-400/70 font-mono truncate">${escapeHtml(item.relativePath)}</span><span class="text-[0.6rem] text-gray-600 flex-shrink-0">:${item.lineNumber}</span>` : '';
+
+            el.innerHTML = `
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                        <span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>
+                        <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
+                    </div>
+                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    ${locationInfo}
+                </div>`;
+
+            // Click → navigate to file
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('.workspace-todo-edit-btn')) return;
+                if (item.relativePath) vscode.postMessage({ command: 'navigateToCode', relativePath: item.relativePath, startLine: item.lineNumber, endLine: item.lineNumber });
+            });
+
+            // Edit button
+            const editBtn = el.querySelector('.workspace-todo-edit-btn');
+            if (editBtn) {
+                editBtn.addEventListener('click', (e) => { e.stopPropagation(); openWorkspaceTodoEdit(item.raw); });
+            }
+
+            return el;
+        }
+
+        /** Build a Jira ticket card (clickable to show popup, not draggable) */
+        function _buildJiraTicketCard(item) {
+            const el = document.createElement('div');
+            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-blue-500/30 transition-colors group cursor-pointer';
+            el.dataset.itemId = item.id;
+
+            el.innerHTML = `
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                        <span class="source-badge-ticket text-[0.55rem] px-1 py-0.5 rounded font-medium">Jira</span>
+                        <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    <span class="text-[0.6rem] font-mono text-blue-400/70">${escapeHtml(item.ticketKey)}</span>
+                    <span class="text-[0.55rem] text-gray-500">${escapeHtml(item.ticketStatus?.status || '')}</span>
+                    ${item.priority ? `<span class="text-[0.55rem] text-gray-500 uppercase">${escapeHtml(item.priority)}</span>` : ''}
+                </div>`;
+
+            // Click → open Jira popup
+            el.addEventListener('click', () => {
+                showJiraTicketPopup(item.raw);
+            });
+
+            return el;
+        }
+
+        /** Show Jira ticket info popup */
+        function showJiraTicketPopup(ticket) {
+            document.getElementById('jira-popup-key').textContent = ticket.key;
+            document.getElementById('jira-popup-summary').textContent = ticket.summary;
+            document.getElementById('jira-popup-status').textContent = ticket.status;
+            document.getElementById('jira-popup-priority').textContent = ticket.priority;
+            document.getElementById('jira-popup-type').textContent = ticket.issuetype || '';
+            document.getElementById('jira-popup-link').href = ticket.browseUrl;
+            // Store ticket data for investigate button
+            document.getElementById('jira-ticket-popup')._ticketData = ticket;
+            document.getElementById('jira-ticket-popup').classList.remove('hidden');
+        }
+
+        // Close Jira popup
+        document.getElementById('btn-close-jira-popup')?.addEventListener('click', () => {
+            document.getElementById('jira-ticket-popup').classList.add('hidden');
+        });
+        document.getElementById('btn-close-jira-popup-2')?.addEventListener('click', () => {
+            document.getElementById('jira-ticket-popup').classList.add('hidden');
+        });
+
+        // Investigate from popup — ask user about repo relevance
+        document.getElementById('jira-popup-investigate')?.addEventListener('click', () => {
+            const popup = document.getElementById('jira-ticket-popup');
+            const ticket = popup._ticketData;
+
+            if (!session.roomId) {
+                showToast('Start a chat session first (select a room in Online mode or use Local workspace)', 'error');
+                return;
+            }
+
+            popup.classList.add('hidden');
+
+            // Visual feedback — switch to chat tab and show thinking
+            const chatTab = document.getElementById('tab-chat');
+            if (chatTab) chatTab.click();
+            showToast(`Investigating ${ticket.key}...`, 'info');
+
+            // Send to agent with repo-check askUser
+            const components = ticket.components ? ticket.components.join(', ') : '';
+            const query = `[jira] Investigate Jira ticket ${ticket.key}: "${ticket.summary}".` +
+                (components ? ` Components: ${components}.` : '') +
+                ` Status: ${ticket.status}. Priority: ${ticket.priority}.` +
+                ` CRITICAL: Before using any code tools, use ask_user to confirm: ` +
+                `"Does this ticket relate to the code in your current workspace?" ` +
+                `with options: ["Yes, investigate in current workspace", "No, it's in a different repo"]. ` +
+                `If the user says yes, proceed with code analysis. ` +
+                `If no, ask them which repo/folder it belongs to, then explain: ` +
+                `"Please open that workspace and run investigate again — I can only analyze code in the currently open workspace."`;
+
+            vscode.postMessage({
+                command: 'askAI',
+                roomId: session.roomId,
+                query,
+                planMode: true,
+            });
+        });
+
+        // ------- AI Working Space Rendering -------
+        function renderAIWorkspace() {
+            aiWorkspaceList.innerHTML = '';
+            const hasItems = aiWorkspaceItems.length > 0;
+            aiWorkspaceEmpty.classList.toggle('hidden', hasItems);
+            if (hasItems) {
+                aiWorkspaceCount.textContent = aiWorkspaceItems.length;
+                aiWorkspaceCount.classList.remove('hidden');
+            } else {
+                aiWorkspaceCount.classList.add('hidden');
+            }
+
+            aiWorkspaceItems.forEach((item, idx) => {
+                const card = document.createElement('div');
+                card.className = 'workspace-card bg-gray-800/60 border border-emerald-700/30 rounded-lg p-2.5 flex flex-col gap-1.5';
+                const isCode = item.source === 'code';
+
+                card.innerHTML = `
                     <div class="flex items-start justify-between gap-2">
-                        <span class="text-xs text-gray-200 font-medium leading-snug flex-1 min-w-0">${escapeHtml(todo.title)}</span>
-                        <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-violet-400 transition-opacity" title="Edit">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                                <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+                        <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                            ${isCode ? '<span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>'
+                                     : '<span class="source-badge-ticket text-[0.55rem] px-1 py-0.5 rounded font-medium">Jira</span>'}
+                            <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
+                        </div>
+                        <button class="ws-remove-btn text-gray-600 hover:text-red-400 p-0.5 transition-colors" title="Remove from workspace">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                             </svg>
                         </button>
                     </div>
-                    ${todo.description ? `<span class="text-[0.65rem] text-gray-500 leading-snug">${escapeHtml(todo.description)}</span>` : ''}
-                    <div class="flex items-center gap-1 mt-0.5">
-                        <span class="text-[0.6rem] text-blue-400/70 font-mono truncate">${escapeHtml(todo.relativePath)}</span>
-                        <span class="text-[0.6rem] text-gray-600 flex-shrink-0">:${todo.lineNumber}</span>
+                    ${item.ticketKey ? `<span class="text-[0.6rem] text-blue-400/70 font-mono">${escapeHtml(item.ticketKey)}</span>` : ''}
+                    <div class="flex items-center gap-2 mt-1" id="ws-actions-${idx}">
+                        <button class="investigate-btn flex items-center gap-1 text-[0.6rem] font-medium
+                            bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 hover:text-emerald-300
+                            border border-emerald-600/30 hover:border-emerald-500/50
+                            px-2.5 py-1 rounded-md transition-all">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
+                            </svg>
+                            Investigate
+                        </button>
+                        <button class="implement-btn-disabled flex items-center gap-1 text-[0.6rem] font-medium
+                            text-gray-600 border border-gray-700/30 px-2.5 py-1 rounded-md"
+                            disabled title="Coming soon — AI implementation">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                            Implement
+                        </button>
                     </div>
-                `;
-                // Navigate to file on click (but not on edit button)
-                el.addEventListener('click', (e) => {
-                    if (e.target.closest('.workspace-todo-edit-btn')) return;
-                    vscode.postMessage({ command: 'navigateToCode', relativePath: todo.relativePath, startLine: todo.lineNumber, endLine: todo.lineNumber });
+                    <div class="ws-status-${idx} hidden text-[0.6rem] text-emerald-400/70 mt-0.5"></div>`;
+
+                // Remove from workspace
+                card.querySelector('.ws-remove-btn').addEventListener('click', () => {
+                    aiWorkspaceItems.splice(idx, 1);
+                    renderAIWorkspace();
+                    renderBacklog();
                 });
-                el.querySelector('.workspace-todo-edit-btn').addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    openWorkspaceTodoEdit(todo);
+
+                // Investigate button
+                card.querySelector('.investigate-btn').addEventListener('click', () => {
+                    if (!session.roomId) {
+                        showToast('Start a chat session first', 'error');
+                        return;
+                    }
+
+                    const statusEl = card.querySelector(`.ws-status-${idx}`);
+                    statusEl.classList.remove('hidden');
+                    statusEl.textContent = 'Investigating...';
+                    const btn = card.querySelector('.investigate-btn');
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Investigating...`;
+
+                    // Switch to chat tab for visibility
+                    const chatTab = document.getElementById('tab-chat');
+                    if (chatTab) chatTab.click();
+
+                    // Build investigation query
+                    const ticketCtx = item.ticketKey ? `Jira ticket ${item.ticketKey}: "${item.title}".` : '';
+                    const codeCtx = item.relativePath ? `Code location: ${item.relativePath}:${item.lineNumber}.` : '';
+                    const isJiraOnly = item.source === 'ticket' && !item.relativePath;
+                    const repoCheck = isJiraOnly
+                        ? `CRITICAL: Before using any code tools, use ask_user: "Does this ticket relate to the code in your current workspace?" ` +
+                          `with options ["Yes, investigate here", "No, different repo"]. ` +
+                          `If no, ask which repo and say "Please open that workspace and investigate again." `
+                        : '';
+                    const query = `[jira] Investigate this task: "${item.title}". ${ticketCtx} ${codeCtx} ${repoCheck}Read the relevant code, analyze what needs to be done, and provide a detailed plan. If this is a Jira ticket, update the description with your findings. If this is a code TODO, update the TODO_DESC with key findings.`;
+
+                    vscode.postMessage({
+                        command: 'askAI',
+                        roomId: session.roomId,
+                        query,
+                        planMode: true,
+                    });
                 });
-                workspaceTodosList.appendChild(el);
+
+                aiWorkspaceList.appendChild(card);
             });
         }
 
@@ -8010,22 +8634,44 @@
         });
 
         // Handle backend responses
+        // Ticket status cache — populated by workspace TODO scan
+        let _ticketStatuses = {};
+        let _ticketSyncEnabled = false;
+        let _ticketAuthNeeded = false;
+
         function handleWorkspaceTodosScanned(data) {
             // Reset scan button
             const btn = document.getElementById('btn-scan-workspace-todos');
             if (btn) { btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/></svg> Scan`; btn.disabled = false; }
             if (data.error) { showToast('Scan failed: ' + data.error, 'error'); return; }
             workspaceTodos = data.todos || [];
-            renderWorkspaceTodoList();
+            _ticketStatuses = data.ticketStatuses || {};
+            _ticketSyncEnabled = data.ticketSyncEnabled || false;
+            _ticketAuthNeeded = data.ticketAuthNeeded || false;
+            renderBacklog();
             if (workspaceTodos.length === 0) {
-                workspaceTodosEmpty.classList.remove('hidden');
-                workspaceTodosEmpty.innerHTML = 'No TODO comments found.<br><span class="text-gray-700">Add <code class="text-violet-500">// TODO: title</code> to your code.</span>';
-                if (!_workspaceTodosExpanded) {
-                    _workspaceTodosExpanded = true;
-                    workspaceTodosPanel.classList.remove('hidden');
-                    workspaceTodosChevron.style.transform = 'rotate(90deg)';
+                backlogEmpty.classList.remove('hidden');
+                backlogEmpty.innerHTML = 'No TODO comments found.<br><span class="text-gray-700">Add <code class="text-violet-500">// TODO: title</code> to your code.</span>';
+                if (!_taskBoardExpanded) {
+                    _taskBoardExpanded = true;
+                    taskBoardPanel.classList.remove('hidden');
+                    taskBoardChevron.style.transform = 'rotate(90deg)';
                 }
             }
+        }
+
+        function handleJiraTicketsLoaded(data) {
+            const btn = document.getElementById('btn-load-jira-tickets');
+            if (btn) { btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/><path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/></svg> Jira`; btn.disabled = false; }
+            if (data.error) { showToast(data.error, 'error'); return; }
+            if (data.authNeeded) {
+                showToast('Connect Jira first', 'info');
+                vscode.postMessage({ command: 'jiraConnect' });
+                return;
+            }
+            jiraTickets = data.tickets || [];
+            showToast(`Loaded ${jiraTickets.length} tickets from ${data.providerName || 'Jira'}`, 'success');
+            renderBacklog();
         }
 
         function handleWorkspaceTodoUpdated(data) {
@@ -10490,6 +11136,65 @@
             btnCopyCodePrompt.addEventListener('click', copyCodePromptToClipboard);
         }
 
+        // ---- Component multi-select chip logic ----
+        let _jiraAvailableComponents = [];
+        let _jiraSelectedComponents = [];
+
+        function _renderComponentChips() {
+            const container = document.getElementById('jira-components-chips');
+            if (!container) return;
+            container.querySelectorAll('.comp-chip').forEach(c => c.remove());
+            const input = document.getElementById('jira-components-input');
+            _jiraSelectedComponents.forEach(name => {
+                const chip = document.createElement('span');
+                chip.className = 'comp-chip';
+                chip.innerHTML = escapeHtml(name) + ' <span class="chip-x">&times;</span>';
+                chip.querySelector('.chip-x').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    _jiraSelectedComponents = _jiraSelectedComponents.filter(n => n !== name);
+                    _renderComponentChips();
+                });
+                container.insertBefore(chip, input);
+            });
+        }
+
+        function _renderComponentDropdown(filter) {
+            const dropdown = document.getElementById('jira-components-dropdown');
+            if (!dropdown) return;
+            filter = (filter || '').toLowerCase();
+            const filtered = _jiraAvailableComponents.filter(n =>
+                !_jiraSelectedComponents.includes(n) &&
+                n.toLowerCase().includes(filter)
+            );
+            if (filtered.length === 0) { dropdown.classList.add('hidden'); return; }
+            dropdown.innerHTML = filtered.map(n =>
+                '<div class="comp-option">' + escapeHtml(n) + '</div>'
+            ).join('');
+            dropdown.classList.remove('hidden');
+            dropdown.querySelectorAll('.comp-option').forEach(opt => {
+                opt.addEventListener('click', () => {
+                    _jiraSelectedComponents.push(opt.textContent.trim());
+                    _renderComponentChips();
+                    dropdown.classList.add('hidden');
+                    const inp = document.getElementById('jira-components-input');
+                    if (inp) inp.value = '';
+                });
+            });
+        }
+
+        (function _wireComponentChipInput() {
+            const inp = document.getElementById('jira-components-input');
+            if (!inp) return;
+            inp.addEventListener('input', () => _renderComponentDropdown(inp.value));
+            inp.addEventListener('focus', () => _renderComponentDropdown(inp.value));
+            document.addEventListener('click', (e) => {
+                const field = document.getElementById('jira-components-field');
+                if (field && !field.contains(e.target)) {
+                    document.getElementById('jira-components-dropdown')?.classList.add('hidden');
+                }
+            });
+        })();
+
         // ============================================================
         // JIRA INTEGRATION
         // ============================================================
@@ -10513,12 +11218,104 @@
 
         let jiraConnected = false;
 
-        function showJiraModal() {
+        /**
+         * Show the Jira ticket creation modal.
+         * @param {object} [prefill] — Optional pre-filled values from agent draft.
+         *   { projectKey, issueType, summary, description, priority, team, components }
+         */
+        function showJiraModal(prefill) {
             jiraModal?.classList.add('jira-visible');
             jiraResult?.classList.add('hidden');
             vscode.postMessage({ command: 'jiraCheckStatus' });
+
+            // Pre-fill fields if agent provided a draft
+            if (prefill) {
+                setTimeout(() => {
+                    if (prefill.summary) {
+                        const el = document.getElementById('jira-summary');
+                        if (el) el.value = prefill.summary;
+                    }
+                    if (prefill.description) {
+                        const el = document.getElementById('jira-description');
+                        if (el) el.value = prefill.description;
+                    }
+                    if (prefill.projectKey && jiraProjectSelect) {
+                        jiraProjectSelect.value = prefill.projectKey;
+                        jiraProjectSelect.dispatchEvent(new Event('change'));
+                    }
+                    if (prefill.priority) {
+                        const el = document.getElementById('jira-priority');
+                        if (el) setTimeout(() => { el.value = prefill.priority; }, 500);
+                    }
+                    if (prefill.team) {
+                        const el = document.getElementById('jira-team');
+                        if (el) setTimeout(() => { el.value = prefill.team; }, 500);
+                    }
+                    if (prefill.issueType && jiraIssueTypeSelect) {
+                        setTimeout(() => {
+                            jiraIssueTypeSelect.value = prefill.issueType;
+                            jiraIssueTypeSelect.dispatchEvent(new Event('change'));
+                        }, 300);
+                    }
+                    if (prefill.components && prefill.components.length) {
+                        _jiraSelectedComponents = [...prefill.components];
+                        setTimeout(() => _renderComponentChips(), 600);
+                    }
+                }, 100);
+            }
         }
-        function hideJiraModal() { jiraModal?.classList.remove('jira-visible'); }
+        function hideJiraModal() {
+            jiraModal?.classList.remove('jira-visible');
+            // Reset selected components when closing
+            _jiraSelectedComponents = [];
+            _renderComponentChips();
+        }
+
+        /**
+         * Parse a ticket draft from agent's markdown response.
+         * Looks for common patterns: **Summary**: ..., **Priority**: ..., etc.
+         */
+        function _parseTicketDraft(text) {
+            const draft = {};
+            // Summary: first heading or **Summary**: value
+            const summaryMatch = text.match(/\*\*Summary\*\*[:\s]+(.+)/i)
+                || text.match(/^#+\s+(.+)/m);
+            if (summaryMatch) draft.summary = summaryMatch[1].trim();
+
+            // Description: **Description**: value (may be multi-line)
+            const descMatch = text.match(/\*\*Description\*\*[:\s]+([\s\S]+?)(?=\n\*\*|\n##|$)/i);
+            if (descMatch) draft.description = descMatch[1].trim();
+
+            // Priority
+            const prioMatch = text.match(/\*\*Priority\*\*[:\s]+(Highest|High|Medium|Low|Lowest)/i);
+            if (prioMatch) draft.priority = prioMatch[1];
+
+            // Issue type
+            const typeMatch = text.match(/\*\*(?:Issue\s*)?Type\*\*[:\s]+(Epic|Bug|Story|Software Task|Task|Project)/i);
+            if (typeMatch) draft.issueType = typeMatch[1];
+
+            // Project
+            const projMatch = text.match(/\*\*Project\*\*[:\s]+([A-Z]+)/i);
+            if (projMatch) draft.projectKey = projMatch[1];
+
+            // Components
+            const compMatch = text.match(/\*\*Components?\*\*[:\s]+(.+)/i);
+            if (compMatch) {
+                draft.components = compMatch[1].split(/[,;]/).map(c => c.trim()).filter(Boolean);
+            }
+
+            // Team
+            const teamMatch = text.match(/\*\*Team\*\*[:\s]+(.+)/i);
+            if (teamMatch) draft.team = teamMatch[1].trim();
+
+            // If no structured fields found, use first line as summary
+            if (!draft.summary) {
+                const firstLine = text.split('\n').find(l => l.trim());
+                if (firstLine) draft.summary = firstLine.replace(/^[#*\s-]+/, '').trim().slice(0, 200);
+            }
+
+            return draft;
+        }
 
         function showJiraAuth() {
             jiraAuthSection?.classList.remove('hidden');
@@ -10578,8 +11375,7 @@
             const issueType = jiraIssueTypeSelect?.value || '';
             const priority = document.getElementById('jira-priority')?.value || '';
             const team = document.getElementById('jira-team')?.value || '';
-            const compSel = document.getElementById('jira-components');
-            const components = compSel?.value ? [compSel.value] : [];
+            const components = [..._jiraSelectedComponents];
 
             if (!summary.trim()) { showJiraResult(false, 'Summary is required'); return; }
             if (!projectKey) { showJiraResult(false, 'Please select a project'); return; }

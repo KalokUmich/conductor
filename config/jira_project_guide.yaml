@@ -1,0 +1,105 @@
+# Jira Project Guide — Maps code changes to Jira projects and components.
+#
+# Used by the Jira agent (Layer 3 skill) to auto-fill project + component
+# when creating tickets.  The agent matches git diff file paths against
+# these rules.  If no rule matches, the agent asks the user.
+#
+# Structure:
+#   projects.<KEY>.description  — what this Jira project is for
+#   projects.<KEY>.repos.<repo>.rules — path prefix → component mapping
+#   projects.<KEY>.repos.<repo>.default_component — fallback when no rule matches
+#
+# When a rule has `candidates` instead of `component`, the agent uses
+# context (recent tickets, code diff content) to pick the best match,
+# or asks the user if uncertain.
+
+projects:
+  DEV:
+    description: "Core engineering — all code changes across abound-server and render repos"
+    default_issue_type: "Story"
+    repos:
+      abound-server:
+        rules:
+          - paths: ["abound-server/"]
+            component: "JBE"
+          - paths: ["abound-lambda/", "abound-lambda-sharecode/"]
+            component: "JBE"
+          - paths: ["abound-adb/"]
+            component: "ADB"
+          - paths: ["abound-db/"]
+            component: "Abound MySQL database"
+          - paths: ["abound-deployment/", "docker/", ".gitlab-ci", "Makefile"]
+            component: "CI & CD Pipelines"
+          - paths: ["abound-playwright/", "playwright/"]
+            component: ~  # QA — no matching Jira component, ask user
+          - paths: ["CDE/"]
+            candidates: ["Mortgage", "Decision Engine"]  # LLM picks based on context
+        default_component: "JBE"
+
+      render:
+        rules:
+          # Ledger-related code
+          - paths:
+              - "backend/src/common/services/ledger"
+              - "backend/src/common/services/ledger_payment_service/"
+              - "backend/src/common/services/ledger_facility_service/"
+              - "backend/src/common/services/ledger_quote_service/"
+              - "backend/src/common/services/ledger_service/"
+              - "backend/src/common/services/ledger_facility_transfer_service/"
+              - "backend/src/dashboard_api/ledger_proxy/"
+              - "backend/src/portal_clients/generated/ledger_client/"
+              - "backend/src/data_models/db/ledger/"
+            component: "Ledger REST API"
+          # Abound / Loan Agent integration
+          - paths: ["backend/src/abound/"]
+            component: "Loan agent"
+          # Identity / IDV
+          - paths:
+              - "backend/src/common/services/identity_service/"
+              - "backend/src/dashboard_api/identity_paths/"
+            component: "IDV"
+          # Dashboard
+          - paths: ["backend/src/dashboard_api/", "ui/dashboard/"]
+            component: "Render Dashboard"
+          # Application journey (customer-facing UI)
+          - paths: ["ui/abound-dashboard/"]
+            component: "Application journey (JBE & Web)"
+          # Decision engine / features
+          - paths: ["backend/src/features/"]
+            component: "Decision Engine"
+          # Deployment / CI
+          - paths: ["deployment/", "ci/", "build/", "docker/", "infrastructure/"]
+            component: "CI & CD Pipelines"
+          # QA
+          - paths: ["qa/"]
+            component: ~  # ask user
+          # External API (main Render REST API)
+          - paths: ["backend/src/external_api/"]
+            component: "Render API"
+          # Background worker
+          - paths: ["backend/src/background_worker/"]
+            component: "Render API"
+          # Core / common / data models (general Render API)
+          - paths: ["backend/src/common/", "backend/src/core/", "backend/src/data_models/"]
+            component: "Render API"
+        default_component: "Render API"
+
+  FN:
+    description: "Finance — financial reporting, accounting, NetSuite integration"
+    default_issue_type: "Task"
+
+  FO:
+    description: "FinOps — infrastructure cost optimisation, cloud spend monitoring"
+    default_issue_type: "Task"
+
+  HELP:
+    description: "Helpdesk — internal IT support, tooling issues, access requests"
+    default_issue_type: "Task"
+
+  PT:
+    description: "Pen Testing — security testing, vulnerability remediation, CVE tracking"
+    default_issue_type: "Bug"
+
+  REN:
+    description: "Render product — high-level product features, client onboarding, business requirements"
+    default_issue_type: "Story"

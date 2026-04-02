@@ -50,8 +50,11 @@ import {
     wrapJiraConnection,
     getValidJiraConnection,
     isJiraConnectionStale,
+    restoreJiraFromTokenStore,
     JIRA_GLOBALSTATE_KEY,
 } from './services/jiraAuthService';
+import { JiraTokenStore } from './services/jiraTokenStore';
+import { JiraTicketProvider, type ITicketProvider, type TicketStatus } from './services/ticketProvider';
 import { ChatLocalStore } from './services/chatLocalStore';
 
 /** Output channel for logging invite links to the user. */
@@ -360,6 +363,20 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
+    // Initialize Jira token store (SecretStorage + .conductor/jira.json)
+    const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? '';
+    const jiraTokenStore = wsRoot
+        ? new JiraTokenStore(context.secrets, wsRoot, getBackendUrl())
+        : undefined;
+
+    // Initialize ticket provider for TODO ↔ Jira sync
+    const ticketProvider: ITicketProvider | undefined = jiraTokenStore
+        ? new JiraTicketProvider(jiraTokenStore, getBackendUrl())
+        : undefined;
+    if (ticketProvider) {
+        provider.setTicketProvider(ticketProvider);
+    }
+
     // Register URI handler for OAuth callbacks (e.g., Jira)
     const jiraUriHandler = new JiraUriHandler(
         (status) => {
@@ -378,8 +395,11 @@ export function activate(context: vscode.ExtensionContext): void {
                 });
             }
             vscode.window.showInformationMessage(`Jira connected: ${status.siteUrl}`);
+            // Auto-load tickets after successful OAuth
+            provider.autoLoadJiraTickets();
         },
         getBackendUrl(),
+        jiraTokenStore,
     );
     context.subscriptions.push(vscode.window.registerUriHandler(jiraUriHandler));
 
@@ -394,6 +414,9 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.commands.registerCommand('conductor.jiraDisconnect', async () => {
             try {
                 await fetch(`${getBackendUrl()}/api/integrations/jira/disconnect`, { method: 'POST' });
+                if (jiraTokenStore) {
+                    await jiraTokenStore.clear();
+                }
                 context.globalState.update(JIRA_GLOBALSTATE_KEY, undefined);
                 vscode.window.showInformationMessage('Jira disconnected');
             } catch {
@@ -402,10 +425,18 @@ export function activate(context: vscode.ExtensionContext): void {
         })
     );
 
-    // Clear stale Jira connection on reload
+    // Restore Jira connection from locally-stored tokens (survives backend restart)
     const storedJira = context.globalState.get(JIRA_GLOBALSTATE_KEY);
     if (isJiraConnectionStale(storedJira)) {
         context.globalState.update(JIRA_GLOBALSTATE_KEY, undefined);
+    }
+    if (!getValidJiraConnection(storedJira) && jiraTokenStore) {
+        restoreJiraFromTokenStore(jiraTokenStore).then(conn => {
+            if (conn) {
+                context.globalState.update(JIRA_GLOBALSTATE_KEY, wrapJiraConnection(conn));
+                console.log(`[Conductor] Jira connection restored from local tokens: ${conn.siteUrl}`);
+            }
+        }).catch(() => { /* silent — user can re-auth manually */ });
     }
 
     // Register command to compare local tool implementations (LSP vs grep)
@@ -847,14 +878,19 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     /** Policy evaluation result for the current changeset. */
     private _policyResult?: PolicyResult;
 
+    /** Ticket provider for TODO ↔ ticket sync (undefined if not configured). */
+    private _ticketProvider?: ITicketProvider;
+
     constructor(
         extensionUri: vscode.Uri,
         context: vscode.ExtensionContext,
         controller: ConductorController,
+        ticketProvider?: ITicketProvider,
     ) {
         this._extensionUri = extensionUri;
         this._context = context;
         this._controller = controller;
+        this._ticketProvider = ticketProvider;
         // Load auto-apply state from global state
         this._autoApplyEnabled = context.globalState.get<boolean>('autoApplyEnabled', false);
 
@@ -866,6 +902,18 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 this._fetchEnabledSSOProviders();
             }
         });
+    }
+
+    /** Set ticket provider after construction (initialized later in activate). */
+    public setTicketProvider(tp: ITicketProvider): void {
+        this._ticketProvider = tp;
+    }
+
+    /** Auto-load Jira tickets (called after OAuth success). */
+    public autoLoadJiraTickets(): void {
+        this._handleLoadJiraTickets().catch(e =>
+            console.error('[Conductor] Auto-load Jira tickets failed:', e)
+        );
     }
 
     public resolveWebviewView(
@@ -1187,6 +1235,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     return;
                 case 'updateWorkspaceTodo':
                     await this._handleUpdateWorkspaceTodo(message.payload as UpdateTodoPayload);
+                    return;
+                case 'startTaskFromTodo':
+                    // User clicked "Start task" on a TODO without ticket → trigger agent
+                    await this._handleStartTaskFromTodo(message);
+                    return;
+                case 'confirmTodoDone':
+                    // User confirmed a Done ticket's TODO should be removed
+                    await this._handleConfirmTodoDone(message);
+                    return;
+                case 'loadJiraTickets':
+                    await this._handleLoadJiraTickets();
                     return;
                 case 'loadHistory':
                     await this._handleLoadHistory(message.roomId, message.before, message.limit);
@@ -4107,6 +4166,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private async _handleAskAI(message: {
         roomId: string;
         query: string;
+        planMode?: boolean;
         codeContext?: {
             code: string;
             relativePath: string;
@@ -4118,8 +4178,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         const backendUrl = getBackendUrl();
         const roomId = message.roomId;
         const query = message.query;
+        const planMode = message.planMode || false;
 
-        console.log(`[Conductor][AskAI] query="${query.slice(0, 80)}" room=${roomId}`);
+        console.log(`[Conductor][AskAI] query="${query.slice(0, 80)}" room=${roomId}${planMode ? ' [PLAN]' : ''}`);
         let thinkingSteps: Array<Record<string, any>> = [];
 
         try {
@@ -4318,6 +4379,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             } catch { /* ignore */ }
 
             const hasCodeContext = !!message.codeContext;
+            // Detect plan mode: explicit flag OR LLM response contains actionable plan sections
+            const detectedPlanMode = planMode
+                || /^##\s*(Plan|Changes|Implementation|Steps)\b/m.test(finalAnswer);
+
             const aiData = hasCodeContext
                 ? JSON.stringify({
                       code:         message.codeContext!.code,
@@ -4327,7 +4392,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                       language:     message.codeContext!.language || '',
                       thinking_steps: thinkingSteps,
                   })
-                : JSON.stringify({ query, thinking_steps: thinkingSteps });
+                : JSON.stringify({ query, thinking_steps: thinkingSteps, planMode: detectedPlanMode });
             const postParams = new URLSearchParams({
                 message_type: hasCodeContext ? 'ai_explanation' : 'ai_answer',
                 model_name: modelName,
@@ -5807,7 +5872,32 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private async _handleScanWorkspaceTodos(): Promise<void> {
         try {
             const todos = await scanWorkspaceTodos();
-            this._view?.webview.postMessage({ command: 'workspaceTodosScanned', todos });
+
+            // Enrich TODOs with ticket status if provider is available
+            let ticketStatuses: Record<string, TicketStatus> = {};
+            let ticketAuthNeeded = false;
+
+            if (this._ticketProvider) {
+                const keys = todos
+                    .map(t => t.ticketKey)
+                    .filter((k): k is string => !!k);
+
+                if (keys.length > 0) {
+                    const result = await this._ticketProvider.fetchStatuses(keys);
+                    ticketAuthNeeded = !result.authenticated;
+                    result.statuses.forEach((status, key) => {
+                        ticketStatuses[key] = status;
+                    });
+                }
+            }
+
+            this._view?.webview.postMessage({
+                command: 'workspaceTodosScanned',
+                todos,
+                ticketStatuses,
+                ticketAuthNeeded,
+                ticketSyncEnabled: !!this._ticketProvider,
+            });
         } catch (e) {
             console.error('[Conductor] scanWorkspaceTodos failed:', e);
             this._view?.webview.postMessage({ command: 'workspaceTodosScanned', todos: [], error: String(e) });
@@ -5817,6 +5907,129 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     private async _handleUpdateWorkspaceTodo(payload: UpdateTodoPayload): Promise<void> {
         const ok = updateWorkspaceTodoInFile(payload);
         this._view?.webview.postMessage({ command: 'workspaceTodoUpdated', ok, filePath: payload.filePath });
+    }
+
+    /**
+     * "Start task" — user clicked on an unlinked TODO.
+     * Sends the TODO context to the agent to create a Jira ticket,
+     * then writes the ticket key back to TODO_DESC.
+     */
+    private async _handleStartTaskFromTodo(message: {
+        roomId: string;
+        todo: { title: string; description?: string; filePath: string; lineNumber: number; relativePath: string; commentPrefix: string; descriptionLine?: number };
+    }): Promise<void> {
+        const { todo } = message;
+        const query = `[jira] Create a Jira ticket for this TODO task: "${todo.title}"${todo.description ? ` — ${todo.description}` : ''}. The code is at ${todo.relativePath}:${todo.lineNumber}. Analyze the relevant code first, assess complexity, draft the ticket with code context, and ask me to confirm before creating.`;
+
+        // Send as askAI — the agent will create the ticket
+        await this._handleAskAI({
+            roomId: message.roomId,
+            query,
+        });
+
+        // Note: the ticket key write-back to TODO_DESC happens after the user
+        // sees the created ticket in chat and can manually update, or we could
+        // parse the agent's response for the ticket key. For now, user edits TODO_DESC.
+    }
+
+    /**
+     * User confirmed that a Done ticket's TODO should be removed from code.
+     */
+    private async _handleConfirmTodoDone(message: {
+        todo: { filePath: string; lineNumber: number; descriptionLine?: number; commentPrefix: string };
+    }): Promise<void> {
+        const { todo } = message;
+        try {
+            const fs = await import('fs/promises');
+            const content = await fs.readFile(todo.filePath, 'utf-8');
+            const lines = content.split('\n');
+            const todoIdx = todo.lineNumber - 1;
+
+            // Remove lines (description first if present, then TODO)
+            const linesToRemove: number[] = [todoIdx];
+            if (todo.descriptionLine) {
+                linesToRemove.push(todo.descriptionLine - 1);
+            }
+            // Sort descending so indices don't shift
+            linesToRemove.sort((a, b) => b - a);
+            for (const idx of linesToRemove) {
+                if (idx >= 0 && idx < lines.length) {
+                    lines.splice(idx, 1);
+                }
+            }
+
+            await fs.writeFile(todo.filePath, lines.join('\n'), 'utf-8');
+            this._view?.webview.postMessage({ command: 'todoDoneConfirmed', filePath: todo.filePath });
+            // Re-scan to refresh the list
+            await this._handleScanWorkspaceTodos();
+        } catch (e) {
+            console.error('[Conductor] confirmTodoDone failed:', e);
+        }
+    }
+
+    /**
+     * "Load Jira" — fetch user's assigned tickets and auto-associate with code TODOs.
+     */
+    private async _handleLoadJiraTickets(): Promise<void> {
+        if (!this._ticketProvider) {
+            this._view?.webview.postMessage({
+                command: 'jiraTicketsLoaded',
+                tickets: [],
+                error: 'No ticket provider configured',
+            });
+            return;
+        }
+
+        try {
+            // Try fetching directly — isAuthenticated checks both local + backend tokens
+            const isAuth = await this._ticketProvider.isAuthenticated();
+            if (!isAuth) {
+                this._view?.webview.postMessage({
+                    command: 'jiraTicketsLoaded',
+                    tickets: [],
+                    authNeeded: true,
+                });
+                return;
+            }
+
+            const tickets = await this._ticketProvider.fetchMyTickets();
+
+            // Also scan TODOs to find associations
+            const todos = await scanWorkspaceTodos();
+            const todosByTicket = new Map<string, typeof todos[number]>();
+            for (const todo of todos) {
+                if (todo.ticketKey) {
+                    todosByTicket.set(todo.ticketKey, todo);
+                }
+            }
+
+            // Enrich tickets with linked TODO info
+            const enriched = tickets.map(t => ({
+                ...t,
+                linkedTodo: todosByTicket.has(t.key)
+                    ? {
+                        filePath: todosByTicket.get(t.key)!.filePath,
+                        relativePath: todosByTicket.get(t.key)!.relativePath,
+                        lineNumber: todosByTicket.get(t.key)!.lineNumber,
+                        title: todosByTicket.get(t.key)!.title,
+                    }
+                    : null,
+            }));
+
+            this._view?.webview.postMessage({
+                command: 'jiraTicketsLoaded',
+                tickets: enriched,
+                providerName: this._ticketProvider.name,
+                tagPrefix: this._ticketProvider.tagPrefix,
+            });
+        } catch (e) {
+            console.error('[Conductor] loadJiraTickets failed:', e);
+            this._view?.webview.postMessage({
+                command: 'jiraTicketsLoaded',
+                tickets: [],
+                error: String(e),
+            });
+        }
     }
 
     private _getHtmlContent(webview: vscode.Webview): string {

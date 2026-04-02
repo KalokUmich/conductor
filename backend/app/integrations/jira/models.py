@@ -22,6 +22,11 @@ class JiraCallbackRequest(BaseModel):
     state: str = ""
 
 
+class RefreshTokenRequest(BaseModel):
+    """Request body for client-side token refresh."""
+    refresh_token: str
+
+
 class CreateIssueRequest(BaseModel):
     """Request to create a Jira issue."""
     project_key: str

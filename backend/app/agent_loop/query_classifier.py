@@ -35,6 +35,10 @@ _ALL_TOOLS = [
     "compressed_view", "module_summary", "expand_symbol", "detect_patterns",
     "run_test", "git_hotspots", "list_endpoints", "extract_docstrings", "db_schema",
     "glob",
+    # File editing
+    "file_edit", "file_write",
+    # Jira integration
+    "jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects",
 ]
 
 # Core tools always included regardless of query type
@@ -199,6 +203,19 @@ QUERY_TYPES: Dict[str, dict] = {
         "tools": _CORE_TOOLS + [
             "web_search", "web_navigate", "web_click",
             "web_fill", "web_screenshot", "web_extract",
+        ],
+    },
+    "issue_tracking": {
+        "budget_level": "medium",
+        "suggested_token_budget": 300_000,
+        "keywords": [
+            "jira", "ticket", "issue", "create ticket",
+            "search ticket", "my tickets", "sprint",
+            "blockers", "assigned to me", "status of",
+        ],
+        "tools": _CORE_TOOLS + [
+            "jira_search", "jira_get_issue", "jira_create_issue",
+            "jira_update_issue", "jira_list_projects",
         ],
     },
 }

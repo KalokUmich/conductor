@@ -74,6 +74,23 @@ class TestClassifyQuery:
         result = classify_query("WHERE IS THE ENDPOINT FOR LOGIN?")
         assert result.query_type == "entry_point_discovery"
 
+    def test_issue_tracking_jira(self):
+        result = classify_query("[jira] Create a Jira ticket for: Fix auth bug")
+        assert result.query_type == "issue_tracking"
+        assert "jira_search" in result.tool_set
+        assert "jira_create_issue" in result.tool_set
+
+    def test_issue_tracking_ticket(self):
+        result = classify_query("search for my Jira tickets in the current sprint")
+        assert result.query_type == "issue_tracking"
+
+    def test_issue_tracking_has_code_tools(self):
+        result = classify_query("[jira] Create a ticket for the auth refactor")
+        assert result.query_type == "issue_tracking"
+        # Should also have core code tools for code analysis
+        assert "grep" in result.tool_set
+        assert "read_file" in result.tool_set
+
 
 class TestToolSet:
     """Tests for dynamic tool set per query type."""

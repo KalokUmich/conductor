@@ -68,6 +68,7 @@ class RemoteToolExecutor(ToolExecutor):
     _BACKEND_ONLY_TOOLS = frozenset([
         "web_search", "web_navigate", "web_click", "web_fill",
         "web_screenshot", "web_extract",
+        "jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects",
     ])
 
     def __init__(self, room_id: str, workspace_path: str) -> None:

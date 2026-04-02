@@ -18,6 +18,7 @@
  */
 
 import * as complexTools from './complexToolRunner';
+import * as fileEditTools from './fileEditRunner';
 import type { ToolResult } from './toolTypes';
 export type { ToolResult };
 
@@ -61,6 +62,8 @@ const COMPLEX_TOOLS = new Set([
     'get_dependents',
     'test_outline',
     'module_summary',
+    'file_edit',
+    'file_write',
 ]);
 
 /**
@@ -89,6 +92,8 @@ const COMPLEX_TOOL_RUNNERS: Record<string, (workspace: string, params: any) => c
     trace_variable: complexTools.trace_variable,
     detect_patterns: complexTools.detect_patterns,
     module_summary: complexTools.module_summary,
+    file_edit: (workspace: string, params: any) => fileEditTools.file_edit(workspace, params),
+    file_write: (workspace: string, params: any) => fileEditTools.file_write(workspace, params),
 };
 
 // ---------------------------------------------------------------------------
@@ -189,7 +194,16 @@ export async function executeLocalTool(
     // ---- Tier 1: Subprocess tools ----
     if (SUBPROCESS_TOOLS.has(tool)) {
         log(`${tool} → Tier 1 (subprocess)`);
-        return subprocessFn(tool, params, workspace);
+        const result = await subprocessFn(tool, params, workspace);
+        // Track read_file for file_edit/file_write read-before-write checks
+        if (tool === 'read_file' && result.success && params.path) {
+            try {
+                const absPath = require('path').resolve(workspace, params.path);
+                const content = typeof result.data === 'string' ? result.data : JSON.stringify(result.data);
+                fileEditTools.recordFileRead(absPath, content);
+            } catch { /* ignore */ }
+        }
+        return result;
     }
 
     // ---- Tier 2: AST / LSP tools ----

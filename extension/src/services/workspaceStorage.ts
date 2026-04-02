@@ -35,6 +35,8 @@ export interface WorkspaceConfig {
     maxContextFiles: number;
     /** Top-K cap for ranked context results. */
     semanticTopK: number;
+    /** Enable TODO ↔ ticket system bidirectional sync. */
+    ticketSyncEnabled: boolean;
 }
 
 /** Canonical defaults — every field has a safe value out of the box. */
@@ -50,6 +52,7 @@ export const DEFAULT_WORKSPACE_CONFIG: WorkspaceConfig = {
     maxRelated:      8,
     maxContextFiles: 15,
     semanticTopK:    20,
+    ticketSyncEnabled: true,
 };
 
 // ---------------------------------------------------------------------------

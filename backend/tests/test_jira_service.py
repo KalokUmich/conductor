@@ -735,3 +735,85 @@ class TestConstructor:
         assert len(svc._team_cache) == 2
         assert svc._team_field_key == "customfield_10001"
         assert svc._static_teams is True
+
+
+# ===========================================================================
+# refresh_token_for_client
+# ===========================================================================
+
+class TestRefreshTokenForClient:
+    @pytest.mark.asyncio
+    async def test_successful_refresh(self, svc, mock_httpx):
+        """Returns new token pair on successful refresh."""
+        mock_httpx.post.return_value = _mock_response(json_data={
+            "access_token": "new-acc",
+            "refresh_token": "new-ref",
+            "expires_in": 3600,
+        })
+
+        result = await svc.refresh_token_for_client("old-refresh-token")
+
+        assert result["access_token"] == "new-acc"
+        assert result["refresh_token"] == "new-ref"
+        assert result["expires_in"] == 3600
+
+        # Verify it sent the right payload
+        call_kwargs = mock_httpx.post.call_args
+        payload = call_kwargs.kwargs.get("json") or call_kwargs[1].get("json")
+        assert payload["grant_type"] == "refresh_token"
+        assert payload["client_id"] == "test-client-id"
+        assert payload["client_secret"] == "test-client-secret"
+        assert payload["refresh_token"] == "old-refresh-token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_old_refresh_token_when_not_rotated(self, svc, mock_httpx):
+        """If Atlassian doesn't return a new refresh_token, keep the old one."""
+        mock_httpx.post.return_value = _mock_response(json_data={
+            "access_token": "new-acc",
+            "expires_in": 3600,
+        })
+
+        result = await svc.refresh_token_for_client("keep-this-token")
+
+        assert result["refresh_token"] == "keep-this-token"
+
+    @pytest.mark.asyncio
+    async def test_refresh_does_not_modify_server_state(self, svc, mock_httpx):
+        """Server-side in-memory tokens should NOT be updated."""
+        _inject_tokens(svc, access_token="server-acc", refresh_token="server-ref")
+
+        mock_httpx.post.return_value = _mock_response(json_data={
+            "access_token": "client-new-acc",
+            "refresh_token": "client-new-ref",
+            "expires_in": 3600,
+        })
+
+        await svc.refresh_token_for_client("client-ref")
+
+        # Server state unchanged
+        assert svc._tokens.access_token == "server-acc"
+        assert svc._tokens.refresh_token == "server-ref"
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_raises_runtime_error(self, svc, mock_httpx):
+        """Atlassian returns an error (e.g. expired refresh token)."""
+        error_resp = MagicMock()
+        error_resp.status_code = 400
+        error_resp.json.return_value = {"error": "invalid_grant", "error_description": "Token has been revoked"}
+        error_resp.text = '{"error": "invalid_grant"}'
+        mock_httpx.post.return_value = error_resp
+
+        with pytest.raises(RuntimeError, match="Token refresh failed"):
+            await svc.refresh_token_for_client("expired-token")
+
+    @pytest.mark.asyncio
+    async def test_refresh_failure_with_non_json_response(self, svc, mock_httpx):
+        """Atlassian returns a non-JSON error body."""
+        error_resp = MagicMock()
+        error_resp.status_code = 500
+        error_resp.json.side_effect = ValueError("Not JSON")
+        error_resp.text = "Internal Server Error"
+        mock_httpx.post.return_value = error_resp
+
+        with pytest.raises(RuntimeError, match="Token refresh failed.*Internal Server Error"):
+            await svc.refresh_token_for_client("some-token")

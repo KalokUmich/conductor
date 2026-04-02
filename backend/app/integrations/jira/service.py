@@ -185,6 +185,37 @@ class JiraOAuthService:
             "site_url": self._tokens.site_url,
         }
 
+    async def refresh_token_for_client(self, refresh_token: str) -> dict:
+        """Refresh a token on behalf of a client (extension).
+
+        Uses server-side client_id/client_secret with the provided refresh_token.
+        Returns the new token pair for the client to store locally.
+        Does NOT update server-side in-memory state.
+        """
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                ATLASSIAN_TOKEN_URL,
+                json={
+                    "grant_type": "refresh_token",
+                    "client_id": self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": refresh_token,
+                },
+            )
+            if resp.status_code >= 400:
+                try:
+                    error_body = resp.json()
+                except Exception:
+                    error_body = resp.text
+                raise RuntimeError(f"Token refresh failed: {error_body}")
+
+            data = resp.json()
+            return {
+                "access_token": data["access_token"],
+                "refresh_token": data.get("refresh_token", refresh_token),
+                "expires_in": data.get("expires_in", 3600),
+            }
+
     def disconnect(self) -> None:
         """Clear stored tokens."""
         self._tokens = None
@@ -535,13 +566,120 @@ class JiraOAuthService:
             browse_url=browse_url,
         )
 
+    async def get_issue(self, issue_key: str) -> dict:
+        """Get full details of a Jira issue."""
+        data = await self._api_request("GET", f"/issue/{issue_key}", params={
+            "fields": "summary,description,status,priority,assignee,issuetype,"
+                      "components,labels,created,updated,comment,subtasks,parent",
+        })
+        fields = data.get("fields", {})
+
+        # Parse description (ADF → plain text)
+        desc_raw = fields.get("description")
+        description = ""
+        if isinstance(desc_raw, dict):
+            description = self._adf_to_text(desc_raw)
+        elif isinstance(desc_raw, str):
+            description = desc_raw
+
+        # Parse comments
+        comment_data = fields.get("comment", {})
+        comments = []
+        for c in comment_data.get("comments", []):
+            body = c.get("body", "")
+            if isinstance(body, dict):
+                body = self._adf_to_text(body)
+            comments.append({
+                "author": c.get("author", {}).get("displayName", ""),
+                "created": c.get("created", ""),
+                "body": body,
+            })
+
+        # Parse subtasks
+        subtasks = []
+        for st in fields.get("subtasks", []):
+            st_fields = st.get("fields", {})
+            subtasks.append({
+                "key": st["key"],
+                "summary": st_fields.get("summary", ""),
+                "status": st_fields.get("status", {}).get("name", ""),
+            })
+
+        browse_url = ""
+        if self._tokens and self._tokens.site_url:
+            browse_url = f"{self._tokens.site_url}/browse/{issue_key}"
+
+        return {
+            "key": data["key"],
+            "summary": fields.get("summary", ""),
+            "description": description,
+            "status": fields.get("status", {}).get("name", ""),
+            "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+            "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+            "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+            "components": [c.get("name", "") for c in fields.get("components", [])],
+            "labels": fields.get("labels", []),
+            "created": fields.get("created", ""),
+            "updated": fields.get("updated", ""),
+            "parent": fields.get("parent", {}).get("key", "") if fields.get("parent") else "",
+            "subtasks": subtasks,
+            "comments": comments,
+            "browse_url": browse_url,
+        }
+
+    @staticmethod
+    def _adf_to_text(adf: dict) -> str:
+        """Convert Atlassian Document Format to plain text."""
+        parts: List[str] = []
+
+        def _walk(node: Any) -> None:
+            if isinstance(node, dict):
+                if node.get("type") == "text":
+                    parts.append(node.get("text", ""))
+                for child in node.get("content", []):
+                    _walk(child)
+            elif isinstance(node, list):
+                for item in node:
+                    _walk(item)
+
+        _walk(adf)
+        return " ".join(parts).strip()
+
+    async def list_undone_tickets(self, max_results: int = 30) -> List[dict]:
+        """List the current user's tickets that are not Done/Closed/Merged."""
+        jql = (
+            'assignee = currentUser() '
+            'AND status NOT IN (Done, Closed, Merged, Resolved) '
+            'ORDER BY priority ASC, updated DESC'
+        )
+        data = await self._api_request("POST", "/search/jql", json={
+            "jql": jql,
+            "maxResults": max_results,
+            "fields": ["summary", "status", "assignee", "priority", "issuetype", "components"],
+        })
+        issues = data.get("issues", [])
+        result = []
+        for issue in issues:
+            fields = issue.get("fields", {})
+            result.append({
+                "key": issue["key"],
+                "summary": fields.get("summary", ""),
+                "status": fields.get("status", {}).get("name", ""),
+                "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+                "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+                "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+                "components": [c.get("name", "") for c in fields.get("components", [])],
+                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+            })
+        return result
+
     async def search_issues(self, query: str, max_results: int = 10) -> List[dict]:
         """Search Jira issues using JQL text search."""
         jql = f'text ~ "{query}" ORDER BY updated DESC'
-        data = await self._api_request("GET", "/search", params={
+        data = await self._api_request("POST", "/search/jql", json={
             "jql": jql,
-            "maxResults": str(max_results),
-            "fields": "summary,status,assignee,priority,issuetype",
+            "maxResults": max_results,
+            "fields": ["summary", "status", "assignee", "priority", "issuetype"],
         })
         issues = data.get("issues", [])
         result = []
@@ -557,3 +695,65 @@ class JiraOAuthService:
                 "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
             })
         return result
+
+    # ------------------------------------------------------------------
+    # Issue update operations
+    # ------------------------------------------------------------------
+
+    # Statuses that agents CANNOT transition to — user-only operations
+    BLOCKED_STATUSES = frozenset({"done", "closed", "resolved"})
+
+    async def get_transitions(self, issue_key: str) -> List[dict]:
+        """Get available status transitions for an issue."""
+        data = await self._api_request("GET", f"/issue/{issue_key}/transitions")
+        transitions = []
+        for t in data.get("transitions", []):
+            target_name = t.get("to", {}).get("name", "")
+            transitions.append({
+                "id": t["id"],
+                "name": t["name"],
+                "to_status": target_name,
+                "blocked": target_name.lower() in self.BLOCKED_STATUSES,
+            })
+        return transitions
+
+    async def transition_issue(self, issue_key: str, transition_id: str) -> None:
+        """Transition an issue to a new status.
+
+        Raises RuntimeError if the target status is in BLOCKED_STATUSES.
+        """
+        transitions = await self.get_transitions(issue_key)
+        target = next((t for t in transitions if t["id"] == transition_id), None)
+        if not target:
+            raise RuntimeError(f"Transition {transition_id} not available for {issue_key}")
+        if target["blocked"]:
+            raise RuntimeError(
+                f"Cannot transition {issue_key} to '{target['to_status']}' — "
+                f"Done/Closed/Resolved transitions require manual user action"
+            )
+
+        await self._api_request("POST", f"/issue/{issue_key}/transitions", json={
+            "transition": {"id": transition_id},
+        })
+        logger.info("Jira: transitioned %s via %s → %s", issue_key, transition_id, target["to_status"])
+
+    async def add_comment(self, issue_key: str, body: str) -> dict:
+        """Add a comment to an issue."""
+        adf_body = {
+            "version": 1,
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": body}]},
+            ],
+        }
+        data = await self._api_request("POST", f"/issue/{issue_key}/comment", json={
+            "body": adf_body,
+        })
+        return {
+            "id": data.get("id", ""),
+            "created": data.get("created", ""),
+        }
+
+    async def update_fields(self, issue_key: str, fields: Dict[str, Any]) -> None:
+        """Update arbitrary fields on an issue (priority, labels, components, etc.)."""
+        await self._api_request("PUT", f"/issue/{issue_key}", json={"fields": fields})

@@ -21,6 +21,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 
+/** Structured ticket tag: {provider:KEY} e.g. {jira:DEV-123} */
+const TICKET_TAG_RE = /\{(\w+):([^}]+)\}/;
+/** Bare Jira-style ticket key: PROJECT-123 */
+const TICKET_KEY_RE = /\b[A-Z][A-Z0-9]+-\d+\b/;
+
 export interface WorkspaceTodo {
     /** Stable ID derived from file path + line number. */
     id: string;
@@ -38,6 +43,8 @@ export interface WorkspaceTodo {
     descriptionLine?: number;
     /** Comment prefix detected on the TODO line (e.g. '//', '#', '--'). */
     commentPrefix: string;
+    /** Ticket key extracted from title or description (e.g. 'DEV-123'). */
+    ticketKey?: string;
 }
 
 /** File extensions to scan (text-based source files). */
@@ -138,6 +145,12 @@ function parseFileTodos(filePath: string, content: string): WorkspaceTodo[] {
             }
         }
 
+        // Extract ticket key: prefer structured {jira:DEV-123} tag, fall back to bare DEV-123
+        const ticketSource = description || title;
+        const tagMatch = TICKET_TAG_RE.exec(ticketSource);
+        const bareMatch = TICKET_KEY_RE.exec(ticketSource);
+        const ticketKey = tagMatch ? tagMatch[2] : bareMatch ? bareMatch[0] : undefined;
+
         todos.push({
             id: makeId(filePath, i + 1),
             filePath,
@@ -147,6 +160,7 @@ function parseFileTodos(filePath: string, content: string): WorkspaceTodo[] {
             description,
             descriptionLine,
             commentPrefix,
+            ticketKey,
         });
     }
     return todos;

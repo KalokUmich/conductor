@@ -376,9 +376,17 @@ class JiraTeamEntry(BaseModel):
     name: str
 
 
+class JiraBranchFormats(BaseModel):
+    """Branch naming templates for ticket-linked branches."""
+    feature: str = "feature/{ticket}-{content}"
+    bugfix: str = "bugfix/{ticket}-{content}"
+
+
 class JiraSettings(BaseModel):
     """Jira integration configuration."""
     enabled: bool = False
+    branch_formats: JiraBranchFormats = JiraBranchFormats()
+    allowed_projects: List[str] = []  # filter by project key; empty = show all
     teams: List[JiraTeamEntry] = []
 
 

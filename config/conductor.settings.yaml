@@ -351,6 +351,18 @@ jira:
   # Team UUIDs for customfield_10001 (Atlassian Teams).
   # Find each UUID at: https://team.atlassian.com/people/team/{uuid}
   # The Teams API does not support OAuth 2.0, so we configure them statically here.
+  # Branch naming templates. {ticket} = issue key, {content} = slugified summary.
+  branch_formats:
+    feature: "feature/{ticket}-{content}"
+    bugfix: "bugfix/{ticket}-{content}"
+  # Restrict project list to these keys. Empty list = show all projects.
+  allowed_projects:
+    - DEV    # Development
+    - FN     # Finance
+    - FO     # FinOps
+    - HELP   # Helpdesk
+    - PT     # Pen Testing
+    - REN    # Render
   teams:
     - id: "3b379d3e-9882-424a-93e9-5afa069303f6"
       name: "Platform"
@@ -360,3 +372,11 @@ jira:
       name: "Data Science"
     - id: "f51b8336-878c-44bd-ae22-ec3b37e07668"
       name: "FinOps"
+    - id: "953341fd-d0b3-403d-85ce-5a2b02b2dcc7"
+      name: "Support"
+    - id: "8f86a9e3-c5aa-49f4-92b3-80dc795afae4"
+      name: "Mortgages"
+    - id: "c10aa23e-6973-4b1e-a47d-9bfdcee857db"
+      name: "IT & Security"
+    - id: "93553b1a-50c8-4312-995a-4abaad903daf"
+      name: "Customer Operations"

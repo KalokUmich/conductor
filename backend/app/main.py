@@ -291,9 +291,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if static_teams:
             logger.info("Jira integration: loaded %d static teams from config", len(static_teams))
         app.state.jira_service = jira_service
+        app.state.jira_allowed_projects = set(
+            k.upper() for k in conductor_cfg.jira.allowed_projects
+        )
+        if app.state.jira_allowed_projects:
+            logger.info("Jira integration: project filter = %s", app.state.jira_allowed_projects)
+        # Initialize Jira tools for agent loop
+        from .integrations.jira.tools import init_jira_tools
+        init_jira_tools(jira_service, app.state.jira_allowed_projects)
         logger.info("Jira integration: enabled (redirect=%s)", redirect_uri)
     else:
         app.state.jira_service = None
+        app.state.jira_allowed_projects = set()
         logger.info("Jira integration: disabled")
 
     logger.info("Conducator startup complete.")

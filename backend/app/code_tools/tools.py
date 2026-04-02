@@ -352,6 +352,10 @@ def read_file(
     except OSError as exc:
         return ToolResult(tool_name="read_file", success=False, error=str(exc))
 
+    # Track read state for file_edit/file_write read-before-write checks
+    from .file_edit_tools import record_file_read
+    record_file_read(str(fp), text)
+
     lines = text.split("\n")
     total = len(lines)
 
@@ -4480,6 +4484,17 @@ try:
     TOOL_REGISTRY.update(BROWSER_TOOL_REGISTRY)
 except ImportError:
     logger.debug("Browser tools unavailable (playwright not installed)")
+
+# --- File editing tools ---
+from .file_edit_tools import FILE_EDIT_TOOL_REGISTRY
+TOOL_REGISTRY.update(FILE_EDIT_TOOL_REGISTRY)
+
+# --- Jira integration tools ---
+try:
+    from app.integrations.jira.tools import JIRA_TOOL_REGISTRY
+    TOOL_REGISTRY.update(JIRA_TOOL_REGISTRY)
+except ImportError:
+    logger.debug("Jira tools unavailable")
 
 
 def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
