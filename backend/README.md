@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 24 code tools + token budget controller + 3-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, Jira integration, PostgreSQL-backed persistence (schema managed by Liquibase), and multi-provider AI (Bedrock / Anthropic / OpenAI).
+Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 42 tools + token budget controller + 4-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, Jira integration (OAuth 3LO + 5 agent tools), PostgreSQL-backed persistence (schema managed by Liquibase), and multi-provider AI (Bedrock / Anthropic / OpenAI).
 
 ### Quick Start
 
@@ -68,7 +68,7 @@ Docs:
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/context/query` | LLM agent loop — iteratively calls 24 code tools (supports optional `code_context` for snippet-based queries) |
+| POST | `/api/context/query` | LLM agent loop — iteratively calls 42 tools (supports optional `code_context` for snippet-based queries) |
 | POST | `/api/context/query/stream` | SSE streaming — real-time tool call progress events |
 | GET | `/api/code-tools/available` | List all available code tools |
 | POST | `/api/code-tools/execute/{tool_name}` | Directly execute a single code tool |
@@ -84,14 +84,14 @@ python -m app.code_tools grep /path/to/workspace '{"pattern": "authenticate"}'
 python -m app.code_tools file_outline /path/to/workspace '{"path": "src/auth.py"}'
 ```
 
-The `code_tools/__main__.py` module is invoked by the VS Code extension's `pythonCliRunner.ts` to execute the 7 "complex" tools that require Python (ast_search, trace_variable, compressed_view, module_summary, test_outline, find_todo, detect_patterns).
+The `code_tools/__main__.py` module is invoked by the VS Code extension's local tool dispatcher to execute tools via subprocess (all 42 tools are available via this CLI).
 
 #### Workflow Engine (`/api/workflows/`)
 
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/workflows` | List available workflows (name, description, route_mode, agent count) |
-| GET | `/api/workflows/{name}` | Full workflow config (agents, routes, pipeline, classifier) |
+| GET | `/api/workflows/{name}` | Full workflow config (agents, routes, pipeline) |
 | GET | `/api/workflows/{name}/mermaid` | Auto-generated Mermaid flowchart |
 | GET | `/api/workflows/{name}/graph` | React Flow-compatible graph JSON (nodes + edges) |
 | PUT | `/api/workflows/{name}/models` | Update explorer/judge model assignments |
@@ -170,9 +170,9 @@ The `code_tools/__main__.py` module is invoked by the VS Code extension's `pytho
 
 ### Agentic Code Intelligence
 
-`POST /api/context/query` runs an LLM agent loop (up to **25 iterations**, **500K token budget**). The Query Classifier categorises the query into one of 7 types and selects an optimal 8-12 tool subset. A 3-layer system prompt is injected following Anthropic's prompt design guidelines (goal-oriented, not prescriptive): Core Identity (investigation guidance, ~30 lines) + optional Strategy (structured output for `code_review` only) + Runtime Guidance (budget signal, iteration count). Key principle: tell the model WHAT to achieve, not HOW to do it step by step — Claude's autonomous reasoning outperforms hand-written exploration scripts. A token-based Budget Controller emits NORMAL / WARN_CONVERGE / FORCE_CONCLUDE signals. An Evidence Evaluator rejects weak answers before finalising. Session Traces are saved as JSON for offline analysis.
+`POST /api/context/query` runs an LLM agent loop (up to **25 iterations**, **800K token budget**). The Query Classifier categorises the query into one of 11 types and selects an optimal tool subset from 42 tools. A 4-layer system prompt is injected following Anthropic's prompt design guidelines (goal-oriented, not prescriptive): Identity (agent persona) + Tools (curated per query type) + Skills & Guidelines (workspace context, investigation methodology) + User Message (query + code context). Key principle: tell the model WHAT to achieve, not HOW to do it step by step — Claude's autonomous reasoning outperforms hand-written exploration scripts. A token-based Budget Controller emits NORMAL / WARN_CONVERGE / FORCE_CONCLUDE signals. An Evidence Evaluator rejects weak answers before finalising. Session Traces are saved as JSON for offline analysis.
 
-**24 code tools:**
+**42 tools** (code + file-edit + Jira + browser):
 
 | Tool | Description |
 |------|-------------|
@@ -198,6 +198,26 @@ The `code_tools/__main__.py` module is invoked by the VS Code extension's `pytho
 | `module_summary` | Module-level summary: services, models, functions, file list (~95% savings) |
 | `expand_symbol` | Expand a symbol from compressed view to full source code |
 | `run_test` | Execute a test file or specific test function; returns pass/fail + output (optional verification) |
+| `glob` | Fast file pattern matching (e.g. `**/*.ts`) |
+| `detect_patterns` | Architectural pattern detection (singleton, factory, observer, etc.) |
+| `git_diff_files` | List changed files between two git refs |
+| `git_hotspots` | Files with most recent churn (changes × authors) |
+| `list_endpoints` | Extract API route definitions (Flask, FastAPI, Express, etc.) |
+| `extract_docstrings` | Extract docstrings from a module's functions/classes |
+| `db_schema` | Database schema introspection (SQLAlchemy models) |
+| `file_edit` | Partial file edit via search-and-replace (read_file required first) |
+| `file_write` | Full file write/create (read_file required for existing files) |
+| `jira_search` | Search Jira issues (JQL or free text; shortcuts: "my tickets", "my sprint", "blockers") |
+| `jira_get_issue` | Fetch full Jira issue details (description, comments, subtasks) |
+| `jira_create_issue` | Create Jira ticket with ADF description, code block support, parent_key for sub-tasks |
+| `jira_update_issue` | Update Jira issue (transitions, comments, fields, labels; Done/Closed/Resolved blocked) |
+| `jira_list_projects` | List accessible Jira projects |
+| `web_search` | Web search via Playwright |
+| `web_navigate` | Navigate to URL in headless browser |
+| `web_click` | Click element on page |
+| `web_fill` | Fill form field |
+| `web_screenshot` | Capture page screenshot |
+| `web_extract` | Extract page content |
 
 ### AI Provider Notes
 
@@ -298,14 +318,13 @@ Key test files (agentic code intelligence):
 
 | File | Tests | Coverage |
 |------|-------|----------|
-| `tests/test_code_tools.py` | 98 | All 24 code tools + dispatcher + multi-language |
-| `tests/test_agent_loop.py` | 47 | Agent loop + message format + workspace layout + 3-layer prompt + completeness |
+| `tests/test_code_tools.py` | 139 | All 42 tools + dispatcher + multi-language |
+| `tests/test_agent_loop.py` | 55 | Agent loop + message format + workspace layout + 4-layer prompt + completeness |
 | `tests/test_budget_controller.py` | 20 | Token budget signals, tracking, edge cases |
 | `tests/test_session_trace.py` | 15 | SessionTrace, IterationTrace, save/load |
 | `tests/test_evidence.py` | 14 | Evidence evaluator (file refs, tool calls, budget checks) |
 | `tests/test_symbol_role.py` | 24 | Symbol role classification + sorting + decorator detection |
 | `tests/test_output_policy.py` | 19 | Per-tool truncation policies, budget adaptation |
-| `tests/test_query_classifier.py` | 26 | Keyword + LLM classification, dynamic tool sets |
 | `tests/test_compressed_tools.py` | 24 | compressed_view, module_summary, expand_symbol |
 | `tests/test_langextract.py` | 57 | Bedrock provider, catalog, service, router |
 | `tests/test_repo_graph.py` | 72 | Parser + graph + PageRank + RepoMapService |
@@ -369,7 +388,7 @@ python ../eval/tool_parity/run.py --compare
 <a name="中文"></a>
 ## 中文
 
-Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 24 个代码工具 + Token 预算控制器 + 三层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、Jira 集成、PostgreSQL 持久化（Liquibase 管理表结构），以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
+Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 42 个工具 + Token 预算控制器 + 四层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、Jira 集成（OAuth 3LO + 5 个 Agent 工具）、PostgreSQL 持久化（Liquibase 管理表结构），以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
 
 ### 快速启动
 
@@ -430,7 +449,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 | Method | Path | 说明 |
 |---|---|---|
-| POST | `/api/context/query` | LLM Agent Loop — 迭代调用 24 个代码工具回答代码查询（最多 25 轮 / 500K token） |
+| POST | `/api/context/query` | LLM Agent Loop — 迭代调用 42 个工具回答代码查询（最多 25 轮 / 800K token） |
 | POST | `/api/context/query/stream` | SSE 流式接口 — 实时工具调用进度事件 |
 | GET | `/api/code-tools/available` | 列出所有可用代码工具 |
 | POST | `/api/code-tools/execute/{tool_name}` | 直接执行单个代码工具 |
@@ -446,7 +465,7 @@ python -m app.code_tools grep /path/to/workspace '{"pattern": "authenticate"}'
 python -m app.code_tools compressed_view /path/to/workspace '{"path": "src/auth.py"}'
 ```
 
-Extension 的 `pythonCliRunner.ts` 通过此 CLI 执行 7 个复杂工具（ast_search、trace_variable、compressed_view、module_summary、test_outline 等）。
+Extension 的本地工具调度器通过此 CLI 以子进程方式执行工具（全部 42 个工具均可通过此 CLI 访问）。
 
 #### Git 工作区（`/api/git-workspace/`）
 
@@ -507,9 +526,9 @@ Extension 的 `pythonCliRunner.ts` 通过此 CLI 执行 7 个复杂工具（ast_
 
 ### 智能代码分析
 
-`POST /api/context/query` 运行 LLM Agent Loop（最多 25 轮迭代，500K token 预算）。QueryClassifier 将查询分类为 7 种类型并选出最优 8-12 工具子集。注入三层 System Prompt（遵循 Anthropic 提示词设计规范：目标导向，非逐步脚本）：核心身份（调查引导，约 30 行）+ 可选策略（仅 `code_review` 使用结构化输出模板）+ 运行时指导（预算信号、迭代次数）。核心原则：告诉模型要达成什么目标，而非如何逐步执行——Claude 的自主推理优于手写的探索策略。BudgetController 发出 NORMAL / WARN_CONVERGE / FORCE_CONCLUDE 信号。EvidenceEvaluator 在最终输出前拒绝证据不足的答案。Session Trace 以 JSON 保存供离线分析。
+`POST /api/context/query` 运行 LLM Agent Loop（最多 25 轮迭代，800K token 预算）。QueryClassifier 将查询分类为 11 种类型并从 42 个工具中选出最优子集。注入四层 System Prompt（遵循 Anthropic 提示词设计规范：目标导向，非逐步脚本）：身份（Agent 人格）+ 工具（按查询类型精选）+ 技能与指南（工作区上下文、调查方法论）+ 用户消息（查询 + 代码上下文）。核心原则：告诉模型要达成什么目标，而非如何逐步执行——Claude 的自主推理优于手写的探索策略。BudgetController 发出 NORMAL / WARN_CONVERGE / FORCE_CONCLUDE 信号。EvidenceEvaluator 在最终输出前拒绝证据不足的答案。Session Trace 以 JSON 保存供离线分析。
 
-**24 个代码工具：**
+**42 个工具**（代码 + 文件编辑 + Jira + 浏览器）：
 
 | 工具 | 说明 |
 |------|------|
@@ -535,6 +554,26 @@ Extension 的 `pythonCliRunner.ts` 通过此 CLI 执行 7 个复杂工具（ast_
 | `module_summary` | 模块级摘要：服务、模型、函数、文件列表（节省约 95% token） |
 | `expand_symbol` | 将压缩视图中的符号展开为完整源码 |
 | `run_test` | 执行测试文件或指定测试函数；返回通过/失败 + 输出（可选验证步骤） |
+| `glob` | 快速文件模式匹配（如 `**/*.ts`） |
+| `detect_patterns` | 架构模式检测（单例、工厂、观察者等） |
+| `git_diff_files` | 列出两个 git ref 之间变更的文件 |
+| `git_hotspots` | 最近变更热点文件（变更次数 × 作者数） |
+| `list_endpoints` | 提取 API 路由定义（Flask、FastAPI、Express 等） |
+| `extract_docstrings` | 提取模块中函数/类的文档字符串 |
+| `db_schema` | 数据库 Schema 内省（SQLAlchemy 模型） |
+| `file_edit` | 部分文件编辑（搜索替换，需先 read_file） |
+| `file_write` | 完整文件写入/创建（已存在文件需先 read_file） |
+| `jira_search` | 搜索 Jira Issue（JQL 或自由文本；快捷方式：my tickets / my sprint / blockers） |
+| `jira_get_issue` | 获取 Jira Issue 完整详情（描述、评论、子任务） |
+| `jira_create_issue` | 创建 Jira Ticket（ADF 描述、代码块、parent_key 创建子任务） |
+| `jira_update_issue` | 更新 Jira Issue（状态转换、评论、字段、标签；Done/Closed/Resolved 被阻止） |
+| `jira_list_projects` | 列出可访问的 Jira 项目 |
+| `web_search` | 网页搜索（Playwright） |
+| `web_navigate` | 无头浏览器导航到 URL |
+| `web_click` | 点击页面元素 |
+| `web_fill` | 填写表单字段 |
+| `web_screenshot` | 截取页面截图 |
+| `web_extract` | 提取页面内容 |
 
 ### AI Provider 说明
 
@@ -587,14 +626,13 @@ pytest --cov=. --cov-report=html   # 覆盖率报告
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|----------|
-| `test_code_tools.py` | 98 | 全部 24 个工具 + 调度器 + 多语言 |
-| `test_agent_loop.py` | 47 | Agent Loop + 三层 Prompt + 工作区布局 + 完整性检查 |
+| `test_code_tools.py` | 139 | 全部 42 个工具 + 调度器 + 多语言 |
+| `test_agent_loop.py` | 55 | Agent Loop + 四层 Prompt + 工作区布局 + 完整性检查 |
 | `test_budget_controller.py` | 20 | Token 预算信号、追踪、边界情况 |
 | `test_session_trace.py` | 15 | SessionTrace JSON 保存/加载 |
 | `test_evidence.py` | 14 | 证据评估器质量门控 |
 | `test_symbol_role.py` | 24 | 符号角色分类 + 装饰器检测 |
 | `test_output_policy.py` | 19 | 每工具截断策略、预算自适应 |
-| `test_query_classifier.py` | 26 | 关键词 + LLM 分类、动态工具集 |
 | `test_compressed_tools.py` | 24 | compressed_view、module_summary、expand_symbol |
 | `test_langextract.py` | 57 | Bedrock Provider、Catalog、Service、Router |
 | `test_repo_graph.py` | 72 | Parser + 依赖图 + PageRank + Service |

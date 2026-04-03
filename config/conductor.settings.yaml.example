@@ -12,12 +12,20 @@
 # Server Configuration
 # =============================================================================
 server:
-  # Backend server host and port
-  host: "localhost"
+  host: "0.0.0.0"
   port: 8000
-  
+  debug: false
+  reload: false
+  log_level: "info"
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:3001"
+    - "http://localhost:5173"
+    - "vscode-webview://*"
+
   # Public URL for external access (set by ngrok or other tunnel service)
-  # Leave empty to use localhost
+  # When ngrok is enabled, the live tunnel URL takes priority over this value.
+  # Leave empty to use localhost (only works when NOT in VS Code Remote-WSL).
   public_url: ""
 
 # =============================================================================
@@ -27,26 +35,77 @@ server:
 ngrok:
   # Region (us, eu, ap, au, sa, jp, in)
   region: "us"
-  
+
   # Enable ngrok tunnel on startup
+  enabled: false
+
+# =============================================================================
+# PostgreSQL (OLTP — credentials in conductor.secrets.yaml)
+# Env var DATABASE_URL overrides the built URL entirely.
+# =============================================================================
+postgres:
+  host: "localhost"
+  port: 5432
+  database: "conductor"
+  pool_size: 10
+  max_overflow: 20
+
+# =============================================================================
+# Redis (chat state — credentials in conductor.secrets.yaml)
+# Env var REDIS_URL overrides the built URL entirely.
+# =============================================================================
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  prefix: "conductor:"
+
+# =============================================================================
+# Authentication
+# =============================================================================
+auth:
+  token_expire_minutes: 60
+  refresh_expire_days: 7
+  require_email_verify: false
+
+# =============================================================================
+# Rooms
+# =============================================================================
+rooms:
+  max_participants: 50
+  max_rooms_per_user: 10
+  session_timeout_minutes: 120
+  enable_persistence: true
+
+# =============================================================================
+# AWS SSO Configuration
+# =============================================================================
+# Enable SSO login for user identification via AWS IAM Identity Center.
+sso:
+  enabled: false
+  start_url: "https://d-xxxxxxxxxx.awsapps.com/start"
+  region: "us-east-1"
+
+# =============================================================================
+# Google SSO Configuration
+# =============================================================================
+# Requires client_id and client_secret in conductor.secrets.yaml.
+google_sso:
   enabled: false
 
 # =============================================================================
 # AI Summary Configuration
 # =============================================================================
 summary:
-  # Enable AI-powered summarization feature
   enabled: true
-  
-  # Default model to use for summarization
   # Must match an id from ai_models below
-  default_model: "claude-sonnet-4-anthropic"
+  default_model: "claude-sonnet-4-6-bedrock"
 
 # =============================================================================
 # AI Provider Settings
 # =============================================================================
 # Enable/disable providers. Even if enabled here, providers need valid API keys
-# in conductor.secrets.yaml to function. UI will show grayed out if unavailable.
+# in conductor.secrets.yaml to function.
 ai_provider_settings:
   anthropic_enabled: true
   aws_bedrock_enabled: true
@@ -60,32 +119,35 @@ ai_provider_settings:
 # Define available models for each provider.
 # Only models for enabled providers with valid API keys will be usable.
 #
-# Note for AWS Bedrock:
-# - Some models (like Claude Sonnet 4) only support cross-region inference
-# - Use the inference profile ID format: us.anthropic.claude-sonnet-4-20250514-v1:0
-# - Or use models that support single-region: anthropic.claude-3-haiku-20240307-v1:0
+# Special flags:
+#   explorer: true    — Can be used as sub-agent model
+#   explorer: true    — Can be used as sub-agent model
 ai_models:
-  - id: "claude-sonnet-4-anthropic"
-    provider: "anthropic"
-    model_name: "claude-sonnet-4-20250514"
-    display_name: "Claude Sonnet 4 (Anthropic)"
-    enabled: true
-
-  - id: "claude-sonnet-4-bedrock"
+  # ---- Claude (Bedrock) ----
+  - id: "claude-sonnet-4-6-bedrock"
     provider: "aws_bedrock"
-    model_name: "us.anthropic.claude-sonnet-4-20250514-v1:0"
-    display_name: "Claude Sonnet 4 (Bedrock Cross-Region)"
-    enabled: false  # Requires Converse API support
+    model_name: "eu.anthropic.claude-sonnet-4-6"
+    display_name: "Claude Sonnet 4.6 (Bedrock EU)"
+    enabled: true
+    explorer: true
+
 
   - id: "claude-haiku-4-5-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
     display_name: "Claude Haiku 4.5 (Bedrock EU)"
     enabled: true
-    classifier: true  # fast + cheap — good for query pre-classification
-    explorer: true    # good sub-agent — strong instruction following, no thinking override needed
-    litellm: true
 
+    explorer: true
+
+  # ---- Claude (Anthropic Direct) ----
+  - id: "claude-sonnet-4-anthropic"
+    provider: "anthropic"
+    model_name: "claude-sonnet-4-20250514"
+    display_name: "Claude Sonnet 4 (Anthropic)"
+    enabled: true
+
+  # ---- OpenAI ----
   - id: "gpt-4o"
     provider: "openai"
     model_name: "gpt-4o"
@@ -97,6 +159,7 @@ ai_models:
     model_name: "gpt-4o-mini"
     display_name: "GPT-4o Mini"
     enabled: true
+
 
   # ---- Alibaba / Qwen (DashScope, OpenAI-compatible) ----
   # Requires alibaba_enabled: true and a DashScope API key in secrets
@@ -111,13 +174,15 @@ ai_models:
     model_name: "qwen3.5-plus"
     display_name: "Qwen3.5 Plus (DashScope)"
     enabled: true
+    explorer: true
 
   - id: "qwen3.5-flash"
     provider: "alibaba"
     model_name: "qwen3.5-flash"
     display_name: "Qwen3.5 Flash (DashScope)"
     enabled: true
-    classifier: true  # very fast + cheap — ideal for query pre-classification
+
+    explorer: true
 
   - id: "qwen3-coder-plus"
     provider: "alibaba"
@@ -131,6 +196,8 @@ ai_models:
     display_name: "Qwen3 Coder Flash (DashScope)"
     enabled: true
 
+    explorer: true
+
   # ---- Moonshot / Kimi (OpenAI-compatible) ----
   # Requires moonshot_enabled: true and a Moonshot API key in secrets
   - id: "kimi-k2.5"
@@ -139,35 +206,11 @@ ai_models:
     display_name: "Kimi K2.5 (Moonshot)"
     enabled: true
 
-  - id: "kimi-k2-thinking"
-    provider: "moonshot"
-    model_name: "kimi-k2-thinking"
-    display_name: "Kimi K2 Thinking (Moonshot)"
-    enabled: true
-
 # =============================================================================
-# AWS SSO Configuration
+# Prompt Configuration
 # =============================================================================
-# Enable SSO login for user identification via AWS IAM Identity Center.
-# Users can sign in before starting/joining a session.
-sso:
-  # Enable SSO login button in the extension
-  enabled: false
-
-  # Your AWS SSO portal start URL (from IAM Identity Center settings)
-  start_url: "https://d-xxxxxxxxxx.awsapps.com/start"
-
-  # AWS region where your IAM Identity Center is configured
-  region: "us-east-1"
-
-# =============================================================================
-# Google SSO Configuration
-# =============================================================================
-# Enable Google OAuth SSO login for user identification.
-# Requires client_id and client_secret in conductor.secrets.yaml.
-google_sso:
-  # Enable Google SSO login button in the extension
-  enabled: false
+prompt:
+  output_mode: "unified_diff"
 
 # =============================================================================
 # Change Limits Configuration
@@ -182,22 +225,8 @@ change_limits:
 # Logging Configuration
 # =============================================================================
 logging:
-  # Enable audit logging
   audit_enabled: true
-
-  # Path to audit log database file
-  audit_path: "audit_logs.db"
-
-# =============================================================================
-# Prompt Configuration
-# =============================================================================
-# Controls how the code generation prompt is formatted.
-# output_mode options:
-#   "unified_diff"       - Provide changes as unified diff patches (default)
-#   "direct_repo_edits"  - Provide complete file contents
-#   "plan_then_diff"     - Provide implementation plan, then diffs
-prompt:
-  output_mode: "unified_diff"
+  audit_path: "backend/audit_logs.db"
 
 # =============================================================================
 # Git Workspace Settings
@@ -210,3 +239,43 @@ git_workspace:
   max_worktrees_per_repo: 20
   cleanup_on_room_close: true
 
+# =============================================================================
+# Session Trace Settings
+# =============================================================================
+# Records per-query metrics (tokens, latencies, tool calls) for offline analysis.
+trace:
+  enabled: true
+  backend: "database"                       # "local" (JSON files) or "database" (Postgres)
+  local_path: ".conductor/session_traces"   # fallback when database is unavailable
+
+# =============================================================================
+# Langfuse Observability
+# =============================================================================
+# Self-hosted Langfuse via: make langfuse-up  (http://localhost:3001)
+# User/org/project are auto-provisioned on first startup (see docker/.env).
+# Dev defaults — add these to conductor.secrets.yaml:
+#   langfuse:
+#     public_key: "pk-lf-conductor-dev"
+#     secret_key: "sk-lf-conductor-dev"
+# Login: admin@conductor.dev / conductor
+langfuse:
+  enabled: true
+  host: "http://localhost:3001"
+
+# =============================================================================
+# Jira Integration
+# =============================================================================
+# Atlassian OAuth 2.0 (3LO) for Jira Cloud.
+# Create an OAuth 2.0 app at https://developer.atlassian.com/console/myapps/
+# Set callback URL to: {your_backend_url}/api/integrations/jira/callback
+# client_id and client_secret go in conductor.secrets.yaml
+jira:
+  enabled: true
+  branch_formats:
+    feature: "feature/{ticket}-{content}"
+    bugfix: "bugfix/{ticket}-{content}"
+  # Restrict project list to these keys. Empty list = show all projects.
+  allowed_projects: []
+  # Team UUIDs for customfield_10001 (Atlassian Teams).
+  # Find each UUID at: https://team.atlassian.com/people/team/{uuid}
+  teams: []

@@ -22,13 +22,21 @@ extension/src/
 │   ├── astToolRunner.ts                # 6 AST tools via web-tree-sitter
 │   ├── treeSitterService.ts            # web-tree-sitter WASM wrapper (8 languages)
 │   ├── complexToolRunner.ts            # 6 complex tools (compressed_view, trace_variable, etc.)
+│   ├── fileEditRunner.ts               # file_edit + file_write tools (read-before-write enforcement)
+│   ├── ticketProvider.ts               # ITicketProvider interface + JiraTicketProvider (batch status, my tickets)
+│   ├── todoScanner.ts                  # Workspace TODO scanner ({jira:TICKET#N|after:M|blocked:OTHER} deps, //+ continuations, 43+ file types)
+│   ├── jiraAuthService.ts              # Jira OAuth URI handler + connection state management
+│   ├── jiraTokenStore.ts               # Local Jira token persistence (SecretStorage + .conductor/jira.json)
 │   └── chatLocalStore.ts               # Local message cache (IndexedDB via VS Code globalState)
 └── commands/index.ts
 
 extension/media/
-├── chat.html      # Main WebView — @AI /ask /pr slash commands, Workflows tab
+├── chat.html      # Main WebView — @AI /ask /pr /jira slash commands, Workflows tab
 │                  # Online mode room list, renderMessageByType, Highlight.js syntax highlighting
 │                  # chatLocalStore integration, mermaid with raw-source fallback
+│                  # Backlog: 3-section (Linked/Code/Jira) + AI Working Space + drag-and-drop
+│                  # Task Board: dependency gating (blocked items grayed), Epic grouping (mine=green/unassigned=orange)
+│                  # Jira: ticket creation modal, component multi-select, ticket key auto-linking
 └── workflow.html  # Workflow visualization — SVG graph + agent detail panel
 
 extension/media/highlight.min.js    # Bundled Highlight.js 11.9.0 (no CDN dependency)

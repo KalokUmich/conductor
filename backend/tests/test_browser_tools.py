@@ -453,37 +453,3 @@ class TestBrowserToolRegistry:
 # ---------------------------------------------------------------------------
 
 
-class TestWebBrowsingClassifier:
-    """Verify web_browsing query type is defined."""
-
-    def test_web_browsing_query_type_exists(self):
-        from app.agent_loop.query_classifier import QUERY_TYPES
-
-        assert "web_browsing" in QUERY_TYPES
-
-    def test_web_browsing_includes_browser_tools(self):
-        from app.agent_loop.query_classifier import QUERY_TYPES
-
-        tools = QUERY_TYPES["web_browsing"]["tools"]
-        for name in ["web_search", "web_navigate", "web_click", "web_fill", "web_screenshot", "web_extract"]:
-            assert name in tools, f"{name} missing from web_browsing tool set"
-
-    def test_investigative_query_types_include_browser_tools(self):
-        from app.agent_loop.query_classifier import QUERY_TYPES
-
-        investigative = [
-            "business_flow_tracing", "root_cause_analysis",
-            "architecture_question", "data_lineage",
-        ]
-        for qt in investigative:
-            tools = QUERY_TYPES[qt]["tools"]
-            assert "web_search" in tools, f"web_search missing from {qt}"
-            assert "web_navigate" in tools, f"web_navigate missing from {qt}"
-
-    def test_precision_query_types_exclude_browser_tools(self):
-        from app.agent_loop.query_classifier import QUERY_TYPES
-
-        precision = ["entry_point_discovery", "config_analysis", "code_review", "recent_changes"]
-        for qt in precision:
-            tools = QUERY_TYPES[qt]["tools"]
-            assert "web_search" not in tools, f"web_search should not be in {qt}"

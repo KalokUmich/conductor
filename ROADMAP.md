@@ -22,9 +22,9 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
   - Workspace code search (`GET /workspace/{room_id}/search`)
 - **Agentic Code Intelligence**:
   - `AgentLoopService` — LLM-driven iterative tool loop (up to 25 iterations, 500K token budget)
-  - 24 code tools: `grep`, `read_file`, `list_files`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log` (+ `search=`), `git_diff`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `run_test`
-  - 3-layer system prompt: Core Identity + Strategy (by query type) + Runtime Guidance
-  - Query classifier: keyword matching (default) or LLM pre-classification (Haiku)
+  - 42 tools across 3 registries: 31 code tools (grep, read_file, list_files, glob, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff, git_diff_files, ast_search, get_callees, get_callers, git_blame, git_show, git_hotspots, find_tests, test_outline, trace_variable, compressed_view, module_summary, expand_symbol, detect_patterns, run_test, list_endpoints, extract_docstrings, db_schema, file_edit, file_write) + 5 Jira tools + 6 browser tools
+  - 4-layer system prompt: Identity + Tools + Skills & Guidelines + User Message
+  - Query classifier: removed (superseded by Brain orchestrator)
   - Dynamic tool sets: 8-12 tools per query type (reduces LLM confusion)
   - Token-based budget controller with convergence signals
   - `trace_variable` — data flow tracing with alias detection, argument→parameter mapping, sink/source patterns
@@ -225,17 +225,10 @@ Optimizations guided by OpenAI review and academic research (ICLR 2026, MutaGReP
 - [x] Updated `load_settings()` log message to remove embedding/rerank references
 - [x] Updated test suite: `test_config_new.py` rewritten to match cleaned config
 
-#### Query Classifier + LLM Pre-Classification (COMPLETE)
-- [x] Keyword-based classification into 7 query types (entry_point, flow_tracing, root_cause, impact, architecture, config, data_lineage)
-- [x] Per-type strategy suggestion, initial tool hints, and token budget recommendation
-- [x] Classification result injected into initial user message for LLM guidance
-- [x] Integrated into `AgentLoopService.run_stream()` alongside existing `_is_high_level_query`
-- [x] Optional LLM pre-classification via `classify_query_with_llm()` using lightweight model (Haiku) — ~100ms, ~$0.001 per call
-- [x] Configurable in `conductor.settings.yaml` via `classifier.use_llm` and `classifier.model_id`
-- [x] Falls back to keyword matching on LLM failure
-- [x] Dynamic tool set per query type — only 8-12 of 24 tools exposed to LLM (reduces confusion and token waste)
-- [x] `filter_tools()` helper in `schemas.py` for tool set filtering
-- [x] 26 tests in `test_query_classifier.py` (keyword, LLM mock, tool_set, filter_tools)
+#### Query Classifier (SUPERSEDED — removed 2026-04-03)
+- Replaced entirely by Brain orchestrator. Brain makes dispatch decisions via LLM reasoning,
+  not keyword/LLM pre-classification. All classifier code, tests, config flags, and API endpoints removed.
+  See `backend/app/agent_loop/brain.py` for the current dispatch mechanism.
 
 #### Compressed View Tools (COMPLETE)
 - [x] `compressed_view` tool — file signatures + call relationships + side effects + raises (~80% token savings vs read_file)
@@ -670,42 +663,51 @@ User: "@AI /jira what's the status of the auth refactor?"
 - [x] `allowed_projects` setting filter (DEV, FN, FO, HELP, PT, REN)
 - [x] Static teams config (Platform, UPL, Data Science, FinOps, Support, Mortgages, IT & Security, Customer Operations)
 
-#### 7.7.2 Smart Ticket Creation (IN PROGRESS)
+#### 7.7.2 Smart Ticket Creation (COMPLETE)
 - [x] Complexity assessment: Small→Task, Medium→Epic+sub-tasks, Large→Project (in agent config)
 - [x] `parent_key` field for creating sub-tasks under Epics
 - [x] ADF description with code block support
-- [ ] Wire `/jira create` slash command → Brain dispatch → jira_assistant agent
-- [ ] ask_user confirmation with pre-filled preview before creation
-- [ ] Return clickable ticket link in chat after creation
+- [x] `/jira create` slash command → `[jira] Create...` transform → Brain dispatch → issue_tracking skill agent
+- [x] ask_user confirmation guided by skill prompt (agent must confirm before `jira_create_issue`)
+- [x] Clickable ticket link: agent returns `browse_url`, auto-linked by Jira key linkifier in chat
 
-#### 7.7.3 Ticket Consultation (PLANNED)
+#### 7.7.3 Ticket Consultation (COMPLETE)
 - [x] `jira_get_issue` tool with full details (description, comments, subtasks)
-- [ ] Wire `/jira PROJ-123` → agent fetches ticket + reads related code → explains approach
-- [ ] Chat rendering: ticket detail card with status badge, priority, components
+- [x] `/jira PROJ-123` → transform → Brain dispatch → agent fetches ticket + reads related code → explains approach
+- [x] Skill prompt defines structured output format: ticket header (status/priority/assignee/components) + code mapping + suggested approach
+- [x] Jira ticket keys auto-linked to Jira site in chat (inlineFormat linkifier)
 
-#### 7.7.4 Status Query & Search (PLANNED)
+#### 7.7.4 Status Query & Search (COMPLETE)
 - [x] `jira_search` tool with JQL auto-detection vs free text
-- [ ] Convenience queries: "my tickets", "my sprint", "blockers"
-- [ ] Priority view: group by priority
-- [ ] Workload summary with suggested focus
-- [ ] Compact summary cards in chat
+- [x] "my tickets" convenience query — `/api/integrations/jira/undone` endpoint + `fetchMyTickets()`
+- [x] Convenience JQL shortcuts in `jira_search`: "my tickets", "my sprint", "blockers" → auto-expand
+- [x] Query classifier keywords: "my tickets", "my sprint", "blockers", "blocked", "workload"
+- [x] `/jira` slash commands: `my tickets`, `my sprint`, `blockers`, `workload` transforms
+- [x] Skill prompt defines priority-grouped output format with suggested focus
+- [x] Brain prompt examples for CONSULT and SEARCH intents
+- [x] Budget: issue_tracking skill 500K tokens, model="strong" (Sonnet)
 
-#### 7.7.5 Ticket Update (PLANNED)
-- [ ] `jira_update_issue` tool — status transitions, comments, field changes
-- [ ] `PUT /api/integrations/jira/issue/{key}` endpoint
-- [ ] ask_user confirmation before any write operation
+#### 7.7.5 Ticket Update (COMPLETE)
+- [x] `jira_update_issue` tool — status transitions, comments, field changes, labels
+- [x] Service `update_fields()` method for arbitrary field updates via Jira REST API
+- [x] Safety: Done/Closed/Resolved transitions blocked (tool + service + router 403)
+- [x] ask_user confirmation documented in tool description (agent-enforced)
 
-#### 7.7.6 Direct `/jira` Agent Dispatch (PLANNED)
-- [ ] `/jira` slash command bypasses Brain, directly starts jira_assistant agent
-- [ ] Saves one LLM round-trip vs Brain dispatch
-- [ ] Natural language Jira queries still go through Brain → dispatch
+#### 7.7.6 Direct `/jira` Agent Dispatch (DROPPED)
+Brain classification accuracy is sufficient to route Jira intents correctly — no bypass needed.
 
-#### 7.7.7 TODO ↔ Ticket Bidirectional Sync (PLANNED)
+#### 7.7.7 TODO ↔ Ticket Bidirectional Sync (COMPLETE)
 Generic ticket system integration — designed to work with Jira now, extensible to other systems.
 
-- [ ] `ticketing.enabled` setting switch — controls visibility of all sync UI
-- [ ] `ITicketProvider` interface — abstract ticket fetch/status check (Jira implements first)
-- [ ] TODO scanner: detect ticket key pattern in `TODO_DESC` (e.g. `DEV-123`)
+- [x] `ticketing.enabled` setting switch (JiraSettings.enabled in config.py)
+- [x] `ITicketProvider` interface — abstract ticket fetch/status check (ticketProvider.ts)
+- [x] `JiraTicketProvider` implementation — batch status fetch via JQL, fallback individual fetch
+- [x] TODO scanner: detect `{jira:KEY}` tags + bare ticket key patterns in TODO/TODO_DESC
+- [x] 3-section Backlog UI: Linked (TODO+Jira) / Code TODOs / Jira Tickets + AI Working Space
+- [x] Drag-and-drop: linked items → AI Working Space
+- [x] `updateWorkspaceTodoInFile()` — edit TODO in source preserving indentation/prefix
+- [x] `/api/integrations/jira/undone` endpoint — current user's non-Done tickets
+- [x] 93 unit tests (ticketProvider.test.ts)
 - [ ] On TODO load with ticket key + valid token → fetch status from provider
   - [ ] Status = Done → show "Jira says complete, confirm to remove TODO?" prompt
   - [ ] User confirms → delete TODO + TODO_DESC lines via `updateWorkspaceTodoInFile`
@@ -715,10 +717,10 @@ Generic ticket system integration — designed to work with Jira now, extensible
   - [ ] User clicks → Brain analyses code context → jira_assistant creates ticket
   - [ ] Ticket key written back to `TODO_DESC` via `updateWorkspaceTodoInFile`
 
-#### 7.7.8 Ticket Creation UI Enhancement (PLANNED)
-- [ ] Component multi-select (chip/tag UI, replace single `<select>`)
-- [ ] Ticket preview/edit confirmation modal before submit
-- [ ] agent pre-fills all fields, user can edit any before confirming
+#### 7.7.8 Ticket Creation UI Enhancement (COMPLETE)
+- [x] Component multi-select (chip/tag UI with dropdown filtering)
+- [x] Ticket preview/edit confirmation modal before submit (`.jira-modal-overlay`)
+- [x] `showJiraModal(prefill)` — agent pre-fills all fields, user can edit before confirming
 
 #### Design Principles
 - **Agent-first**: agent fills as much as possible, only asks user when genuinely uncertain
@@ -727,14 +729,36 @@ Generic ticket system integration — designed to work with Jira now, extensible
 - **Safe**: all write operations (create, update) require ask_user confirmation
 - **Generic**: ticket integration abstracted behind `ITicketProvider` for future systems (Linear, GitHub Issues, Azure DevOps)
 
-#### 7.7.9 Cross-Workspace Investigation (PLANNED)
+#### 7.7.9 TODO Dependency System + Epic Grouping (COMPLETE — 2026-04-03)
+
+**TODO Dependency Markers:**
+- [x] Extended TODO format: `{jira:TICKET#N|after:M|blocked:OTHER}` for intra-ticket and cross-ticket dependencies
+- [x] `//+` continuation lines for multi-line TODO_DESC
+- [x] `{jira:PARENT>CHILD#N}` parent-child (Epic>Ticket) syntax
+- [x] `todoScanner.ts`: full dependency parsing (changeNumber, afterDeps, blockedBy, parentTicket)
+- [x] `chat.html`: dependency graph built on scan, blocked cards grayed + lock icon, drag-to-workspace gated with toast
+- [x] Phase 2 prompt: detailed format spec with numbering, dependencies, examples
+
+**Epic Grouping:**
+- [x] `service.py`: auto-discover classic epic link field via `/field` API (cached), extract epic_key from parent or custom field
+- [x] `list_undone_tickets()` returns `{ tickets, epics, unassigned_tickets }`
+- [x] `ticketProvider.ts`: `EpicInfo`, `TicketsWithEpics` types, backward-compat fallback
+- [x] `chat.html`: Epic-grouped Jira section with collapsible headers, mine=green/unassigned=orange borders
+
+**Config & Deployment:**
+- [x] `CONDUCTOR_*` env vars override `conductor.secrets.yaml` for cloud deployment (ECS/K8s)
+- [x] Classifier system removed (Brain is sole dispatcher) — `query_classifier.py` deleted, all references cleaned
+- [x] Bedrock models updated: Claude 4.6 (Sonnet + Opus), tool-use verified, non-functional models removed
+- [x] Example YAML files updated with all current sections
+
+#### 7.7.10 Cross-Workspace Investigation (PLANNED)
 When investigating a Jira ticket that belongs to a different repo than the current workspace, automatically switch context:
 - [ ] **Local mode**: detect target repo from jira_project_guide.yaml component mapping → open target folder in VS Code → re-initialize extension workspace context → resume investigation. Requires session state migration (workspace root, tree-sitter cache, repo graph, .conductor/ config).
 - [ ] **Online mode**: close current room → create new room bound to target workspace → resume investigation in new room. Requires preserving investigation context (Jira ticket info, agent state) across room transitions.
 - [ ] Fallback: if auto-switch fails, show user a one-click "Open workspace: /path/to/repo" button in chat.
 - [ ] Investigation context handoff: serialize current agent findings + ticket data so the new workspace session can continue where the old one left off.
 
-#### 7.7.10 Jira Webhook Auto-Investigate (PLANNED)
+#### 7.7.11 Jira Webhook Auto-Investigate (PLANNED)
 When a Jira ticket is created/assigned to the user, auto-trigger investigation without manual action.
 - [ ] `POST /api/webhooks/jira` — receiver endpoint for Jira webhooks (issue_created, issue_updated events)
 - [ ] Jira webhook config: register URL in Jira project settings (admin), filter by assignee + event type
@@ -744,7 +768,7 @@ When a Jira ticket is created/assigned to the user, auto-trigger investigation w
 - [ ] Cost control: configurable rate limit (e.g. max 5 auto-investigations per hour), skip low-priority tickets
 - [ ] Opt-in via `conductor.settings.yaml`: `jira.webhook_auto_investigate: true`
 
-#### 7.7.11 MCP Server for Jira Tools (PLANNED)
+#### 7.7.12 MCP Server for Jira Tools (PLANNED)
 Expose Conductor's Jira tools as an MCP (Model Context Protocol) server so other AI tools (Claude Desktop, external agents) can use our Jira integration.
 - [ ] MCP server endpoint: stdio or HTTP transport (following Anthropic MCP spec)
 - [ ] Register all 5 Jira tools as MCP tools: jira_search, jira_get_issue, jira_create_issue, jira_update_issue, jira_list_projects
@@ -753,7 +777,7 @@ Expose Conductor's Jira tools as an MCP (Model Context Protocol) server so other
 - [ ] Benefit: any MCP-compatible client (Claude Code, Claude Desktop, third-party agents) can use our Jira + code tools
 - [ ] Reference: Atlassian's official Remote MCP Server pattern (Cloudflare-hosted)
 
-#### 7.7.12 Auto Branch + PR Creation (PLANNED)
+#### 7.7.13 Auto Branch + PR Creation (PLANNED)
 After investigate → apply completes, automatically create a git branch and pull request.
 - [ ] Branch creation: use `jira.branch_formats` config (e.g. `feature/DEV-123-add-retry-logic`)
 - [ ] Slugify ticket summary for branch name (lowercase, hyphens, max 50 chars)
@@ -971,7 +995,7 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 **Reference files**: `Tool.ts` (792 lines), `tools.ts` (tool registry)
 
 **Completed**:
-- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 35 tools
+- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 42 tools
 - [x] Summary generation for context compaction — `_clear_old_tool_results()` uses `summary_template` for readable one-line summaries (e.g., `grep 'auth' in src/: 12 matches`)
 - [x] `format_tool_summary()` utility function with fallback for unknown tools
 - [x] 42 new tests covering grep enhancements, glob tool, ToolMetadata, and context clearing

@@ -311,8 +311,11 @@ async def search_issues(
 async def list_undone_tickets(
     request: Request,
     max_results: int = Query(30, alias="maxResults", le=50),
-) -> list:
-    """List the current user's tickets that are not Done/Closed/Merged."""
+) -> dict:
+    """List the current user's undone tickets with Epic grouping.
+
+    Returns { tickets, epics, unassigned_tickets }.
+    """
     svc = _get_service(request)
     try:
         return await svc.list_undone_tickets(max_results=max_results)

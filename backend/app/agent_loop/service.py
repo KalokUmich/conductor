@@ -34,7 +34,6 @@ from .config import AgentLoopConfig
 # completeness check removed — Brain handles via need_brain_review
 from .evidence import check_evidence
 from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
-from .query_classifier import QUERY_TYPES, QueryClassification, classify_query, classify_query_with_llm
 from .trace import IterationTrace, SessionTrace, ToolCallTrace, TraceWriter
 from app.workflow.observability import observe
 
@@ -113,7 +112,6 @@ class AgentLoopService:
         tool_executor: Optional[ToolExecutor] = None,
         trace_writer: Optional[TraceWriter] = None,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
-        classifier_provider: Optional[AIProvider] = None,
         explorer_provider: Optional[AIProvider] = None,
         verifier_provider: Optional[AIProvider] = None,
         # Legacy individual params — kept for backward compatibility.
@@ -135,7 +133,6 @@ class AgentLoopService:
         self._tool_executor = tool_executor
         self._trace_writer = trace_writer
         self._llm_semaphore = llm_semaphore
-        self._classifier_provider = classifier_provider
         self._explorer_provider = explorer_provider
         self._verifier_provider = verifier_provider
 
@@ -261,7 +258,6 @@ class AgentLoopService:
         ):
             if event.kind == "classify":
                 # Unpack private state keys before forwarding the clean event to clients
-                classification = event.data["_classification"]
                 system = event.data["_system"]
                 active_tools = event.data["_active_tools"]
                 messages = event.data["_messages"]
@@ -389,6 +385,18 @@ class AgentLoopService:
                 input_tokens=response.usage.input_tokens if response.usage else 0,
                 output_tokens=response.usage.output_tokens if response.usage else 0,
             )
+
+            # Record generation to Langfuse (model name + token usage)
+            if response.usage:
+                from app.workflow.observability import track_generation
+                track_generation(
+                    name=f"llm_iter_{iteration + 1}",
+                    model=self._provider.model_name,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    cache_read_input_tokens=response.usage.cache_read_input_tokens,
+                    cache_write_input_tokens=response.usage.cache_write_input_tokens,
+                )
 
             # Build iteration trace
             iter_trace = IterationTrace(
@@ -564,19 +572,17 @@ class AgentLoopService:
         risk_context: str,
         code_context: Optional[Dict[str, Any]],
     ) -> AsyncGenerator[AgentEvent, None]:
-        """Classify the query and build the system prompt + tool list.
+        """Build the system prompt + tool list.
 
-        Handles four branches:
+        Handles two branches:
           - Brain mode: uses Brain tools and pre-built system prompt.
-          - Brain-dispatched (forced_tools): skips classification entirely.
-          - Workflow-driven: uses the route's classification directly.
-          - Standalone: LLM-based classifier with keyword fallback.
+          - Agent mode (Brain-dispatched or standalone): uses forced/all tools.
 
         Yields a single ``classify`` event whose ``data`` dict carries the
-        private keys ``_classification``, ``_system``, ``_active_tools``,
+        private keys ``_system``, ``_active_tools``,
         ``_messages``, and ``_is_high_level`` so the caller can unpack them.
         """
-        # Branch 0: Brain mode — skip classification, use Brain tools + prompt
+        # Branch 0: Brain mode — use Brain meta-tools + prompt
         if self._is_brain:
             from app.code_tools.schemas import get_brain_tool_definitions  # lazy: schemas is expensive to import at module level
             system = self._brain_system_prompt
@@ -592,24 +598,16 @@ class AgentLoopService:
                     f"```{lang}\n{code_context['code']}\n```\n"
                 )
             active_tools = get_brain_tool_definitions()
-            classification = QueryClassification(
-                query_type="brain",
-                budget_level="high",
-                suggested_token_budget=self._budget_config.max_input_tokens if self._budget_config else 100_000,
-                tool_set=[],
-            )
             logger.info("Brain mode: %d meta-tools, prompt=%d chars",
                         len(active_tools), len(system))
             # Brain is always interactive
             self._interactive = True
-            messages = self._initial_messages(query, classification)
+            messages = self._initial_messages(query)
             yield AgentEvent(kind="classify", data={
                 "query_type": "brain",
                 "budget_level": "high",
                 "tools_active": len(active_tools),
                 "tools_total": len(active_tools),
-                # Private keys consumed by run_stream
-                "_classification": classification,
                 "_system": system,
                 "_active_tools": active_tools,
                 "_messages": messages,
@@ -617,52 +615,17 @@ class AgentLoopService:
             })
             return
 
-        # Branch 0.5: Dispatched by Brain with forced_tools — skip classification entirely
+        # Determine query type label for logging / prompt selection
+        query_type = "brain_dispatched" if self._forced_tools else (
+            self._workflow_route_name or "general"
+        )
+        budget_level = "medium"
         if self._forced_tools:
-            classification = QueryClassification(
-                query_type="brain_dispatched",
-                budget_level="medium",
-                suggested_token_budget=self._budget_config.max_input_tokens if self._budget_config else 300_000,
-                tool_set=self._forced_tools,
-            )
-            logger.info("Brain-dispatched agent: forced_tools=%d, skipping classification",
-                        len(self._forced_tools))
-
-        # Branch 1: Running under WorkflowEngine — use the route's classification directly
+            logger.info("Brain-dispatched agent: forced_tools=%d", len(self._forced_tools))
         elif self._workflow_route_name:
-            route_type = (
-                self._workflow_route_name
-                or getattr(self._workflow_config, "category", None)
-                or getattr(self._workflow_config, "name", "general")
-            )
-            if route_type in QUERY_TYPES:
-                spec = QUERY_TYPES[route_type]
-                classification = QueryClassification(
-                    query_type=route_type,
-                    budget_level=spec["budget_level"],
-                    suggested_token_budget=spec["suggested_token_budget"],
-                    tool_set=spec["tools"],
-                )
-            else:
-                classification = classify_query(query)
-                classification.query_type = route_type
-            logger.info("Using workflow-driven classification: type=%s (route=%s)",
-                        classification.query_type, self._workflow_route_name)
+            logger.info("Workflow-driven agent: route=%s", self._workflow_route_name)
 
-        # Branch 2: Standalone mode — full classification (LLM preferred, keyword fallback)
-        else:
-            if self._classifier_provider:
-                try:
-                    classification = await classify_query_with_llm(
-                        query, self._classifier_provider,
-                    )
-                except Exception as exc:
-                    logger.warning("LLM classifier failed, falling back to keywords: %s", exc)
-                    classification = classify_query(query)
-            else:
-                classification = classify_query(query)
-
-        is_high_level = classification.query_type in ("architecture_question", "business_flow_tracing")
+        is_high_level = query_type in ("architecture_question", "business_flow_tracing")
 
         # Build system prompt
         if self._agent_identity:
@@ -684,7 +647,7 @@ class AgentLoopService:
             )
         else:
             # Legacy path: standalone / old workflow mode
-            effective_query_type = self._forced_strategy or classification.query_type
+            effective_query_type = self._forced_strategy or query_type
             system = build_system_prompt(
                 workspace_path,
                 workspace_layout=layout,
@@ -697,12 +660,10 @@ class AgentLoopService:
                 has_signal_blocker=bool(self._forced_tools),
             )
 
-        # Dynamic tool set: forced_tools (from Brain dispatch) > classification > all
+        # Dynamic tool set: forced_tools (from Brain dispatch) > all tools
         if self._forced_tools:
             active_tools = filter_tools(self._forced_tools)
             logger.info("Using forced tools from Brain dispatch: %d tools", len(active_tools))
-        elif classification.tool_set:
-            active_tools = filter_tools(classification.tool_set)
         else:
             active_tools = TOOL_DEFINITIONS
 
@@ -713,19 +674,16 @@ class AgentLoopService:
             active_tools = list(active_tools) + [get_ask_user_tool_def()]
 
         logger.info(
-            "Query classified: type=%s, budget=%s, tools=%d",
-            classification.query_type, classification.budget_level,
-            len(active_tools),
+            "Agent prepared: type=%s, budget=%s, tools=%d",
+            query_type, budget_level, len(active_tools),
         )
 
-        messages = self._initial_messages(query, classification)
+        messages = self._initial_messages(query)
         yield AgentEvent(kind="classify", data={
-            "query_type": classification.query_type,
-            "budget_level": classification.budget_level,
+            "query_type": query_type,
+            "budget_level": budget_level,
             "tools_active": len(active_tools),
             "tools_total": len(TOOL_DEFINITIONS),
-            # Private keys consumed by run_stream
-            "_classification": classification,
             "_system": system,
             "_active_tools": active_tools,
             "_messages": messages,
@@ -1629,10 +1587,7 @@ class AgentLoopService:
     # because it's the most structured. Provider adapters normalise to/from it.
 
     @staticmethod
-    def _initial_messages(
-        query: str,
-        classification: Optional[QueryClassification] = None,
-    ) -> List[Dict[str, Any]]:
+    def _initial_messages(query: str) -> List[Dict[str, Any]]:
         return [
             {
                 "role": "user",

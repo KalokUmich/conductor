@@ -683,18 +683,29 @@ async def test_add_comment_empty_body(client, mock_service):
 
 @pytest.mark.asyncio
 async def test_list_undone_tickets(client, mock_service):
-    mock_service.list_undone_tickets = AsyncMock(return_value=[
-        {"key": "DEV-1", "summary": "Fix bug", "status": "In Progress", "priority": "High",
-         "issuetype": "Bug", "assignee": "Alice", "components": ["JBE"], "browse_url": "https://x/DEV-1"},
-        {"key": "DEV-2", "summary": "Add feature", "status": "To Do", "priority": "Medium",
-         "issuetype": "Story", "assignee": "Alice", "components": [], "browse_url": "https://x/DEV-2"},
-    ])
+    mock_service.list_undone_tickets = AsyncMock(return_value={
+        "tickets": [
+            {"key": "DEV-1", "summary": "Fix bug", "status": "In Progress", "priority": "High",
+             "issuetype": "Bug", "assignee": "Alice", "components": ["JBE"], "epic_key": "EPIC-1",
+             "browse_url": "https://x/DEV-1"},
+            {"key": "DEV-2", "summary": "Add feature", "status": "To Do", "priority": "Medium",
+             "issuetype": "Story", "assignee": "Alice", "components": [], "epic_key": "",
+             "browse_url": "https://x/DEV-2"},
+        ],
+        "epics": {
+            "EPIC-1": {"key": "EPIC-1", "summary": "Epic One", "status": "In Progress",
+                       "priority": "High", "assignee": "Alice", "browse_url": "https://x/EPIC-1"},
+        },
+        "unassigned_tickets": [],
+    })
     resp = await client.get("/api/integrations/jira/undone")
     assert resp.status_code == 200
-    tickets = resp.json()
-    assert len(tickets) == 2
-    assert tickets[0]["key"] == "DEV-1"
-    assert tickets[0]["status"] == "In Progress"
+    data = resp.json()
+    assert len(data["tickets"]) == 2
+    assert data["tickets"][0]["key"] == "DEV-1"
+    assert data["tickets"][0]["epic_key"] == "EPIC-1"
+    assert "EPIC-1" in data["epics"]
+    assert data["epics"]["EPIC-1"]["summary"] == "Epic One"
     mock_service.list_undone_tickets.assert_awaited_once()
 
 

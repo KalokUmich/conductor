@@ -56,14 +56,13 @@ When modifying or adding a code tool:
 1. **Python first**: implement/modify in `backend/app/code_tools/tools.py`
 2. **Update schema**: if params/result shape changed, update `schemas.py`
 3. **Update metadata**: add/update entry in `TOOL_METADATA` dict in `schemas.py` (is_read_only, is_concurrent_safe, summary_template, category)
-4. **Update classifier**: add to `_ALL_TOOLS` and relevant `QUERY_TYPES` tool sets in `query_classifier.py`
-5. **Regenerate contracts**: `make update-contracts`
-6. **Port to TS**: update the appropriate module:
+4. **Regenerate contracts**: `make update-contracts`
+5. **Port to TS**: update the appropriate module:
    - Complex: `extension/src/services/complexToolRunner.ts`
    - AST: `extension/src/services/astToolRunner.ts`
-7. **Update dispatcher**: add to appropriate set in `localToolDispatcher.ts` (SUBPROCESS/AST/COMPLEX)
-8. **Add parity tests**: `test_tool_parity_ast.py` or `test_tool_parity_deep.py`
-9. **Validate**: `make test-parity`
+6. **Update dispatcher**: add to appropriate set in `localToolDispatcher.ts` (SUBPROCESS/AST/COMPLEX)
+7. **Add parity tests**: `test_tool_parity_ast.py` or `test_tool_parity_deep.py`
+8. **Validate**: `make test-parity`
 
 ## Configuration
 
@@ -73,17 +72,20 @@ cp config/conductor.secrets.yaml.example config/conductor.secrets.yaml
 ```
 
 Key settings in `conductor.settings.yaml`:
-- `classifier.use_llm` / `classifier.model_id` — enable LLM pre-classification
 - `langfuse.enabled` + secrets in `conductor.secrets.yaml`
-- `workflow_models.{name}.explorer` / `.judge` — model per workflow role
+- `ai_models[].explorer: true` — mark model as sub-agent capable
 
-Environment variables:
+Environment variables override secrets for cloud deployment (`CONDUCTOR_*` prefix):
 ```bash
-BACKEND_HOST=0.0.0.0
-BACKEND_PORT=8000
-GIT_WORKSPACE_ROOT=/tmp/conductor_workspaces
-ANTHROPIC_API_KEY=sk-ant-...     # or AWS_* for Bedrock, OPENAI_API_KEY for OpenAI
+CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock credentials
+CONDUCTOR_AWS_SECRET_ACCESS_KEY=...
+CONDUCTOR_AWS_REGION=eu-west-2
+CONDUCTOR_POSTGRES_PASSWORD=...       # Database
+CONDUCTOR_JIRA_CLIENT_ID=...          # Integrations
+LANGFUSE_PUBLIC_KEY=...               # Observability
+LANGFUSE_SECRET_KEY=...
 ```
+See `docs/GUIDE.md` §21.7 for the full variable reference.
 
 ## Testing Notes
 
@@ -95,6 +97,7 @@ ANTHROPIC_API_KEY=sk-ant-...     # or AWS_* for Bedrock, OPENAI_API_KEY for Open
 ## What's Next
 
 See [ROADMAP.md](ROADMAP.md). Near-term priorities:
+- **Phase 7.7.10-7.7.12: Jira Advanced** — webhook auto-investigate, MCP server, auto branch + PR creation
 - **Phase 9: Claude Code Pattern Adoption** — systematic learning and integration from reference codebase
 - **Phase 10: Companion & Developer Experience** — interactive mascot in VS Code WebView (CSS/SVG animations, deterministic gacha, agent integration)
 - Microsoft Teams integration (Phase 7.5)

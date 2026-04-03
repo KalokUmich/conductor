@@ -352,7 +352,7 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         when_to_use='"Create a Jira ticket for this bug", "Search for related tickets", "Update ticket DEV-123", "Break this work into sub-tasks"',
         when_not='"Find the bug in the code" (that\'s root_cause — investigate first)',
         tools=["jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects", "grep", "read_file", "git_log", "git_diff"],
-        budget=200_000,
+        budget=500_000,
         iterations=15,
     ),
 }
@@ -553,21 +553,154 @@ derives from the value.
     "issue_tracking": """\
 ## Investigation skill: Issue Tracking
 
-### Reading existing tickets
-- Use jira_get_issue to fetch full details (description, comments, acceptance criteria)
-- Map ticket requirements to specific code locations (file:line)
-- Produce actionable plan with complexity estimate
+Detect user intent and follow the matching workflow below.
 
-### Creating new tickets
-- Analyse the relevant code first — gather evidence (affected files, \
-dependencies, complexity) before writing the ticket
-- Assess complexity: Small (1 task, ≤1 week), Medium (1 epic + sub-tasks), \
-Large (1 project + epics with sub-tasks)
-- Description MUST include: code context with file:line references, \
-affected components, acceptance criteria
-- Check for duplicate tickets before creating (use jira_search)
-- Sub-tasks should each be ≤1 week and independently testable
-- Always confirm with user (ask_user) before creating or updating tickets
+### CREATE — user wants to create a ticket
+1. **Investigate first** — grep, read_file, find_references to gather affected \
+files (file:line), dependencies, and complexity estimate
+2. **Check duplicates** — jira_search for similar tickets before creating
+3. **Assess complexity**: Small (1 task, ≤1 week) → Task, \
+Medium (multiple tasks) → Epic + sub-tasks, Large → Project + epics
+4. **Draft ticket** — summary, description with code refs and acceptance criteria, \
+priority, component (use jira_project_guide below to map files→project+component)
+5. **Confirm with user** — call ask_user with the full ticket preview: \
+summary, project, type, priority, component, and a short description excerpt. \
+Only proceed to jira_create_issue after user confirms.
+6. **Return result** — include the clickable ticket URL from browse_url
+
+### CONSULT — user references a ticket key (e.g. DEV-123)
+
+Three-phase pipeline: **Investigate → Mark → Update**.
+
+#### Phase 1: Investigate
+1. **Fetch ticket** — jira_get_issue for full details (description, comments, \
+acceptance criteria, subtasks)
+2. **Read related code** — use grep, read_file, find_references to locate the \
+code areas mentioned in the ticket description
+3. **Map requirements to code** — for each requirement/acceptance criterion, \
+identify the exact file:line where changes are needed and what the change is
+4. **Estimate complexity** — count affected files, new methods needed, test \
+changes. Small ≤3 days, Medium 3-10 days, Large >10 days
+
+Produce structured findings:
+```
+### <TICKET-KEY>: <summary>
+**Status**: <status> | **Priority**: <priority> | **Assignee**: <assignee>
+**Components**: <components>
+
+#### What the ticket asks
+<mapped requirements with file:line refs>
+
+#### Affected files
+- `path/to/file.py:45` — <what to change>
+- `path/to/other.py:120` — <what to change>
+
+#### Suggested approach
+<step-by-step plan>
+
+#### Estimated complexity
+<Small/Medium/Large> — <reasoning>
+```
+
+#### Phase 2: Mark code
+Using the findings from Phase 1 (do NOT re-investigate — the context is \
+already available), add TODO markers at each change point using file_edit. \
+Quick-verify line numbers with read_file first. Only mark, do not implement.
+
+**TODO marker format** — use this exact structure:
+```
+<comment-prefix> TODO {jira:TICKET#N}: Brief task title
+<comment-prefix> TODO_DESC: What needs to change
+<comment-prefix>+ continuation if description is long
+```
+
+**Numbering**: Number changes sequentially within each ticket: #1, #2, #3.
+
+**Dependencies** (add only when changes have a genuine order):
+- `after:N` — intra-ticket: change #M needs #N done first. \
+Example: `{jira:DEV-123#2|after:1}` means #2 depends on #1.
+- `after:N,K` — multiple deps: `{jira:DEV-123#3|after:1,2}`.
+- `blocked:OTHER` — cross-ticket: this change cannot start until \
+another ticket completes. Example: `{jira:DEV-456#1|blocked:DEV-123}`.
+- Combined: `{jira:DEV-456#2|after:1|blocked:DEV-123}`.
+
+**Parent-child / Epic**: If the ticket belongs to an Epic or is a sub-task, \
+always use `{jira:EPIC>TICKET#N}` to encode the hierarchy. The Epic key is \
+available from jira_get_issue's parent field. Example: `{jira:DEV-100>DEV-101#1}`. \
+This enables the Task Board to group TODOs by Epic and show cross-ticket dependencies.
+
+**Continuation lines**: `<prefix>+` (no space before `+`) for multi-line \
+descriptions. TODO_DESC does NOT repeat the {jira:...} ref.
+
+**Example** (Python):
+```
+# TODO {jira:DEV-10424#1}: Compute net disbursement from Ledger
+# TODO_DESC: LedgerService.getNetAmount() must
+#+ subtract subsidy from loan_amount. Add calculateDisbursementAmount(loanId).
+
+# TODO {jira:DEV-10424#2|after:1}: Build transaction ID
+# TODO_DESC: Construct drawDownId as
+#+ aboundRef + "-" + loanRef. Used downstream by disburseLoan().
+
+# TODO {jira:DEV-10425#1|blocked:DEV-10424}: Wire Phoenix bank details
+# TODO_DESC: disburseLoan() needs Phoenix's
+#+ fixed bank account (sort: 20-92-54, acct: 73528952).
+```
+
+Rules:
+1. Every TODO MUST have a `{jira:TICKET#N}` tag.
+2. Only add `after:` for genuine data/logic dependencies, not just ordering preference.
+3. Only add `blocked:` when the entire other ticket must complete first.
+4. Keep descriptions to 1-3 lines. Be specific about what changes.
+5. Match comment style of the file (`//` for TS/JS/Java/Go, `#` for Python, `--` for SQL).
+
+#### Phase 3: Update ticket
+Write the analysis back to Jira so the team has full context:
+1. **Append analysis** — use jira_update_issue with description_append containing: \
+affected files with file:line, change summary per file, business logic notes, \
+and estimated complexity. The original description is preserved automatically.
+2. **Decompose if needed** — if estimated complexity is Large (>3 days of work):
+   - If current issue is a **ticket/task**: create linked sub-tasks via \
+jira_create_issue with parent_key set to the current ticket key
+   - If current issue is an **epic**: create child tickets under it
+   - Each sub-task should be ≤3 days and have its own affected files list
+3. **Confirm with user** — call ask_user before writing to Jira. Show what \
+will be appended and any sub-tasks to be created.
+
+### SEARCH — user wants to find or list tickets
+1. **Build JQL** — translate natural language to JQL:
+   - "my tickets" → `assignee = currentUser() AND status NOT IN (Done, Closed, Resolved) ORDER BY priority ASC`
+   - "my sprint" → `assignee = currentUser() AND sprint IN openSprints() ORDER BY priority ASC`
+   - "blockers" → `assignee = currentUser() AND (priority = Highest OR priority = Blocker OR labels = blocked) ORDER BY priority ASC`
+   - Other queries → detect keywords and build appropriate JQL, or pass free text
+2. **Group results by priority** — Highest/Blocker first, then High, Medium, Low
+3. **Suggest focus** — recommend which tickets to work on first based on priority \
+and status (In Progress before To Do)
+
+Format the response as:
+```
+### 🔴 Highest / Blocker
+- **<KEY>**: <summary> — <status>
+
+### 🟠 High
+- **<KEY>**: <summary> — <status>
+
+### 🟡 Medium
+- **<KEY>**: <summary> — <status>
+
+### 🟢 Low
+- **<KEY>**: <summary> — <status>
+
+#### Suggested focus
+<1-3 sentences on what to tackle first and why>
+```
+
+### UPDATE — user wants to change a ticket
+1. **Confirm with user** — call ask_user before any write operation
+2. Use jira_update_issue for transitions, comments, description_append, field changes
+3. When appending to description, the original content is always preserved — \
+a Conductor separator with timestamp is inserted automatically
+4. Return updated ticket state
 
 {jira_project_guide}
 """,
@@ -1504,8 +1637,45 @@ dispatch_agent(query="Investigate the auth token expiry bug, gather evidence \
 (affected files, root cause), then create a Jira ticket with code references.",
   tools=["grep", "read_file", "git_log", "git_diff", "find_references", \
 "jira_list_projects", "jira_search", "jira_create_issue"],
-  skill="issue_tracking", budget_tokens=200000, max_iterations=15)
+  skill="issue_tracking", model="strong", budget_tokens=500000, max_iterations=15)
 Result: Agent investigates, confirms with user, creates ticket. Done.
+</example>
+
+<example>
+Query: "[query_type:issue_tracking] Fetch Jira ticket DEV-456, read the related code, and explain what needs to be done"
+<commentary>
+Ticket consultation — 3-phase pipeline: investigate → mark code → update ticket.
+Use issue_tracking skill with code tools + Jira tools + file_edit for markers.
+The agent runs all three phases in one dispatch: investigate the ticket,
+add TODO markers at change points, then append analysis to the ticket description.
+</commentary>
+create_plan(mode="simple", reasoning="Ticket consultation: investigate, mark code, update ticket")
+dispatch_agent(query="Fetch Jira ticket DEV-456 and run the full CONSULT pipeline: \
+(1) investigate — read related code, map requirements to file:line locations, \
+estimate complexity. (2) mark — add TODO(DEV-456) markers at each change point \
+using file_edit. (3) update ticket — append the analysis (affected files, change \
+summary, complexity) to the ticket description using description_append, and \
+create sub-tasks if complexity is Large.",
+  tools=["jira_get_issue", "jira_update_issue", "jira_create_issue", \
+"grep", "read_file", "find_symbol", "find_references", \
+"get_dependencies", "file_outline", "file_edit", "ask_user"],
+  skill="issue_tracking", model="strong", budget_tokens=600000, max_iterations=20)
+Result: Agent investigates, marks code, confirms with user, updates ticket. Done.
+</example>
+
+<example>
+Query: "[query_type:issue_tracking] Show all Jira tickets assigned to me. Group by priority."
+<commentary>
+Status search — list user's tickets grouped by priority. Lightweight query,
+one agent with jira_search. Medium budget for grouping and summary.
+</commentary>
+create_plan(mode="simple", reasoning="Jira status search with priority grouping")
+dispatch_agent(query="Search for all Jira tickets assigned to me that are not \
+Done/Closed. Group the results by priority (Highest first) and suggest which \
+tickets to focus on.",
+  tools=["jira_search", "jira_get_issue"],
+  skill="issue_tracking", budget_tokens=300000, max_iterations=10)
+Result: Agent searches, groups, suggests focus. Done.
 </example>"""
 
 

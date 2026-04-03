@@ -12,7 +12,6 @@ backend/app/
 │   ├── pr_brain.py          # PRBrainOrchestrator — deterministic PR review pipeline via Brain
 │   ├── budget.py            # BudgetController — token-based budget management
 │   ├── trace.py             # SessionTrace — per-session trace (Postgres + local JSON fallback)
-│   ├── query_classifier.py  # QueryClassifier — keyword + optional LLM classification
 │   ├── evidence.py          # EvidenceEvaluator — rule-based answer quality check
 │   ├── completeness.py      # CompletenessCheck — verifies answer covers all query aspects
 │   ├── interactive.py       # ask_user coordination (register/submit/cleanup)
@@ -45,8 +44,8 @@ backend/app/
 │   ├── ranking.py           # Score and rank findings
 │   ├── dedup.py             # Merge and deduplicate findings
 │   └── router.py            # /api/code-review/ endpoints (+ SSE stream)
-├── code_tools/              # 29 code intelligence tools + ToolMetadata
-│   ├── schemas.py           # Pydantic models + TOOL_DEFINITIONS + ToolMetadata (35 entries)
+├── code_tools/              # 42 tools (code + file-edit + Jira + browser) + ToolMetadata
+│   ├── schemas.py           # Pydantic models + TOOL_DEFINITIONS (44) + ToolMetadata (42 entries)
 │   ├── tools.py             # Tool implementations (including glob, enhanced grep)
 │   ├── output_policy.py     # Per-tool truncation policies (budget-adaptive)
 │   ├── __main__.py          # Python CLI: python -m app.code_tools <tool> <ws> '<params>'
@@ -119,9 +118,12 @@ Key design: The arbitrator is a **defense attorney** — it tries to rebut findi
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
-**29 code tools** (`code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`.
+**42 tools** across 3 registries:
+- **Code tools** (31, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`.
+- **Jira tools** (5, `integrations/jira/tools.py`): `jira_search` (with convenience JQL: "my tickets", "my sprint", "blockers"), `jira_get_issue`, `jira_create_issue`, `jira_update_issue`, `jira_list_projects`.
+- **Browser tools** (6, `browser/tools.py`): `web_search`, `web_navigate`, `web_click`, `web_fill`, `web_screenshot`, `web_extract`.
 
-**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 35 tools (code + browser). Used by `_clear_old_tool_results()` for readable context compaction summaries.
+**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 42 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
 
 Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_params>'` (used by extension local mode).
 
@@ -220,50 +222,54 @@ Singleton services (`TODOService`, `AuditLogService`, `FileStorageService`, `Cha
 ### Test Files
 
 ```
-tests/
+tests/                                          # 1655 tests total
 ├── conftest.py                     # Centralized stubs + fixtures (cocoindex, etc.)
 │   # Agent loop & Brain
-├── test_agent_loop.py              # 53 tests — AgentLoopService, 4-layer prompt, evidence check, context clearing
+├── test_agent_loop.py              # 55 tests — AgentLoopService, 4-layer prompt, evidence check, context clearing
 ├── test_agent_loop_integration.py  # Integration tests — real Bedrock models (@integration marker)
-├── test_brain.py                   # 39 tests — Brain orchestrator, AgentToolExecutor, dispatch modes
+├── test_brain.py                   # 64 tests — Brain orchestrator, AgentToolExecutor, dispatch modes
 ├── test_mock_agent.py              # 26 tests — MockProvider scripted responses + agent harness
 ├── test_interactive.py             # 9 tests  — ask_user coordination (register/submit/cleanup)
 ├── test_prompt_builder.py          # 64 tests — 4-layer prompt assembly, skill injection, tool hints
 │   # Code review
 ├── test_code_review.py             # 67 tests — CodeReviewService legacy pipeline
+├── test_shared.py                  # 55 tests — Shared code review functions (evidence gate, dedup, ranking)
+├── test_pr_brain.py                # 32 tests — PRBrainOrchestrator pipeline
 │   # Code tools
-├── test_code_tools.py              # 140 tests — 29 tools + dispatcher + multi-language + grep enhancements + glob + ToolMetadata
+├── test_code_tools.py              # 139 tests — 42 tools + dispatcher + multi-language + grep enhancements + glob + ToolMetadata
 ├── test_compressed_tools.py        # 24 tests — compressed_view, trace_variable, detect_patterns
 ├── test_detect_patterns.py         # 34 tests — detect_patterns tool (pattern extraction)
+├── test_file_edit_tools.py         # 32 tests — file_edit + file_write tools
 │   # Tool parity (Python ↔ TypeScript)
 ├── test_tool_parity.py             # 68 tests — get_dependencies/get_dependents/test_outline parity
 ├── test_tool_parity_ast.py         # 26 tests — AST tools parity (file_outline, find_symbol, etc.)
 ├── test_tool_parity_deep.py        # 34 tests — deep parity (trace_variable, compressed_view, etc.)
+├── test_tool_parity_subprocess.py  # 32 tests — subprocess tools parity
 ├── test_local_tools_parity.py      # 23 tests — local mode tool contract validation
 │   # AI providers
 ├── test_ai_provider.py             # 131 tests — AIProvider ABC, ClaudeDirectProvider, Bedrock, OpenAI
 ├── test_bedrock_tool_repair.py     # 64 tests — Bedrock tool call repair + malformed response handling
 │   # Workflow + config
-├── test_config_new.py              # 27 tests — Settings + Secrets YAML loading
+├── test_config_new.py              # 19 tests — Settings + Secrets YAML loading
 ├── test_config_paths.py            # 3 tests  — Path resolution for audit logs
 ├── test_style_loader.py            # 22 tests — Agent .md frontmatter + body loader
 │   # Infrastructure
 ├── test_budget_controller.py       # 20 tests — BudgetController token accounting
-├── test_session_trace.py           # 15 tests — SessionTrace (Postgres + local fallback)
-├── test_evidence.py                # 14 tests — EvidenceEvaluator rule-based quality check
-├── test_query_classifier.py        # 26 tests — QueryClassifier keyword + LLM classification
-├── test_output_policy.py           # 20 tests — Per-tool truncation policies (budget-adaptive, glob)
+├── test_session_trace.py           # 23 tests — SessionTrace (Postgres + local fallback)
+├── test_evidence.py                # 19 tests — EvidenceEvaluator rule-based quality check
+├── test_output_policy.py           # 21 tests — Per-tool truncation policies (budget-adaptive, glob)
 ├── test_symbol_role.py             # 24 tests — Symbol role extraction (AST-based)
 ├── test_auto_apply_policy.py       # 28 tests — Auto-apply policy enforcement
 │   # Language processing
 ├── test_langextract.py             # 57 tests — LangExtract + multi-vendor Bedrock integration
-├── test_repo_graph.py              # 72 tests — AST symbol extraction + dependency graph
+├── test_repo_graph.py              # 67 tests — AST symbol extraction + dependency graph
 │   # Chat
 ├── test_chat.py                    # 29 tests — WebSocket chat, identity, lead transfer
-├── test_chat_persistence.py        # ChatPersistenceService — micro-batch Postgres writes
+├── test_chat_persistence.py        # 16 tests — ChatPersistenceService — micro-batch Postgres writes
 │   # Integrations
-├── test_jira_router.py             # 25 tests — Jira OAuth 3LO + REST API router
-├── test_jira_service.py            # 43 tests — JiraOAuthService token lifecycle + API calls
+├── test_jira_router.py             # 45 tests — Jira OAuth 3LO + REST API router
+├── test_jira_service.py            # 48 tests — JiraOAuthService token lifecycle + API calls
+├── test_jira_tools.py              # 21 tests — Jira agent tools (search, create, update, get_issue)
 ├── test_auth.py                    # 38 tests — SSO ARN parsing, device auth flow
 ├── test_audit.py                   # 11 tests — AuditLogService + changeset hash
 ├── test_room_settings.py           # 18 tests — Room settings CRUD
@@ -272,6 +278,6 @@ tests/
 ├── test_workspace_files.py         # 39 tests — workspace file browsing + filtering
 ├── test_db.py                      # 5 tests  — SQLAlchemy engine + table creation (Postgres)
 │   # Browser + misc
-├── test_browser_tools.py           # Browser tools (Playwright) — mocked service
+├── test_browser_tools.py           # 35 tests — Browser tools (Playwright) — mocked service
 └── test_main.py                    # 1 test   — FastAPI app startup / lifespan smoke test
 ```

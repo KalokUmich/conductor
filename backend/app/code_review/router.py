@@ -98,11 +98,6 @@ def _get_agent_provider():
     return getattr(app.state, "agent_provider", None)
 
 
-def _get_classifier_provider():
-    from app.main import app
-    return getattr(app.state, "classifier_provider", None)
-
-
 def _get_explorer_provider():
     from app.main import app
     return getattr(app.state, "explorer_provider", None)
@@ -123,7 +118,7 @@ async def code_review(
     req: CodeReviewRequest,
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
-    classifier_provider=Depends(_get_classifier_provider),
+
     explorer_provider=Depends(_get_explorer_provider),
     trace_writer=Depends(_get_trace_writer),
 ) -> CodeReviewResponse:
@@ -149,7 +144,7 @@ async def code_review(
 
     service = CodeReviewService(
         provider=agent_provider,
-        explorer_provider=explorer_provider or classifier_provider,
+        explorer_provider=explorer_provider,
         trace_writer=trace_writer,
     )
 
@@ -167,7 +162,7 @@ async def code_review_stream(
     req: CodeReviewRequest,
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
-    classifier_provider=Depends(_get_classifier_provider),
+
     explorer_provider=Depends(_get_explorer_provider),
     trace_writer=Depends(_get_trace_writer),
 ):
@@ -191,7 +186,7 @@ async def code_review_stream(
 
     service = CodeReviewService(
         provider=agent_provider,
-        explorer_provider=explorer_provider or classifier_provider,
+        explorer_provider=explorer_provider,
         trace_writer=trace_writer,
     )
 

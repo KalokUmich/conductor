@@ -122,35 +122,80 @@ ai_provider_settings:
 # AI Models Configuration
 # =============================================================================
 ai_models:
-  # ---- Claude (Bedrock) ----
+  # All Bedrock models below verified with Converse API tool use (2026-04-03).
+  #
+  # Roles:
+  #   brain      — orchestrator (needs strong reasoning + reliable tool calling)
+  #   explorer   — sub-agent (needs good instruction following + tool use)
+  #   explorer   — sub-agent (needs good instruction following + tool use)
+
+  # ---- Claude (Bedrock, cross-region EU) ----
   - id: "claude-sonnet-4-6-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-sonnet-4-6"
     display_name: "Claude Sonnet 4.6 (Bedrock EU)"
     enabled: true
-    explorer: true  # good sub-agent — strong instruction following, no thinking override needed
-    classifier: true
+    explorer: true    # best all-around sub-agent
+
 
   - id: "claude-opus-4-6-bedrock"
     provider: "aws_bedrock"
-    model_name: "eu.anthropic.claude-opus-4-6"
+    model_name: "eu.anthropic.claude-opus-4-6-v1"
     display_name: "Claude Opus 4.6 (Bedrock EU)"
     enabled: true
+    # strongest brain — use for complex orchestration, PR review synthesis
 
   - id: "claude-haiku-4-5-bedrock"
     provider: "aws_bedrock"
     model_name: "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
     display_name: "Claude Haiku 4.5 (Bedrock EU)"
     enabled: true
-    classifier: true  # fast + cheap — good for query pre-classification
-    explorer: true    # good sub-agent — strong instruction following, no thinking override needed
+
+    explorer: true    # good sub-agent — strong instruction following
 
   # ---- Claude (Anthropic Direct) ----
-  - id: "claude-sonnet-4-anthropic"
+  - id: "claude-sonnet-4-6-anthropic"
     provider: "anthropic"
-    model_name: "claude-sonnet-4-20250514"
-    display_name: "Claude Sonnet 4 (Anthropic)"
+    model_name: "claude-sonnet-4-6-20250725"
+    display_name: "Claude Sonnet 4.6 (Anthropic)"
     enabled: true
+
+  # ---- DeepSeek (Bedrock) ----
+  - id: "deepseek-v3-bedrock"
+    provider: "aws_bedrock"
+    model_name: "deepseek.v3.2"
+    display_name: "DeepSeek V3.2 (Bedrock)"
+    enabled: true
+    explorer: true    # strong reasoning, good for complex code analysis
+
+  # ---- Qwen (Bedrock) ----
+  - id: "qwen3-235b-bedrock"
+    provider: "aws_bedrock"
+    model_name: "qwen.qwen3-235b-a22b-2507-v1:0"
+    display_name: "Qwen3 235B MoE (Bedrock)"
+    enabled: true
+    explorer: true    # large MoE — good general-purpose sub-agent
+
+  - id: "qwen3-coder-480b-bedrock"
+    provider: "aws_bedrock"
+    model_name: "qwen.qwen3-coder-480b-a35b-v1:0"
+    display_name: "Qwen3 Coder 480B (Bedrock)"
+    enabled: true
+    explorer: true    # best Qwen for code tasks
+
+  - id: "qwen3-coder-next-bedrock"
+    provider: "aws_bedrock"
+    model_name: "qwen.qwen3-coder-next"
+    display_name: "Qwen3 Coder Next (Bedrock)"
+    enabled: true
+    explorer: true    # latest Qwen coder, good for code exploration
+
+  - id: "qwen3-32b-bedrock"
+    provider: "aws_bedrock"
+    model_name: "qwen.qwen3-32b-v1:0"
+    display_name: "Qwen3 32B (Bedrock)"
+    enabled: true
+
 
   # ---- Amazon Nova (Bedrock) ----
   - id: "amazon-nova-pro-bedrock"
@@ -158,60 +203,46 @@ ai_models:
     model_name: "amazon.nova-pro-v1:0"
     display_name: "Amazon Nova Pro (Bedrock)"
     enabled: true
-
-  - id: "amazon-nova-lite-bedrock"
-    provider: "aws_bedrock"
-    model_name: "amazon.nova-lite-v1:0"
-    display_name: "Amazon Nova Lite (Bedrock)"
-    enabled: true
-    classifier: true  # very fast, suitable for classification
+    explorer: true    # good all-around, multimodal
 
   - id: "amazon-nova-micro-bedrock"
     provider: "aws_bedrock"
     model_name: "amazon.nova-micro-v1:0"
     display_name: "Amazon Nova Micro (Bedrock)"
     enabled: true
-    classifier: true
 
-  # ---- Qwen (Bedrock) ----
-  - id: "qwen3-coder-next-bedrock"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-coder-next"
-    display_name: "Qwen3 Coder Next (Bedrock EU)"
-    enabled: true
-
-  - id: "qwen3-next-80b"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-next-80b-a3b"
-    display_name: "Qwen3 Next 80B (Bedrock EU)"
-    enabled: true
-
-  # ---- Meta Llama (Bedrock) ----
-  - id: "llama4-scout-bedrock"
-    provider: "aws_bedrock"
-    model_name: "meta.llama4-scout-17b-16e-instruct-v1:0"
-    display_name: "Llama 4 Scout 17B (Bedrock)"
-    enabled: true
-
-  - id: "llama4-maverick-bedrock"
-    provider: "aws_bedrock"
-    model_name: "meta.llama4-maverick-17b-128e-instruct-v1:0"
-    display_name: "Llama 4 Maverick 17B (Bedrock)"
-    enabled: true
 
   # ---- Mistral (Bedrock) ----
-  - id: "mistral-large-bedrock"
+  - id: "devstral-bedrock"
     provider: "aws_bedrock"
-    model_name: "mistral.mistral-large-2407-v1:0"
-    display_name: "Mistral Large (Bedrock)"
+    model_name: "mistral.devstral-2-123b"
+    display_name: "Devstral 123B (Bedrock)"
     enabled: true
+    explorer: true    # code specialist — strong for code exploration tasks
 
-  # ---- DeepSeek (Bedrock) ----
-  - id: "deepseek-r1-bedrock"
+  # ---- Moonshot Kimi (Bedrock) ----
+  - id: "kimi-k2.5-bedrock"
     provider: "aws_bedrock"
-    model_name: "deepseek.r1-v1:0"
-    display_name: "DeepSeek R1 (Bedrock)"
+    model_name: "moonshotai.kimi-k2.5"
+    display_name: "Kimi K2.5 (Bedrock)"
     enabled: true
+    explorer: true    # multimodal, good tool use
+
+  # ---- NVIDIA (Bedrock) ----
+  - id: "nemotron-super-120b-bedrock"
+    provider: "aws_bedrock"
+    model_name: "nvidia.nemotron-super-3-120b"
+    display_name: "Nemotron Super 120B (Bedrock)"
+    enabled: true
+    explorer: true    # large model, strong reasoning
+
+  # ---- Z.AI GLM (Bedrock) ----
+  - id: "glm-5-bedrock"
+    provider: "aws_bedrock"
+    model_name: "zai.glm-5"
+    display_name: "GLM-5 (Bedrock)"
+    enabled: true
+    explorer: true
 
   # ---- OpenAI ----
   - id: "gpt-4o"
@@ -225,7 +256,7 @@ ai_models:
     model_name: "gpt-4o-mini"
     display_name: "GPT-4o Mini"
     enabled: true
-    classifier: true
+
 
   # ---- Alibaba / Qwen (DashScope, OpenAI-compatible) ----
   - id: "qwen3-max"
@@ -246,8 +277,8 @@ ai_models:
     model_name: "qwen3.5-flash"
     display_name: "Qwen3.5 Flash (DashScope)"
     enabled: true
-    classifier: true  # very fast + cheap — ideal for query pre-classification
-    explorer: true    # sub-agent — thinking DISABLED to maximise content output
+
+    explorer: true
 
   - id: "qwen3-coder-plus"
     provider: "alibaba"
@@ -260,8 +291,8 @@ ai_models:
     model_name: "qwen3-coder-flash"
     display_name: "Qwen3 Coder Flash (DashScope)"
     enabled: true
-    classifier: true  # very fast + cheap — ideal for code change classification
-    explorer: true    # sub-agent — thinking DISABLED to maximise content output
+
+    explorer: true
 
   # ---- Kimi (via Alibaba DashScope) ----
   - id: "kimi-k2.5"
@@ -331,10 +362,12 @@ trace:
 # Langfuse Observability
 # =============================================================================
 # Self-hosted Langfuse via: make langfuse-up  (http://localhost:3001)
-# After creating a project, add API keys to conductor.secrets.yaml:
+# User/org/project are auto-provisioned on first startup (see docker/.env).
+# Dev defaults — add these to conductor.secrets.yaml:
 #   langfuse:
-#     public_key: "pk-lf-..."
-#     secret_key: "sk-lf-..."
+#     public_key: "pk-lf-conductor-dev"
+#     secret_key: "sk-lf-conductor-dev"
+# Login: admin@conductor.dev / conductor
 langfuse:
   enabled: true
   host: "http://localhost:3001"

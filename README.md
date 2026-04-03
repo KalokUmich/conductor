@@ -52,7 +52,7 @@ Each collaboration room runs inside its own Git workspace using bare repositorie
 
 ### Agentic Code Intelligence
 
-Conductor uses a tool-based agent loop instead of simple RAG. The agent iteratively navigates the repository using 24 code tools (up to 25 iterations, 500K token budget):
+Conductor uses a Brain orchestrator with tool-based agent loops instead of simple RAG. The Brain (strong model) dispatches specialist sub-agents, each navigating the repository using 42 code tools (up to 40 iterations, 500K token budget):
 
 | Tool | Description |
 |------|-------------|
@@ -79,11 +79,19 @@ Conductor uses a tool-based agent loop instead of simple RAG. The agent iterativ
 | `expand_symbol` | Expand a symbol from compressed view to full source code |
 | `run_test` | Execute a test file or function; returns pass/fail + output (optional verification) |
 
-The agent dynamically selects 8–12 tools per query type (reducing hallucinated calls and token waste). A **Token Budget Controller** emits `NORMAL → WARN_CONVERGE → FORCE_CONCLUDE` signals. An **Evidence Evaluator** gates answers before finalising: requires file:line references, ≥2 tool calls, ≥1 file accessed.
+The Brain dispatches agents via `dispatch_agent` / `dispatch_swarm` tools, each with per-agent tool sets. A **Token Budget Controller** emits `NORMAL → WARN_CONVERGE → FORCE_CONCLUDE` signals. An **Evidence Evaluator** gates answers before finalising: requires file:line references, ≥2 tool calls, ≥1 file accessed.
 
 ### Multi-Provider AI
 
-Conductor supports AWS Bedrock, Anthropic, and OpenAI. `ProviderResolver` health-checks all configured providers at startup and automatically selects the best available model. All three providers implement `chat_with_tools()`.
+Conductor supports AWS Bedrock (Claude, Qwen, DeepSeek, Mistral, Nova, NVIDIA, GLM), Anthropic Direct, OpenAI, Alibaba DashScope, and Moonshot. `ProviderResolver` health-checks all configured providers at startup and selects the best available model. All providers implement `chat_with_tools()`.
+
+### Jira Integration + Task Board
+
+Full Jira integration (OAuth 3LO) with 5 agent tools and a 3-phase workflow: **investigate** (code analysis) → **mark code** (TODO markers with dependencies) → **update ticket**. The Task Board shows Jira tickets grouped by Epic (mine=green, unassigned=orange) with dependency-aware drag-and-drop to AI Working Space.
+
+### Cloud Deployment
+
+Docker images ship with dev-default secrets. For ECS/K8s, `CONDUCTOR_*` environment variables override any secret in `conductor.secrets.yaml`. See `docs/GUIDE.md` §21.7 for the full variable reference.
 
 ## Quick Demo
 
@@ -120,10 +128,10 @@ Open the VS Code extension and start a session. Then ask questions like:
 │  └────────────────────────────┘  │     │  └───────────────────────────────────┘  │
 │                                  │     │                                          │
 │  ┌────────────────────────────┐  │     │  ┌───────────────────────────────────┐  │
-│  │ WorkflowPanel              │  │     │  │ Agent Loop Service                 │  │
-│  │ SVG graph visualization    │  │     │  │  QueryClassifier → 3-layer prompt │  │
-│  │ agent detail sidebar       │  │     │  │  LLM ←→ 24 Code Tools (dynamic   │  │
-│  └────────────────────────────┘  │     │  │  subset) → BudgetController       │  │
+│  │ WorkflowPanel              │  │     │  │ Brain Orchestrator                 │  │
+│  │ SVG graph visualization    │  │     │  │  dispatch_agent / dispatch_swarm  │  │
+│  │ agent detail sidebar       │  │     │  │  LLM ←→ 42 Code Tools            │  │
+│  └────────────────────────────┘  │     │  │  → BudgetController              │  │
 │                                  │     │  │  → EvidenceEvaluator → SSE stream │  │
 └──────────────────────────────────┘     │  └───────────────────────────────────┘  │
                                          │                                          │
@@ -152,16 +160,18 @@ Open the VS Code extension and start a session. Then ask questions like:
 Current prototype includes:
 
 - VS Code collaboration extension with slash-command `@AI` chat and workflow visualization
-- FastAPI backend with config-driven multi-agent workflow engine
-- Agentic code intelligence (24 tools)
-- Multi-agent PR review pipeline (6 specialized agents, parallel dispatch, arbitration, synthesis)
+- FastAPI backend with Brain orchestrator (dispatches specialist agents)
+- Agentic code intelligence (42 tools, 4-layer prompt architecture)
+- Multi-agent PR review pipeline (6 specialized agents, adversarial arbitration, synthesis)
 - Isolated Git workspaces per room
-- **Chat persistence**: write-through micro-batch Postgres (ChatPersistenceService) + Redis hot cache; chat history survives backend restarts
-- **Browser tools**: Playwright Chromium automation for web browsing from agents (`browse_url`, `search_web`, `screenshot`)
-- Multi-provider AI support (Bedrock, Anthropic, OpenAI)
+- **Task Board**: TODO dependency markers (`{jira:TICKET#N|after:M|blocked:OTHER}`), Epic-grouped Jira tickets, drag-and-drop AI Working Space
+- **Chat persistence**: write-through micro-batch Postgres + Redis hot cache
+- **Browser tools**: Playwright Chromium automation for web browsing from agents
+- Multi-provider AI support (Bedrock, Anthropic, OpenAI, DashScope, Moonshot)
 - Langfuse self-hosted observability (nested execution trees, cost tracking)
-- Jira integration (OAuth 3LO, create/list issues from engineering decisions)
-- 1300+ automated tests
+- Jira integration (OAuth 3LO, 5 agent tools, 3-phase investigate→mark→update workflow)
+- Cloud-ready: `CONDUCTOR_*` env vars override secrets for ECS/K8s deployment
+- 1655+ automated tests
 
 ## Roadmap
 
@@ -180,22 +190,14 @@ See [ROADMAP.md](ROADMAP.md) for full details.
 
 ```bash
 cd backend
-pytest                                        # all tests (1300+)
-pytest tests/test_code_tools.py -v            # 24 code tools (98 tests)
-pytest tests/test_agent_loop.py -v            # agent loop + 3-layer prompt (47 tests)
-pytest tests/test_budget_controller.py -v     # token budget controller (20 tests)
-pytest tests/test_session_trace.py -v         # session trace (15 tests)
-pytest tests/test_evidence.py -v              # evidence evaluator (14 tests)
-pytest tests/test_symbol_role.py -v           # symbol role classification (24 tests)
-pytest tests/test_output_policy.py -v         # per-tool output policies (19 tests)
-pytest tests/test_query_classifier.py -v      # query classifier (26 tests)
+pytest                                        # all tests (1655+)
+pytest tests/test_code_tools.py -v            # code tools (139 tests)
+pytest tests/test_agent_loop.py -v            # agent loop + 4-layer prompt (55 tests)
+pytest tests/test_brain.py -v                 # Brain orchestrator (64 tests)
+pytest tests/test_jira_tools.py -v            # Jira agent tools (21 tests)
+pytest tests/test_ai_provider.py -v           # AI providers (131 tests)
 pytest tests/test_compressed_tools.py -v      # compressed view tools (24 tests)
-pytest tests/test_langextract.py -v           # langextract multi-vendor (57 tests)
-pytest tests/test_repo_graph.py -v            # repo graph (72 tests)
-pytest tests/test_config_new.py -v            # config (27 tests)
-pytest tests/test_chat_persistence.py -v      # chat persistence (micro-batch Postgres)
-pytest tests/test_browser_tools.py -v         # browser tools (Playwright, mocked)
-pytest tests/test_git_workspace.py -v         # git workspace
+pytest tests/test_code_review.py -v           # code review pipeline (67 tests)
 pytest --cov=. --cov-report=html              # coverage report
 
 # Tool parity (Python ↔ TypeScript)
@@ -260,15 +262,15 @@ AI 提炼
 
 ### Agentic 代码智能
 
-Conductor 使用基于工具的 Agent 循环，而非简单的 RAG。Agent 通过 24 个代码工具迭代探索代码库（最多 25 轮迭代，50 万 token 预算）。
+Conductor 使用 Brain 编排器和基于工具的 Agent 循环，而非简单的 RAG。Brain（强模型）分发专业子 Agent，每个 Agent 通过 42 个代码工具迭代探索代码库（最多 40 轮迭代，50 万 token 预算）。
 
 工具详情见上方英文部分。
 
-Agent 每种查询类型动态选择 8-12 个工具。**Token 预算控制器**发出 `NORMAL → WARN_CONVERGE → FORCE_CONCLUDE` 信号。**证据评估器**在最终确认答案前把关：要求文件:行号引用、≥2 次工具调用、≥1 个已访问文件。
+Brain 通过 `dispatch_agent` / `dispatch_swarm` 分发 Agent，每个 Agent 配有专属工具集。**Token 预算控制器**发出 `NORMAL → WARN_CONVERGE → FORCE_CONCLUDE` 信号。**证据评估器**在最终确认答案前把关：要求文件:行号引用、≥2 次工具调用、≥1 个已访问文件。
 
 ### 多提供商 AI
 
-支持 AWS Bedrock、Anthropic 和 OpenAI。`ProviderResolver` 在启动时对所有已配置的提供商做健康检查，自动选择最优模型。三个提供商均实现 `chat_with_tools()`。
+支持 AWS Bedrock（Claude、Qwen、DeepSeek、Mistral、Nova 等）、Anthropic Direct、OpenAI、阿里 DashScope 和 Moonshot。`ProviderResolver` 在启动时对所有已配置的提供商做健康检查，自动选择最优模型。所有提供商均实现 `chat_with_tools()`。
 
 ## 快速开始
 
@@ -300,16 +302,18 @@ npm run compile
 当前原型包括：
 
 - VS Code 协作扩展（斜杠命令 `@AI` 聊天与工作流可视化面板）
-- FastAPI 后端（配置驱动的多 Agent 工作流引擎）
-- Agentic 代码智能（24 个工具）
-- 多 Agent PR 代码评审（6 个专用 Agent，并行派发，仲裁，综合输出）
+- FastAPI 后端（Brain 编排器分发专业 Agent）
+- Agentic 代码智能（42 个工具，4 层 prompt 架构）
+- 多 Agent PR 代码评审（6 个专用 Agent，对抗仲裁，综合输出）
 - 每个房间独立的 Git 工作区
-- **聊天持久化**：写穿透 micro-batch Postgres（ChatPersistenceService）+ Redis 热缓存，重启后历史不丢失
-- **浏览器工具**：Playwright Chromium 自动化（`browse_url`、`search_web`、`screenshot`）
-- 多提供商 AI 支持（Bedrock、Anthropic、OpenAI）
+- **任务面板**：TODO 依赖标记（`{jira:TICKET#N|after:M|blocked:OTHER}`）、Epic 分组 Jira 票、拖拽 AI 工作区
+- **聊天持久化**：写穿透 micro-batch Postgres + Redis 热缓存
+- **浏览器工具**：Playwright Chromium 自动化
+- 多提供商 AI 支持（Bedrock、Anthropic、OpenAI、DashScope、Moonshot）
 - Langfuse 自托管可观测性（嵌套执行树、成本追踪）
-- Jira 集成（OAuth 3LO，从工程决策创建/列出问题）
-- 1300+ 自动化测试
+- Jira 集成（OAuth 3LO，5 个 Agent 工具，3 阶段 investigate→mark→update 流程）
+- 云部署就绪：`CONDUCTOR_*` 环境变量覆盖 ECS/K8s 部署的 secrets
+- 1655+ 自动化测试
 
 ## Roadmap
 
@@ -328,7 +332,7 @@ npm run compile
 
 ```bash
 cd backend
-pytest                          # 所有测试 (1300+)
+pytest                          # 所有测试 (1655+)
 pytest --cov=. --cov-report=html  # 覆盖率报告
 
 # 工具一致性验证（Python ↔ TypeScript）
@@ -340,6 +344,8 @@ make test-parity
 在 `config/conductor.secrets.yaml` 中配置 AI 提供商凭证（参考 `config/conductor.secrets.yaml.example`）。
 
 非敏感配置在 `config/conductor.settings.yaml` 中。
+
+云部署时，通过 `CONDUCTOR_*` 环境变量覆盖 secrets.yaml 中的值。详见 `docs/GUIDE.md` §21.7。
 
 ## 参与贡献
 

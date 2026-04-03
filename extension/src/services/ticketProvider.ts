@@ -46,6 +46,25 @@ export interface TicketItem {
     browseUrl: string;
     /** Source identifier for UI badges. */
     source: 'ticket';
+    /** Parent Epic key (if the ticket belongs to an Epic). */
+    epicKey?: string;
+}
+
+/** Summary info for an Epic. */
+export interface EpicInfo {
+    key: string;
+    summary: string;
+    status: string;
+    priority: string;
+    assignee: string;
+    browseUrl: string;
+}
+
+/** Result from fetchMyTickets — includes Epic grouping data. */
+export interface TicketsWithEpics {
+    tickets: TicketItem[];
+    epics: Record<string, EpicInfo>;
+    unassignedTickets: TicketItem[];
 }
 
 /**
@@ -67,8 +86,8 @@ export interface ITicketProvider {
     /** Fetch status for multiple ticket keys in one call. */
     fetchStatuses(keys: string[]): Promise<TicketStatusResult>;
 
-    /** Fetch tickets assigned to the current user. */
-    fetchMyTickets(): Promise<TicketItem[]>;
+    /** Fetch tickets assigned to the current user, with Epic grouping. */
+    fetchMyTickets(): Promise<TicketsWithEpics>;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,38 +174,65 @@ export class JiraTicketProvider implements ITicketProvider {
         }
     }
 
-    async fetchMyTickets(): Promise<TicketItem[]> {
+    async fetchMyTickets(): Promise<TicketsWithEpics> {
+        const empty: TicketsWithEpics = { tickets: [], epics: {}, unassignedTickets: [] };
         try {
             const resp = await fetch(
                 `${this._backendUrl}/api/integrations/jira/undone?maxResults=30`,
             );
-            if (resp.status === 401) return []; // Not connected — caller handles auth
-            if (!resp.ok) return [];
+            if (resp.status === 401) return empty;
+            if (!resp.ok) return empty;
 
-            const issues = await resp.json() as Array<{
-                key: string;
-                summary: string;
-                status: string;
-                priority: string;
-                issuetype: string;
-                assignee: string;
-                browse_url: string;
-            }>;
+            const raw = await resp.json();
 
-            return issues.map(issue => ({
-                key: issue.key,
-                summary: issue.summary,
-                status: issue.status,
-                priority: issue.priority,
-                issuetype: issue.issuetype,
-                assignee: issue.assignee,
-                isDone: /^(done|closed|resolved|complete)$/i.test(issue.status),
-                browseUrl: issue.browse_url,
-                source: 'ticket' as const,
-            }));
+            // Backward compat: old backend returns flat array
+            if (Array.isArray(raw)) {
+                const tickets = (raw as Array<Record<string, any>>).map(issue => this._mapTicket(issue));
+                return { tickets, epics: {}, unassignedTickets: [] };
+            }
+
+            // New backend returns { tickets, epics, unassigned_tickets }
+            const data = raw as {
+                tickets: Array<Record<string, any>>;
+                epics: Record<string, Record<string, any>>;
+                unassigned_tickets: Array<Record<string, any>>;
+            };
+
+            const tickets = (data.tickets || []).map(t => this._mapTicket(t));
+
+            const epics: Record<string, EpicInfo> = {};
+            for (const [key, e] of Object.entries(data.epics || {})) {
+                epics[key] = {
+                    key: e.key || key,
+                    summary: e.summary || '',
+                    status: e.status || '',
+                    priority: e.priority || '',
+                    assignee: e.assignee || '',
+                    browseUrl: e.browse_url || '',
+                };
+            }
+
+            const unassignedTickets = (data.unassigned_tickets || []).map(t => this._mapTicket(t));
+
+            return { tickets, epics, unassignedTickets };
         } catch {
-            return [];
+            return empty;
         }
+    }
+
+    private _mapTicket(issue: Record<string, any>): TicketItem {
+        return {
+            key: issue.key,
+            summary: issue.summary || '',
+            status: issue.status || '',
+            priority: issue.priority || '',
+            issuetype: issue.issuetype || '',
+            assignee: issue.assignee || '',
+            isDone: /^(done|closed|resolved|complete)$/i.test(issue.status || ''),
+            browseUrl: issue.browse_url || '',
+            epicKey: issue.epic_key || undefined,
+            source: 'ticket' as const,
+        };
     }
 
     private async _fetchIndividual(keys: string[]): Promise<TicketStatusResult> {

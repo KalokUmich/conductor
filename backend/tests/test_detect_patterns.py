@@ -13,7 +13,6 @@ from app.agent_loop.prompts import (
     build_system_prompt,
     scan_workspace_risk,
 )
-from app.agent_loop.query_classifier import QUERY_TYPES, _ALL_TOOLS, classify_query
 
 
 # ---------------------------------------------------------------------------
@@ -424,34 +423,3 @@ class TestBuildSystemPromptWithRisk:
 # ---------------------------------------------------------------------------
 
 
-class TestQueryClassifierIntegration:
-    """Verify detect_patterns is in the right query type tool sets."""
-
-    def test_detect_patterns_in_all_tools(self):
-        assert "detect_patterns" in _ALL_TOOLS
-
-    def test_detect_patterns_in_code_review(self):
-        assert "detect_patterns" in QUERY_TYPES["code_review"]["tools"]
-
-    def test_detect_patterns_in_root_cause(self):
-        assert "detect_patterns" in QUERY_TYPES["root_cause_analysis"]["tools"]
-
-    def test_detect_patterns_in_impact_analysis(self):
-        assert "detect_patterns" in QUERY_TYPES["impact_analysis"]["tools"]
-
-    def test_detect_patterns_in_business_flow(self):
-        assert "detect_patterns" in QUERY_TYPES["business_flow_tracing"]["tools"]
-
-    def test_detect_patterns_in_architecture(self):
-        assert "detect_patterns" in QUERY_TYPES["architecture_question"]["tools"]
-
-    def test_detect_patterns_not_in_simple_queries(self):
-        """Simple queries like config_analysis don't need pattern detection."""
-        assert "detect_patterns" not in QUERY_TYPES["config_analysis"]["tools"]
-        assert "detect_patterns" not in QUERY_TYPES["entry_point_discovery"]["tools"]
-        assert "detect_patterns" not in QUERY_TYPES["recent_changes"]["tools"]
-
-    def test_classify_code_review_includes_detect_patterns(self):
-        """When classifying a code review query, detect_patterns should be in tool set."""
-        c = classify_query("review the PR master...feature/auth")
-        assert "detect_patterns" in c.tool_set

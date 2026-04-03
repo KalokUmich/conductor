@@ -63,7 +63,6 @@ class ModelStatus:
     provider: str
     display_name: str
     available: bool  # Provider is healthy and model is enabled
-    classifier: bool = False  # Can be used as a query pre-classifier
     explorer: bool = False    # Can be used as a code-explorer sub-agent
 
 
@@ -121,6 +120,11 @@ class ProviderResolver:
         # Active model and provider
         self.active_model_id: Optional[str] = None
         self.active_provider_type: Optional[str] = None
+
+        # Model-level provider cache: model_id → AIProvider instance.
+        # Avoids recreating clients on every request when per-room model
+        # selection resolves the same model_id repeatedly.
+        self._model_cache: Dict[str, AIProvider] = {}
 
     def _is_provider_enabled(self, provider_type: ProviderType) -> bool:
         """Check if a provider is enabled in settings."""
@@ -343,6 +347,32 @@ class ProviderResolver:
 
         return self._create_provider(model.provider, model.model_name)
 
+    def get_or_create_provider(self, model_id: str) -> Optional[AIProvider]:
+        """Get a cached provider for a model, creating it on first access.
+
+        Unlike ``get_provider_for_model`` (which creates a new instance every
+        call), this method caches by *model_id* so the same httpx client is
+        reused across requests — important when per-room model selection
+        resolves the same model repeatedly.
+
+        Returns None if the model is not found, disabled, or its provider is
+        unhealthy.
+        """
+        cached = self._model_cache.get(model_id)
+        if cached is not None:
+            return cached
+
+        model = self._find_model(model_id)
+        if not model or not model.enabled:
+            return None
+        if not self._provider_health.get(model.provider, False):
+            return None
+
+        provider = self._create_provider(model.provider, model.model_name)
+        if provider:
+            self._model_cache[model_id] = provider
+        return provider
+
     def get_status(self) -> AIStatus:
         """Get the current AI status.
 
@@ -370,7 +400,6 @@ class ProviderResolver:
                     self._provider_enabled.get(model.provider, False) and
                     self._provider_health.get(model.provider, False)
                 ),
-                classifier=model.classifier,
                 explorer=model.explorer,
             )
             for model in self.models_config
@@ -395,42 +424,6 @@ class ProviderResolver:
         if self.active_provider_type:
             return self._providers.get(self.active_provider_type)
         return None
-
-    def get_classifier_provider(self) -> Optional[AIProvider]:
-        """Get a provider for query pre-classification.
-
-        Returns the first enabled model with ``classifier: true`` whose
-        provider is healthy. Returns None if no classifier model is configured.
-        """
-        for model in self.models_config:
-            if (
-                model.classifier
-                and model.enabled
-                and self._provider_health.get(model.provider, False)
-            ):
-                provider = self._create_provider(model.provider, model.model_name)
-                if provider:
-                    logger.info("Classifier provider: %s (%s)", model.id, model.provider)
-                    return provider
-        return None
-
-    def get_classifier_provider_for_model(self, model_id: str) -> Optional[AIProvider]:
-        """Get a classifier provider for a specific model ID.
-
-        Returns None if the model is not found, not enabled, not marked as
-        classifier, or its provider is not healthy.
-        """
-        model = self._find_model(model_id)
-        if not model:
-            return None
-        if not model.classifier or not model.enabled:
-            return None
-        if not self._provider_health.get(model.provider, False):
-            return None
-        provider = self._create_provider(model.provider, model.model_name)
-        if provider:
-            logger.info("Classifier provider set to: %s (%s)", model.id, model.provider)
-        return provider
 
     def get_explorer_provider(self) -> Optional[AIProvider]:
         """Get a provider for code-explorer sub-agents.
@@ -514,6 +507,7 @@ class ProviderResolver:
         provider = self._create_provider(model.provider, model.model_name)
         if provider:
             self._providers[model.provider] = provider
+            self._model_cache[model_id] = provider
 
         logger.info(f"Active model changed to: {model_id}")
         return True

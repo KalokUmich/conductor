@@ -72,14 +72,12 @@ class WorkflowEngine:
         explorer_provider: Optional[AIProvider] = None,
         trace_writer=None,
         tool_executor=None,
-        classifier_provider: Optional[AIProvider] = None,
         interactive: bool = False,
     ) -> None:
         self._provider = provider
         self._explorer_provider = explorer_provider or provider
         self._trace_writer = trace_writer
         self._tool_executor = tool_executor
-        self._classifier_provider = classifier_provider
         self._interactive = interactive
         self._event_queue: Optional[asyncio.Queue] = None
 
@@ -136,19 +134,6 @@ class WorkflowEngine:
         classify_result = classifier.classify(context)
         keyword_route = classify_result.best_route
         keyword_score = max(classify_result.raw_scores.values()) if classify_result.raw_scores else 0
-
-        # If LLM classifier is available and route config has examples,
-        # use example-based LLM classification (more accurate than keywords).
-        # Only skip if keyword already matched strongly (score >= 3).
-        if self._classifier_provider is not None and classifier.has_examples() and keyword_score < 3:
-            query_text = context.get("query_text") or context.get("query", "")
-            llm_route = await classifier.classify_with_llm(query_text, self._classifier_provider)
-            if llm_route:
-                classify_result.best_route = llm_route
-                logger.info(
-                    "LLM classifier (examples): keyword=%s(score=%s) → llm=%s",
-                    keyword_route, keyword_score, llm_route,
-                )
 
         context["_classify_result"] = classify_result
 

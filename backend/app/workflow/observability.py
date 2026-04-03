@@ -68,26 +68,32 @@ def init_langfuse(settings=None) -> bool:
         _langfuse_initialized = True
         return False
 
-    # Get API keys from secrets
+    # Get API keys: environment variables take priority, then secrets YAML
+    import os
     secrets = getattr(settings, "secrets", None)
     langfuse_secrets = getattr(secrets, "langfuse", None) if secrets else None
 
-    public_key = getattr(langfuse_secrets, "public_key", "") if langfuse_secrets else ""
-    secret_key = getattr(langfuse_secrets, "secret_key", "") if langfuse_secrets else ""
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY") or (
+        getattr(langfuse_secrets, "public_key", "") if langfuse_secrets else ""
+    )
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY") or (
+        getattr(langfuse_secrets, "secret_key", "") if langfuse_secrets else ""
+    )
+    host = os.environ.get("LANGFUSE_HOST") or langfuse_settings.host
 
     if not public_key or not secret_key:
         logger.warning(
-            "Langfuse: enabled but missing API keys in conductor.secrets.yaml. "
-            "Set langfuse.public_key and langfuse.secret_key."
+            "Langfuse: enabled but missing API keys. "
+            "Set LANGFUSE_PUBLIC_KEY/LANGFUSE_SECRET_KEY env vars "
+            "or langfuse.public_key/secret_key in conductor.secrets.yaml."
         )
         _langfuse_initialized = True
         return False
 
     # Configure Langfuse via environment (the SDK reads these)
-    import os
-    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", public_key)
-    os.environ.setdefault("LANGFUSE_SECRET_KEY", secret_key)
-    os.environ.setdefault("LANGFUSE_HOST", langfuse_settings.host)
+    os.environ["LANGFUSE_PUBLIC_KEY"] = public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = secret_key
+    os.environ["LANGFUSE_HOST"] = host
 
     _langfuse_enabled = True
     _langfuse_initialized = True
@@ -159,6 +165,59 @@ def update_trace(
     try:
         if _langfuse_context is not None:
             _langfuse_context.update_current_trace(metadata=metadata, tags=tags, **kwargs)
+    except Exception:
+        pass  # never fail the main code path
+
+
+def track_generation(
+    *,
+    name: str,
+    model: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+    cache_write_input_tokens: int = 0,
+    metadata: Optional[dict] = None,
+) -> None:
+    """Record an LLM generation with model name and token usage.
+
+    Creates a child generation span under the current trace so that
+    Langfuse can compute token costs (using its built-in model pricing
+    or custom model definitions).
+
+    No-op when Langfuse is disabled.
+    """
+    if not _langfuse_enabled or not _LANGFUSE_AVAILABLE:
+        return
+
+    usage_details: dict = {
+        "input": input_tokens,
+        "output": output_tokens,
+    }
+    if cache_read_input_tokens:
+        usage_details["cache_read_input"] = cache_read_input_tokens
+    if cache_write_input_tokens:
+        usage_details["cache_creation_input"] = cache_write_input_tokens
+
+    try:
+        # v4: get_client().start_observation() → update → end
+        if _get_langfuse_client is not None:
+            client = _get_langfuse_client()
+            gen = client.start_observation(
+                name=name,
+                as_type="generation",
+                model=model,
+                usage_details=usage_details,
+                metadata=metadata,
+            )
+            gen.end()
+        # v2: langfuse_context approach — update the current observation
+        elif _langfuse_context is not None:
+            _langfuse_context.update_current_observation(
+                model=model,
+                usage_details=usage_details,
+                metadata=metadata,
+            )
     except Exception:
         pass  # never fail the main code path
 

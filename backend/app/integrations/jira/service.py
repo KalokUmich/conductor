@@ -57,6 +57,9 @@ class JiraOAuthService:
         self._team_cache: List[JiraFieldOption] = static_teams or []
         self._team_field_key: str = "customfield_10001" if static_teams else ""
         self._static_teams: bool = bool(static_teams)  # if True, never overwrite from API
+        # Classic Jira epic link custom field (discovered once via /field API)
+        self._epic_link_field: Optional[str] = None
+        self._epic_link_field_checked: bool = False
 
     def get_authorize_url(self) -> dict:
         """Generate the Atlassian OAuth authorize URL.
@@ -645,8 +648,100 @@ class JiraOAuthService:
         _walk(adf)
         return " ".join(parts).strip()
 
-    async def list_undone_tickets(self, max_results: int = 30) -> List[dict]:
-        """List the current user's tickets that are not Done/Closed/Merged."""
+    async def _discover_epic_link_field(self) -> Optional[str]:
+        """Discover the classic Jira epic link custom field ID.
+
+        Calls GET /field once and caches the result. Returns the field ID
+        (e.g. 'customfield_10014') or None if not found / not classic project.
+        """
+        if self._epic_link_field_checked:
+            return self._epic_link_field
+        self._epic_link_field_checked = True
+        try:
+            fields = await self._api_request("GET", "/field")
+            for f in fields:
+                schema = f.get("schema", {})
+                if schema.get("custom") == "com.pyxis.greenhopper.jira:gh-epic-link":
+                    self._epic_link_field = f["id"]
+                    logger.info("Discovered classic epic link field: %s", self._epic_link_field)
+                    return self._epic_link_field
+        except Exception as e:
+            logger.debug("Epic link field discovery failed (non-critical): %s", e)
+        return None
+
+    async def _fetch_epic_details(self, epic_keys: List[str]) -> Dict[str, dict]:
+        """Batch-fetch details for a list of Epic issue keys."""
+        if not epic_keys:
+            return {}
+        keys_str = ", ".join(epic_keys)
+        data = await self._api_request("POST", "/search/jql", json={
+            "jql": f"key IN ({keys_str})",
+            "maxResults": len(epic_keys),
+            "fields": ["summary", "status", "priority", "issuetype", "assignee"],
+        })
+        result = {}
+        for issue in data.get("issues", []):
+            fields = issue.get("fields", {})
+            result[issue["key"]] = {
+                "key": issue["key"],
+                "summary": fields.get("summary", ""),
+                "status": fields.get("status", {}).get("name", ""),
+                "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+                "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+                "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+            }
+        return result
+
+    def _extract_epic_key(self, fields: dict) -> str:
+        """Extract the epic key from issue fields (handles both next-gen and classic)."""
+        # Next-gen: parent with issuetype == "Epic"
+        parent = fields.get("parent")
+        if parent:
+            parent_type = parent.get("fields", {}).get("issuetype", {}).get("name", "")
+            if parent_type.lower() == "epic":
+                return parent.get("key", "")
+        # Classic: custom epic link field
+        if self._epic_link_field:
+            epic_val = fields.get(self._epic_link_field)
+            if isinstance(epic_val, str) and epic_val:
+                return epic_val
+            if isinstance(epic_val, dict):
+                return epic_val.get("key", "")
+        return ""
+
+    def _parse_ticket(self, issue: dict) -> dict:
+        """Parse a Jira issue into a ticket dict with epic_key."""
+        fields = issue.get("fields", {})
+        return {
+            "key": issue["key"],
+            "summary": fields.get("summary", ""),
+            "status": fields.get("status", {}).get("name", ""),
+            "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+            "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+            "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+            "components": [c.get("name", "") for c in fields.get("components", [])],
+            "epic_key": self._extract_epic_key(fields),
+            "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+        }
+
+    async def list_undone_tickets(self, max_results: int = 30) -> dict:
+        """List the current user's undone tickets with Epic grouping.
+
+        Returns dict with:
+        - tickets: user's own undone tickets (each with epic_key)
+        - epics: details for referenced Epics
+        - unassigned_tickets: unassigned tickets under the same Epics
+        """
+        # Discover classic epic link field (cached after first call)
+        epic_field = await self._discover_epic_link_field()
+
+        # Build fields list
+        fields_list = ["summary", "status", "assignee", "priority", "issuetype", "components", "parent"]
+        if epic_field:
+            fields_list.append(epic_field)
+
+        # Fetch user's tickets
         jql = (
             'assignee = currentUser() '
             'AND status NOT IN (Done, Closed, Merged, Resolved) '
@@ -655,23 +750,46 @@ class JiraOAuthService:
         data = await self._api_request("POST", "/search/jql", json={
             "jql": jql,
             "maxResults": max_results,
-            "fields": ["summary", "status", "assignee", "priority", "issuetype", "components"],
+            "fields": fields_list,
         })
-        issues = data.get("issues", [])
-        result = []
-        for issue in issues:
-            fields = issue.get("fields", {})
-            result.append({
-                "key": issue["key"],
-                "summary": fields.get("summary", ""),
-                "status": fields.get("status", {}).get("name", ""),
-                "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
-                "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
-                "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
-                "components": [c.get("name", "") for c in fields.get("components", [])],
-                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
-            })
-        return result
+        tickets = [self._parse_ticket(issue) for issue in data.get("issues", [])]
+
+        # Collect unique epic keys
+        epic_keys = list({t["epic_key"] for t in tickets if t["epic_key"]})
+
+        # Batch-fetch epic details
+        epics = await self._fetch_epic_details(epic_keys) if epic_keys else {}
+
+        # Fetch unassigned tickets under the same epics
+        unassigned_tickets: List[dict] = []
+        if epic_keys:
+            my_keys = {t["key"] for t in tickets}
+            # Build JQL for unassigned under these epics
+            keys_str = ", ".join(epic_keys)
+            unassigned_jql = (
+                f'assignee IS EMPTY '
+                f'AND parent IN ({keys_str}) '
+                f'AND status NOT IN (Done, Closed, Merged, Resolved) '
+                f'ORDER BY priority ASC, updated DESC'
+            )
+            try:
+                ua_data = await self._api_request("POST", "/search/jql", json={
+                    "jql": unassigned_jql,
+                    "maxResults": 50,
+                    "fields": fields_list,
+                })
+                for issue in ua_data.get("issues", []):
+                    parsed = self._parse_ticket(issue)
+                    if parsed["key"] not in my_keys:
+                        unassigned_tickets.append(parsed)
+            except Exception as e:
+                logger.debug("Unassigned tickets fetch failed (non-critical): %s", e)
+
+        return {
+            "tickets": tickets,
+            "epics": epics,
+            "unassigned_tickets": unassigned_tickets,
+        }
 
     async def search_issues(self, query: str, max_results: int = 10) -> List[dict]:
         """Search Jira issues using JQL text search."""

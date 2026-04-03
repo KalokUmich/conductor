@@ -631,45 +631,6 @@ class TestCodeReviewAPI:
 # =========================================================================
 
 
-class TestClassifierDiffSpec:
-    """Verify that classify_query extracts diff_spec for PR patterns."""
-
-    def test_do_pr_pattern(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("do PR master...feature/auth")
-        assert c.query_type == "code_review"
-        assert c.diff_spec == "master...feature/auth"
-
-    def test_review_diff_pattern(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("review diff main...feature/payment")
-        assert c.query_type == "code_review"
-        assert c.diff_spec == "main...feature/payment"
-
-    def test_at_ai_do_pr(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("@AI do PR master...feature/branch-name")
-        assert c.query_type == "code_review"
-        assert c.diff_spec == "master...feature/branch-name"
-
-    def test_code_review_head(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("code review HEAD~5")
-        # HEAD~5 doesn't contain ... so _detect_pr_pattern may or may not match
-        assert c.query_type == "code_review"
-
-    def test_non_pr_query_no_diff_spec(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("how does the auth module work?")
-        assert c.diff_spec is None
-
-    def test_chinese_review(self):
-        from app.agent_loop.query_classifier import classify_query
-        c = classify_query("审核 PR main...feature/login")
-        assert c.query_type == "code_review"
-        assert c.diff_spec == "main...feature/login"
-
-
 # =========================================================================
 # Multi-agent review delegation
 # =========================================================================

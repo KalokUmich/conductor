@@ -233,6 +233,7 @@
         .jira-result { margin-top: 0.75rem; padding: 0.5rem; border-radius: 8px; font-size: 0.8rem; }
         .jira-result-success { background: rgba(74,222,128,0.1); border: 1px solid rgba(74,222,128,0.2); color: #4ade80; }
         .jira-result-error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #f87171; }
+        .jira-key-link { font-weight: 600; font-size: 0.7rem; letter-spacing: 0.02em; }
 
         /* ============================================================
            PREMIUM VISUAL SYSTEM
@@ -1466,52 +1467,21 @@
             </button>
         </div>
 
-        <!-- TODO / Tasks Tab Panel -->
+        <!-- Tasks Tab Panel — Task Board + AI Working Space -->
         <div id="tab-panel-tasks" class="hidden flex-1 min-h-0 flex flex-col overflow-y-auto px-3 py-3 gap-2" style="scrollbar-width:thin; scrollbar-color:rgba(139,92,246,0.2) transparent;">
-            <div class="flex items-center justify-between mb-1">
-                <div class="flex gap-1">
-                    <button data-filter="all" class="todo-filter-btn active text-[0.65rem] px-2 py-1 rounded-full bg-violet-600/20 text-violet-400 border border-violet-600/30">All</button>
-                    <button data-filter="open" class="todo-filter-btn text-[0.65rem] px-2 py-1 rounded-full text-gray-500 hover:text-gray-300 border border-gray-700/40">Open</button>
-                    <button data-filter="done" class="todo-filter-btn text-[0.65rem] px-2 py-1 rounded-full text-gray-500 hover:text-gray-300 border border-gray-700/40">Done</button>
-                </div>
-                <button id="btn-add-todo" class="text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1 transition-colors">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
-                    Add
-                </button>
-            </div>
-            <!-- Quick add form (hidden by default) -->
-            <div id="todo-add-form" class="hidden bg-gray-800/60 rounded-lg p-3 border border-gray-700/40 flex flex-col gap-2">
-                <input id="todo-title-input" type="text" placeholder="Task title *" maxlength="200"
-                    class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 focus:outline-none focus:border-violet-500 w-full" />
-                <textarea id="todo-desc-input" rows="2" placeholder="Description (optional) — helps AI understand what to do"
-                    class="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-400 focus:outline-none focus:border-violet-500 w-full resize-none"></textarea>
-                <div class="flex items-center gap-2">
-                    <select id="todo-priority-select" class="bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-xs text-gray-300 focus:outline-none">
-                        <option value="high">🔴 High</option>
-                        <option value="medium" selected>🟡 Medium</option>
-                        <option value="low">🟢 Low</option>
-                    </select>
-                    <div class="flex gap-1.5 ml-auto">
-                        <button id="btn-todo-cancel" class="btn-secondary text-xs px-3 py-1.5">Cancel</button>
-                        <button id="btn-todo-save" class="btn-primary text-xs px-3 py-1.5">Add Task</button>
-                    </div>
-                </div>
-            </div>
-            <div id="todos-list" class="flex flex-col gap-1.5">
-                <div class="text-xs text-gray-600 text-center py-6">No tasks yet. They'll appear here from AI summaries or when you add them manually.</div>
-            </div>
 
-            <!-- Unified Task Board -->
-            <div class="mt-3 border-t border-gray-700/40 pt-3">
+            <!-- Task Board (always visible) -->
+            <div>
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-2">
-                    <button id="btn-toggle-task-board" class="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 transition-colors">
-                        <svg id="task-board-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                    <div class="flex items-center gap-1.5 text-xs text-gray-300">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-violet-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M9 2a1 1 0 000 2h2a1 1 0 100-2H9z"/>
+                            <path fill-rule="evenodd" d="M4 5a2 2 0 012-2 3 3 0 003 3h2a3 3 0 003-3 2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm3 4a1 1 0 000 2h.01a1 1 0 100-2H7zm3 0a1 1 0 000 2h3a1 1 0 100-2h-3zm-3 4a1 1 0 100 2h.01a1 1 0 100-2H7zm3 0a1 1 0 100 2h3a1 1 0 100-2h-3z" clip-rule="evenodd"/>
                         </svg>
                         <span class="font-medium">Task Board</span>
                         <span id="task-board-count" class="hidden text-[0.6rem] bg-violet-600/40 text-violet-300 px-1.5 rounded-full">0</span>
-                    </button>
+                    </div>
                     <div class="flex items-center gap-2">
                         <button id="btn-load-jira-tickets" class="flex items-center gap-1 text-[0.65rem] text-blue-400 hover:text-blue-300 transition-colors" title="Load your Jira tickets">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
@@ -1528,7 +1498,7 @@
                     </div>
                 </div>
 
-                <div id="task-board-panel" class="hidden flex flex-col gap-3">
+                <div id="task-board-panel" class="flex flex-col gap-3">
                     <!-- Backlog: 3 collapsible sections -->
                     <div id="backlog-empty" class="text-xs text-gray-600 text-center py-3">
                         <strong>Scan</strong> for code TODOs or <strong>Jira</strong> for your tickets.
@@ -3181,39 +3151,45 @@
         // ============================================================
         // Slash Command System
         // ============================================================
+        // Slash command prefix convention: [query_type:xxx] ensures the
+        // backend classifier immediately knows the intent without keyword guessing.
         const SLASH_COMMANDS = [
             {
                 name: '/ask',
                 description: 'Ask a question about the codebase',
                 hint: 'How does auth work?',
-                transform: (args) => args,
+                transform: (args) => args,  // no prefix — classifier infers from keywords
             },
             {
                 name: '/pr',
                 description: 'Review a pull request or diff',
                 hint: 'main...feature/branch-name',
-                transform: (args) => `do PR ${args}`,
+                transform: (args) => `[query_type:code_review] ${args}`,
             },
             {
                 name: '/jira',
                 description: 'Create, search, or consult Jira tickets',
-                hint: 'create Fix login bug | DEV-123 | search auth issues | my tickets',
+                hint: 'create Fix login bug | DEV-123 | search auth | my tickets | blockers',
                 transform: (args) => {
-                    if (!args.trim()) return '[jira] List my current Jira tickets and show a summary of what I should focus on.';
+                    const prefix = '[query_type:issue_tracking]';
+                    if (!args.trim()) return `${prefix} List my current Jira tickets. Group by priority (Highest/Blocker first) and suggest what to focus on.`;
                     // Ticket key pattern → consultation
-                    if (/^[A-Z]+-\d+$/i.test(args.trim())) return `[jira] Fetch Jira ticket ${args.trim()}, read the related code, and explain what needs to be done with a suggested approach.`;
+                    if (/^[A-Z]+-\d+$/i.test(args.trim())) return `${prefix} Fetch Jira ticket ${args.trim().toUpperCase()}, read the related code, and explain what needs to be done. Include: ticket summary, status, priority, components, then map requirements to specific code locations (file:line) and suggest an implementation approach.`;
                     // Subcommands
-                    const sub = args.match(/^(create|search|my\s+tickets|my\s+sprint)\s*(.*)/i);
+                    const sub = args.match(/^(create|search|update|my\s+tickets|my\s+sprint|blockers|workload)\s*(.*)/i);
                     if (sub) {
                         const cmd = sub[1].toLowerCase();
                         const rest = sub[2].trim();
-                        if (cmd === 'create') return `[jira] Create a Jira ticket for: ${rest || 'the task I describe'}. Analyze the relevant code first, assess complexity (ticket vs epic vs project), draft the ticket with code context, and ask me to confirm before creating.`;
-                        if (cmd === 'search') return `[jira] Search Jira for: ${rest}`;
-                        if (cmd.startsWith('my ticket')) return `[jira] Show all Jira tickets assigned to me. Group by priority and suggest what to focus on.`;
-                        if (cmd.startsWith('my sprint')) return `[jira] Show my current sprint tickets. Group by status and highlight blockers.`;
+                        if (cmd === 'create') return `${prefix} Create a Jira ticket for: ${rest || 'the task I describe'}. Analyze the relevant code first, assess complexity (ticket vs epic vs project), draft the ticket with code context (affected files, dependencies, acceptance criteria), and ask me to confirm before creating. Return the ticket URL after creation.`;
+                        if (cmd === 'search') return `${prefix} Search Jira for: ${rest}. Group results by priority and include status and assignee for each ticket.`;
+                        if (cmd === 'update') return `${prefix} Update Jira ticket: ${rest}. Confirm with me before making any changes.`;
+                        if (cmd.startsWith('my ticket')) return `${prefix} Show all Jira tickets assigned to me that are not Done. Group by priority (Highest/Blocker first) and suggest what to focus on.`;
+                        if (cmd.startsWith('my sprint')) return `${prefix} Show my current sprint tickets. Group by status (In Progress first, then To Do) and highlight blockers or highest-priority items.`;
+                        if (cmd.startsWith('blocker')) return `${prefix} Show my blocker and highest-priority tickets. These are tickets with priority Highest/Blocker or labelled as blocked. Suggest what to unblock first.`;
+                        if (cmd.startsWith('workload')) return `${prefix} Show my current workload: all assigned tickets grouped by priority and status. Summarise total count per status, highlight overdue or blocked items, and suggest a focus plan.`;
                     }
                     // Default: let the agent figure out intent
-                    return `[jira] ${args}`;
+                    return `${prefix} ${args}`;
                 },
             },
         ];
@@ -7664,7 +7640,7 @@
                 }
 
                 // Detect plan mode for known actionable flows
-                const isPlanMode = /^\[jira\]\s*(create|investigate)/i.test(query);
+                const isPlanMode = /^\[query_type:issue_tracking\]\s*(create|investigate)/i.test(query);
 
                 console.log('[WebView] @AI detected, sending askAI command:', query, isPlanMode ? '(plan mode)' : '');
                 const askMsg = {
@@ -7744,10 +7720,7 @@
         const tabTasks = document.getElementById('tab-tasks');
         const tabPanelChat  = document.getElementById('tab-panel-chat');
         const tabPanelTasks = document.getElementById('tab-panel-tasks');
-        const todosListEl   = document.getElementById('todos-list');
         const todoBadge     = document.getElementById('todo-count-badge');
-        let currentFilter   = 'all';
-        let allTodos        = [];
 
         // Pill-style tab activation helpers
         function activatePillTab(activeBtn, inactiveBtn) {
@@ -7784,326 +7757,37 @@
             activatePillTab(tabTasks, tabChat);
             tabPanelTasks.classList.remove('hidden');
             tabPanelChat.classList.add('hidden');
-            // Load todos when tab opens
-            if (session.roomId) {
-                vscode.postMessage({ command: 'loadTodos', roomId: session.roomId });
-            }
         });
 
-        // Filter buttons
-        document.querySelectorAll('.todo-filter-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                document.querySelectorAll('.todo-filter-btn').forEach(b => {
-                    b.classList.remove('active','bg-violet-600/20','text-violet-400','border-violet-600/30');
-                    b.classList.add('text-gray-500','border-gray-700/40');
-                });
-                btn.classList.add('active','bg-violet-600/20','text-violet-400','border-violet-600/30');
-                btn.classList.remove('text-gray-500','border-gray-700/40');
-                currentFilter = btn.dataset.filter;
-                renderTodoList(allTodos);
-            });
-        });
-
-        // Add TODO form
-        const btnAddTodo    = document.getElementById('btn-add-todo');
-        const todoAddForm   = document.getElementById('todo-add-form');
-        const todoTitleInput = document.getElementById('todo-title-input');
-        const todoPrioritySelect = document.getElementById('todo-priority-select');
-        const btnTodoSave   = document.getElementById('btn-todo-save');
-        const btnTodoCancel = document.getElementById('btn-todo-cancel');
-
-        btnAddTodo.addEventListener('click', () => {
-            todoAddForm.classList.toggle('hidden');
-            if (!todoAddForm.classList.contains('hidden')) todoTitleInput.focus();
-        });
-        const todoDescInput = document.getElementById('todo-desc-input');
-
-        function _closeTodoForm() {
-            todoAddForm.classList.add('hidden');
-            todoTitleInput.value = '';
-            if (todoDescInput) todoDescInput.value = '';
-        }
-
-        btnTodoCancel.addEventListener('click', _closeTodoForm);
-
-        // Submit on Cmd/Ctrl+Enter inside the form
-        todoAddForm.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) btnTodoSave.click();
-        });
-
-        btnTodoSave.addEventListener('click', () => {
-            const title = todoTitleInput.value.trim();
-            if (!title || !session.roomId) return;
-            const description = todoDescInput?.value.trim() || null;
-            vscode.postMessage({
-                command: 'createTodo',
-                roomId: session.roomId,
-                todo: {
-                    title,
-                    description: description || undefined,
-                    priority: todoPrioritySelect.value,
-                    source: 'manual',
-                    created_by: session.displayName || '',
-                },
-            });
-            _closeTodoForm();
-        });
-
-        function renderTodoList(todos) {
-            allTodos = todos;
-            const filtered = currentFilter === 'all' ? todos
-                : todos.filter(t => currentFilter === 'done' ? t.status === 'done' : t.status !== 'done');
-
-            if (filtered.length === 0) {
-                if (currentFilter === 'done') {
-                    todosListEl.innerHTML = `<div class="text-xs text-gray-600 text-center py-6">No completed tasks yet.</div>`;
-                } else if (todos.length > 0) {
-                    // There are tasks, just none match the filter
-                    todosListEl.innerHTML = `<div class="text-xs text-gray-600 text-center py-6">No open tasks.</div>`;
-                } else {
-                    // Truly empty — explain how tasks are created
-                    todosListEl.innerHTML = `
-                        <div class="flex flex-col items-center gap-3 py-6 px-2 text-center">
-                            <div class="text-2xl">✅</div>
-                            <p class="text-xs text-gray-500 font-medium">No tasks yet</p>
-                            <div class="bg-gray-800/40 border border-gray-700/40 rounded-lg p-3 text-left space-y-2 w-full">
-                                <p class="text-[0.65rem] text-gray-400 font-semibold uppercase tracking-wide">How tasks are created</p>
-                                <div class="flex items-start gap-2">
-                                    <span class="text-violet-400 flex-shrink-0 mt-0.5">🤖</span>
-                                    <p class="text-[0.65rem] text-gray-400 leading-relaxed"><strong class="text-gray-300">Automatically</strong> — run <strong class="text-violet-300">Summarize</strong> in the chat. The AI extracts actionable items and adds them here.</p>
-                                </div>
-                                <div class="flex items-start gap-2">
-                                    <span class="text-emerald-400 flex-shrink-0 mt-0.5">✏️</span>
-                                    <p class="text-[0.65rem] text-gray-400 leading-relaxed"><strong class="text-gray-300">Manually</strong> — click <strong class="text-gray-300">+ Add</strong> above to create a task yourself.</p>
-                                </div>
-                            </div>
-                        </div>`;
-                }
-            } else {
-                todosListEl.innerHTML = '';
-            }
-
-            filtered.forEach(todo => {
-                const el = buildTodoEl(todo);
-                todosListEl.appendChild(el);
-            });
-
-            // Update badge
-            const openCount = todos.filter(t => t.status !== 'done').length;
-            if (openCount > 0) {
-                todoBadge.textContent = openCount;
-                todoBadge.classList.remove('hidden');
-            } else {
-                todoBadge.classList.add('hidden');
-            }
-        }
-
-        function buildTodoEl(todo) {
-            const el = document.createElement('div');
-            const isDone = todo.status === 'done';
-            el.className = `todo-item rounded-lg border transition-all
-                ${isDone ? 'bg-gray-900/20 border-gray-800/30 opacity-55' : 'bg-gray-800/40 border-gray-700/40 hover:border-gray-600/60'}`;
-            el.dataset.todoId = todo.id;
-
-            const priorityDot = { high: 'bg-red-400', medium: 'bg-yellow-400', low: 'bg-green-400' };
-            const priorityLabel = { high: 'text-red-400', medium: 'text-yellow-400', low: 'text-green-400' };
-            const dot = priorityDot[todo.priority] || 'bg-gray-500';
-            const prioText = priorityLabel[todo.priority] || 'text-gray-400';
-
-            // Description: show first 2 lines truncated; click to toggle full
-            const descHtml = todo.description ? `
-                <p class="todo-desc text-[0.65rem] text-gray-500 mt-1 leading-relaxed"
-                   style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"
-                >${escapeHtml(todo.description)}</p>` : '';
-
-            // Source badge
-            const sourceBadge = todo.source === 'ai_summary'
-                ? `<span class="text-[0.6rem] text-violet-500/70">🤖 from AI</span>` : '';
-
-            el.innerHTML = `
-                <!-- Main row -->
-                <div class="flex items-start gap-2 p-2.5">
-                    <!-- Checkbox -->
-                    <button class="todo-check mt-0.5 flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-all
-                        ${isDone ? 'bg-violet-600 border-violet-600' : 'border-gray-600 hover:border-violet-500'}">
-                        ${isDone ? '<svg class="w-2.5 h-2.5 text-white" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>' : ''}
-                    </button>
-
-                    <!-- Content -->
-                    <div class="flex-1 min-w-0">
-                        <div class="flex items-start gap-1.5">
-                            <span class="w-1.5 h-1.5 rounded-full ${dot} flex-shrink-0 mt-1.5"></span>
-                            <p class="text-xs ${isDone ? 'line-through text-gray-600' : 'text-gray-200'} leading-snug break-words flex-1">${escapeHtml(todo.title)}</p>
-                        </div>
-                        ${descHtml}
-                        <!-- Meta row -->
-                        <div class="flex items-center gap-2 mt-1.5 flex-wrap">
-                            <span class="text-[0.6rem] font-medium ${prioText} uppercase tracking-wide">${todo.priority}</span>
-                            ${todo.type && todo.type !== 'task' ? `<span class="text-[0.6rem] text-gray-500 bg-gray-700/40 px-1.5 py-0.5 rounded">${escapeHtml(todo.type)}</span>` : ''}
-                            ${todo.file_path ? `<button class="todo-nav-btn text-[0.6rem] text-blue-400 hover:text-blue-300 font-mono truncate max-w-[110px]" data-path="${escapeHtml(todo.file_path)}" data-line="${todo.line_number || 1}">📎 ${escapeHtml(todo.file_path.split('/').slice(-1)[0])}${todo.line_number ? ':' + todo.line_number : ''}</button>` : ''}
-                            ${sourceBadge}
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Action row — shown on hover via CSS, always accessible -->
-                <div class="todo-actions flex items-center justify-end gap-1 px-2.5 pb-2">
-                    <button class="todo-ai-btn flex items-center gap-1 text-[0.65rem] text-violet-400 hover:text-violet-300
-                        bg-violet-500/10 hover:bg-violet-500/20 border border-violet-600/20 hover:border-violet-500/40
-                        px-2 py-1 rounded-md transition-all font-medium"
-                        title="Ask AI to implement this task — generates a code prompt in chat">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2L13.09 8.26L18 6L14.74 10.91L21 12L14.74 13.09L18 18L13.09 15.74L12 22L10.91 15.74L6 18L9.26 13.09L3 12L9.26 10.91L6 6L10.91 8.26L12 2Z"/>
-                        </svg>
-                        Ask AI
-                    </button>
-                    <button class="todo-delete-btn flex items-center gap-1 text-[0.65rem] text-gray-600 hover:text-red-400
-                        hover:bg-red-500/10 border border-transparent hover:border-red-600/20
-                        px-2 py-1 rounded-md transition-all"
-                        title="Delete task">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd" />
-                        </svg>
-                        Delete
-                    </button>
-                </div>`;
-
-            // Toggle done
-            el.querySelector('.todo-check').addEventListener('click', (e) => {
-                e.stopPropagation();
-                const newStatus = isDone ? 'open' : 'done';
-                vscode.postMessage({ command: 'updateTodo', roomId: session.roomId, todoId: todo.id, updates: { status: newStatus } });
-            });
-
-            // Navigate to code
-            const navBtn = el.querySelector('.todo-nav-btn');
-            if (navBtn) {
-                navBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    vscode.postMessage({ command: 'navigateToCode', relativePath: navBtn.dataset.path, startLine: parseInt(navBtn.dataset.line), endLine: parseInt(navBtn.dataset.line) });
-                });
-            }
-
-            // Toggle description expand/collapse
-            const descEl = el.querySelector('.todo-desc');
-            if (descEl) {
-                descEl.style.cursor = 'pointer';
-                let descExpanded = false;
-                descEl.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    descExpanded = !descExpanded;
-                    descEl.style.webkitLineClamp = descExpanded ? 'unset' : '2';
-                    descEl.style.overflow = descExpanded ? 'visible' : 'hidden';
-                });
-            }
-
-            // Ask AI — format task as CodeRelevantItem and trigger code prompt generation
-            el.querySelector('.todo-ai-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!session.roomId) return;
-
-                const aiBtn = el.querySelector('.todo-ai-btn');
-                const originalHtml = aiBtn.innerHTML;
-
-                // Show loading state
-                aiBtn.disabled = true;
-                aiBtn.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg> Generating…`;
-
-                // Package the task as a CodeRelevantItem — reuses the existing CGP pipeline
-                const item = {
-                    title: todo.title,
-                    description: todo.description
-                        ? `${todo.title}\n\n${todo.description}`
-                        : todo.title,
-                    affected_components: todo.file_path ? [todo.file_path] : [],
-                    type: todo.type || 'code_change',
-                    priority: todo.priority,
-                };
-
-                vscode.postMessage({
-                    command: 'generateCodePromptFromItemsAndPost',
-                    items: [item],
-                    topic: todo.title,
-                    roomId: session.roomId,
-                });
-
-                // Restore button after a short delay (actual result appears in chat)
-                setTimeout(() => {
-                    aiBtn.disabled = false;
-                    aiBtn.innerHTML = originalHtml;
-                }, 3000);
-            });
-
-            // Delete task
-            el.querySelector('.todo-delete-btn').addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (!session.roomId) return;
-                // Optimistic UI — fade out immediately
-                el.style.transition = 'opacity 0.2s';
-                el.style.opacity = '0';
-                setTimeout(() => {
-                    vscode.postMessage({ command: 'deleteTodo', roomId: session.roomId, todoId: todo.id });
-                }, 180);
-            });
-
-            return el;
-        }
-
-        function addTodoToList(todo) {
-            allTodos.unshift(todo);
-            renderTodoList(allTodos);
-        }
-
-        function refreshTodoInList(updated) {
-            allTodos = allTodos.map(t => t.id === updated.id ? updated : t);
-            renderTodoList(allTodos);
-        }
-
-        function removeTodoFromList(todoId) {
-            allTodos = allTodos.filter(t => t.id !== todoId);
-            renderTodoList(allTodos);
-        }
-
-        // Auto-populate todos from AI summary CodeRelevantItems
-        function autoPopulateTodosFromItems(items, roomId) {
-            if (!items || !roomId) return;
-            items.forEach(item => {
-                // title and description are both populated so "Ask AI" has full context
-                const title = item.title || item.description || 'Task from AI';
-                const description = item.description && item.description !== title
-                    ? item.description : null;
-                const todo = {
-                    title,
-                    description,
-                    type: item.type || 'task',
-                    priority: item.priority || 'medium',
-                    file_path: (item.affected_components || [])[0] || null,
-                    source: 'ai_summary',
-                    created_by: 'AI',
-                };
-                vscode.postMessage({ command: 'createTodo', roomId, todo });
-            });
-        }
+        // --- Manual TODO list removed — Task Board is the primary task UI ---
+        // Stub functions kept to avoid errors from backend messages
+        function renderTodoList() {}
+        function addTodoToList() {}
+        function refreshTodoInList() {}
+        function removeTodoFromList() {}
+        function autoPopulateTodosFromItems() {}
 
         // ============================================================
         // Task Board: Backlog + AI Working Space
         // ============================================================
 
-        /** @type {Array<{id:string,filePath:string,relativePath:string,lineNumber:number,title:string,description?:string,descriptionLine?:number,commentPrefix:string,ticketKey?:string}>} */
+        /** @type {Array<{id:string,filePath:string,relativePath:string,lineNumber:number,title:string,description?:string,descriptionLine?:number,commentPrefix:string,ticketKey?:string,changeNumber?:number,afterDeps?:number[],blockedBy?:string[],parentTicket?:string,blockEndLine?:number,rawTag?:string}>} */
         let workspaceTodos = [];
-        /** @type {Array<{key:string,summary:string,status:string,priority:string,issuetype:string,isDone:boolean,browseUrl:string,source:string,linkedTodo?:object}>} */
+        /** @type {Array<{key:string,summary:string,status:string,priority:string,issuetype:string,isDone:boolean,browseUrl:string,source:string,epicKey?:string,assignee?:string,linkedTodo?:object}>} */
         let jiraTickets = [];
+        /** @type {Record<string,{key:string,summary:string,status:string,priority:string,assignee:string,browseUrl:string}>} */
+        let jiraEpics = {};
+        /** @type {Array<object>} Unassigned tickets under same Epics */
+        let jiraUnassignedTickets = [];
         /** @type {Array<object>} Items in AI Working Space */
         let aiWorkspaceItems = [];
         /** Currently edited workspace todo item */
         let _editingWorkspaceTodo = null;
+        /** Dependency graph: itemId -> { unresolvedAfter: [...], unresolvedBlocked: [...] } */
+        let _dependencyGraph = {};
 
         const btnScanWorkspaceTodos      = document.getElementById('btn-scan-workspace-todos');
-        const btnToggleTaskBoard         = document.getElementById('btn-toggle-task-board');
-        const taskBoardChevron           = document.getElementById('task-board-chevron');
+        // Task Board is always visible (no toggle needed)
         const taskBoardPanel             = document.getElementById('task-board-panel');
         const backlogEmpty               = document.getElementById('backlog-empty');
         const taskBoardCount             = document.getElementById('task-board-count');
@@ -8154,11 +7838,7 @@
             if (_scanOverlayTimeout) { clearTimeout(_scanOverlayTimeout); _scanOverlayTimeout = null; }
         }
 
-        btnToggleTaskBoard.addEventListener('click', () => {
-            _taskBoardExpanded = !_taskBoardExpanded;
-            taskBoardPanel.classList.toggle('hidden', !_taskBoardExpanded);
-            taskBoardChevron.style.transform = _taskBoardExpanded ? 'rotate(90deg)' : '';
-        });
+        // Task Board toggle removed — always visible
 
         // Toggle accordion sections
         document.getElementById('btn-toggle-linked')?.addEventListener('click', () => {
@@ -8212,6 +7892,19 @@
                     const item = JSON.parse(itemJson);
                     // Avoid duplicates
                     if (aiWorkspaceItems.some(i => i.id === item.id)) return;
+                    // Check dependencies before allowing drop
+                    const deps = _dependencyGraph[item.id];
+                    if (deps) {
+                        const blockers = [];
+                        for (const a of deps.unresolvedAfter) {
+                            blockers.push('{jira:' + a.ticketKey + '#' + a.changeNumber + '}');
+                        }
+                        for (const b of deps.unresolvedBlocked) {
+                            blockers.push('{jira:' + b.ticketKey + '}');
+                        }
+                        showToast('Blocked — complete ' + blockers.join(', ') + ' first', 'error');
+                        return;
+                    }
                     aiWorkspaceItems.push(item);
                     renderAIWorkspace();
                     renderBacklog(); // Update backlog to hide dragged item
@@ -8221,7 +7914,64 @@
 
         function renderWorkspaceTodoList() { renderBacklog(); }
 
+        /**
+         * Build dependency graph from workspaceTodos.
+         * Populates _dependencyGraph: itemId -> { unresolvedAfter, unresolvedBlocked }
+         * A dependency is "unresolved" when the depended-on TODO still exists in the scan.
+         */
+        function buildDependencyGraph() {
+            _dependencyGraph = {};
+
+            // Index: "TICKET#N" -> todo item id
+            const changeIndex = {};
+            // Index: "TICKET" -> [todo item ids]
+            const ticketIndex = {};
+
+            for (const todo of workspaceTodos) {
+                const itemId = 'todo:' + todo.id;
+                if (todo.ticketKey) {
+                    if (!ticketIndex[todo.ticketKey]) ticketIndex[todo.ticketKey] = [];
+                    ticketIndex[todo.ticketKey].push(itemId);
+                    if (todo.changeNumber) {
+                        changeIndex[todo.ticketKey + '#' + todo.changeNumber] = itemId;
+                    }
+                }
+            }
+
+            for (const todo of workspaceTodos) {
+                const itemId = 'todo:' + todo.id;
+                const unresolvedAfter = [];
+                const unresolvedBlocked = [];
+
+                // Intra-ticket: after:N — depends on change #N within same ticket
+                if (todo.afterDeps && todo.ticketKey) {
+                    for (const n of todo.afterDeps) {
+                        const depKey = todo.ticketKey + '#' + n;
+                        if (changeIndex[depKey]) {
+                            unresolvedAfter.push({ changeNumber: n, ticketKey: todo.ticketKey });
+                        }
+                    }
+                }
+
+                // Cross-ticket: blocked:OTHER — all TODOs from OTHER must be resolved
+                if (todo.blockedBy) {
+                    for (const otherTicket of todo.blockedBy) {
+                        if (ticketIndex[otherTicket] && ticketIndex[otherTicket].length > 0) {
+                            unresolvedBlocked.push({ ticketKey: otherTicket });
+                        }
+                    }
+                }
+
+                if (unresolvedAfter.length > 0 || unresolvedBlocked.length > 0) {
+                    _dependencyGraph[itemId] = { unresolvedAfter, unresolvedBlocked };
+                }
+            }
+        }
+
         function renderBacklog() {
+            // Rebuild dependency graph on every render (deps may change after re-scan)
+            buildDependencyGraph();
+
             // Clear all section lists
             backlogLinkedList.innerHTML = '';
             backlogCodeList.innerHTML = '';
@@ -8245,6 +7995,9 @@
                     ticketKey: todo.ticketKey, ticketStatus: ts, filePath: todo.filePath,
                     relativePath: todo.relativePath, lineNumber: todo.lineNumber,
                     commentPrefix: todo.commentPrefix, descriptionLine: todo.descriptionLine,
+                    changeNumber: todo.changeNumber, afterDeps: todo.afterDeps,
+                    blockedBy: todo.blockedBy, parentTicket: todo.parentTicket,
+                    blockEndLine: todo.blockEndLine, rawTag: todo.rawTag,
                     priority: ts?.priority || null, browseUrl: ts?.browseUrl || null, raw: todo };
                 if (todo.ticketKey) {
                     linkedItems.push(item);
@@ -8253,7 +8006,7 @@
                 }
             }
 
-            // Jira tickets not already linked to a TODO
+            // Jira tickets not already linked to a TODO (mine)
             for (const ticket of jiraTickets) {
                 if (ticket.isDone) continue;
                 const itemId = 'ticket:' + ticket.key;
@@ -8263,7 +8016,21 @@
                     ticketKey: ticket.key, ticketStatus: { key: ticket.key, summary: ticket.summary, status: ticket.status, isDone: false, browseUrl: ticket.browseUrl },
                     filePath: ticket.linkedTodo?.filePath || null, relativePath: ticket.linkedTodo?.relativePath || null,
                     lineNumber: ticket.linkedTodo?.lineNumber || null, priority: ticket.priority,
-                    browseUrl: ticket.browseUrl, raw: ticket });
+                    epicKey: ticket.epicKey || null, assignee: ticket.assignee || null,
+                    browseUrl: ticket.browseUrl, raw: ticket, _isUnassigned: false });
+            }
+            // Unassigned Jira tickets under same Epics
+            for (const ticket of jiraUnassignedTickets) {
+                if (ticket.isDone) continue;
+                const itemId = 'ticket:' + ticket.key;
+                if (wsItemIds.has(itemId)) continue;
+                if (todoTicketKeys.has(ticket.key)) continue;
+                jiraItems.push({ id: itemId, source: 'ticket', title: ticket.summary, description: null,
+                    ticketKey: ticket.key, ticketStatus: { key: ticket.key, summary: ticket.summary, status: ticket.status, isDone: false, browseUrl: ticket.browseUrl },
+                    filePath: ticket.linkedTodo?.filePath || null, relativePath: ticket.linkedTodo?.relativePath || null,
+                    lineNumber: ticket.linkedTodo?.lineNumber || null, priority: ticket.priority,
+                    epicKey: ticket.epicKey || null, assignee: '',
+                    browseUrl: ticket.browseUrl, raw: ticket, _isUnassigned: true });
             }
 
             const totalCount = linkedItems.length + codeItems.length + jiraItems.length;
@@ -8281,12 +8048,7 @@
             if (totalCount > 0) taskBoardCount.classList.remove('hidden');
             else taskBoardCount.classList.add('hidden');
 
-            // Auto-expand when results arrive
-            if (!_taskBoardExpanded) {
-                _taskBoardExpanded = true;
-                taskBoardPanel.classList.remove('hidden');
-                taskBoardChevron.style.transform = 'rotate(90deg)';
-            }
+            // Task Board is always visible — no expand needed
 
             // --- Render Linked section ---
             if (linkedItems.length > 0) {
@@ -8310,13 +8072,37 @@
                 backlogCodeSection.classList.add('hidden');
             }
 
-            // --- Render Jira Tickets section ---
+            // --- Render Jira Tickets section (grouped by Epic) ---
             if (jiraItems.length > 0) {
                 backlogJiraSection.classList.remove('hidden');
                 jiraTicketsCountEl.textContent = jiraItems.length;
-                jiraItems.forEach(item => {
-                    backlogJiraList.appendChild(_buildJiraTicketCard(item));
-                });
+
+                // Group jira items by epicKey
+                const epicGroups = {};  // epicKey -> { mine: [], unassigned: [] }
+                const noEpicItems = [];
+                for (const item of jiraItems) {
+                    const ek = item.epicKey;
+                    if (ek && jiraEpics[ek]) {
+                        if (!epicGroups[ek]) epicGroups[ek] = { mine: [], unassigned: [] };
+                        if (item._isUnassigned) epicGroups[ek].unassigned.push(item);
+                        else epicGroups[ek].mine.push(item);
+                    } else {
+                        noEpicItems.push(item);
+                    }
+                }
+
+                // Render Epic groups
+                for (const [epicKey, group] of Object.entries(epicGroups)) {
+                    const epicInfo = jiraEpics[epicKey];
+                    backlogJiraList.appendChild(_buildEpicGroup(epicKey, epicInfo, group.mine, group.unassigned));
+                }
+
+                // Render tickets without Epic
+                if (noEpicItems.length > 0) {
+                    for (const item of noEpicItems) {
+                        backlogJiraList.appendChild(_buildJiraTicketCard(item));
+                    }
+                }
             } else {
                 backlogJiraSection.classList.add('hidden');
             }
@@ -8357,6 +8143,27 @@
                 e.dataTransfer.effectAllowed = 'move';
             });
             el.addEventListener('dragend', () => el.classList.remove('dragging'));
+
+            // Gray out blocked items
+            const deps = _dependencyGraph[item.id];
+            if (deps) {
+                el.classList.add('opacity-40');
+                el.draggable = false;
+                el.style.cursor = 'not-allowed';
+                // Build tooltip
+                const parts = [];
+                for (const a of (deps.unresolvedAfter || [])) parts.push('#' + a.changeNumber + ' (' + a.ticketKey + ')');
+                for (const b of (deps.unresolvedBlocked || [])) parts.push(b.ticketKey);
+                el.title = 'Blocked by: ' + parts.join(', ');
+                // Add lock badge
+                const metaRow = el.querySelector('.flex.items-center.gap-1\\.5.mt-0\\.5');
+                if (metaRow) {
+                    const lockBadge = document.createElement('span');
+                    lockBadge.className = 'text-[0.55rem] text-orange-400/70 flex items-center gap-0.5';
+                    lockBadge.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg> Blocked';
+                    metaRow.appendChild(lockBadge);
+                }
+            }
 
             // Click → navigate to file
             el.addEventListener('click', (e) => {
@@ -8409,10 +8216,57 @@
         }
 
         /** Build a Jira ticket card (clickable to show popup, not draggable) */
-        function _buildJiraTicketCard(item) {
+        /** Build an Epic group with collapsible header and child tickets. */
+        function _buildEpicGroup(epicKey, epicInfo, myTickets, unassignedTickets) {
+            const container = document.createElement('div');
+            container.className = 'epic-group border-l-2 border-indigo-500/40 rounded-r-lg mb-2';
+
+            const childCount = myTickets.length + unassignedTickets.length;
+            const header = document.createElement('button');
+            header.className = 'flex items-center gap-1.5 w-full text-left text-[0.65rem] font-medium px-2 py-1.5 hover:bg-gray-800/30 rounded-r-lg transition-colors';
+            header.innerHTML = `
+                <svg class="epic-chevron h-2.5 w-2.5 text-indigo-400/70 transition-transform" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
+                </svg>
+                <span class="text-indigo-400/70 font-mono">${escapeHtml(epicKey)}</span>
+                <span class="text-gray-300 truncate flex-1">${escapeHtml(epicInfo.summary)}</span>
+                <span class="text-[0.5rem] px-1.5 py-0.5 rounded-full bg-indigo-600/20 text-indigo-300">${epicInfo.status}</span>
+                <span class="text-[0.5rem] bg-gray-700/50 text-gray-400 px-1.5 rounded-full">${childCount}</span>`;
+
+            const list = document.createElement('div');
+            list.className = 'flex flex-col gap-1 pl-2 pb-1 hidden';
+
+            // Toggle collapse
+            header.addEventListener('click', () => {
+                list.classList.toggle('hidden');
+                header.querySelector('.epic-chevron').style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
+            });
+
+            // Render my tickets (green accent)
+            for (const item of myTickets) {
+                list.appendChild(_buildJiraTicketCard(item, false));
+            }
+            // Render unassigned tickets (orange accent)
+            for (const item of unassignedTickets) {
+                list.appendChild(_buildJiraTicketCard(item, true));
+            }
+
+            container.appendChild(header);
+            container.appendChild(list);
+            return container;
+        }
+
+        /** Build a Jira ticket card (clickable to show popup, not draggable) */
+        function _buildJiraTicketCard(item, isUnassigned) {
+            if (isUnassigned === undefined) isUnassigned = item._isUnassigned || false;
+            const borderColor = isUnassigned ? 'border-l-orange-500/50' : 'border-l-emerald-500/50';
             const el = document.createElement('div');
-            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-blue-500/30 transition-colors group cursor-pointer';
+            el.className = `backlog-card bg-gray-800/50 border border-gray-700/30 border-l-2 ${borderColor} rounded-lg p-2.5 flex flex-col gap-1 hover:border-blue-500/30 transition-colors group cursor-pointer`;
             el.dataset.itemId = item.id;
+
+            const unassignedBadge = isUnassigned
+                ? '<span class="text-[0.5rem] px-1 py-0.5 rounded bg-orange-600/20 text-orange-400 border border-orange-600/30">Unassigned</span>'
+                : '';
 
             el.innerHTML = `
                 <div class="flex items-start justify-between gap-2">
@@ -8425,6 +8279,7 @@
                     <span class="text-[0.6rem] font-mono text-blue-400/70">${escapeHtml(item.ticketKey)}</span>
                     <span class="text-[0.55rem] text-gray-500">${escapeHtml(item.ticketStatus?.status || '')}</span>
                     ${item.priority ? `<span class="text-[0.55rem] text-gray-500 uppercase">${escapeHtml(item.priority)}</span>` : ''}
+                    ${unassignedBadge}
                 </div>`;
 
             // Click → open Jira popup
@@ -8475,7 +8330,10 @@
 
             // Send to agent with repo-check askUser
             const components = ticket.components ? ticket.components.join(', ') : '';
+            const epicInfo = ticket.epicKey && jiraEpics[ticket.epicKey] ? jiraEpics[ticket.epicKey] : null;
+            const epicCtx = epicInfo ? ` Part of Epic ${ticket.epicKey}: "${epicInfo.summary}" (${epicInfo.status}).` : '';
             const query = `[jira] Investigate Jira ticket ${ticket.key}: "${ticket.summary}".` +
+                epicCtx +
                 (components ? ` Components: ${components}.` : '') +
                 ` Status: ${ticket.status}. Priority: ${ticket.priority}.` +
                 ` CRITICAL: Before using any code tools, use ask_user to confirm: ` +
@@ -8552,6 +8410,21 @@
                     renderBacklog();
                 });
 
+                // Disable Investigate if item has unresolved dependencies
+                const wsDeps = _dependencyGraph[item.id];
+                if (wsDeps) {
+                    const invBtn = card.querySelector('.investigate-btn');
+                    if (invBtn) {
+                        invBtn.disabled = true;
+                        invBtn.classList.remove('bg-emerald-600/20', 'hover:bg-emerald-600/30', 'text-emerald-400', 'hover:text-emerald-300', 'border-emerald-600/30', 'hover:border-emerald-500/50');
+                        invBtn.classList.add('text-gray-600', 'cursor-not-allowed', 'border-gray-700/30');
+                        const parts = [];
+                        for (const a of (wsDeps.unresolvedAfter || [])) parts.push('#' + a.changeNumber);
+                        for (const b of (wsDeps.unresolvedBlocked || [])) parts.push(b.ticketKey);
+                        invBtn.title = 'Blocked by: ' + parts.join(', ');
+                    }
+                }
+
                 // Investigate button
                 card.querySelector('.investigate-btn').addEventListener('click', () => {
                     if (!session.roomId) {
@@ -8624,6 +8497,8 @@
                     newDescription,
                     descriptionLine: _editingWorkspaceTodo.descriptionLine,
                     commentPrefix: _editingWorkspaceTodo.commentPrefix,
+                    rawTag: _editingWorkspaceTodo.rawTag,
+                    blockEndLine: _editingWorkspaceTodo.blockEndLine,
                 },
             });
             // Optimistically update local state
@@ -8652,11 +8527,7 @@
             if (workspaceTodos.length === 0) {
                 backlogEmpty.classList.remove('hidden');
                 backlogEmpty.innerHTML = 'No TODO comments found.<br><span class="text-gray-700">Add <code class="text-violet-500">// TODO: title</code> to your code.</span>';
-                if (!_taskBoardExpanded) {
-                    _taskBoardExpanded = true;
-                    taskBoardPanel.classList.remove('hidden');
-                    taskBoardChevron.style.transform = 'rotate(90deg)';
-                }
+                // Task Board always visible
             }
         }
 
@@ -8670,7 +8541,14 @@
                 return;
             }
             jiraTickets = data.tickets || [];
-            showToast(`Loaded ${jiraTickets.length} tickets from ${data.providerName || 'Jira'}`, 'success');
+            jiraEpics = data.epics || {};
+            jiraUnassignedTickets = data.unassignedTickets || [];
+            const totalCount = jiraTickets.length + jiraUnassignedTickets.length;
+            const epicCount = Object.keys(jiraEpics).length;
+            const msg = epicCount > 0
+                ? `Loaded ${totalCount} tickets (${epicCount} epics) from ${data.providerName || 'Jira'}`
+                : `Loaded ${jiraTickets.length} tickets from ${data.providerName || 'Jira'}`;
+            showToast(msg, 'success');
             renderBacklog();
         }
 
@@ -9544,15 +9422,9 @@
         }
 
         // ============================================================
-        // Workflows Tab
+        // Agent Swarm — Brain swarms + specialized brains
         // ============================================================
         let workflowsLoaded = false;
-
-        // ============================================================
-        // Agent Swarm — Unified workflow + agent configuration
-        // ============================================================
-        let _swarmWorkflows = [];       // cached workflow summaries
-        let _swarmDetails = {};         // cached workflow detail by name
 
         async function loadWorkflowsTab() {
             if (workflowsLoaded) return;
@@ -9565,36 +9437,31 @@
             error.classList.add('hidden');
 
             try {
-                if (!window._aiModels || window._aiModels.length === 0) {
-                    try {
-                        const statusResp = await fetch(`${session.backendUrl}/ai/status`);
-                        if (statusResp.ok) { window._aiModels = (await statusResp.json()).models || []; }
-                    } catch (_) {}
-                }
-
-                const resp = await fetch(`${session.backendUrl}/api/workflows`);
+                const resp = await fetch(`${session.backendUrl}/api/brain/swarms`);
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                _swarmWorkflows = await resp.json();
+                const data = await resp.json();
 
-                // Pre-fetch all details
-                for (const wf of _swarmWorkflows) {
-                    const dr = await fetch(`${session.backendUrl}/api/workflows/${wf.name}`);
-                    if (dr.ok) _swarmDetails[wf.name] = await dr.json();
-                }
+                // Build combined list: specialized brains + swarms
+                const allSwarms = [...(data.specialized_brains || []), ...(data.swarms || [])];
 
                 // Populate selector
                 const sel = document.getElementById('swarm-workflow-select');
-                sel.innerHTML = _swarmWorkflows.map(w =>
-                    `<option value="${w.name}">${escapeHtml(w.name)}  —  ${escapeHtml(w.description)}</option>`
+                sel.innerHTML = allSwarms.map(s =>
+                    `<option value="${s.name}">${escapeHtml(s.name)}  —  ${escapeHtml(s.description)}</option>`
                 ).join('');
+
+                // Store for rendering
+                window._brainSwarmData = data;
+                window._brainSwarmMap = {};
+                allSwarms.forEach(s => { window._brainSwarmMap[s.name] = s; });
+
                 sel.addEventListener('change', () => renderSwarmDetail(sel.value));
 
                 loading.classList.add('hidden');
                 content.classList.remove('hidden');
                 workflowsLoaded = true;
 
-                // Render first workflow
-                if (_swarmWorkflows.length > 0) renderSwarmDetail(_swarmWorkflows[0].name);
+                if (allSwarms.length > 0) renderSwarmDetail(allSwarms[0].name);
             } catch (err) {
                 console.error('[Agent Swarm] Load failed:', err);
                 loading.classList.add('hidden');
@@ -9603,28 +9470,22 @@
         }
 
         function renderSwarmDetail(name) {
-            const wf = _swarmDetails[name];
-            if (!wf) return;
+            const swarm = (window._brainSwarmMap || {})[name];
+            if (!swarm) return;
             const container = document.getElementById('swarm-detail');
-            const explorers = wf.agents.filter(a => a.type === 'explorer');
-            const judges = [...wf.agents.filter(a => a.type === 'judge'), ...(wf.post_pipeline_agents || []).filter(a => a.type === 'judge')];
-            // Deduplicate judges by name
-            const seenJudges = new Set();
-            const uniqueJudges = judges.filter(j => { if (seenJudges.has(j.name)) return false; seenJudges.add(j.name); return true; });
+            const agents = swarm.agents || [];
+            const arbitrator = swarm.arbitrator;
 
-            const routeLabel = wf.route_mode === 'parallel_all_matching'
-                ? '<span class="text-amber-400/80">Parallel</span> — all matching routes run simultaneously'
-                : '<span class="text-emerald-400/80">First match</span> — classifier picks the best route';
-
-            const judgeModel = (window._aiModels || [])
-                .map(m => `<option value="${m.id}"${!m.available ? ' disabled style="color:#6b7280"' : ''}>${m.display_name}</option>`)
-                .join('');
+            const typeLabel = swarm.type === 'brain'
+                ? '<span class="text-emerald-400/80">Specialized Brain</span> — deterministic pipeline with handoff'
+                : '<span class="text-amber-400/80">Swarm</span> — parallel agent dispatch';
+            const modeLabel = swarm.mode === 'pipeline' ? 'Pipeline' : swarm.mode === 'parallel' ? 'Parallel' : swarm.mode;
 
             container.innerHTML = `
                 <!-- Description Hero -->
                 <div class="rounded-xl bg-gradient-to-br from-violet-950/40 via-gray-900/60 to-gray-900/40 border border-violet-800/20 p-4">
-                    <p class="text-gray-300 text-sm leading-relaxed">${escapeHtml(wf.description)}</p>
-                    <p class="text-xs text-gray-500 mt-2">${routeLabel} &middot; ${wf.routes.length} routes &middot; ${explorers.length + uniqueJudges.length} agents</p>
+                    <p class="text-gray-300 text-sm leading-relaxed">${escapeHtml(swarm.description)}</p>
+                    <p class="text-xs text-gray-500 mt-2">${typeLabel} &middot; ${modeLabel} &middot; ${agents.length} agents${arbitrator ? ' + arbitrator' : ''}</p>
                     <button class="swarm-open-diagram mt-3 flex items-center gap-2 text-xs text-violet-400 hover:text-violet-300 transition-colors group">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="8" y="14" width="7" height="7"/><line x1="6.5" y1="10" x2="6.5" y2="14"/><line x1="17.5" y1="10" x2="17.5" y2="14"/></svg>
                         View interactive diagram
@@ -9632,7 +9493,7 @@
                     </button>
                 </div>
 
-                <!-- Explorers Section -->
+                <!-- Agents Section -->
                 <div>
                     <div class="flex items-center gap-2 mb-2.5">
                         <div class="h-5 w-5 rounded-md bg-violet-500/15 flex items-center justify-center">
@@ -9640,113 +9501,60 @@
                                 <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
                             </svg>
                         </div>
-                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Explorers</span>
-                        <span class="text-[0.6rem] text-gray-600">${explorers.length} agents</span>
+                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Agents</span>
+                        <span class="text-[0.6rem] text-gray-600">${agents.length} agents</span>
                     </div>
-                    <p class="text-[0.7rem] text-gray-500 leading-relaxed mb-3">Lightweight agents that navigate the codebase using tools. Explorer models should prioritise <span class="text-gray-400">strong instruction following</span> over raw reasoning power — fast, cheap models work best here.</p>
-
-                    ${explorers.length > 0 ? `
-                    <select id="swarm-explorer-select" class="w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-2 mb-2.5 focus:ring-1 focus:ring-violet-500/50 appearance-none" style="background-image:url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%239ca3af%22 stroke-width=%222%22><polyline points=%226 9 12 15 18 9%22/></svg>');background-repeat:no-repeat;background-position:right 10px center;">
-                        ${explorers.map((a, i) => `<option value="${i}">${a.name}${a.category ? ' (' + a.category + ')' : ''}</option>`).join('')}
-                    </select>
-                    <div id="swarm-explorer-card"></div>` : '<p class="text-xs text-gray-600 italic">No explorer agents in this workflow.</p>'}
-
-                    <p class="text-[0.6rem] text-gray-600 mt-2.5 leading-relaxed">Model is shared across all explorers. Change it in <span class="text-violet-400/70">Global Model Settings</span> below.</p>
+                    <div class="space-y-1.5">
+                        ${agents.map(a => {
+                            const modelColor = a.model === 'strong' ? 'text-emerald-400 bg-emerald-500/10' : 'text-violet-400 bg-violet-500/10';
+                            const modelLabel = a.model === 'strong' ? 'Strong' : 'Explorer';
+                            return `
+                            <div class="rounded-lg bg-gray-900/40 border border-gray-700/30 p-3 transition-all hover:border-violet-500/30">
+                                <div class="flex items-center gap-2.5 mb-1.5">
+                                    <div class="h-6 w-6 rounded-md bg-violet-500/10 flex items-center justify-center shrink-0">
+                                        <span class="text-[0.55rem] text-violet-400 font-bold">${a.name.charAt(0).toUpperCase()}</span>
+                                    </div>
+                                    <span class="text-xs text-gray-200 font-medium">${escapeHtml(a.name)}</span>
+                                    <span class="text-[0.55rem] ${modelColor} px-1.5 py-0.5 rounded-full">${modelLabel}</span>
+                                </div>
+                                <p class="text-[0.65rem] text-gray-500 leading-relaxed ml-[34px]">${escapeHtml(a.description)}</p>
+                                <div class="flex items-center gap-2 mt-1.5 ml-[34px] flex-wrap">
+                                    ${a.tools.slice(0, 5).map(t => '<span class="text-[0.55rem] text-gray-600 bg-gray-800/60 px-1.5 py-0.5 rounded">' + escapeHtml(t) + '</span>').join('')}
+                                    ${a.tools.length > 5 ? '<span class="text-[0.55rem] text-gray-600">+' + (a.tools.length - 5) + ' more</span>' : ''}
+                                </div>
+                            </div>`;
+                        }).join('')}
+                    </div>
                 </div>
 
-                <!-- Judges Section -->
-                ${uniqueJudges.length > 0 ? `
+                <!-- Arbitrator Section -->
+                ${arbitrator ? `
                 <div>
                     <div class="flex items-center gap-2 mb-2.5">
-                        <div class="h-5 w-5 rounded-md bg-indigo-500/15 flex items-center justify-center">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-indigo-400" viewBox="0 0 20 20" fill="currentColor">
+                        <div class="h-5 w-5 rounded-md bg-amber-500/15 flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
                             </svg>
                         </div>
-                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Judges</span>
-                        <span class="text-[0.6rem] text-gray-600">${uniqueJudges.length} agents</span>
+                        <span class="text-[0.65rem] text-gray-400 uppercase tracking-wider font-semibold">Arbitrator</span>
                     </div>
-                    <p class="text-[0.7rem] text-gray-500 leading-relaxed mb-3">High-reasoning models responsible for synthesis, deduplication, and quality arbitration. Judges require <span class="text-gray-400">strong analytical capability</span> — use the most capable model available.</p>
-
-                    <div class="space-y-1.5 mb-3">
-                        ${uniqueJudges.map(j => `
-                        <div class="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-gray-900/40 border border-gray-700/30">
-                            <div class="h-6 w-6 rounded-md bg-indigo-500/10 flex items-center justify-center shrink-0">
-                                <span class="text-[0.55rem] text-indigo-400 font-bold">${j.name.charAt(0).toUpperCase()}</span>
+                    <div class="rounded-lg bg-gray-900/40 border border-amber-800/20 p-3">
+                        <div class="flex items-center gap-2.5 mb-1.5">
+                            <div class="h-6 w-6 rounded-md bg-amber-500/10 flex items-center justify-center shrink-0">
+                                <span class="text-[0.55rem] text-amber-400 font-bold">${arbitrator.name.charAt(0).toUpperCase()}</span>
                             </div>
-                            <div class="min-w-0">
-                                <span class="text-xs text-gray-200 font-medium block truncate">${escapeHtml(j.name)}</span>
-                                <span class="text-[0.6rem] text-gray-500">${j.tool_count} tools &middot; ${j.model_role}</span>
-                            </div>
-                        </div>`).join('')}
+                            <span class="text-xs text-gray-200 font-medium">${escapeHtml(arbitrator.name)}</span>
+                        </div>
+                        <p class="text-[0.65rem] text-gray-500 leading-relaxed ml-[34px]">${escapeHtml(arbitrator.description)}</p>
                     </div>
-
-                    <label class="text-[0.6rem] text-gray-500 block mb-1.5">Judge Model</label>
-                    <select id="swarm-judge-model" class="w-full bg-gray-900/80 border border-gray-700/50 text-white text-xs rounded-lg px-3 py-2 focus:ring-1 focus:ring-indigo-500/50">
-                        <option value="">Default (strongest available)</option>
-                        ${judgeModel}
-                    </select>
                 </div>` : ''}
+
+                <!-- Trigger Info -->
+                <div class="rounded-lg bg-gray-800/30 border border-gray-700/30 p-3">
+                    <span class="text-[0.6rem] text-gray-500 uppercase tracking-wider font-semibold block mb-1">Brain Trigger</span>
+                    <code class="text-[0.7rem] text-emerald-400 font-mono">${escapeHtml(swarm.trigger)}</code>
+                </div>
             `;
-
-            // Bind explorer card
-            if (explorers.length > 0) {
-                const explorerSelect = container.querySelector('#swarm-explorer-select');
-                const renderCard = () => {
-                    const agent = explorers[explorerSelect.value || 0];
-                    container.querySelector('#swarm-explorer-card').innerHTML = `
-                        <div class="rounded-xl bg-gray-900/40 border border-violet-800/20 p-3.5 transition-all">
-                            <div class="flex items-center gap-2.5 mb-2">
-                                <div class="h-7 w-7 rounded-lg bg-violet-500/10 flex items-center justify-center">
-                                    <span class="text-[0.6rem] text-violet-400 font-bold">${agent.name.charAt(0).toUpperCase()}</span>
-                                </div>
-                                <div>
-                                    <span class="text-xs text-white font-medium">${escapeHtml(agent.name)}</span>
-                                    ${agent.category ? `<span class="ml-1.5 text-[0.55rem] text-violet-400/60 bg-violet-500/10 px-1.5 py-0.5 rounded-full">${agent.category}</span>` : ''}
-                                </div>
-                            </div>
-                            <div class="flex items-center gap-3 text-[0.6rem] text-gray-500">
-                                <span class="flex items-center gap-1">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 text-gray-600" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd"/></svg>
-                                    ${agent.tool_count} tools
-                                </span>
-                                <span>weight ${agent.budget_weight}</span>
-                                <span>${agent.model_role} model</span>
-                            </div>
-                        </div>`;
-                };
-                explorerSelect.addEventListener('change', renderCard);
-                renderCard();
-            }
-
-            // Bind diagram button
-            container.querySelector('.swarm-open-diagram')?.addEventListener('click', () => vscode.postMessage({ command: 'showWorkflow' }));
-        }
-
-        async function saveWorkflowModels(workflowName) {
-            const explorer = document.getElementById(`wf-explorer-${workflowName}`)?.value || '';
-            const judge = document.getElementById(`wf-judge-${workflowName}`)?.value || '';
-
-            try {
-                const resp = await fetch(`${session.backendUrl}/api/workflows/${workflowName}/models`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ explorer: explorer || null, judge: judge || null }),
-                });
-                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                // Brief visual feedback
-                const btn = document.querySelector(`.wf-save-btn[data-workflow="${workflowName}"]`);
-                if (btn) {
-                    btn.textContent = 'Saved';
-                    btn.classList.replace('bg-violet-600', 'bg-green-600');
-                    setTimeout(() => {
-                        btn.textContent = 'Save';
-                        btn.classList.replace('bg-green-600', 'bg-violet-600');
-                    }, 1500);
-                }
-            } catch (err) {
-                console.error('[Workflows] Save failed:', err);
-            }
         }
 
         /**
@@ -10445,6 +10253,12 @@
                     + 'title="Go to ' + filePath + ':' + startLine + '">'
                     + match + '</span>';
             });
+            // Linkify Jira ticket keys (e.g. DEV-123, FN-45) — skip if already inside a tag
+            if (jiraSiteUrl) {
+                text = text.replace(/(?<![\/\w">])([A-Z][A-Z0-9]+-\d+)(?!["\w<])/g, function(match, key) {
+                    return '<a href="' + jiraSiteUrl + '/browse/' + key + '" class="jira-key-link text-blue-400 hover:text-blue-300 underline" title="Open ' + key + ' in Jira">' + key + '</a>';
+                });
+            }
             return text;
         }
 
@@ -11217,6 +11031,7 @@
         const jiraExtraFields = document.getElementById('jira-extra-fields');
 
         let jiraConnected = false;
+        let jiraSiteUrl = '';
 
         /**
          * Show the Jira ticket creation modal.
@@ -11324,6 +11139,7 @@
         function showJiraForm(siteUrl) {
             jiraAuthSection?.classList.add('hidden');
             jiraForm?.classList.remove('hidden');
+            if (siteUrl) jiraSiteUrl = siteUrl;
             if (jiraSiteLabel) jiraSiteLabel.textContent = siteUrl || 'Connected';
         }
 

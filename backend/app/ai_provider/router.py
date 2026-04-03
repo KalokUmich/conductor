@@ -43,7 +43,6 @@ class ModelStatusResponse(BaseModel):
     provider: str
     display_name: str
     available: bool
-    classifier: bool = False
     explorer: bool = False
 
 
@@ -55,8 +54,6 @@ class AIStatusResponse(BaseModel):
     providers: List[ProviderStatusResponse]
     models: List[ModelStatusResponse]
     default_model: str
-    classifier_enabled: bool = False
-    active_classifier: Optional[str] = None
     explorer_enabled: bool = False
     active_explorer: Optional[str] = None
 
@@ -210,10 +207,8 @@ async def get_ai_status() -> AIStatusResponse:
 
     status = resolver.get_status()
 
-    # Determine classifier / explorer status from app state
+    # Determine explorer status from app state
     from app.main import app
-    classifier_provider = getattr(app.state, "classifier_provider", None)
-    active_classifier_id = getattr(app.state, "active_classifier_model_id", None)
     explorer_provider = getattr(app.state, "explorer_provider", None)
     active_explorer_id = getattr(app.state, "active_explorer_model_id", None)
 
@@ -236,14 +231,11 @@ async def get_ai_status() -> AIStatusResponse:
                 provider=m.provider,
                 display_name=m.display_name,
                 available=m.available,
-                classifier=m.classifier,
                 explorer=m.explorer,
             )
             for m in status.models
         ],
         default_model=status.default_model,
-        classifier_enabled=classifier_provider is not None,
-        active_classifier=active_classifier_id,
         explorer_enabled=explorer_provider is not None,
         active_explorer=active_explorer_id,
     )
@@ -289,6 +281,12 @@ async def set_active_model(request: SetModelRequest) -> SetModelResponse:
     success = resolver.set_active_model(request.model_id)
 
     if success:
+        # Propagate to app.state so global fallback stays in sync
+        from app.main import app
+        provider = resolver.get_or_create_provider(request.model_id)
+        if provider:
+            app.state.agent_provider = provider
+
         return SetModelResponse(
             success=True,
             active_model=request.model_id,
@@ -298,83 +296,6 @@ async def set_active_model(request: SetModelRequest) -> SetModelResponse:
         raise HTTPException(
             status_code=400,
             detail=f"Cannot set model '{request.model_id}': model not found, disabled, or provider not healthy",
-        )
-
-
-class SetClassifierRequest(BaseModel):
-    """Request model for POST /ai/classifier endpoint."""
-    enabled: bool
-    model_id: Optional[str] = None
-
-
-class SetClassifierResponse(BaseModel):
-    """Response model for POST /ai/classifier endpoint."""
-    success: bool
-    classifier_enabled: bool
-    active_classifier: Optional[str] = None
-    message: str
-
-
-@router.post("/classifier", response_model=SetClassifierResponse)
-async def set_classifier(request: SetClassifierRequest) -> SetClassifierResponse:
-    """Enable/disable the LLM query classifier and optionally select the model."""
-    from app.main import app
-
-    resolver = get_resolver()
-    if resolver is None:
-        raise HTTPException(
-            status_code=503,
-            detail="AI provider resolver not initialized.",
-        )
-
-    if not request.enabled:
-        app.state.classifier_provider = None
-        app.state.active_classifier_model_id = None
-        return SetClassifierResponse(
-            success=True,
-            classifier_enabled=False,
-            active_classifier=None,
-            message="Classifier disabled.",
-        )
-
-    # Enabling — resolve the model
-    if request.model_id:
-        provider = resolver.get_classifier_provider_for_model(request.model_id)
-        if provider is None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot use '{request.model_id}' as classifier: not found, not enabled, or provider unhealthy.",
-            )
-        app.state.classifier_provider = provider
-        app.state.active_classifier_model_id = request.model_id
-        return SetClassifierResponse(
-            success=True,
-            classifier_enabled=True,
-            active_classifier=request.model_id,
-            message=f"Classifier enabled with model: {request.model_id}",
-        )
-    else:
-        # Auto-select first available classifier model
-        provider = resolver.get_classifier_provider()
-        if provider is None:
-            raise HTTPException(
-                status_code=400,
-                detail="No classifier-capable model available.",
-            )
-        # Find which model was selected
-        active_id = None
-        res_status = resolver.get_status()
-        for m in res_status.models:
-            if m.classifier and m.available:
-                active_id = m.id
-                break
-        app.state.classifier_provider = provider
-        app.state.active_classifier_model_id = active_id
-        return SetClassifierResponse(
-            success=True,
-            classifier_enabled=True,
-            active_classifier=active_id,
-            message=f"Classifier enabled with model: {active_id}",
         )
 
 

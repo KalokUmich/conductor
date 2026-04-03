@@ -5992,19 +5992,19 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            const tickets = await this._ticketProvider.fetchMyTickets();
+            const { tickets, epics, unassignedTickets } = await this._ticketProvider.fetchMyTickets();
 
             // Also scan TODOs to find associations
             const todos = await scanWorkspaceTodos();
             const todosByTicket = new Map<string, typeof todos[number]>();
             for (const todo of todos) {
-                if (todo.ticketKey) {
+                if (todo.ticketKey && !todosByTicket.has(todo.ticketKey)) {
                     todosByTicket.set(todo.ticketKey, todo);
                 }
             }
 
             // Enrich tickets with linked TODO info
-            const enriched = tickets.map(t => ({
+            const enrichTicket = (t: typeof tickets[number]) => ({
                 ...t,
                 linkedTodo: todosByTicket.has(t.key)
                     ? {
@@ -6014,11 +6014,13 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         title: todosByTicket.get(t.key)!.title,
                     }
                     : null,
-            }));
+            });
 
             this._view?.webview.postMessage({
                 command: 'jiraTicketsLoaded',
-                tickets: enriched,
+                tickets: tickets.map(enrichTicket),
+                epics,
+                unassignedTickets: unassignedTickets.map(enrichTicket),
                 providerName: this._ticketProvider.name,
                 tagPrefix: this._ticketProvider.tagPrefix,
             });

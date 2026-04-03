@@ -197,17 +197,48 @@ def _get_trace_writer():
     return getattr(app.state, "trace_writer", None)
 
 
-def _get_classifier_provider():
-    """Get the lightweight model used for query pre-classification."""
-    from app.main import app
-    return getattr(app.state, "classifier_provider", None)
-
 
 def _get_explorer_provider():
     """Get the sub-agent model used for code exploration (thinking disabled for Alibaba)."""
     from app.main import app
     return getattr(app.state, "explorer_provider", None)
 
+
+async def _resolve_room_providers(
+    room_id: str,
+    default_strong,
+    default_explorer,
+):
+    """Resolve strong + explorer providers for a room.
+
+    Checks room settings for per-room model overrides and falls back to
+    the global defaults when no custom model is set or the selected model
+    is unavailable.
+    """
+    from app.ai_provider.resolver import get_resolver
+    from app.chat.manager import manager
+
+    resolver = get_resolver()
+    if not resolver:
+        return default_strong, default_explorer
+
+    settings = await manager.ensure_room_settings_loaded(room_id)
+
+    strong = default_strong
+    sid = settings.get("strong_model_id")
+    if sid:
+        p = resolver.get_or_create_provider(sid)
+        if p:
+            strong = p
+
+    explorer = default_explorer
+    eid = settings.get("explorer_model_id")
+    if eid:
+        p = resolver.get_or_create_provider(eid)
+        if p:
+            explorer = p
+
+    return strong, explorer
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +265,7 @@ async def context_query(
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
     trace_writer=Depends(_get_trace_writer),
-    classifier_provider=Depends(_get_classifier_provider),
+
     explorer_provider=Depends(_get_explorer_provider),
 ) -> ContextQueryResponse:
     """Run an agent loop to find relevant code context and answer a question.
@@ -243,6 +274,11 @@ async def context_query(
     prominently into the agent's system prompt so it can use it as a starting
     point for exploration.
     """
+    # Resolve per-room model overrides (falls back to global defaults)
+    agent_provider, explorer_provider = await _resolve_room_providers(
+        req.room_id, agent_provider, explorer_provider,
+    )
+
     if agent_provider is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -281,7 +317,7 @@ async def context_query(
             explorer_provider=explorer_provider,
             trace_writer=trace_writer,
             tool_executor=executor,
-            classifier_provider=classifier_provider,
+
         )
         wf_context: Dict[str, Any] = {
             "query_text": query,
@@ -298,7 +334,7 @@ async def context_query(
             provider=agent_provider,
             max_iterations=req.max_iterations,
             trace_writer=trace_writer,
-            classifier_provider=classifier_provider,
+
             explorer_provider=explorer_provider,
             tool_executor=executor,
         )
@@ -338,7 +374,7 @@ async def context_query_stream(
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
     trace_writer=Depends(_get_trace_writer),
-    classifier_provider=Depends(_get_classifier_provider),
+
     explorer_provider=Depends(_get_explorer_provider),
 ):
     """SSE streaming version of context_query.
@@ -356,6 +392,11 @@ async def context_query_stream(
       * ``done``          — final answer
       * ``error``         — unrecoverable error
     """
+    # Resolve per-room model overrides (falls back to global defaults)
+    agent_provider, explorer_provider = await _resolve_room_providers(
+        req.room_id, agent_provider, explorer_provider,
+    )
+
     if agent_provider is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

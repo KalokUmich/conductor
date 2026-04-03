@@ -1,17 +1,95 @@
-"""Conducator application configuration.
+"""Conductor application configuration.
 
 Loads settings from two YAML files:
   * conductor.settings.yaml  — non-secret configuration
   * conductor.secrets.yaml   — secrets (never committed)
+
+Environment variable overrides:
+  Any secret can be overridden by an environment variable.  This allows
+  Docker images to ship with dev defaults in conductor.secrets.yaml while
+  ECS/K8s task definitions inject production values via env vars.
+
+  Naming convention: ``CONDUCTOR_<SECTION>_<KEY>`` (uppercase, underscores).
+  Examples:
+    CONDUCTOR_AWS_ACCESS_KEY_ID      → ai_providers.aws_bedrock.access_key_id
+    CONDUCTOR_AWS_SECRET_ACCESS_KEY  → ai_providers.aws_bedrock.secret_access_key
+    CONDUCTOR_AWS_SESSION_TOKEN      → ai_providers.aws_bedrock.session_token
+    CONDUCTOR_AWS_REGION             → ai_providers.aws_bedrock.region
+    CONDUCTOR_ANTHROPIC_API_KEY      → ai_providers.anthropic.api_key
+    CONDUCTOR_OPENAI_API_KEY         → ai_providers.openai.api_key
+    CONDUCTOR_ALIBABA_API_KEY        → ai_providers.alibaba.api_key
+    CONDUCTOR_ALIBABA_BASE_URL       → ai_providers.alibaba.base_url
+    CONDUCTOR_MOONSHOT_API_KEY       → ai_providers.moonshot.api_key
+    CONDUCTOR_POSTGRES_USER          → postgres.user
+    CONDUCTOR_POSTGRES_PASSWORD      → postgres.password
+    CONDUCTOR_JIRA_CLIENT_ID         → jira.client_id
+    CONDUCTOR_JIRA_CLIENT_SECRET     → jira.client_secret
+    CONDUCTOR_GOOGLE_CLIENT_ID       → google_sso.client_id
+    CONDUCTOR_GOOGLE_CLIENT_SECRET   → google_sso.client_secret
+    CONDUCTOR_NGROK_AUTHTOKEN        → ngrok.authtoken
+    LANGFUSE_PUBLIC_KEY              → langfuse.public_key  (Langfuse SDK convention)
+    LANGFUSE_SECRET_KEY              → langfuse.secret_key
+    LANGFUSE_HOST                    → langfuse.host
 """
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field
+
+
+def _env(name: str, default: str = "") -> str:
+    """Return env var *name* if set and non-empty, else *default*."""
+    val = os.environ.get(name, "")
+    return val if val else default
+
+
+# Mapping: env var name → path into the secrets_data dict.
+_ENV_SECRETS_MAP = {
+    "CONDUCTOR_POSTGRES_USER":          ("postgres", "user"),
+    "CONDUCTOR_POSTGRES_PASSWORD":      ("postgres", "password"),
+    "CONDUCTOR_ANTHROPIC_API_KEY":      ("ai_providers", "anthropic", "api_key"),
+    "CONDUCTOR_AWS_ACCESS_KEY_ID":      ("ai_providers", "aws_bedrock", "access_key_id"),
+    "CONDUCTOR_AWS_SECRET_ACCESS_KEY":  ("ai_providers", "aws_bedrock", "secret_access_key"),
+    "CONDUCTOR_AWS_SESSION_TOKEN":      ("ai_providers", "aws_bedrock", "session_token"),
+    "CONDUCTOR_AWS_REGION":             ("ai_providers", "aws_bedrock", "region"),
+    "CONDUCTOR_OPENAI_API_KEY":         ("ai_providers", "openai", "api_key"),
+    "CONDUCTOR_ALIBABA_API_KEY":        ("ai_providers", "alibaba", "api_key"),
+    "CONDUCTOR_ALIBABA_BASE_URL":       ("ai_providers", "alibaba", "base_url"),
+    "CONDUCTOR_MOONSHOT_API_KEY":       ("ai_providers", "moonshot", "api_key"),
+    "CONDUCTOR_MOONSHOT_BASE_URL":      ("ai_providers", "moonshot", "base_url"),
+    "CONDUCTOR_JIRA_CLIENT_ID":         ("jira", "client_id"),
+    "CONDUCTOR_JIRA_CLIENT_SECRET":     ("jira", "client_secret"),
+    "CONDUCTOR_GOOGLE_CLIENT_ID":       ("google_sso", "client_id"),
+    "CONDUCTOR_GOOGLE_CLIENT_SECRET":   ("google_sso", "client_secret"),
+    "CONDUCTOR_NGROK_AUTHTOKEN":        ("ngrok", "authtoken"),
+    "LANGFUSE_PUBLIC_KEY":              ("langfuse", "public_key"),
+    "LANGFUSE_SECRET_KEY":              ("langfuse", "secret_key"),
+}
+
+
+def _apply_env_overrides(secrets_data: dict) -> None:
+    """Override secrets_data values with environment variables when set.
+
+    Mutates *secrets_data* in place. Only overwrites if the env var exists
+    and is non-empty, so Docker-baked YAML defaults still work when no
+    env var is set.
+    """
+    for env_name, path in _ENV_SECRETS_MAP.items():
+        val = os.environ.get(env_name, "")
+        if not val:
+            continue
+        # Navigate to the parent dict, creating intermediaries if needed
+        d = secrets_data
+        for key in path[:-1]:
+            if key not in d or not isinstance(d[key], dict):
+                d[key] = {}
+            d = d[key]
+        d[path[-1]] = val
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +321,9 @@ def load_settings() -> AppSettings:
     settings_data = _load_yaml(settings_path)
     secrets_data  = _load_yaml(secrets_path)
 
+    # Apply environment variable overrides to secrets
+    _apply_env_overrides(secrets_data)
+
     # Merge: secrets live under the "secrets" key in AppSettings
     settings_data["secrets"] = secrets_data
 
@@ -330,9 +411,6 @@ class AIModelConfig(BaseModel):
     """Configuration for a single AI model.
 
     Flags:
-      - ``classifier``: If True, this model can be used as a lightweight
-        pre-classification model before the agent loop starts.
-        (Typically a small/fast model like Haiku.)
       - ``explorer``: If True, this model can be used as a code explorer
         (sub-agent) for iterative tool-calling loops.  Explorer models
         have thinking/reasoning disabled to maximise content output and
@@ -343,7 +421,6 @@ class AIModelConfig(BaseModel):
     model_name:   str  = ""
     display_name: str  = ""
     enabled:      bool = True
-    classifier:   bool = False
     explorer:     bool = False
 
 
@@ -539,12 +616,12 @@ def load_config(
     gsso_data = raw.get("google_sso", {})
     google_sso_cfg = GoogleSSOConfig(enabled=gsso_data.get("enabled", False))
 
-    # Secrets
+    # Secrets — env vars override YAML values (for cloud deployment)
     secrets_raw = _load_yaml(secrets_path)
     gsso_sec = secrets_raw.get("google_sso", {})
     google_sso_secrets_cfg = GoogleSSOSecretsConfig(
-        client_id=gsso_sec.get("client_id", ""),
-        client_secret=gsso_sec.get("client_secret", ""),
+        client_id=_env("CONDUCTOR_GOOGLE_CLIENT_ID", gsso_sec.get("client_id", "")),
+        client_secret=_env("CONDUCTOR_GOOGLE_CLIENT_SECRET", gsso_sec.get("client_secret", "")),
     )
 
     jira_data = raw.get("jira", {})
@@ -552,11 +629,10 @@ def load_config(
     jira_teams = [JiraTeamEntry(id=t["id"], name=t["name"]) for t in jira_teams_raw if t.get("id")]
     jira_cfg = JiraSettings(enabled=jira_data.get("enabled", False), teams=jira_teams)
 
-    # Jira secrets: must be in secrets.yaml (not settings.yaml)
     jira_sec = secrets_raw.get("jira", {})
     jira_secrets_cfg = JiraSecretsConfig(
-        client_id=jira_sec.get("client_id", ""),
-        client_secret=jira_sec.get("client_secret", ""),
+        client_id=_env("CONDUCTOR_JIRA_CLIENT_ID", jira_sec.get("client_id", "")),
+        client_secret=_env("CONDUCTOR_JIRA_CLIENT_SECRET", jira_sec.get("client_secret", "")),
     )
 
     summary_data = raw.get("summary", {})
@@ -581,24 +657,26 @@ def load_config(
     ali_sec = ap_sec.get("alibaba", {})
     moon_sec = ap_sec.get("moonshot", {})
     ai_providers_cfg = AIProvidersSecretsConfig(
-        anthropic=AnthropicSecretsConfig(api_key=anth_sec.get("api_key", "")),
+        anthropic=AnthropicSecretsConfig(
+            api_key=_env("CONDUCTOR_ANTHROPIC_API_KEY", anth_sec.get("api_key", "")),
+        ),
         aws_bedrock=AWSBedrockSecretsConfig(
-            access_key_id=bdr_sec.get("access_key_id", ""),
-            secret_access_key=bdr_sec.get("secret_access_key", ""),
-            session_token=bdr_sec.get("session_token"),
-            region=bdr_sec.get("region", "us-east-1"),
+            access_key_id=_env("CONDUCTOR_AWS_ACCESS_KEY_ID", bdr_sec.get("access_key_id", "")),
+            secret_access_key=_env("CONDUCTOR_AWS_SECRET_ACCESS_KEY", bdr_sec.get("secret_access_key", "")),
+            session_token=_env("CONDUCTOR_AWS_SESSION_TOKEN", bdr_sec.get("session_token") or ""),
+            region=_env("CONDUCTOR_AWS_REGION", bdr_sec.get("region", "us-east-1")),
         ),
         openai=OpenAISecretsConfig(
-            api_key=oai_sec.get("api_key", ""),
+            api_key=_env("CONDUCTOR_OPENAI_API_KEY", oai_sec.get("api_key", "")),
             organization=oai_sec.get("organization"),
         ),
         alibaba=AlibabaSecretsConfig(
-            api_key=ali_sec.get("api_key", ""),
-            base_url=ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+            api_key=_env("CONDUCTOR_ALIBABA_API_KEY", ali_sec.get("api_key", "")),
+            base_url=_env("CONDUCTOR_ALIBABA_BASE_URL", ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")),
         ),
         moonshot=MoonshotSecretsConfig(
-            api_key=moon_sec.get("api_key", ""),
-            base_url=moon_sec.get("base_url", "https://api.moonshot.ai/v1"),
+            api_key=_env("CONDUCTOR_MOONSHOT_API_KEY", moon_sec.get("api_key", "")),
+            base_url=_env("CONDUCTOR_MOONSHOT_BASE_URL", moon_sec.get("base_url", "https://api.moonshot.ai/v1")),
         ),
     )
 

@@ -165,44 +165,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.warning("No healthy AI provider — agent loop disabled.")
 
-        # Classifier provider (lightweight model for query pre-classification)
-        classifier_provider = resolver.get_classifier_provider()
-        if classifier_provider:
-            logger.info("Classifier provider ready.")
-        else:
-            logger.info("No classifier model configured — using keyword classification.")
-
-        # Explorer provider (sub-agent model with thinking enabled for Alibaba)
+        # Explorer provider (sub-agent model)
         explorer_provider = resolver.get_explorer_provider()
         if explorer_provider:
             logger.info("Explorer (sub-agent) provider ready.")
         else:
-            logger.info("No explorer model configured — sub-agents will use classifier or main provider.")
+            logger.info("No explorer model configured — sub-agents will use main provider.")
     except Exception as exc:
         logger.warning("Failed to initialize AI provider resolver: %s", exc)
-        classifier_provider = None
         explorer_provider = None
     app.state.agent_provider = agent_provider
-    app.state.classifier_provider = classifier_provider
     app.state.explorer_provider = explorer_provider
 
-    # Auto-enable classifier / explorer if models are available
-    active_classifier_id = None
+    # Auto-detect active explorer model
     active_explorer_id = None
-    _resolver_status = None
-    if classifier_provider is not None or explorer_provider is not None:
+    if explorer_provider is not None:
         _resolver_status = resolver.get_status()
-    if classifier_provider is not None and _resolver_status:
-        for m in _resolver_status.models:
-            if m.classifier and m.available:
-                active_classifier_id = m.id
-                break
-    if explorer_provider is not None and _resolver_status:
-        for m in _resolver_status.models:
-            if m.explorer and m.available:
-                active_explorer_id = m.id
-                break
-    app.state.active_classifier_model_id = active_classifier_id
+        if _resolver_status:
+            for m in _resolver_status.models:
+                if m.explorer and m.available:
+                    active_explorer_id = m.id
+                    break
     app.state.active_explorer_model_id = active_explorer_id
 
     # ---- Session Trace Writer ----
@@ -437,7 +420,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .workspace_files.router import router as workspace_files_router
     from .langextract.router     import router as langextract_router
     from .code_review.router     import router as code_review_router
-    from .workflow.router         import router as workflow_router
+    from .workflow.router         import router as workflow_router, brain_router
     from .integrations.jira.router import router as jira_router
 
     # Browser tools (optional — only available when playwright is installed)
@@ -463,6 +446,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(langextract_router)
     app.include_router(code_review_router)
     app.include_router(workflow_router)
+    app.include_router(brain_router)
     app.include_router(jira_router)
     if _browser_router is not None:
         app.include_router(_browser_router)
