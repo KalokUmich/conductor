@@ -4,27 +4,27 @@ Manages bare clones + git worktrees on the local filesystem, one worktree
 per chat room.  Supports Mode A (token/GIT_ASKPASS) and Mode B (delegate)
 authentication.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import os
 import re
 import shutil
-import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from .credential_store import CredentialStore
-from .token_cache import RepoTokenCache
 from .schemas import (
     CloneProgress,
     CredentialPayload,
-    FileSyncEvent,
     FileChange,
+    FileSyncEvent,
     WorkspaceCommitRequest,
     WorkspaceCommitResult,
     WorkspaceCreateRequest,
@@ -37,6 +37,7 @@ from .schemas import (
     WorkspaceSyncResult,
     WorktreeStatus,
 )
+from .token_cache import RepoTokenCache
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +51,17 @@ class _WorktreeRecord:
     """In-process record for a single room's worktree."""
 
     __slots__ = (
-        "room_id", "repo_url", "branch", "worktree_path",
-        "repo_hash", "base_branch_name",
-        "status", "created_at", "last_synced", "error_detail",
+        "base_branch_name",
+        "branch",
         "clone_progress",
+        "created_at",
+        "error_detail",
+        "last_synced",
+        "repo_hash",
+        "repo_url",
+        "room_id",
+        "status",
+        "worktree_path",
     )
 
     def __init__(
@@ -65,29 +73,29 @@ class _WorktreeRecord:
         repo_hash: str = "",
         base_branch_name: str = "main",
     ) -> None:
-        self.room_id       = room_id
-        self.repo_url      = repo_url
-        self.branch        = branch
+        self.room_id = room_id
+        self.repo_url = repo_url
+        self.branch = branch
         self.worktree_path = worktree_path
-        self.repo_hash          = repo_hash
-        self.base_branch_name   = base_branch_name
-        self.status        = WorktreeStatus.PENDING
-        self.created_at    = datetime.now(timezone.utc)
-        self.last_synced:  Optional[datetime] = None
-        self.error_detail: Optional[str]      = None
+        self.repo_hash = repo_hash
+        self.base_branch_name = base_branch_name
+        self.status = WorktreeStatus.PENDING
+        self.created_at = datetime.now(UTC)
+        self.last_synced: Optional[datetime] = None
+        self.error_detail: Optional[str] = None
         self.clone_progress: Optional[CloneProgress] = None
 
     def to_info(self) -> WorkspaceInfo:
         return WorkspaceInfo(
-            room_id        = self.room_id,
-            repo_url       = self.repo_url,
-            branch         = self.branch,
-            worktree_path  = str(self.worktree_path),
-            status         = self.status,
-            created_at     = self.created_at,
-            last_synced    = self.last_synced,
-            error_detail   = self.error_detail,
-            clone_progress = self.clone_progress,
+            room_id=self.room_id,
+            repo_url=self.repo_url,
+            branch=self.branch,
+            worktree_path=str(self.worktree_path),
+            status=self.status,
+            created_at=self.created_at,
+            last_synced=self.last_synced,
+            error_detail=self.error_detail,
+            clone_progress=self.clone_progress,
         )
 
 
@@ -140,6 +148,7 @@ class GitWorkspaceService:
         self._credential_store = CredentialStore()
         self._token_cache: Optional[RepoTokenCache] = None
         self._broadcast_callbacks: Dict[str, list] = {}  # room_id → [callbacks]
+        self._background_tasks: set = set()  # prevent GC of fire-and-forget tasks
         self._max_worktrees: int = 20
         self._cleanup_on_close: bool = True
         self._initialized: bool = False
@@ -150,8 +159,8 @@ class GitWorkspaceService:
 
     async def initialize(self, settings) -> None:  # settings: GitWorkspaceSettings
         """Call once from app lifespan on startup."""
-        self._workspaces_dir  = Path(settings.workspaces_dir).resolve()
-        self._max_worktrees   = settings.max_worktrees_per_repo
+        self._workspaces_dir = Path(settings.workspaces_dir).resolve()
+        self._max_worktrees = settings.max_worktrees_per_repo
         self._cleanup_on_close = settings.cleanup_on_room_close
         self._workspaces_dir.mkdir(parents=True, exist_ok=True)
         await self._credential_store.start()
@@ -159,6 +168,7 @@ class GitWorkspaceService:
         # Persistent repo-scoped token cache (PostgreSQL-backed via shared engine)
         try:
             from ..db.engine import get_engine
+
             db_engine = get_engine()
             self._token_cache = RepoTokenCache(engine=db_engine)
         except Exception as exc:
@@ -199,21 +209,26 @@ class GitWorkspaceService:
     # ------------------------------------------------------------------
 
     async def list_remote_branches(
-        self, repo_url: str, credentials: Optional[CredentialPayload] = None,
+        self,
+        repo_url: str,
+        credentials: Optional[CredentialPayload] = None,
     ) -> tuple[list[str], Optional[str]]:
         """List branches from a remote repo using ``git ls-remote``."""
         env = os.environ.copy()
         if credentials:
             askpass_path = _make_askpass_script()
-            env.update({
-                "GIT_ASKPASS": askpass_path,
-                "GIT_CREDENTIAL_USERNAME": credentials.username or "git",
-                "GIT_CREDENTIAL_TOKEN": credentials.token,
-                "GIT_TERMINAL_PROMPT": "0",
-            })
+            env.update(
+                {
+                    "GIT_ASKPASS": askpass_path,
+                    "GIT_CREDENTIAL_USERNAME": credentials.username or "git",
+                    "GIT_CREDENTIAL_TOKEN": credentials.token,
+                    "GIT_TERMINAL_PROMPT": "0",
+                }
+            )
 
         output = await self._run_git(
-            ["ls-remote", "--heads", "--symref", repo_url], env=env,
+            ["ls-remote", "--heads", "--symref", repo_url],
+            env=env,
         )
 
         branches: list[str] = []
@@ -235,9 +250,7 @@ class GitWorkspaceService:
 
     async def create_workspace(self, req: WorkspaceCreateRequest) -> WorkspaceInfo:
         if len(self._worktrees) >= self._max_worktrees:
-            raise RuntimeError(
-                f"Maximum concurrent worktrees ({self._max_worktrees}) reached."
-            )
+            raise RuntimeError(f"Maximum concurrent worktrees ({self._max_worktrees}) reached.")
         if req.room_id in self._worktrees:
             return self._worktrees[req.room_id].to_info()
 
@@ -251,44 +264,47 @@ class GitWorkspaceService:
                 effective_creds = cached
                 logger.info(
                     "Room %s: using cached token for repo %s",
-                    req.room_id, req.repo_url,
+                    req.room_id,
+                    req.repo_url,
                 )
 
         if effective_creds:
             await self._credential_store.put(req.room_id, effective_creds)
 
-        repo_hash    = hashlib.sha256(req.repo_url.encode()).hexdigest()[:12]
-        repo_dir     = self._workspaces_dir / repo_hash
-        bare_dir     = repo_dir / "bare.git"
+        repo_hash = hashlib.sha256(req.repo_url.encode()).hexdigest()[:12]
+        repo_dir = self._workspaces_dir / repo_hash
+        bare_dir = repo_dir / "bare.git"
         worktrees_dir = repo_dir / "worktrees"
         worktree_path = worktrees_dir / req.room_id
-        branch        = f"session/{req.room_id}"
+        branch = f"session/{req.room_id}"
 
         record = _WorktreeRecord(
-            room_id       = req.room_id,
-            repo_url      = req.repo_url,
-            branch        = branch,
-            worktree_path = worktree_path,
-            repo_hash          = repo_hash,
-            base_branch_name   = req.base_branch,
+            room_id=req.room_id,
+            repo_url=req.repo_url,
+            branch=branch,
+            worktree_path=worktree_path,
+            repo_hash=repo_hash,
+            base_branch_name=req.base_branch,
         )
         self._worktrees[req.room_id] = record
 
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._setup_worktree(
-                record      = record,
-                req         = req,
-                bare_dir    = bare_dir,
-                worktrees_dir = worktrees_dir,
+                record=record,
+                req=req,
+                bare_dir=bare_dir,
+                worktrees_dir=worktrees_dir,
             )
         )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
         return record.to_info()
 
     async def _setup_worktree(
         self,
-        record:        _WorktreeRecord,
-        req:           WorkspaceCreateRequest,
-        bare_dir:      Path,
+        record: _WorktreeRecord,
+        req: WorkspaceCreateRequest,
+        bare_dir: Path,
         worktrees_dir: Path,
     ) -> None:
         """Background task: clone bare repo (if needed) then create worktree."""
@@ -320,17 +336,20 @@ class GitWorkspaceService:
             logger.info("Creating worktree for room %s (branch=%s)", req.room_id, record.branch)
             await self._run_git(
                 [
-                    "-C", str(bare_dir),
-                    "worktree", "add",
-                    "-b", record.branch,
+                    "-C",
+                    str(bare_dir),
+                    "worktree",
+                    "add",
+                    "-b",
+                    record.branch,
                     abs_worktree,
                     req.base_branch,
                 ],
                 env=env,
             )
 
-            record.status      = WorktreeStatus.READY
-            record.last_synced = datetime.now(timezone.utc)
+            record.status = WorktreeStatus.READY
+            record.last_synced = datetime.now(UTC)
             logger.info("Worktree ready for room %s at %s", req.room_id, record.worktree_path)
 
             # --- 3. Cache the token (only if explicitly provided by caller) ---
@@ -352,7 +371,7 @@ class GitWorkspaceService:
             )
 
         except Exception as exc:  # TODO: narrow to (RuntimeError, OSError, ValueError)
-            record.status       = WorktreeStatus.ERROR
+            record.status = WorktreeStatus.ERROR
             record.error_detail = str(exc)
             logger.error("Failed to set up worktree for room %s: %s", req.room_id, exc)
 
@@ -376,12 +395,16 @@ class GitWorkspaceService:
         abs_index_wt = str(index_wt.resolve())
         logger.info(
             "Creating shared index worktree at %s (branch=%s)",
-            abs_index_wt, base_branch,
+            abs_index_wt,
+            base_branch,
         )
         await self._run_git(
             [
-                "-C", str(bare_dir),
-                "worktree", "add", "--detach",
+                "-C",
+                str(bare_dir),
+                "worktree",
+                "add",
+                "--detach",
                 abs_index_wt,
                 base_branch,
             ],
@@ -431,7 +454,7 @@ class GitWorkspaceService:
             worktree_path=str(path),
             status=WorktreeStatus.READY,
             mode=WorkspaceMode.LOCAL,
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
 
     def unregister_local_workspace(self, room_id: str) -> None:
@@ -452,26 +475,22 @@ class GitWorkspaceService:
         record = self._get_record(req.room_id)
         try:
             record.status = WorktreeStatus.SYNCING
-            env  = await self._build_git_env(req.room_id)
+            env = await self._build_git_env(req.room_id)
             verb = ["rebase"] if req.rebase else ["pull"]
             await self._run_git(["--work-tree", str(record.worktree_path)] + verb, cwd=record.worktree_path, env=env)
-            record.status      = WorktreeStatus.READY
-            record.last_synced = datetime.now(timezone.utc)
+            record.status = WorktreeStatus.READY
+            record.last_synced = datetime.now(UTC)
             return WorkspaceSyncResult(room_id=req.room_id, success=True, message="Sync complete")
         except (RuntimeError, OSError) as exc:
-            record.status       = WorktreeStatus.ERROR
+            record.status = WorktreeStatus.ERROR
             record.error_detail = str(exc)
-            return WorkspaceSyncResult(
-                room_id=req.room_id, success=False, message=str(exc)
-            )
+            return WorkspaceSyncResult(room_id=req.room_id, success=False, message=str(exc))
 
     # ------------------------------------------------------------------
     # Commit
     # ------------------------------------------------------------------
 
-    async def commit_workspace(
-        self, req: WorkspaceCommitRequest
-    ) -> WorkspaceCommitResult:
+    async def commit_workspace(self, req: WorkspaceCommitRequest) -> WorkspaceCommitResult:
         record = self._get_record(req.room_id)
         try:
             env = await self._build_git_env(req.room_id)
@@ -483,20 +502,14 @@ class GitWorkspaceService:
             # Build commit command
             git_cmd = ["commit", "-m", req.message]
             if req.author_name and req.author_email:
-                git_cmd += [
-                    f"--author={req.author_name} <{req.author_email}>"
-                ]
+                git_cmd += [f"--author={req.author_name} <{req.author_email}>"]
             await self._run_git(git_cmd, cwd=cwd, env=env)
 
             # Retrieve SHA
             sha = await self._get_head_sha(cwd, env)
-            return WorkspaceCommitResult(
-                room_id=req.room_id, success=True, sha=sha, message="Commit created"
-            )
+            return WorkspaceCommitResult(room_id=req.room_id, success=True, sha=sha, message="Commit created")
         except (RuntimeError, OSError) as exc:
-            return WorkspaceCommitResult(
-                room_id=req.room_id, success=False, message=str(exc)
-            )
+            return WorkspaceCommitResult(room_id=req.room_id, success=False, message=str(exc))
 
     # ------------------------------------------------------------------
     # Push
@@ -505,8 +518,8 @@ class GitWorkspaceService:
     async def push_workspace(self, req: WorkspacePushRequest) -> WorkspacePushResult:
         record = self._get_record(req.room_id)
         try:
-            env  = await self._build_git_env(req.room_id)
-            cwd  = record.worktree_path
+            env = await self._build_git_env(req.room_id)
+            cwd = record.worktree_path
             args = ["push", "origin", record.branch]
             if req.force:
                 args.append("--force")
@@ -520,9 +533,7 @@ class GitWorkspaceService:
                 message="Push successful",
             )
         except (RuntimeError, OSError) as exc:
-            return WorkspacePushResult(
-                room_id=req.room_id, success=False, message=str(exc)
-            )
+            return WorkspacePushResult(room_id=req.room_id, success=False, message=str(exc))
 
     # ------------------------------------------------------------------
     # Destroy
@@ -532,15 +543,11 @@ class GitWorkspaceService:
         # Check local workspaces first — just remove the mapping (never delete local files)
         if room_id in self._local_workspaces:
             self._local_workspaces.pop(room_id)
-            return WorkspaceDestroyResult(
-                room_id=room_id, success=True, message="Local workspace unregistered"
-            )
+            return WorkspaceDestroyResult(room_id=room_id, success=True, message="Local workspace unregistered")
 
         record = self._worktrees.pop(room_id, None)
         if record is None:
-            return WorkspaceDestroyResult(
-                room_id=room_id, success=False, message="Workspace not found"
-            )
+            return WorkspaceDestroyResult(room_id=room_id, success=False, message="Workspace not found")
         await self._credential_store.delete(room_id)
         if self._cleanup_on_close and record.worktree_path.exists():
             try:
@@ -549,9 +556,7 @@ class GitWorkspaceService:
             except OSError as exc:
                 logger.warning("Could not remove worktree dir: %s", exc)
         record.status = WorktreeStatus.DESTROYED
-        return WorkspaceDestroyResult(
-            room_id=room_id, success=True, message="Workspace destroyed"
-        )
+        return WorkspaceDestroyResult(room_id=room_id, success=True, message="Workspace destroyed")
 
     # ------------------------------------------------------------------
     # Accessors
@@ -571,15 +576,17 @@ class GitWorkspaceService:
     def list_workspaces(self) -> List[WorkspaceInfo]:
         result = [r.to_info() for r in self._worktrees.values()]
         for room_id, path in self._local_workspaces.items():
-            result.append(WorkspaceInfo(
-                room_id=room_id,
-                repo_url="",
-                branch="(local)",
-                worktree_path=str(path),
-                status=WorktreeStatus.READY,
-                mode=WorkspaceMode.LOCAL,
-                created_at=datetime.now(timezone.utc),
-            ))
+            result.append(
+                WorkspaceInfo(
+                    room_id=room_id,
+                    repo_url="",
+                    branch="(local)",
+                    worktree_path=str(path),
+                    status=WorktreeStatus.READY,
+                    mode=WorkspaceMode.LOCAL,
+                    created_at=datetime.now(UTC),
+                )
+            )
         return result
 
     def get_workspace(self, room_id: str) -> Optional[WorkspaceInfo]:
@@ -595,7 +602,7 @@ class GitWorkspaceService:
                 worktree_path=str(local),
                 status=WorktreeStatus.READY,
                 mode=WorkspaceMode.LOCAL,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             )
         return None
 
@@ -603,21 +610,15 @@ class GitWorkspaceService:
     # WebSocket file-sync broadcast
     # ------------------------------------------------------------------
 
-    def register_broadcast(
-        self, room_id: str, callback  # Callable[[FileSyncEvent], Awaitable[None]]
-    ) -> None:
+    def register_broadcast(self, room_id: str, callback) -> None:  # Callable[[FileSyncEvent], Awaitable[None]]
         self._broadcast_callbacks.setdefault(room_id, []).append(callback)
 
     def unregister_broadcast(self, room_id: str, callback) -> None:
         cbs = self._broadcast_callbacks.get(room_id, [])
-        try:
+        with contextlib.suppress(ValueError):
             cbs.remove(callback)
-        except ValueError:
-            pass
 
-    async def broadcast_file_sync(
-        self, room_id: str, changes: List[FileChange], sync_id: str
-    ) -> None:
+    async def broadcast_file_sync(self, room_id: str, changes: List[FileChange], sync_id: str) -> None:
         event = FileSyncEvent(
             room_id=room_id,
             changeset=changes,
@@ -658,12 +659,8 @@ class GitWorkspaceService:
             bare_dir = repo_dir / "bare.git"
             repo_url = ""
             if bare_dir.exists():
-                try:
-                    repo_url = await self._run_git(
-                        ["remote", "get-url", "origin"], cwd=bare_dir
-                    )
-                except (RuntimeError, OSError):
-                    pass
+                with contextlib.suppress(RuntimeError, OSError):
+                    repo_url = await self._run_git(["remote", "get-url", "origin"], cwd=bare_dir)
 
             for wt_dir in worktrees_dir.iterdir():
                 if not wt_dir.is_dir():
@@ -677,23 +674,19 @@ class GitWorkspaceService:
 
                 # Read current branch from git
                 branch = f"session/{room_id}"
-                try:
-                    branch = await self._run_git(
-                        ["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_dir
-                    )
-                except (RuntimeError, OSError):
-                    pass
+                with contextlib.suppress(RuntimeError, OSError):
+                    branch = await self._run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=wt_dir)
 
                 record = _WorktreeRecord(
-                    room_id          = room_id,
-                    repo_url         = repo_url,
-                    branch           = branch,
-                    worktree_path    = wt_dir,
-                    repo_hash        = repo_hash,
-                    base_branch_name = "",
+                    room_id=room_id,
+                    repo_url=repo_url,
+                    branch=branch,
+                    worktree_path=wt_dir,
+                    repo_hash=repo_hash,
+                    base_branch_name="",
                 )
-                record.status      = WorktreeStatus.READY
-                record.last_synced = datetime.now(timezone.utc)
+                record.status = WorktreeStatus.READY
+                record.last_synced = datetime.now(UTC)
                 self._worktrees[room_id] = record
                 recovered += 1
 
@@ -706,22 +699,20 @@ class GitWorkspaceService:
             raise KeyError(f"No workspace found for room_id={room_id!r}")
         return record
 
-    async def _build_git_env(
-        self, room_id: str
-    ) -> Dict[str, str]:
+    async def _build_git_env(self, room_id: str) -> Dict[str, str]:
         """Build an env-var dict for git that injects credentials if available."""
         base_env = os.environ.copy()
-        creds    = await self._credential_store.get(room_id)
+        creds = await self._credential_store.get(room_id)
         if creds is None:
             return base_env  # delegate mode – no stored creds
 
         askpass_path = _make_askpass_script()
         base_env.update(
             {
-                "GIT_ASKPASS":            askpass_path,
+                "GIT_ASKPASS": askpass_path,
                 "GIT_CREDENTIAL_USERNAME": creds.username or "git",
-                "GIT_CREDENTIAL_TOKEN":   creds.token,
-                "GIT_TERMINAL_PROMPT":    "0",
+                "GIT_CREDENTIAL_TOKEN": creds.token,
+                "GIT_TERMINAL_PROMPT": "0",
             }
         )
         return base_env
@@ -781,8 +772,8 @@ class GitWorkspaceService:
     async def _run_git_with_progress(
         args: List[str],
         on_progress: Callable[[CloneProgress], None],
-        cwd:  Optional[Path] = None,
-        env:  Optional[Dict[str, str]] = None,
+        cwd: Optional[Path] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> str:
         """Run a git command, streaming stderr progress to *on_progress*."""
         cmd = ["git"] + args
@@ -816,7 +807,7 @@ class GitWorkspaceService:
                 else:
                     idx = min(idx_r, idx_n)
                 line = buf[:idx].decode(errors="replace").strip()
-                buf = buf[idx + 1:]
+                buf = buf[idx + 1 :]
                 if line:
                     prog = GitWorkspaceService._parse_git_progress(line)
                     if prog:
@@ -829,16 +820,14 @@ class GitWorkspaceService:
         stdout = stdout_b.decode(errors="replace").strip()
 
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"git {args[0]} failed (exit {proc.returncode}): {stderr_full or stdout}"
-            )
+            raise RuntimeError(f"git {args[0]} failed (exit {proc.returncode}): {stderr_full or stdout}")
         return stdout
 
     @staticmethod
     async def _run_git(
         args: List[str],
-        cwd:  Optional[Path] = None,
-        env:  Optional[Dict[str, str]] = None,
+        cwd: Optional[Path] = None,
+        env: Optional[Dict[str, str]] = None,
     ) -> str:
         """Run a git sub-command asynchronously; return stdout."""
         cmd = ["git"] + args
@@ -853,9 +842,7 @@ class GitWorkspaceService:
         stdout = stdout_b.decode(errors="replace").strip()
         stderr = stderr_b.decode(errors="replace").strip()
         if proc.returncode != 0:
-            raise RuntimeError(
-                f"git {args[0]} failed (exit {proc.returncode}): {stderr or stdout}"
-            )
+            raise RuntimeError(f"git {args[0]} failed (exit {proc.returncode}): {stderr or stdout}")
         return stdout
 
     async def _get_head_sha(self, cwd: Path, env: Dict[str, str]) -> Optional[str]:

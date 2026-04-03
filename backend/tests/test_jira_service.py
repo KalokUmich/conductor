@@ -12,6 +12,7 @@ Tests cover all public methods and key internal helpers:
 - get_issue_types
 - create_issue
 """
+
 from __future__ import annotations
 
 import time
@@ -27,10 +28,10 @@ from app.integrations.jira.models import (
 )
 from app.integrations.jira.service import JiraOAuthService
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_service(**kwargs) -> JiraOAuthService:
     """Create a JiraOAuthService with default test credentials."""
@@ -53,7 +54,9 @@ def _mock_response(status_code: int = 200, json_data=None, text: str = ""):
     resp.raise_for_status = MagicMock()
     if status_code >= 400:
         resp.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "error", request=MagicMock(), response=resp,
+            "error",
+            request=MagicMock(),
+            response=resp,
         )
     return resp
 
@@ -76,6 +79,7 @@ def _inject_tokens(svc: JiraOAuthService, **overrides) -> None:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def mock_httpx():
     """Provide a mock httpx.AsyncClient context manager."""
@@ -95,6 +99,7 @@ def svc():
 # ===========================================================================
 # get_authorize_url
 # ===========================================================================
+
 
 class TestGetAuthorizeUrl:
     def test_returns_authorize_url_and_state(self, svc: JiraOAuthService):
@@ -128,19 +133,24 @@ class TestGetAuthorizeUrl:
 # exchange_code
 # ===========================================================================
 
+
 class TestExchangeCode:
     @pytest.mark.asyncio
     async def test_exchange_code_stores_tokens(self, svc, mock_httpx):
         """Successful exchange stores tokens and cloudId."""
-        token_resp = _mock_response(json_data={
-            "access_token": "acc-123",
-            "refresh_token": "ref-456",
-            "expires_in": 7200,
-            "scope": "read:jira-work",
-        })
-        resource_resp = _mock_response(json_data=[
-            {"id": "cloud-abc", "url": "https://test.atlassian.net"},
-        ])
+        token_resp = _mock_response(
+            json_data={
+                "access_token": "acc-123",
+                "refresh_token": "ref-456",
+                "expires_in": 7200,
+                "scope": "read:jira-work",
+            }
+        )
+        resource_resp = _mock_response(
+            json_data=[
+                {"id": "cloud-abc", "url": "https://test.atlassian.net"},
+            ]
+        )
         mock_httpx.post.return_value = token_resp
         mock_httpx.get.return_value = resource_resp
 
@@ -159,14 +169,18 @@ class TestExchangeCode:
     @pytest.mark.asyncio
     async def test_exchange_code_prefers_fintern_resource(self, svc, mock_httpx):
         """When multiple resources exist, prefer the one with 'fintern' in URL."""
-        token_resp = _mock_response(json_data={
-            "access_token": "acc",
-            "refresh_token": "ref",
-        })
-        resource_resp = _mock_response(json_data=[
-            {"id": "cloud-other", "url": "https://other.atlassian.net"},
-            {"id": "cloud-fintern", "url": "https://fintern.atlassian.net"},
-        ])
+        token_resp = _mock_response(
+            json_data={
+                "access_token": "acc",
+                "refresh_token": "ref",
+            }
+        )
+        resource_resp = _mock_response(
+            json_data=[
+                {"id": "cloud-other", "url": "https://other.atlassian.net"},
+                {"id": "cloud-fintern", "url": "https://fintern.atlassian.net"},
+            ]
+        )
         mock_httpx.post.return_value = token_resp
         mock_httpx.get.return_value = resource_resp
 
@@ -185,13 +199,17 @@ class TestExchangeCode:
     @pytest.mark.asyncio
     async def test_exchange_code_empty_state_allowed(self, svc, mock_httpx):
         """An empty state string bypasses state validation."""
-        token_resp = _mock_response(json_data={
-            "access_token": "acc",
-            "refresh_token": "ref",
-        })
-        resource_resp = _mock_response(json_data=[
-            {"id": "cid", "url": "https://x.atlassian.net"},
-        ])
+        token_resp = _mock_response(
+            json_data={
+                "access_token": "acc",
+                "refresh_token": "ref",
+            }
+        )
+        resource_resp = _mock_response(
+            json_data=[
+                {"id": "cid", "url": "https://x.atlassian.net"},
+            ]
+        )
         mock_httpx.post.return_value = token_resp
         mock_httpx.get.return_value = resource_resp
 
@@ -201,10 +219,12 @@ class TestExchangeCode:
     @pytest.mark.asyncio
     async def test_exchange_code_no_resources(self, svc, mock_httpx):
         """When accessible-resources returns empty list, cloudId stays empty."""
-        token_resp = _mock_response(json_data={
-            "access_token": "acc",
-            "refresh_token": "ref",
-        })
+        token_resp = _mock_response(
+            json_data={
+                "access_token": "acc",
+                "refresh_token": "ref",
+            }
+        )
         resource_resp = _mock_response(json_data=[])
         mock_httpx.post.return_value = token_resp
         mock_httpx.get.return_value = resource_resp
@@ -229,17 +249,20 @@ class TestExchangeCode:
 # _refresh_token
 # ===========================================================================
 
+
 class TestRefreshToken:
     @pytest.mark.asyncio
     async def test_refresh_updates_access_token(self, svc, mock_httpx):
         """Refreshing updates the access token and expiry."""
         _inject_tokens(svc)
 
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "new-access",
-            "refresh_token": "new-refresh",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "new-access",
+                "refresh_token": "new-refresh",
+                "expires_in": 3600,
+            }
+        )
 
         await svc._refresh_token()
 
@@ -251,9 +274,11 @@ class TestRefreshToken:
         """If the response omits refresh_token, keep the existing one."""
         _inject_tokens(svc, refresh_token="keep-me")
 
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "new-access",
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "new-access",
+            }
+        )
 
         await svc._refresh_token()
 
@@ -278,6 +303,7 @@ class TestRefreshToken:
 # get_valid_token
 # ===========================================================================
 
+
 class TestGetValidToken:
     @pytest.mark.asyncio
     async def test_returns_token_when_not_expired(self, svc):
@@ -292,11 +318,13 @@ class TestGetValidToken:
         _inject_tokens(svc)
         svc._token_expires_at = time.time() + 30  # 30s left, under 60s threshold
 
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "refreshed-token",
-            "refresh_token": "new-ref",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "refreshed-token",
+                "refresh_token": "new-ref",
+                "expires_in": 3600,
+            }
+        )
 
         token = await svc.get_valid_token()
         assert token == "refreshed-token"
@@ -311,6 +339,7 @@ class TestGetValidToken:
 # ===========================================================================
 # get_status / disconnect
 # ===========================================================================
+
 
 class TestGetStatusAndDisconnect:
     def test_status_disconnected(self, svc):
@@ -339,6 +368,7 @@ class TestGetStatusAndDisconnect:
 # _api_request
 # ===========================================================================
 
+
 class TestApiRequest:
     @pytest.mark.asyncio
     async def test_successful_get_request(self, svc, mock_httpx):
@@ -366,10 +396,12 @@ class TestApiRequest:
         second_resp = _mock_response(json_data={"ok": True})
 
         mock_httpx.request.side_effect = [first_resp, second_resp]
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "refreshed",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "refreshed",
+                "expires_in": 3600,
+            }
+        )
 
         data = await svc._api_request("GET", "/resource")
         assert data == {"ok": True}
@@ -385,10 +417,11 @@ class TestApiRequest:
             "errors": {"summary": "Summary is required"},
         }
         mock_httpx.request.return_value = _mock_response(
-            status_code=400, json_data=error_body,
+            status_code=400,
+            json_data=error_body,
         )
 
-        with pytest.raises(RuntimeError, match="Issue does not exist.*summary: Summary is required"):
+        with pytest.raises(RuntimeError, match=r"Issue does not exist.*summary: Summary is required"):
             await svc._api_request("GET", "/issue/FAKE-1")
 
     @pytest.mark.asyncio
@@ -425,14 +458,17 @@ class TestApiRequest:
 # get_projects
 # ===========================================================================
 
+
 class TestGetProjects:
     @pytest.mark.asyncio
     async def test_returns_list_of_projects(self, svc, mock_httpx):
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data=[
-            {"id": "10001", "key": "PROJ", "name": "Project One", "style": "classic"},
-            {"id": "10002", "key": "WEB", "name": "Web App"},
-        ])
+        mock_httpx.request.return_value = _mock_response(
+            json_data=[
+                {"id": "10001", "key": "PROJ", "name": "Project One", "style": "classic"},
+                {"id": "10002", "key": "WEB", "name": "Web App"},
+            ]
+        )
 
         projects = await svc.get_projects()
 
@@ -447,15 +483,18 @@ class TestGetProjects:
 # get_issue_types
 # ===========================================================================
 
+
 class TestGetIssueTypes:
     @pytest.mark.asyncio
     async def test_returns_deduplicated_issue_types(self, svc, mock_httpx):
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data=[
-            {"id": "1", "name": "Bug", "subtask": False},
-            {"id": "2", "name": "Story", "subtask": False},
-            {"id": "1", "name": "Bug", "subtask": False},  # duplicate
-        ])
+        mock_httpx.request.return_value = _mock_response(
+            json_data=[
+                {"id": "1", "name": "Bug", "subtask": False},
+                {"id": "2", "name": "Story", "subtask": False},
+                {"id": "1", "name": "Bug", "subtask": False},  # duplicate
+            ]
+        )
 
         types = await svc.get_issue_types("PROJ")
 
@@ -466,9 +505,11 @@ class TestGetIssueTypes:
     @pytest.mark.asyncio
     async def test_subtask_flag_preserved(self, svc, mock_httpx):
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data=[
-            {"id": "3", "name": "Sub-task", "subtask": True},
-        ])
+        mock_httpx.request.return_value = _mock_response(
+            json_data=[
+                {"id": "3", "name": "Sub-task", "subtask": True},
+            ]
+        )
 
         types = await svc.get_issue_types("PROJ")
         assert types[0].subtask is True
@@ -478,16 +519,19 @@ class TestGetIssueTypes:
 # create_issue
 # ===========================================================================
 
+
 class TestCreateIssue:
     @pytest.mark.asyncio
     async def test_create_basic_issue(self, svc, mock_httpx):
         """Creates an issue with summary and project key."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "12345",
-            "key": "PROJ-42",
-            "self": "https://api.atlassian.com/rest/api/3/issue/12345",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "12345",
+                "key": "PROJ-42",
+                "self": "https://api.atlassian.com/rest/api/3/issue/12345",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -504,9 +548,12 @@ class TestCreateIssue:
     async def test_create_issue_numeric_project_key(self, svc, mock_httpx):
         """Numeric project_key is sent as {id: ...} instead of {key: ...}."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "100", "key": "NUM-1",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "100",
+                "key": "NUM-1",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="10001",
@@ -522,9 +569,12 @@ class TestCreateIssue:
     async def test_create_issue_string_project_key(self, svc, mock_httpx):
         """String project_key is sent as {key: ...}."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "100", "key": "PROJ-1",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "100",
+                "key": "PROJ-1",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -540,9 +590,12 @@ class TestCreateIssue:
     async def test_create_issue_with_description_adf(self, svc, mock_httpx):
         """Description is formatted as ADF (Atlassian Document Format)."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "200", "key": "PROJ-2",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "200",
+                "key": "PROJ-2",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -562,9 +615,12 @@ class TestCreateIssue:
     async def test_create_issue_empty_description_not_included(self, svc, mock_httpx):
         """Empty description is not sent in the payload."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "300", "key": "PROJ-3",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "300",
+                "key": "PROJ-3",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -581,9 +637,12 @@ class TestCreateIssue:
     async def test_create_issue_with_priority(self, svc, mock_httpx):
         """Priority is set correctly (name-based for non-numeric)."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "400", "key": "PROJ-4",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "400",
+                "key": "PROJ-4",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -600,9 +659,12 @@ class TestCreateIssue:
     async def test_create_issue_with_numeric_priority(self, svc, mock_httpx):
         """Numeric priority is sent as {id: ...}."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "401", "key": "PROJ-5",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "401",
+                "key": "PROJ-5",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -619,9 +681,12 @@ class TestCreateIssue:
     async def test_create_issue_with_team(self, svc, mock_httpx):
         """Team is set on the custom field with numeric conversion for digits."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "500", "key": "PROJ-6",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "500",
+                "key": "PROJ-6",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -639,9 +704,12 @@ class TestCreateIssue:
     async def test_create_issue_with_string_team(self, svc, mock_httpx):
         """Non-numeric team value is kept as string."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "501", "key": "PROJ-7",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "501",
+                "key": "PROJ-7",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -658,9 +726,12 @@ class TestCreateIssue:
     async def test_create_issue_team_ignored_without_field_key(self, svc, mock_httpx):
         """Team is not included when team_field_key is empty."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "502", "key": "PROJ-8",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "502",
+                "key": "PROJ-8",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -679,9 +750,12 @@ class TestCreateIssue:
     async def test_create_issue_with_components(self, svc, mock_httpx):
         """Components are included as list of name/id refs."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "600", "key": "PROJ-9",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "600",
+                "key": "PROJ-9",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -699,9 +773,12 @@ class TestCreateIssue:
     async def test_create_issue_numeric_issue_type(self, svc, mock_httpx):
         """Numeric issue_type is sent as {id: ...} instead of {name: ...}."""
         _inject_tokens(svc)
-        mock_httpx.request.return_value = _mock_response(json_data={
-            "id": "700", "key": "PROJ-10",
-        })
+        mock_httpx.request.return_value = _mock_response(
+            json_data={
+                "id": "700",
+                "key": "PROJ-10",
+            }
+        )
 
         req = CreateIssueRequest(
             project_key="PROJ",
@@ -718,6 +795,7 @@ class TestCreateIssue:
 # ===========================================================================
 # Constructor / static_teams
 # ===========================================================================
+
 
 class TestConstructor:
     def test_default_no_static_teams(self):
@@ -741,15 +819,18 @@ class TestConstructor:
 # refresh_token_for_client
 # ===========================================================================
 
+
 class TestRefreshTokenForClient:
     @pytest.mark.asyncio
     async def test_successful_refresh(self, svc, mock_httpx):
         """Returns new token pair on successful refresh."""
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "new-acc",
-            "refresh_token": "new-ref",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "new-acc",
+                "refresh_token": "new-ref",
+                "expires_in": 3600,
+            }
+        )
 
         result = await svc.refresh_token_for_client("old-refresh-token")
 
@@ -768,10 +849,12 @@ class TestRefreshTokenForClient:
     @pytest.mark.asyncio
     async def test_refresh_preserves_old_refresh_token_when_not_rotated(self, svc, mock_httpx):
         """If Atlassian doesn't return a new refresh_token, keep the old one."""
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "new-acc",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "new-acc",
+                "expires_in": 3600,
+            }
+        )
 
         result = await svc.refresh_token_for_client("keep-this-token")
 
@@ -782,11 +865,13 @@ class TestRefreshTokenForClient:
         """Server-side in-memory tokens should NOT be updated."""
         _inject_tokens(svc, access_token="server-acc", refresh_token="server-ref")
 
-        mock_httpx.post.return_value = _mock_response(json_data={
-            "access_token": "client-new-acc",
-            "refresh_token": "client-new-ref",
-            "expires_in": 3600,
-        })
+        mock_httpx.post.return_value = _mock_response(
+            json_data={
+                "access_token": "client-new-acc",
+                "refresh_token": "client-new-ref",
+                "expires_in": 3600,
+            }
+        )
 
         await svc.refresh_token_for_client("client-ref")
 
@@ -815,5 +900,5 @@ class TestRefreshTokenForClient:
         error_resp.text = "Internal Server Error"
         mock_httpx.post.return_value = error_resp
 
-        with pytest.raises(RuntimeError, match="Token refresh failed.*Internal Server Error"):
+        with pytest.raises(RuntimeError, match=r"Token refresh failed.*Internal Server Error"):
             await svc.refresh_token_for_client("some-token")

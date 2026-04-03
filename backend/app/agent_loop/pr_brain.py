@@ -12,6 +12,7 @@ Flow:
   Phase 5: Merge recommendation (deterministic)
   Phase 6: Synthesis (strong model LLM call)
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,7 +30,6 @@ from app.code_review.models import (
     FindingCategory,
     PRContext,
     ReviewFinding,
-    ReviewResult,
     RiskLevel,
     RiskProfile,
     Severity,
@@ -46,15 +46,13 @@ from app.code_review.shared import (
     compute_budget_multiplier,
     evidence_gate,
     extract_relevant_diff,
-    is_multi_source,
     merge_recommendation,
     parse_findings,
     post_filter,
     prefetch_diffs,
-    repair_output,
     should_reject_pr,
 )
-from app.code_tools.executor import LocalToolExecutor, ToolExecutor
+from app.code_tools.executor import ToolExecutor
 from app.code_tools.schemas import ToolResult
 from app.workflow.models import PRBrainConfig
 
@@ -139,11 +137,12 @@ class ArbitrationVerdict:
         suggested_severity: Arbitrator's recommended severity after challenge.
         reason: One-line rationale for the rebuttal assessment.
     """
+
     index: int
     counter_evidence: List[str] = field(default_factory=list)
-    rebuttal_confidence: float = 0.0    # 0.0 = cannot rebut, 1.0 = finding is wrong
-    suggested_severity: str = ""        # arbitrator's recommended severity
-    reason: str = ""                    # one-line rationale
+    rebuttal_confidence: float = 0.0  # 0.0 = cannot rebut, 1.0 = finding is wrong
+    suggested_severity: str = ""  # arbitrator's recommended severity
+    reason: str = ""  # one-line rationale
 
 
 class PRBrainOrchestrator:
@@ -201,13 +200,17 @@ class PRBrainOrchestrator:
 
         logger.info(
             "PR Brain starting: workspace=%s, diff_spec=%s",
-            self._workspace_path, self._diff_spec,
+            self._workspace_path,
+            self._diff_spec,
         )
 
-        yield WorkflowEvent("pr_brain_start", {
-            "diff_spec": self._diff_spec,
-            "workspace_path": self._workspace_path,
-        })
+        yield WorkflowEvent(
+            "pr_brain_start",
+            {
+                "diff_spec": self._diff_spec,
+                "workspace_path": self._workspace_path,
+            },
+        )
 
         # ------------------------------------------------------------------
         # Phase 1: Pre-compute (deterministic, no LLM calls)
@@ -216,26 +219,34 @@ class PRBrainOrchestrator:
         pr_context = parse_diff(self._workspace_path, self._diff_spec)
         logger.info(
             "PR parsed: %d files, %d lines changed",
-            pr_context.file_count, pr_context.total_changed_lines,
+            pr_context.file_count,
+            pr_context.total_changed_lines,
         )
 
         if pr_context.file_count == 0:
-            yield WorkflowEvent("done", {
-                "answer": "No changes found in the diff.",
-                "findings": [],
-                "merge_recommendation": "approve",
-            })
+            yield WorkflowEvent(
+                "done",
+                {
+                    "answer": "No changes found in the diff.",
+                    "findings": [],
+                    "merge_recommendation": "approve",
+                },
+            )
             return
 
         rejection = should_reject_pr(
-            pr_context, max_lines=self._config.limits.reject_above,
+            pr_context,
+            max_lines=self._config.limits.reject_above,
         )
         if rejection:
-            yield WorkflowEvent("done", {
-                "answer": rejection,
-                "findings": [],
-                "merge_recommendation": "request_changes",
-            })
+            yield WorkflowEvent(
+                "done",
+                {
+                    "answer": rejection,
+                    "findings": [],
+                    "merge_recommendation": "request_changes",
+                },
+            )
             return
 
         risk_profile = classify_risk(pr_context)
@@ -244,18 +255,23 @@ class PRBrainOrchestrator:
         budget_multiplier = compute_budget_multiplier(pr_context)
 
         logger.info(
-            "Risk: correctness=%s, concurrency=%s, security=%s, "
-            "reliability=%s, operational=%s | budget=%.1fx",
-            risk_profile.correctness.value, risk_profile.concurrency.value,
-            risk_profile.security.value, risk_profile.reliability.value,
-            risk_profile.operational.value, budget_multiplier,
+            "Risk: correctness=%s, concurrency=%s, security=%s, reliability=%s, operational=%s | budget=%.1fx",
+            risk_profile.correctness.value,
+            risk_profile.concurrency.value,
+            risk_profile.security.value,
+            risk_profile.reliability.value,
+            risk_profile.operational.value,
+            budget_multiplier,
         )
 
-        yield WorkflowEvent("pr_context", {
-            "file_count": pr_context.file_count,
-            "total_lines": pr_context.total_changed_lines,
-            "budget_multiplier": budget_multiplier,
-        })
+        yield WorkflowEvent(
+            "pr_context",
+            {
+                "file_count": pr_context.file_count,
+                "total_lines": pr_context.total_changed_lines,
+                "budget_multiplier": budget_multiplier,
+            },
+        )
 
         # ------------------------------------------------------------------
         # Phase 2: Dispatch review agents
@@ -264,19 +280,29 @@ class PRBrainOrchestrator:
         agents_to_run = self._select_agents(risk_profile, pr_context)
         logger.info("Dispatching %d review agents: %s", len(agents_to_run), agents_to_run)
 
-        yield WorkflowEvent("agents_dispatching", {
-            "agents": agents_to_run,
-            "budget_multiplier": budget_multiplier,
-        })
-
-        agent_results = await self._dispatch_agents(
-            agents_to_run, pr_context, risk_profile,
-            file_diffs, impact_context, budget_multiplier,
+        yield WorkflowEvent(
+            "agents_dispatching",
+            {
+                "agents": agents_to_run,
+                "budget_multiplier": budget_multiplier,
+            },
         )
 
-        yield WorkflowEvent("agents_complete", {
-            "agent_count": len(agent_results),
-        })
+        agent_results = await self._dispatch_agents(
+            agents_to_run,
+            pr_context,
+            risk_profile,
+            file_diffs,
+            impact_context,
+            budget_multiplier,
+        )
+
+        yield WorkflowEvent(
+            "agents_complete",
+            {
+                "agent_count": len(agent_results),
+            },
+        )
 
         # ------------------------------------------------------------------
         # Phase 3: Post-process (deterministic)
@@ -284,9 +310,12 @@ class PRBrainOrchestrator:
 
         findings = self._post_process(agent_results, pr_context)
 
-        yield WorkflowEvent("post_processing", {
-            "findings_count": len(findings),
-        })
+        yield WorkflowEvent(
+            "post_processing",
+            {
+                "findings_count": len(findings),
+            },
+        )
 
         # ------------------------------------------------------------------
         # Phase 4: Arbitration agent
@@ -295,10 +324,13 @@ class PRBrainOrchestrator:
         verdicts = []
         if findings:
             verdicts = await self._arbitrate(findings, file_diffs)
-            yield WorkflowEvent("arbitration_complete", {
-                "findings_count": len(findings),
-                "avg_rebuttal": sum(v.rebuttal_confidence for v in verdicts) / len(verdicts) if verdicts else 0,
-            })
+            yield WorkflowEvent(
+                "arbitration_complete",
+                {
+                    "findings_count": len(findings),
+                    "avg_rebuttal": sum(v.rebuttal_confidence for v in verdicts) / len(verdicts) if verdicts else 0,
+                },
+            )
 
         # ------------------------------------------------------------------
         # Phase 5: Merge recommendation (deterministic, based on sub-agent severity)
@@ -313,13 +345,20 @@ class PRBrainOrchestrator:
         # ------------------------------------------------------------------
 
         synthesis = await self._synthesize(
-            pr_context, risk_profile, findings, verdicts, merge_rec, file_diffs,
+            pr_context,
+            risk_profile,
+            findings,
+            verdicts,
+            merge_rec,
+            file_diffs,
         )
 
         duration_ms = (time.monotonic() - start_time) * 1000  # Convert seconds to milliseconds
         logger.info(
             "PR Brain complete: %d findings, rec=%s, %.0fms",
-            len(findings), merge_rec, duration_ms,
+            len(findings),
+            merge_rec,
+            duration_ms,
         )
 
         # Collect token usage from agent results
@@ -330,23 +369,29 @@ class PRBrainOrchestrator:
                 total_iterations += result.data.get("iterations", 0)
                 total_tokens += result.data.get("tool_calls_made", 0) * 2000  # rough estimate
 
-        yield WorkflowEvent("done", {
-            "answer": synthesis or pr_summary,
-            "findings": [_finding_to_dict(f) for f in findings],
-            "files_reviewed": [f.path for f in pr_context.files],
-            "merge_recommendation": merge_rec,
-            "duration_ms": duration_ms,
-            "total_iterations": total_iterations,
-            "agents_dispatched": len(agents_to_run),
-            "findings_before_arbitration": len(findings) + len([f for f in findings if f.severity == Severity.PRAISE]),
-        })
+        yield WorkflowEvent(
+            "done",
+            {
+                "answer": synthesis or pr_summary,
+                "findings": [_finding_to_dict(f) for f in findings],
+                "files_reviewed": [f.path for f in pr_context.files],
+                "merge_recommendation": merge_rec,
+                "duration_ms": duration_ms,
+                "total_iterations": total_iterations,
+                "agents_dispatched": len(agents_to_run),
+                "findings_before_arbitration": len(findings)
+                + len([f for f in findings if f.severity == Severity.PRAISE]),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Phase 2 helpers
     # ------------------------------------------------------------------
 
     def _select_agents(
-        self, risk_profile: RiskProfile, pr_context: Optional[PRContext] = None,
+        self,
+        risk_profile: RiskProfile,
+        pr_context: Optional[PRContext] = None,
     ) -> List[str]:
         """Select which review agents to run based on risk profile and PR size.
 
@@ -364,7 +409,7 @@ class PRBrainOrchestrator:
         """
         agents = []
         risk_triggers = {
-            "correctness": [],   # always runs — most important reviewer
+            "correctness": [],  # always runs — most important reviewer
             "concurrency": ["concurrency"],
             "security": ["security"],
             "reliability": ["reliability", "operational"],
@@ -409,11 +454,10 @@ class PRBrainOrchestrator:
         budget_multiplier: float,
     ) -> List[ToolResult]:
         """Dispatch review agents in parallel via AgentToolExecutor."""
-        from .brain import AgentToolExecutor, BrainBudgetManager
-        from .budget import BudgetConfig
-        from .config import BrainExecutorConfig
-        from .service import AgentLoopService
         from app.workflow.loader import load_brain_config, load_swarm_registry
+
+        from .brain import AgentToolExecutor, BrainBudgetManager
+        from .config import BrainExecutorConfig
 
         brain_config = load_brain_config()
         swarm_registry = load_swarm_registry()
@@ -459,14 +503,21 @@ class PRBrainOrchestrator:
                     llm_semaphore=llm_semaphore,
                 )
                 query = self._build_agent_query(
-                    agent_name, pr_context, risk_profile, file_diffs, impact_context,
+                    agent_name,
+                    pr_context,
+                    risk_profile,
+                    file_diffs,
+                    impact_context,
                 )
                 weight = self._config.budget_weights.get(agent_name, 1.0)
-                return await executor.execute("dispatch_agent", {
-                    "agent_name": agent_name,
-                    "query": query,
-                    "budget_weight": weight * budget_multiplier,
-                })
+                return await executor.execute(
+                    "dispatch_agent",
+                    {
+                        "agent_name": agent_name,
+                        "query": query,
+                        "budget_weight": weight * budget_multiplier,
+                    },
+                )
 
         results = await asyncio.gather(
             *[run_one(name) for name in agents],
@@ -478,11 +529,13 @@ class PRBrainOrchestrator:
         for name, result in zip(agents, results):
             if isinstance(result, Exception):
                 logger.error("Review agent '%s' raised: %s", name, result)
-                processed.append(ToolResult(
-                    tool_name="dispatch_agent",
-                    success=False,
-                    error=f"Agent '{name}' failed: {result}",
-                ))
+                processed.append(
+                    ToolResult(
+                        tool_name="dispatch_agent",
+                        success=False,
+                        error=f"Agent '{name}' failed: {result}",
+                    )
+                )
             else:
                 # Tag condensed data with the agent name so _post_process
                 # can assign the correct FindingCategory
@@ -527,10 +580,7 @@ class PRBrainOrchestrator:
 
         diffs_section = build_diffs_section(files, file_diffs)
 
-        file_list = "\n".join(
-            f"- `{f.path}` ({f.status}, +{f.additions}/-{f.deletions})"
-            for f in files[:20]
-        )
+        file_list = "\n".join(f"- `{f.path}` ({f.status}, +{f.additions}/-{f.deletions})" for f in files[:20])
 
         risk_summary = (
             f"correctness={risk_profile.correctness.value}, "
@@ -548,7 +598,7 @@ class PRBrainOrchestrator:
             impact_section = f"\n<impact_context>\n{impact_context}\n</impact_context>\n"
 
         return f"""\
-Review this PR for {agent_name.replace('_', ' ')} issues.
+Review this PR for {agent_name.replace("_", " ")} issues.
 
 ## Your Focus
 {focus}
@@ -632,9 +682,11 @@ risk: {risk_summary}
                 findings.sort(key=lambda f: f.confidence, reverse=True)
                 logger.info(
                     "Agent '%s' produced %d findings, capping to top %d",
-                    agent_name, len(findings), self._config.post_processing.max_findings_per_agent,
+                    agent_name,
+                    len(findings),
+                    self._config.post_processing.max_findings_per_agent,
                 )
-                findings = findings[:self._config.post_processing.max_findings_per_agent]
+                findings = findings[: self._config.post_processing.max_findings_per_agent]
 
             all_findings.extend(findings)
 
@@ -647,11 +699,14 @@ risk: {risk_summary}
         # these are "missing test" observations, not real defects.
         # Keep them only if no source-file finding exists.
         _test_prefixes = ("tests/", "test_", "spec/", "__tests__/")
-        source_findings = [f for f in filtered if not any(f.file.startswith(p) or f"/{p}" in f.file for p in _test_prefixes)]
+        source_findings = [
+            f for f in filtered if not any(f.file.startswith(p) or f"/{p}" in f.file for p in _test_prefixes)
+        ]
         if source_findings:
             before = len(filtered)
             filtered = [
-                f for f in filtered
+                f
+                for f in filtered
                 if not (
                     f.category == FindingCategory.TEST_COVERAGE
                     and any(f.file.startswith(p) or f"/{p}" in f.file for p in _test_prefixes)
@@ -713,9 +768,10 @@ risk: {risk_summary}
             logger.info("No critical findings — using lightweight arbitration")
             return await self._arbitrate_lightweight(findings, file_diffs)
 
+        from app.workflow.loader import load_brain_config, load_swarm_registry
+
         from .brain import AgentToolExecutor, BrainBudgetManager
         from .config import BrainExecutorConfig
-        from app.workflow.loader import load_brain_config, load_swarm_registry
 
         brain_config = load_brain_config()
         swarm_registry = load_swarm_registry()
@@ -754,10 +810,13 @@ risk: {risk_summary}
 
         logger.info("Dispatching pr_arbitrator with %d findings", len(findings))
 
-        result = await executor.execute("dispatch_agent", {
-            "agent_name": self._config.arbitrator,
-            "query": query,
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "agent_name": self._config.arbitrator,
+                "query": query,
+            },
+        )
 
         if not result.success:
             logger.warning("Arbitrator failed: %s — returning empty verdicts", result.error)
@@ -806,16 +865,18 @@ risk: {risk_summary}
             loc = f.file
             if f.start_line:
                 loc += f":{f.start_line}"
-            findings_data.append({
-                "index": i,
-                "title": f.title,
-                "severity": f.severity.value,
-                "confidence": f.confidence,
-                "file": loc,
-                "risk": f.risk,
-                "evidence": f.evidence[:5],
-                "agent": f.agent,
-            })
+            findings_data.append(
+                {
+                    "index": i,
+                    "title": f.title,
+                    "severity": f.severity.value,
+                    "confidence": f.confidence,
+                    "file": loc,
+                    "risk": f.risk,
+                    "evidence": f.evidence[:5],
+                    "agent": f.agent,
+                }
+            )
 
             if f.file and f.file in file_diffs:
                 snippet = extract_relevant_diff(file_diffs[f.file], f.start_line, window=80)
@@ -853,23 +914,29 @@ risk: {risk_summary}
             idx = item.get("index", -1)
             if idx < 0 or idx >= len(findings):
                 continue
-            verdicts.append(ArbitrationVerdict(
-                index=idx,
-                counter_evidence=item.get("counter_evidence", []),
-                rebuttal_confidence=float(item.get("rebuttal_confidence", 0.0)),
-                suggested_severity=str(item.get("suggested_severity", findings[idx].severity.value)),
-                reason=item.get("reason", ""),
-            ))
+            verdicts.append(
+                ArbitrationVerdict(
+                    index=idx,
+                    counter_evidence=item.get("counter_evidence", []),
+                    rebuttal_confidence=float(item.get("rebuttal_confidence", 0.0)),
+                    suggested_severity=str(item.get("suggested_severity", findings[idx].severity.value)),
+                    reason=item.get("reason", ""),
+                )
+            )
 
         # Fill in missing indices with defaults
         covered = {v.index for v in verdicts}
         for i in range(len(findings)):
             if i not in covered:
-                verdicts.append(ArbitrationVerdict(
-                    index=i, counter_evidence=[], rebuttal_confidence=0.0,
-                    suggested_severity=findings[i].severity.value,
-                    reason="not challenged",
-                ))
+                verdicts.append(
+                    ArbitrationVerdict(
+                        index=i,
+                        counter_evidence=[],
+                        rebuttal_confidence=0.0,
+                        suggested_severity=findings[i].severity.value,
+                        reason="not challenged",
+                    )
+                )
 
         verdicts.sort(key=lambda v: v.index)
         logger.info(
@@ -880,13 +947,17 @@ risk: {risk_summary}
         return verdicts
 
     def _default_verdicts(
-        self, findings: List[ReviewFinding],
+        self,
+        findings: List[ReviewFinding],
     ) -> List[ArbitrationVerdict]:
         """Return pass-through verdicts when arbitration fails."""
         return [
             ArbitrationVerdict(
-                index=i, counter_evidence=[], rebuttal_confidence=0.0,
-                suggested_severity=f.severity.value, reason="arbitration unavailable",
+                index=i,
+                counter_evidence=[],
+                rebuttal_confidence=0.0,
+                suggested_severity=f.severity.value,
+                reason="arbitration unavailable",
             )
             for i, f in enumerate(findings)
         ]
@@ -937,7 +1008,7 @@ risk: {risk_summary}
 
             # Sub-agent's case (pro)
             entry = (
-                f"{i+1}. [{f.severity.value}] {f.title}\n"
+                f"{i + 1}. [{f.severity.value}] {f.title}\n"
                 f"   File: {loc}\n"
                 f"   Category: {f.category.value}\n"
                 f"   Agent confidence: {f.confidence:.2f}\n"
@@ -950,7 +1021,7 @@ risk: {risk_summary}
             # Arbitrator's challenge (con)
             v = verdict_map.get(i)
             if v and (v.counter_evidence or v.rebuttal_confidence > 0.1):
-                counter = '; '.join(v.counter_evidence[:3]) if v.counter_evidence else 'none'
+                counter = "; ".join(v.counter_evidence[:3]) if v.counter_evidence else "none"
                 entry += (
                     f"\n   --- Arbitrator challenge ---\n"
                     f"   Counter-evidence: {counter}\n"
@@ -965,7 +1036,7 @@ risk: {risk_summary}
         total_diff_chars = 0
         for f in findings:
             if f.file and f.file in file_diffs and total_diff_chars < self._config.synthesis.max_diff_chars:
-                snippet = file_diffs[f.file][:self._config.synthesis.max_diff_snippet_chars]
+                snippet = file_diffs[f.file][: self._config.synthesis.max_diff_snippet_chars]
                 diff_snippets.append(f"### {f.file}\n```diff\n{snippet}\n```")
                 total_diff_chars += len(snippet)
 
@@ -979,21 +1050,22 @@ preliminary_recommendation: {merge_rec}
 </pr_context>
 
 <file_list>
-{chr(10).join(f'- {f.path} (+{f.additions}/-{f.deletions}, {f.category.value})' for f in pr_context.files[:30])}
+{chr(10).join(f"- {f.path} (+{f.additions}/-{f.deletions}, {f.category.value})" for f in pr_context.files[:30])}
 </file_list>
 
 <findings count="{len(findings)}">
-{chr(10).join(findings_text) if findings_text else 'No issues found by any agent.'}
+{chr(10).join(findings_text) if findings_text else "No issues found by any agent."}
 </findings>
 
 <diffs>
-{chr(10).join(diff_snippets) if diff_snippets else 'No diff snippets available.'}
+{chr(10).join(diff_snippets) if diff_snippets else "No diff snippets available."}
 </diffs>
 """
 
         logger.info(
             "Synthesis: calling strong model with %d findings, prompt ~%d chars",
-            len(findings), len(prompt),
+            len(findings),
+            len(prompt),
         )
 
         try:

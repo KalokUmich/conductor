@@ -12,4 +12,3 @@ Supported file types:
 When a session ends, all files for that room are deleted.
 TODO: Consider backing up to cloud storage before deletion.
 """
-

@@ -13,11 +13,12 @@ Usage:
     @observe(name="my_operation")
     async def my_function(): ...
 """
+
 from __future__ import annotations
 
 import logging
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +33,13 @@ _get_langfuse_client = None
 try:
     from langfuse.decorators import langfuse_context as _langfuse_context
     from langfuse.decorators import observe as _langfuse_observe
+
     _LANGFUSE_AVAILABLE = True
 except ImportError:
     try:
-        from langfuse import observe as _langfuse_observe, get_client as _get_langfuse_client
+        from langfuse import get_client as _get_langfuse_client
+        from langfuse import observe as _langfuse_observe
+
         _LANGFUSE_AVAILABLE = True
     except ImportError:
         _LANGFUSE_AVAILABLE = False
@@ -70,6 +74,7 @@ def init_langfuse(settings=None) -> bool:
 
     # Get API keys: environment variables take priority, then secrets YAML
     import os
+
     secrets = getattr(settings, "secrets", None)
     langfuse_secrets = getattr(secrets, "langfuse", None) if secrets else None
 
@@ -145,9 +150,11 @@ def observe(
             return fn(*args, **kw)
 
         import asyncio
+
         if asyncio.iscoroutinefunction(fn):
             return async_wrapper
         return sync_wrapper
+
     return decorator
 
 

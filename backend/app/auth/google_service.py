@@ -5,6 +5,7 @@ Implements the same device-flow pattern as the AWS SSO service:
 2. Poll for token completion
 3. Use the access token to fetch user identity from Google's userinfo endpoint
 """
+
 import logging
 
 import httpx

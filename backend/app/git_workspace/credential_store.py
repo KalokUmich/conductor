@@ -3,9 +3,11 @@
 Credentials are NEVER written to disk.  The store lives for the process
 lifetime only.  A background task sweeps expired entries.
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
@@ -18,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _StoredCredential:
-    payload:    CredentialPayload
-    stored_at:  float = field(default_factory=time.monotonic)
-    expires_at: float = 0.0   # absolute monotonic deadline
+    payload: CredentialPayload
+    stored_at: float = field(default_factory=time.monotonic)
+    expires_at: float = 0.0  # absolute monotonic deadline
 
     def is_expired(self) -> bool:
         return time.monotonic() >= self.expires_at
@@ -31,7 +33,7 @@ class CredentialStore:
 
     def __init__(self, default_ttl_seconds: int = 3600) -> None:
         self._store: Dict[str, _StoredCredential] = {}
-        self._lock  = asyncio.Lock()
+        self._lock = asyncio.Lock()
         self._default_ttl = default_ttl_seconds
         self._sweep_task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
 
@@ -48,10 +50,8 @@ class CredentialStore:
         """Cancel sweep task and wipe all credentials."""
         if self._sweep_task:
             self._sweep_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._sweep_task
-            except asyncio.CancelledError:
-                pass
         async with self._lock:
             self._store.clear()
         logger.info("CredentialStore stopped; all credentials wiped.")

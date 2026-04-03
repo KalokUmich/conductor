@@ -27,12 +27,13 @@ Extension → Backend::
         "truncated": false
     }
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from .schemas import ToolResult
 
@@ -81,13 +82,16 @@ class LocalToolProxy:
         self._pending[request_id] = future
 
         # Send to the room host's WebSocket
-        sent = await manager.send_to_host(room_id, {
-            "type": "tool_request",
-            "requestId": request_id,
-            "tool": tool_name,
-            "params": params,
-            "workspace": workspace,
-        })
+        sent = await manager.send_to_host(
+            room_id,
+            {
+                "type": "tool_request",
+                "requestId": request_id,
+                "tool": tool_name,
+                "params": params,
+                "workspace": workspace,
+            },
+        )
 
         if not sent:
             self._pending.pop(request_id, None)
@@ -99,7 +103,7 @@ class LocalToolProxy:
 
         try:
             response = await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             self._pending.pop(request_id, None)
             return ToolResult(
                 tool_name=tool_name,

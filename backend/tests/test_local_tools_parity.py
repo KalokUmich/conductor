@@ -5,6 +5,7 @@ the tools produce valid, meaningful output. The same inputs are used
 by the TypeScript extension in local mode — if these pass, the extension's
 grep/LSP fallback implementations should produce equivalent results.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,6 @@ def _run(tool: str, **params) -> Dict[str, Any]:
 
 
 class TestFileOperations:
-
     def test_read_file(self):
         r = _run("read_file", path="backend/app/config.py", start_line=1, end_line=10)
         assert r["success"]
@@ -38,7 +38,9 @@ class TestFileOperations:
         assert r["success"]
         # list_files returns a list of dicts
         data = r["data"]
-        files = [f["path"] if isinstance(f, dict) else f for f in data] if isinstance(data, list) else data.get("files", [])
+        files = (
+            [f["path"] if isinstance(f, dict) else f for f in data] if isinstance(data, list) else data.get("files", [])
+        )
         assert any("engine.py" in str(f) for f in files)
 
     def test_grep(self):
@@ -51,7 +53,6 @@ class TestFileOperations:
 
 
 class TestSymbolTools:
-
     def test_find_symbol(self):
         r = _run("find_symbol", name="execute_tool")
         assert r["success"]
@@ -88,7 +89,6 @@ class TestSymbolTools:
 
 
 class TestGitTools:
-
     def test_git_log(self):
         r = _run("git_log", n=5)
         assert r["success"]
@@ -114,7 +114,6 @@ class TestGitTools:
 
 
 class TestCodeNavigation:
-
     def test_get_callees(self):
         r = _run("get_callees", function_name="execute_tool", file="backend/app/code_tools/tools.py")
         assert r["success"]
@@ -137,7 +136,6 @@ class TestCodeNavigation:
 
 
 class TestTestTools:
-
     def test_find_tests(self):
         r = _run("find_tests", name="execute_tool")
         assert r["success"]
@@ -148,15 +146,11 @@ class TestTestTools:
 
 
 class TestPatternDetection:
-
     def test_detect_patterns(self):
         r = _run("detect_patterns", path="backend/app/code_tools/executor.py")
         assert r["success"]
 
-    @pytest.mark.skipif(
-        os.system("which ast-grep > /dev/null 2>&1") != 0,
-        reason="ast-grep not installed"
-    )
+    @pytest.mark.skipif(os.system("which ast-grep > /dev/null 2>&1") != 0, reason="ast-grep not installed")
     def test_ast_search(self):
         r = _run("ast_search", pattern="class $C(ToolExecutor)", language="python")
         assert r["success"]

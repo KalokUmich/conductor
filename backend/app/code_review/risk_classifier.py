@@ -7,6 +7,7 @@ reliability, and operational.
 The risk profile drives agent dispatch — high-risk dimensions get specialized
 agents with larger budgets.
 """
+
 from __future__ import annotations
 
 import re
@@ -114,9 +115,8 @@ def classify_risk(pr_context: PRContext) -> RiskProfile:
 
     # Boost correctness risk for large PRs touching business logic
     biz_files = pr_context.business_logic_files()
-    if len(biz_files) >= 10 or pr_context.total_changed_lines > 2000:
-        if profile.correctness == RiskLevel.LOW:
-            profile.correctness = RiskLevel.MEDIUM
+    if (len(biz_files) >= 10 or pr_context.total_changed_lines > 2000) and profile.correctness == RiskLevel.LOW:
+        profile.correctness = RiskLevel.MEDIUM
 
     # Boost correctness for schema/migration changes
     schema_count = sum(1 for f in files if f.category == FileCategory.SCHEMA)

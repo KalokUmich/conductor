@@ -1,11 +1,12 @@
 """TODOService — async PostgreSQL-backed room-scoped task tracking."""
+
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from ..db.models import Todo
 
@@ -53,7 +54,7 @@ class TODOService:
         source_id: Optional[str] = None,
     ) -> dict:
         todo_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         todo = Todo(
             id=todo_id,
             room_id=room_id,
@@ -78,50 +79,43 @@ class TODOService:
 
     async def list_by_room(self, room_id: str) -> List[dict]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(Todo)
-                .where(Todo.room_id == room_id)
-                .order_by(Todo.created_at.asc())
-            )
+            result = await session.execute(select(Todo).where(Todo.room_id == room_id).order_by(Todo.created_at.asc()))
             return [self._row_to_dict(r) for r in result.scalars().all()]
 
     async def update(self, todo_id: str, **kwargs) -> Optional[dict]:
         allowed = {
-            "title", "description", "priority", "status",
-            "file_path", "line_number", "assignee",
+            "title",
+            "description",
+            "priority",
+            "status",
+            "file_path",
+            "line_number",
+            "assignee",
         }
         fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
         if not fields:
             return await self.get(todo_id)
 
         async with self._session_factory() as session:
-            await session.execute(
-                update(Todo).where(Todo.id == todo_id).values(**fields)
-            )
+            await session.execute(update(Todo).where(Todo.id == todo_id).values(**fields))
             await session.commit()
         return await self.get(todo_id)
 
     async def get(self, todo_id: str) -> Optional[dict]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(Todo).where(Todo.id == todo_id)
-            )
+            result = await session.execute(select(Todo).where(Todo.id == todo_id))
             row = result.scalar_one_or_none()
             return self._row_to_dict(row) if row else None
 
     async def delete(self, todo_id: str) -> bool:
         async with self._session_factory() as session:
-            result = await session.execute(
-                delete(Todo).where(Todo.id == todo_id)
-            )
+            result = await session.execute(delete(Todo).where(Todo.id == todo_id))
             await session.commit()
             return result.rowcount > 0
 
     async def delete_by_room(self, room_id: str) -> int:
         async with self._session_factory() as session:
-            result = await session.execute(
-                delete(Todo).where(Todo.room_id == room_id)
-            )
+            result = await session.execute(delete(Todo).where(Todo.room_id == room_id))
             await session.commit()
             return result.rowcount
 

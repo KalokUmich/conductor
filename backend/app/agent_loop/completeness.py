@@ -8,6 +8,7 @@ whether obvious investigation paths were missed.
 Design reference: Anthropic's 3-agent Code Review architecture where a
 Verification Agent filters findings before the Overview Agent synthesizes.
 """
+
 from __future__ import annotations
 
 import json
@@ -49,6 +50,7 @@ Keep hints to 1-3 specific, actionable directions. Do not repeat what the agent 
 @dataclass
 class CompletenessCheck:
     """Result of the completeness verification."""
+
     sufficient: bool
     hints: List[str] = field(default_factory=list)
 
@@ -102,7 +104,9 @@ async def check_completeness(
     files_list = "\n".join(f"- {f}" for f in sorted(files_accessed)) if files_accessed else "(none)"
 
     if perspective:
-        perspective_block = f"\nAgent perspective (this agent's assigned role — judge completeness within this scope):\n{perspective}\n"
+        perspective_block = (
+            f"\nAgent perspective (this agent's assigned role — judge completeness within this scope):\n{perspective}\n"
+        )
         perspective_scope = " within its assigned perspective"
     else:
         perspective_block = ""
@@ -122,13 +126,17 @@ async def check_completeness(
     logger.debug(
         "Completeness check input — question: %.120s | perspective: %.80s | "
         "answer_len: %d chars | tool_count: %d | files(%d): %s",
-        question, perspective or "(none)", len(answer), len(tool_history),
+        question,
+        perspective or "(none)",
+        len(answer),
+        len(tool_history),
         len(files_accessed),
         ", ".join(files_accessed[:10]) + ("..." if len(files_accessed) > 10 else ""),
     )
 
     try:
         import asyncio
+
         response_text = await asyncio.to_thread(
             provider.call_model,
             prompt=prompt,
@@ -139,7 +147,8 @@ async def check_completeness(
         parsed = _parse_response(response_text)
         logger.info(
             "Completeness check: sufficient=%s, hints=%d",
-            parsed.sufficient, len(parsed.hints),
+            parsed.sufficient,
+            len(parsed.hints),
         )
         return parsed
 

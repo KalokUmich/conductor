@@ -4,6 +4,7 @@ Each agent has a focused prompt, tool set, and budget tailored to its
 review dimension. The orchestrator (CodeReviewService) dispatches them
 in parallel and merges their findings.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,26 +18,26 @@ from app.ai_provider.base import AIProvider
 
 from .models import (
     AgentReviewResult,
-    ChangedFile,
     FindingCategory,
     PRContext,
     ReviewFinding,
     RiskLevel,
     RiskProfile,
-    Severity,
 )
 from .shared import (
     FOCUS_DESCRIPTIONS as _FOCUS_DESCRIPTIONS,
-    STRATEGY_HINTS,
-    MAX_FILE_DIFF_CHARS as _MAX_FILE_DIFF_CHARS,
-    MAX_TOTAL_DIFF_CHARS as _MAX_TOTAL_DIFF_CHARS,
-    CRITICAL_MIN_EVIDENCE as _CRITICAL_MIN_EVIDENCE,
-    CRITICAL_REQUIRE_FILE as _CRITICAL_REQUIRE_FILE,
-    CRITICAL_REQUIRE_LINE as _CRITICAL_REQUIRE_LINE,
+)
+from .shared import (
     build_diffs_section as _build_diffs_section,
-    parse_findings as _parse_findings_shared,
-    repair_output as _repair_output_shared,
+)
+from .shared import (
     evidence_gate as _evidence_gate_shared,
+)
+from .shared import (
+    parse_findings as _parse_findings_shared,
+)
+from .shared import (
+    repair_output as _repair_output_shared,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,21 +49,26 @@ logger = logging.getLogger(__name__)
 
 # Core tools available to all review agents
 _REVIEW_CORE_TOOLS = [
-    "grep", "read_file", "find_symbol", "file_outline",
-    "compressed_view", "expand_symbol",
+    "grep",
+    "read_file",
+    "find_symbol",
+    "file_outline",
+    "compressed_view",
+    "expand_symbol",
 ]
 
 
 @dataclass
 class AgentSpec:
     """Specification for a specialized review agent."""
+
     name: str
     category: FindingCategory
-    tools: List[str]                  # tool names (subset of 21)
-    budget_tokens: int                # max input tokens
+    tools: List[str]  # tool names (subset of 21)
+    budget_tokens: int  # max input tokens
     max_iterations: int
-    risk_dimensions: List[str]        # which risk dimensions trigger this agent
-    strategy_hint: str = ""           # per-agent investigation strategy
+    risk_dimensions: List[str]  # which risk dimensions trigger this agent
+    strategy_hint: str = ""  # per-agent investigation strategy
 
     def should_run(self, risk_profile: RiskProfile, always_run: bool = False) -> bool:
         """Decide if this agent should be dispatched based on risk."""
@@ -90,9 +96,9 @@ class AgentSpec:
 #   reliability  0.70  — call-chain + git history, moderate depth
 #   test_coverage 0.55 — file listing + test lookup, lightest
 # ---------------------------------------------------------------------------
-_MAIN_TOKENS: int = 880_000   # mirrors AgentLoopService / BudgetConfig default
-_MAIN_ITERS:  int = 40        # mirrors AgentLoopService default
-_SUB_FRACTION: float = 0.7    # sub-agents get 70% of the main budget
+_MAIN_TOKENS: int = 880_000  # mirrors AgentLoopService / BudgetConfig default
+_MAIN_ITERS: int = 40  # mirrors AgentLoopService default
+_SUB_FRACTION: float = 0.7  # sub-agents get 70% of the main budget
 
 
 def _sub_budget(weight: float) -> int:
@@ -108,13 +114,19 @@ AGENT_SPECS: List[AgentSpec] = [
     AgentSpec(
         name="correctness",
         category=FindingCategory.CORRECTNESS,
-        tools=_REVIEW_CORE_TOOLS + [
-            "git_diff", "git_show", "git_log", "find_references",
-            "get_callers", "get_callees", "trace_variable",
+        tools=_REVIEW_CORE_TOOLS
+        + [
+            "git_diff",
+            "git_show",
+            "git_log",
+            "find_references",
+            "get_callers",
+            "get_callees",
+            "trace_variable",
             "get_dependencies",
         ],
-        budget_tokens=_sub_budget(1.00),   # 616,000
-        max_iterations=_sub_iters(1.00),   # 28
+        budget_tokens=_sub_budget(1.00),  # 616,000
+        max_iterations=_sub_iters(1.00),  # 28
         risk_dimensions=["correctness"],
         strategy_hint=(
             "Mixed strategy: scan all diffs for suspicious patterns first, "
@@ -126,13 +138,18 @@ AGENT_SPECS: List[AgentSpec] = [
     AgentSpec(
         name="concurrency",
         category=FindingCategory.CONCURRENCY,
-        tools=_REVIEW_CORE_TOOLS + [
-            "git_diff", "git_show", "find_references",
-            "get_callers", "get_callees", "trace_variable",
+        tools=_REVIEW_CORE_TOOLS
+        + [
+            "git_diff",
+            "git_show",
+            "find_references",
+            "get_callers",
+            "get_callees",
+            "trace_variable",
             "ast_search",
         ],
-        budget_tokens=_sub_budget(0.85),   # 523,600
-        max_iterations=_sub_iters(0.85),   # 23
+        budget_tokens=_sub_budget(0.85),  # 523,600
+        max_iterations=_sub_iters(0.85),  # 23
         risk_dimensions=["concurrency"],
         strategy_hint=(
             "Depth-first: identify shared-state operations, then trace each "
@@ -143,12 +160,18 @@ AGENT_SPECS: List[AgentSpec] = [
     AgentSpec(
         name="security",
         category=FindingCategory.SECURITY,
-        tools=_REVIEW_CORE_TOOLS + [
-            "git_diff", "git_show", "git_log", "trace_variable",
-            "find_references", "git_blame", "ast_search",
+        tools=_REVIEW_CORE_TOOLS
+        + [
+            "git_diff",
+            "git_show",
+            "git_log",
+            "trace_variable",
+            "find_references",
+            "git_blame",
+            "ast_search",
         ],
-        budget_tokens=_sub_budget(0.75),   # 462,000
-        max_iterations=_sub_iters(0.75),   # 21
+        budget_tokens=_sub_budget(0.75),  # 462,000
+        max_iterations=_sub_iters(0.75),  # 21
         risk_dimensions=["security"],
         strategy_hint=(
             "Depth-first: trace data from external input (HTTP, queue, file) "
@@ -160,12 +183,16 @@ AGENT_SPECS: List[AgentSpec] = [
     AgentSpec(
         name="reliability",
         category=FindingCategory.RELIABILITY,
-        tools=_REVIEW_CORE_TOOLS + [
-            "git_diff", "get_callers",
-            "find_references", "git_log", "git_show",
+        tools=_REVIEW_CORE_TOOLS
+        + [
+            "git_diff",
+            "get_callers",
+            "find_references",
+            "git_log",
+            "git_show",
         ],
-        budget_tokens=_sub_budget(0.70),   # 431,200
-        max_iterations=_sub_iters(0.70),   # 19
+        budget_tokens=_sub_budget(0.70),  # 431,200
+        max_iterations=_sub_iters(0.70),  # 19
         risk_dimensions=["reliability", "operational"],
         strategy_hint=(
             "Breadth-first: check every exception handler, resource acquisition, "
@@ -176,14 +203,18 @@ AGENT_SPECS: List[AgentSpec] = [
     AgentSpec(
         name="test_coverage",
         category=FindingCategory.TEST_COVERAGE,
-        tools=_REVIEW_CORE_TOOLS + [
-            "git_diff", "find_tests",
-            "test_outline", "find_references", "list_files",
+        tools=_REVIEW_CORE_TOOLS
+        + [
+            "git_diff",
+            "find_tests",
+            "test_outline",
+            "find_references",
+            "list_files",
             "run_test",
         ],
-        budget_tokens=_sub_budget(0.55),   # 338,800
-        max_iterations=_sub_iters(0.55),   # 15
-        risk_dimensions=[],   # always runs (via always_run flag)
+        budget_tokens=_sub_budget(0.55),  # 338,800
+        max_iterations=_sub_iters(0.55),  # 15
+        risk_dimensions=[],  # always runs (via always_run flag)
         strategy_hint=(
             "Breadth-first: for each changed file, use find_tests to locate "
             "existing tests. Use test_outline on found test files to assess "
@@ -320,8 +351,6 @@ RULES:
 - If your token budget is running low, output your findings JSON IMMEDIATELY"""
 
 
-
-
 def _build_agent_query(
     spec: AgentSpec,
     pr_context: PRContext,
@@ -340,9 +369,7 @@ def _build_agent_query(
 
     file_list_lines = []
     for f in files[:20]:  # cap at 20 files
-        file_list_lines.append(
-            f"- `{f.path}` ({f.status}, +{f.additions}/-{f.deletions})"
-        )
+        file_list_lines.append(f"- `{f.path}` ({f.status}, +{f.additions}/-{f.deletions})")
     file_list = "\n".join(file_list_lines) if file_list_lines else "- (no files in scope)"
 
     risk_summary = (
@@ -388,7 +415,10 @@ def _parse_findings(
 ) -> List[ReviewFinding]:
     """Extract structured findings from an agent's answer text."""
     return _parse_findings_shared(
-        answer, spec.name, spec.category, warn_on_empty=warn_on_empty,
+        answer,
+        spec.name,
+        spec.category,
+        warn_on_empty=warn_on_empty,
     )
 
 
@@ -401,7 +431,7 @@ async def _repair_output(
     return await _repair_output_shared(answer, spec.name, spec.category, provider)
 
 
-def _evidence_gate(findings: List[ReviewFinding], agent_result: "AgentResult") -> List[ReviewFinding]:
+def _evidence_gate(findings: List[ReviewFinding], agent_result: AgentResult) -> List[ReviewFinding]:
     """Validate evidence quality for Critical findings."""
     tool_calls = agent_result.tool_calls_made if agent_result else 0
     return _evidence_gate_shared(findings, tool_calls)
@@ -420,7 +450,7 @@ async def run_review_agent(
     workspace_path: str,
     trace_writer=None,
     file_diffs: Optional[Dict[str, str]] = None,
-    llm_semaphore: Optional["asyncio.Semaphore"] = None,
+    llm_semaphore: Optional[asyncio.Semaphore] = None,
     impact_context: str = "",
 ) -> AgentReviewResult:
     """Run a single specialized review agent.
@@ -466,13 +496,16 @@ async def run_review_agent(
         if not findings and result.context_chunks:
             for chunk in result.context_chunks:
                 chunk_findings = _parse_findings(
-                    chunk.content, spec, warn_on_empty=False,
+                    chunk.content,
+                    spec,
+                    warn_on_empty=False,
                 )
                 findings.extend(chunk_findings)
             if findings:
                 logger.info(
                     "Recovered %d findings from context chunks for %s agent",
-                    len(findings), spec.name,
+                    len(findings),
+                    spec.name,
                 )
 
         # --- Improvement 1: Output Repair Loop ---
@@ -480,9 +513,9 @@ async def run_review_agent(
         # reformat the answer as JSON (one cheap extra call).
         if not findings and result.answer and len(result.answer) > 50:
             logger.info(
-                "Agent '%s' produced %d chars but no parseable findings — "
-                "attempting repair loop",
-                spec.name, len(result.answer),
+                "Agent '%s' produced %d chars but no parseable findings — attempting repair loop",
+                spec.name,
+                len(result.answer),
             )
             findings = await _repair_output(result.answer, spec, provider)
 
@@ -490,7 +523,9 @@ async def run_review_agent(
             logger.warning(
                 "Agent '%s' produced %d chars of text but no parseable findings "
                 "(even after repair). First 200 chars: %s",
-                spec.name, len(result.answer), result.answer[:200],
+                spec.name,
+                len(result.answer),
+                result.answer[:200],
             )
 
         # --- Improvement 3: Evidence Gate ---
@@ -500,8 +535,9 @@ async def run_review_agent(
 
         tokens = 0
         if result.budget_summary:
-            tokens = result.budget_summary.get("total_input_tokens", 0) + \
-                     result.budget_summary.get("total_output_tokens", 0)
+            tokens = result.budget_summary.get("total_input_tokens", 0) + result.budget_summary.get(
+                "total_output_tokens", 0
+            )
 
         return AgentReviewResult(
             agent_name=spec.name,

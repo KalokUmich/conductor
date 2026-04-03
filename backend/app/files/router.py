@@ -1,12 +1,13 @@
 """FastAPI router for file upload endpoints."""
+
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, UploadFile, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 
+from .schemas import MAX_FILE_SIZE_BYTES, FileUploadResponse
 from .service import FileStorageService
-from .schemas import FileUploadResponse, MAX_FILE_SIZE_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,8 @@ def get_download_url(request: Request, file_id: str) -> str:
 def _service() -> FileStorageService:
     try:
         return FileStorageService.get_instance()
-    except RuntimeError:
-        raise HTTPException(status_code=503, detail="File service unavailable (database not connected)")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="File service unavailable (database not connected)") from exc
 
 
 @router.post("/upload/{room_id}", response_model=FileUploadResponse)
@@ -56,7 +57,9 @@ async def upload_file(
         download_url = get_download_url(request, metadata.id)
         logger.info(
             "File uploaded: %s (%d bytes) to room %s",
-            metadata.original_filename, metadata.size_bytes, room_id,
+            metadata.original_filename,
+            metadata.size_bytes,
+            room_id,
         )
         return FileUploadResponse(
             id=metadata.id,
@@ -67,12 +70,12 @@ async def upload_file(
             download_url=download_url,
         )
     except ValueError as e:
-        raise HTTPException(status_code=413, detail=str(e))
+        raise HTTPException(status_code=413, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
         logger.error("File upload failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Upload failed: {e!s}") from e
 
 
 @router.get("/download/{file_id}")

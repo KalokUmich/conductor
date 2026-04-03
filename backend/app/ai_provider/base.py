@@ -10,6 +10,7 @@ Usage:
     if provider.health_check():
         summary = provider.summarize_structured(messages)
 """
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
@@ -24,6 +25,7 @@ class ChatMessage:
         text: The message content.
         timestamp: Unix timestamp of the message.
     """
+
     role: Literal["host", "engineer"]
     text: str
     timestamp: float
@@ -43,6 +45,7 @@ class DecisionSummary:
         risk_level: Risk assessment (low, medium, high).
         next_steps: List of action items or next steps.
     """
+
     type: Literal["decision_summary"] = "decision_summary"
     topic: str = ""
     problem_statement: str = ""
@@ -83,6 +86,15 @@ class AIProvider(ABC):
         summarize: Generate a simple summary from a list of messages.
         summarize_structured: Generate a structured decision summary.
     """
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Return the model identifier used by this provider.
+
+        Used for Langfuse generation tracking and cost calculation.
+        """
+        ...
 
     @abstractmethod
     def health_check(self) -> bool:
@@ -183,14 +195,13 @@ class AIProvider(ABC):
         Raises:
             NotImplementedError: If the provider doesn't support tool use.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support chat_with_tools"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not support chat_with_tools")
 
 
 @dataclass
 class ToolCall:
     """A single tool invocation requested by the model."""
+
     id: str
     name: str
     input: Dict[str, Any] = field(default_factory=dict)
@@ -199,6 +210,7 @@ class ToolCall:
 @dataclass
 class TokenUsage:
     """Token counts from a single LLM call."""
+
     input_tokens: int = 0
     output_tokens: int = 0
     total_tokens: int = 0
@@ -209,9 +221,9 @@ class TokenUsage:
 @dataclass
 class ToolUseResponse:
     """Response from chat_with_tools — may contain text and/or tool calls."""
+
     text: str = ""
     tool_calls: List[ToolCall] = field(default_factory=list)
     stop_reason: str = ""  # "end_turn", "tool_use", "max_tokens"
     raw: Any = None  # Provider-specific raw response
     usage: Optional[TokenUsage] = None  # Token counts (if provider returns them)
-

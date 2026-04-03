@@ -18,16 +18,15 @@ Usage:
 
     status = resolver.get_status()
 """
+
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from app.config import (
     AIModelConfig,
-    AlibabaSecretsConfig,
     ConductorConfig,
-    MoonshotSecretsConfig,
 )
 
 from .base import AIProvider
@@ -40,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 class ProviderType(str, Enum):
     """Supported AI provider types."""
+
     ANTHROPIC = "anthropic"
     AWS_BEDROCK = "aws_bedrock"
     OPENAI = "openai"
@@ -50,6 +50,7 @@ class ProviderType(str, Enum):
 @dataclass
 class ProviderStatus:
     """Status of a single provider."""
+
     name: str
     enabled: bool  # Enabled in settings
     configured: bool  # Has API key configured
@@ -59,16 +60,18 @@ class ProviderStatus:
 @dataclass
 class ModelStatus:
     """Status of a single model."""
+
     id: str
     provider: str
     display_name: str
     available: bool  # Provider is healthy and model is enabled
-    explorer: bool = False    # Can be used as a code-explorer sub-agent
+    explorer: bool = False  # Can be used as a code-explorer sub-agent
 
 
 @dataclass
 class AIStatus:
     """Overall AI status response."""
+
     summary_enabled: bool
     active_provider: Optional[str]
     active_model: Optional[str]
@@ -142,8 +145,9 @@ class ProviderResolver:
         if provider_type == ProviderType.ANTHROPIC:
             return bool(self.providers_config.anthropic.api_key)
         elif provider_type == ProviderType.AWS_BEDROCK:
-            return bool(self.providers_config.aws_bedrock.access_key_id and
-                       self.providers_config.aws_bedrock.secret_access_key)
+            return bool(
+                self.providers_config.aws_bedrock.access_key_id and self.providers_config.aws_bedrock.secret_access_key
+            )
         elif provider_type == ProviderType.OPENAI:
             return bool(self.providers_config.openai.api_key)
         elif provider_type == ProviderType.ALIBABA:
@@ -396,9 +400,9 @@ class ProviderResolver:
                 provider=model.provider,
                 display_name=model.display_name,
                 available=(
-                    model.enabled and
-                    self._provider_enabled.get(model.provider, False) and
-                    self._provider_health.get(model.provider, False)
+                    model.enabled
+                    and self._provider_enabled.get(model.provider, False)
+                    and self._provider_health.get(model.provider, False)
                 ),
                 explorer=model.explorer,
             )
@@ -438,11 +442,7 @@ class ProviderResolver:
             An AIProvider suitable for sub-agent / explorer work, or None.
         """
         for model in self.models_config:
-            if (
-                model.explorer
-                and model.enabled
-                and self._provider_health.get(model.provider, False)
-            ):
+            if model.explorer and model.enabled and self._provider_health.get(model.provider, False):
                 # Explorer sub-agents: enable thinking for Alibaba models
                 # so the model reasons about code structure before acting.
                 # This improves finding quality (e.g. provability of defects).
@@ -526,4 +526,3 @@ def set_resolver(resolver: ProviderResolver) -> None:
     """Set the global provider resolver instance."""
     global _resolver
     _resolver = resolver
-

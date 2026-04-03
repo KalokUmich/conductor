@@ -3,6 +3,7 @@
 Provides direct access to individual tools (for debugging / non-agent use)
 and lists available tools.
 """
+
 from __future__ import annotations
 
 import logging
@@ -12,16 +13,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from .schemas import (
     TOOL_DEFINITIONS,
-    FileOutlineParams,
-    FindReferencesParams,
-    FindSymbolParams,
-    GetDependenciesParams,
-    GetDependentsParams,
-    GitDiffParams,
-    GitLogParams,
-    GrepParams,
-    ListFilesParams,
-    ReadFileParams,
     ToolResult,
 )
 from .tools import execute_tool, invalidate_graph_cache, invalidate_symbol_cache
@@ -38,6 +29,7 @@ router = APIRouter(prefix="/api/code-tools", tags=["code-tools"])
 
 def _get_git_workspace_service():
     from app.main import app
+
     return app.state.git_workspace_service
 
 
@@ -92,6 +84,7 @@ async def execute(
     # Local-mode workspaces: proxy tool call to the VS Code extension
     if git_workspace.is_local_workspace(room_id):
         from .proxy import tool_proxy
+
         return await tool_proxy.execute(
             room_id=room_id,
             tool_name=tool_name,

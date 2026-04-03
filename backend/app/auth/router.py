@@ -7,6 +7,7 @@ Endpoints:
     POST /auth/google/poll    - Poll for Google OAuth token and resolve identity
     GET  /auth/providers      - List enabled auth providers
 """
+
 import logging
 
 from fastapi import APIRouter, HTTPException
@@ -60,6 +61,7 @@ async def _poll_for_identity(
 
 class SSOPollRequest(BaseModel):
     """Request body for polling SSO token status."""
+
     device_code: str
     client_id: str
     client_secret: str
@@ -87,7 +89,7 @@ async def sso_start() -> dict:
         return result
     except Exception as e:
         logger.error(f"SSO start failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/sso/poll")
@@ -123,6 +125,7 @@ async def sso_poll(request: SSOPollRequest) -> dict:
 
 class GooglePollRequest(BaseModel):
     """Request body for polling Google OAuth token status."""
+
     device_code: str
 
 
@@ -148,7 +151,7 @@ async def google_start() -> dict:
         return result
     except Exception as e:
         logger.error(f"Google SSO start failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/google/poll")

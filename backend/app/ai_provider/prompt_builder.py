@@ -5,11 +5,14 @@ Instead of including all detected workspace languages and always instructing
 files, detects doc-only changes, and adapts output instructions to a
 configurable output mode.
 """
+
+import contextlib
 import logging
 import os
 from typing import List, Optional
 
-from app.agent.style_loader import Language, CodeStyleLoader, _read_builtin_style, _read_universal_style
+from app.agent.style_loader import CodeStyleLoader, Language, _read_builtin_style, _read_universal_style
+
 from .prompts import format_summaries_for_code_prompt
 
 logger = logging.getLogger(__name__)
@@ -214,10 +217,8 @@ class PromptBuilder:
         if self._detected_languages:
             lang_enums: List[Language] = []
             for lang_str in self._detected_languages:
-                try:
+                with contextlib.suppress(ValueError):
                     lang_enums.append(Language(lang_str))
-                except ValueError:
-                    pass
             if lang_enums:
                 return self._build_style_from_languages(lang_enums)
 
@@ -238,10 +239,8 @@ class PromptBuilder:
         try:
             parts = [_read_universal_style()]
             for lang in languages:
-                try:
+                with contextlib.suppress(FileNotFoundError):
                     parts.append(_read_builtin_style(lang))
-                except FileNotFoundError:
-                    pass
             if len(parts) > 1:
                 return "\n\n---\n\n".join(parts)
             return parts[0]
@@ -270,9 +269,7 @@ class PromptBuilder:
             for s in self._context_snippets:
                 file_path = s.get("file_path", "unknown")
                 snippet_text = s.get("snippet", "")
-                snippet_blocks.append(
-                    f"### {file_path}\n```\n{snippet_text}\n```"
-                )
+                snippet_blocks.append(f"### {file_path}\n```\n{snippet_text}\n```")
             snippets_body = "\n\n".join(snippet_blocks)
             context_section = (
                 f"<context_snippets>\n"
@@ -290,19 +287,11 @@ class PromptBuilder:
 
         policy_section = ""
         if self._policy_constraints:
-            policy_section = (
-                f"<policy_constraints>\n"
-                f"{self._policy_constraints}\n"
-                f"</policy_constraints>\n\n"
-            )
+            policy_section = f"<policy_constraints>\n{self._policy_constraints}\n</policy_constraints>\n\n"
 
         style_section = ""
         if style_str:
-            style_section = (
-                f"<code_style>\n"
-                f"{style_str}\n"
-                f"</code_style>\n\n"
-            )
+            style_section = f"<code_style>\n{style_str}\n</code_style>\n\n"
 
         # Requirements — adapt based on doc-only
         requirements = [
@@ -311,12 +300,8 @@ class PromptBuilder:
         if not doc_only:
             requirements.append("2. Include appropriate error handling")
             requirements.append("3. Add or update tests if applicable")
-            requirements.append(
-                f"{len(requirements) + 1}. Ensure backward compatibility where possible"
-            )
-            requirements.append(
-                f"{len(requirements) + 1}. Document any breaking changes"
-            )
+            requirements.append(f"{len(requirements) + 1}. Ensure backward compatibility where possible")
+            requirements.append(f"{len(requirements) + 1}. Document any breaking changes")
         else:
             requirements.append("2. Ensure backward compatibility where possible")
             requirements.append("3. Document any breaking changes")
@@ -406,6 +391,7 @@ def build_selective_prompt(
     try:
         from app.config import get_config
         from app.policy.auto_apply import FORBIDDEN_PATHS
+
         from .prompts import format_policy_constraints
 
         config = get_config()
@@ -415,17 +401,13 @@ def build_selective_prompt(
             max_lines_changed=limits.max_total_lines,
             forbidden_paths=FORBIDDEN_PATHS,
         )
-        policy_section = (
-            f"<policy_constraints>\n{policy_str}\n</policy_constraints>\n\n"
-        )
+        policy_section = f"<policy_constraints>\n{policy_str}\n</policy_constraints>\n\n"
     except Exception as e:
         logger.debug(f"Could not load policy constraints: {e}")
 
     style_section = ""
     if style_str:
-        style_section = (
-            f"<code_style>\n{style_str}\n</code_style>\n\n"
-        )
+        style_section = f"<code_style>\n{style_str}\n</code_style>\n\n"
 
     output_instruction = _OUTPUT_INSTRUCTIONS.get(
         output_mode,

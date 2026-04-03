@@ -24,18 +24,20 @@ Go:
     main.process(...)
             /path/to/file.go:42 +0x68
 """
+
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
-
 # ---------------------------------------------------------------------------
 # Language enum
 # ---------------------------------------------------------------------------
 
+
 class StackTraceLanguage(str, Enum):
     """Detected language of the stack trace."""
+
     PYTHON = "python"
     JAVASCRIPT = "javascript"
     JAVA = "java"
@@ -46,6 +48,7 @@ class StackTraceLanguage(str, Enum):
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class StackFrame:
@@ -59,6 +62,7 @@ class StackFrame:
         function_name: Function / method name, or None.
         is_internal: True if the path looks like stdlib / node_modules / etc.
     """
+
     raw: str
     file_path: Optional[str] = None
     line_number: Optional[int] = None
@@ -79,6 +83,7 @@ class ParsedStackTrace:
                 innermost first for Go).
         raw_text: The original, unmodified stack trace text.
     """
+
     language: StackTraceLanguage = StackTraceLanguage.UNKNOWN
     error_type: str = ""
     error_message: str = ""
@@ -114,23 +119,21 @@ class ParsedStackTrace:
 _PY_FRAME = re.compile(r'\s*File\s+"([^"]+)",\s+line\s+(\d+),\s+in\s+(.+)')
 
 # JS named:     at MyFunc (/abs/path/file.ts:42:10)
-_JS_NAMED = re.compile(r'\s*at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)')
+_JS_NAMED = re.compile(r"\s*at\s+(.+?)\s+\((.+?):(\d+):(\d+)\)")
 # JS named without column:  at MyFunc (/abs/path/file.ts:42)
-_JS_NAMED_NC = re.compile(r'\s*at\s+(.+?)\s+\((.+?):(\d+)\)')
+_JS_NAMED_NC = re.compile(r"\s*at\s+(.+?)\s+\((.+?):(\d+)\)")
 # JS anonymous:     at /abs/path/file.ts:42:10
-_JS_ANON = re.compile(r'\s*at\s+((?:\/|[A-Za-z]:\\|\.\.?\/|\w).+?):(\d+):(\d+)$')
+_JS_ANON = re.compile(r"\s*at\s+((?:\/|[A-Za-z]:\\|\.\.?\/|\w).+?):(\d+):(\d+)$")
 # JS anonymous without column:  at /abs/path/file.ts:42
-_JS_ANON_NC = re.compile(r'\s*at\s+((?:\/|[A-Za-z]:\\|\.\.?\/|\w).+?):(\d+)$')
+_JS_ANON_NC = re.compile(r"\s*at\s+((?:\/|[A-Za-z]:\\|\.\.?\/|\w).+?):(\d+)$")
 
 # Java:     at com.example.App.method(FileName.java:42)
-_JAVA_FRAME = re.compile(
-    r'\s*at\s+([\w.$]+)\.([\w$<>[\]]+)\((.+?\.java):(\d+)\)'
-)
+_JAVA_FRAME = re.compile(r"\s*at\s+([\w.$]+)\.([\w$<>[\]]+)\((.+?\.java):(\d+)\)")
 
 # Go frame:   \t/path/to/file.go:42 +0x68
-_GO_FILE = re.compile(r'^\t(.+\.go):(\d+)(?:\s+\+0x[0-9a-f]+)?$')
+_GO_FILE = re.compile(r"^\t(.+\.go):(\d+)(?:\s+\+0x[0-9a-f]+)?$")
 # Go function line (precedes file line):  main.process(...)
-_GO_FUNC = re.compile(r'^(\S+)\(')
+_GO_FUNC = re.compile(r"^(\S+)\(")
 
 
 # ---------------------------------------------------------------------------
@@ -162,20 +165,19 @@ def _is_internal(path: str) -> bool:
 # Language detection
 # ---------------------------------------------------------------------------
 
+
 def _detect_language(text: str) -> StackTraceLanguage:
     """Heuristically detect the language of a stack trace."""
-    if "Traceback (most recent call last)" in text or re.search(
-        r'File ".+", line \d+', text
-    ):
+    if "Traceback (most recent call last)" in text or re.search(r'File ".+", line \d+', text):
         return StackTraceLanguage.PYTHON
 
-    if "goroutine" in text and re.search(r'\t.+\.go:\d+', text):
+    if "goroutine" in text and re.search(r"\t.+\.go:\d+", text):
         return StackTraceLanguage.GO
 
-    if re.search(r'\tat [\w.$]+\([\w]+\.java:\d+\)', text):
+    if re.search(r"\tat [\w.$]+\([\w]+\.java:\d+\)", text):
         return StackTraceLanguage.JAVA
 
-    if re.search(r'\n?\s*at\s+.+?[:(]\d+', text):
+    if re.search(r"\n?\s*at\s+.+?[:(]\d+", text):
         return StackTraceLanguage.JAVASCRIPT
 
     return StackTraceLanguage.UNKNOWN
@@ -185,25 +187,27 @@ def _detect_language(text: str) -> StackTraceLanguage:
 # Per-language parsers
 # ---------------------------------------------------------------------------
 
+
 def _parse_python(lines: List[str], result: ParsedStackTrace) -> None:
     """Extract frames and error from a Python traceback."""
     for line in lines:
         m = _PY_FRAME.match(line)
         if m:
             file_path = m.group(1)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(2)),
-                function_name=m.group(3).strip(),
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(2)),
+                    function_name=m.group(3).strip(),
+                    is_internal=_is_internal(file_path),
+                )
+            )
 
     # Error is the last non-blank, non-frame line
     for line in reversed(lines):
         s = line.strip()
-        if s and not s.startswith("File ") and not s.startswith("Traceback") \
-                and not s.startswith("During handling"):
+        if s and not s.startswith("File ") and not s.startswith("Traceback") and not s.startswith("During handling"):
             if ":" in s:
                 etype, _, emsg = s.partition(":")
                 result.error_type = etype.strip()
@@ -220,49 +224,57 @@ def _parse_javascript(lines: List[str], result: ParsedStackTrace) -> None:
         m = _JS_NAMED.match(line)
         if m:
             file_path = m.group(2)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(3)),
-                column_number=int(m.group(4)),
-                function_name=m.group(1).strip(),
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(3)),
+                    column_number=int(m.group(4)),
+                    function_name=m.group(1).strip(),
+                    is_internal=_is_internal(file_path),
+                )
+            )
             continue
 
         m = _JS_NAMED_NC.match(line)
         if m:
             file_path = m.group(2)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(3)),
-                function_name=m.group(1).strip(),
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(3)),
+                    function_name=m.group(1).strip(),
+                    is_internal=_is_internal(file_path),
+                )
+            )
             continue
 
         m = _JS_ANON.match(line)
         if m:
             file_path = m.group(1)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(2)),
-                column_number=int(m.group(3)),
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(2)),
+                    column_number=int(m.group(3)),
+                    is_internal=_is_internal(file_path),
+                )
+            )
             continue
 
         m = _JS_ANON_NC.match(line)
         if m:
             file_path = m.group(1)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(2)),
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(2)),
+                    is_internal=_is_internal(file_path),
+                )
+            )
 
     # Error type is typically the very first line
     for line in lines:
@@ -280,18 +292,18 @@ def _parse_java(lines: List[str], result: ParsedStackTrace) -> None:
     for line in lines:
         m = _JAVA_FRAME.match(line)
         if m:
-            class_path, method, file_name, line_no = (
-                m.group(1), m.group(2), m.group(3), int(m.group(4))
-            )
+            class_path, method, _file_name, line_no = (m.group(1), m.group(2), m.group(3), int(m.group(4)))
             # Convert com.example.App → com/example/App.java
             guessed_path = class_path.replace(".", "/") + ".java"
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=guessed_path,
-                line_number=line_no,
-                function_name=f"{class_path.split('.')[-1]}.{method}",
-                is_internal=_is_internal(class_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=guessed_path,
+                    line_number=line_no,
+                    function_name=f"{class_path.split('.')[-1]}.{method}",
+                    is_internal=_is_internal(class_path),
+                )
+            )
 
     # Error: first line containing "Exception" or "Error"
     for line in lines:
@@ -315,13 +327,15 @@ def _parse_go(lines: List[str], result: ParsedStackTrace) -> None:
         m = _GO_FILE.match(line)
         if m:
             file_path = m.group(1)
-            result.frames.append(StackFrame(
-                raw=line.rstrip(),
-                file_path=file_path,
-                line_number=int(m.group(2)),
-                function_name=pending_func,
-                is_internal=_is_internal(file_path),
-            ))
+            result.frames.append(
+                StackFrame(
+                    raw=line.rstrip(),
+                    file_path=file_path,
+                    line_number=int(m.group(2)),
+                    function_name=pending_func,
+                    is_internal=_is_internal(file_path),
+                )
+            )
             pending_func = None
             continue
 
@@ -345,6 +359,7 @@ def _parse_go(lines: List[str], result: ParsedStackTrace) -> None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def parse_stack_trace(text: str) -> ParsedStackTrace:
     """Parse a raw stack trace string into a :class:`ParsedStackTrace`.

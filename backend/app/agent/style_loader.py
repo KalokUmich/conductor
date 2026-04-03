@@ -3,14 +3,15 @@
 Loads code style guidelines from .ai/code-style.md if it exists and is non-empty,
 otherwise falls back to built-in style guidelines stored as markdown files.
 """
-import os
-from pathlib import Path
-from typing import Optional, List
+
 from enum import Enum
+from pathlib import Path
+from typing import List, Optional
 
 
 class Language(str, Enum):
     """Supported programming languages."""
+
     JAVA = "java"
     JAVASCRIPT = "javascript"
     PYTHON = "python"
@@ -23,6 +24,7 @@ STYLES_DIR = Path(__file__).parent / "styles"
 
 class StyleSource(str, Enum):
     """Source of the code style."""
+
     CUSTOM = "custom"  # From .ai/code-style.md
     BUILTIN = "builtin"  # Language-specific Google style fallback
     UNIVERSAL = "universal"  # Language-agnostic universal style
@@ -121,13 +123,10 @@ class CodeStyleLoader:
             if not content:
                 return None
             return content
-        except (IOError, OSError):
+        except OSError:
             return None
 
-    def get_style(
-        self,
-        language: Optional[Language] = None
-    ) -> tuple[str, StyleSource]:
+    def get_style(self, language: Optional[Language] = None) -> tuple[str, StyleSource]:
         """
         Get the code style guidelines.
 
@@ -161,9 +160,11 @@ class CodeStyleLoader:
         templates = []
         for md_file in sorted(STYLES_DIR.glob("*.md")):
             content = md_file.read_text(encoding="utf-8").strip()
-            templates.append({
-                "name": md_file.stem,
-                "filename": md_file.name,
-                "content": content,
-            })
+            templates.append(
+                {
+                    "name": md_file.stem,
+                    "filename": md_file.name,
+                    "content": content,
+                }
+            )
         return templates

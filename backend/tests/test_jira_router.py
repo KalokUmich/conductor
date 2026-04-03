@@ -3,16 +3,16 @@
 Tests all nine endpoints in app.integrations.jira.router using
 httpx.AsyncClient with a mocked JiraOAuthService on app.state.
 """
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.integrations.jira.models import (
-    CreateIssueRequest,
     JiraCreateMeta,
     JiraFieldOption,
     JiraIssue,
@@ -109,8 +109,10 @@ async def test_get_authorize_url(client, mock_service):
 @pytest.mark.asyncio
 async def test_oauth_callback_get_success(client, mock_service):
     token = JiraTokenPair(
-        access_token="at", refresh_token="rt",
-        cloud_id="cloud-1", site_url="https://mysite.atlassian.net",
+        access_token="at",
+        refresh_token="rt",
+        cloud_id="cloud-1",
+        site_url="https://mysite.atlassian.net",
     )
     mock_service.exchange_code.return_value = token
 
@@ -152,8 +154,10 @@ async def test_oauth_callback_get_missing_code(client):
 @pytest.mark.asyncio
 async def test_oauth_callback_post_success(client, mock_service):
     token = JiraTokenPair(
-        access_token="at", refresh_token="rt",
-        cloud_id="cloud-2", site_url="https://site2.atlassian.net",
+        access_token="at",
+        refresh_token="rt",
+        cloud_id="cloud-2",
+        site_url="https://site2.atlassian.net",
     )
     mock_service.exchange_code.return_value = token
 
@@ -386,7 +390,8 @@ async def test_get_create_meta_unauthorized(client, mock_service):
 @pytest.mark.asyncio
 async def test_create_issue_simple(client, mock_service):
     mock_service.create_issue.return_value = JiraIssue(
-        id="12345", key="PROJ-42",
+        id="12345",
+        key="PROJ-42",
         self_url="https://api.atlassian.com/ex/jira/cloud/rest/api/3/issue/12345",
         browse_url="https://mysite.atlassian.net/browse/PROJ-42",
     )
@@ -409,7 +414,10 @@ async def test_create_issue_with_team_cached(client, mock_service):
     """When team is specified and _team_field_key is already cached."""
     mock_service._team_field_key = "customfield_10001"
     mock_service.create_issue.return_value = JiraIssue(
-        id="99", key="ENG-7", self_url="", browse_url="",
+        id="99",
+        key="ENG-7",
+        self_url="",
+        browse_url="",
     )
     resp = await client.post(
         "/api/integrations/jira/issues",
@@ -438,7 +446,10 @@ async def test_create_issue_with_team_needs_lookup(client, mock_service):
         teams=[JiraFieldOption(id="200", name="Beta")],
     )
     mock_service.create_issue.return_value = JiraIssue(
-        id="50", key="PROJ-50", self_url="", browse_url="",
+        id="50",
+        key="PROJ-50",
+        self_url="",
+        browse_url="",
     )
     resp = await client.post(
         "/api/integrations/jira/issues",
@@ -484,11 +495,13 @@ async def test_create_issue_server_error(client, mock_service):
 
 @pytest.mark.asyncio
 async def test_refresh_token_success(client, mock_service):
-    mock_service.refresh_token_for_client = AsyncMock(return_value={
-        "access_token": "new-acc",
-        "refresh_token": "new-ref",
-        "expires_in": 3600,
-    })
+    mock_service.refresh_token_for_client = AsyncMock(
+        return_value={
+            "access_token": "new-acc",
+            "refresh_token": "new-ref",
+            "expires_in": 3600,
+        }
+    )
     resp = await client.post(
         "/api/integrations/jira/refresh",
         json={"refresh_token": "old-ref"},
@@ -503,9 +516,7 @@ async def test_refresh_token_success(client, mock_service):
 
 @pytest.mark.asyncio
 async def test_refresh_token_expired(client, mock_service):
-    mock_service.refresh_token_for_client = AsyncMock(
-        side_effect=RuntimeError("Token refresh failed: invalid_grant")
-    )
+    mock_service.refresh_token_for_client = AsyncMock(side_effect=RuntimeError("Token refresh failed: invalid_grant"))
     resp = await client.post(
         "/api/integrations/jira/refresh",
         json={"refresh_token": "expired-ref"},
@@ -516,9 +527,7 @@ async def test_refresh_token_expired(client, mock_service):
 
 @pytest.mark.asyncio
 async def test_refresh_token_server_error(client, mock_service):
-    mock_service.refresh_token_for_client = AsyncMock(
-        side_effect=Exception("Unexpected error")
-    )
+    mock_service.refresh_token_for_client = AsyncMock(side_effect=Exception("Unexpected error"))
     resp = await client.post(
         "/api/integrations/jira/refresh",
         json={"refresh_token": "some-ref"},
@@ -602,10 +611,12 @@ async def test_get_tokens_disabled(client_no_service):
 
 @pytest.mark.asyncio
 async def test_get_transitions(client, mock_service):
-    mock_service.get_transitions = AsyncMock(return_value=[
-        {"id": "21", "name": "Start", "to_status": "In Progress", "blocked": False},
-        {"id": "31", "name": "Done", "to_status": "Done", "blocked": True},
-    ])
+    mock_service.get_transitions = AsyncMock(
+        return_value=[
+            {"id": "21", "name": "Start", "to_status": "In Progress", "blocked": False},
+            {"id": "31", "name": "Done", "to_status": "Done", "blocked": True},
+        ]
+    )
     resp = await client.get("/api/integrations/jira/issue/DEV-1/transitions")
     assert resp.status_code == 200
     data = resp.json()
@@ -683,21 +694,45 @@ async def test_add_comment_empty_body(client, mock_service):
 
 @pytest.mark.asyncio
 async def test_list_undone_tickets(client, mock_service):
-    mock_service.list_undone_tickets = AsyncMock(return_value={
-        "tickets": [
-            {"key": "DEV-1", "summary": "Fix bug", "status": "In Progress", "priority": "High",
-             "issuetype": "Bug", "assignee": "Alice", "components": ["JBE"], "epic_key": "EPIC-1",
-             "browse_url": "https://x/DEV-1"},
-            {"key": "DEV-2", "summary": "Add feature", "status": "To Do", "priority": "Medium",
-             "issuetype": "Story", "assignee": "Alice", "components": [], "epic_key": "",
-             "browse_url": "https://x/DEV-2"},
-        ],
-        "epics": {
-            "EPIC-1": {"key": "EPIC-1", "summary": "Epic One", "status": "In Progress",
-                       "priority": "High", "assignee": "Alice", "browse_url": "https://x/EPIC-1"},
-        },
-        "unassigned_tickets": [],
-    })
+    mock_service.list_undone_tickets = AsyncMock(
+        return_value={
+            "tickets": [
+                {
+                    "key": "DEV-1",
+                    "summary": "Fix bug",
+                    "status": "In Progress",
+                    "priority": "High",
+                    "issuetype": "Bug",
+                    "assignee": "Alice",
+                    "components": ["JBE"],
+                    "epic_key": "EPIC-1",
+                    "browse_url": "https://x/DEV-1",
+                },
+                {
+                    "key": "DEV-2",
+                    "summary": "Add feature",
+                    "status": "To Do",
+                    "priority": "Medium",
+                    "issuetype": "Story",
+                    "assignee": "Alice",
+                    "components": [],
+                    "epic_key": "",
+                    "browse_url": "https://x/DEV-2",
+                },
+            ],
+            "epics": {
+                "EPIC-1": {
+                    "key": "EPIC-1",
+                    "summary": "Epic One",
+                    "status": "In Progress",
+                    "priority": "High",
+                    "assignee": "Alice",
+                    "browse_url": "https://x/EPIC-1",
+                },
+            },
+            "unassigned_tickets": [],
+        }
+    )
     resp = await client.get("/api/integrations/jira/undone")
     assert resp.status_code == 200
     data = resp.json()
@@ -727,9 +762,11 @@ async def test_list_undone_tickets_disabled(client_no_service):
 async def test_oauth_callback_post_returns_tokens(client, mock_service):
     """POST /callback should return access_token, refresh_token, expires_in."""
     token = JiraTokenPair(
-        access_token="at-new", refresh_token="rt-new",
+        access_token="at-new",
+        refresh_token="rt-new",
         expires_in=7200,
-        cloud_id="cloud-new", site_url="https://new.atlassian.net",
+        cloud_id="cloud-new",
+        site_url="https://new.atlassian.net",
     )
     mock_service.exchange_code.return_value = token
 

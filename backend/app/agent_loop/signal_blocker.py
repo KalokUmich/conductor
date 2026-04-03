@@ -14,7 +14,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-
 # How long the sub-agent waits for Brain's response (seconds).
 SIGNAL_TIMEOUT: float = 60.0  # 1 minute — Brain should respond quickly
 
@@ -37,7 +36,10 @@ _pending_signals: Dict[str, PendingSignal] = {}
 
 
 def register_signal(
-    session_id: str, reason: str, options: list = None, context: str = "",
+    session_id: str,
+    reason: str,
+    options: list = None,
+    context: str = "",
 ) -> PendingSignal:
     """Register a pending signal and return the handle."""
     ps = PendingSignal(reason=reason, options=options or [], context=context)

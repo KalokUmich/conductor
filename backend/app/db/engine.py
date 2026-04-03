@@ -5,6 +5,7 @@ Resolution order for database URL:
   2. YAML config ``postgres.url``
   3. Default: ``postgresql+asyncpg://conductor:conductor@localhost:5432/conductor``
 """
+
 from __future__ import annotations
 
 import logging
@@ -17,8 +18,6 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
-
-from .models import Base
 
 logger = logging.getLogger(__name__)
 

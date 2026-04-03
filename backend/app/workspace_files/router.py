@@ -13,10 +13,10 @@ URL layout (matches what the FS provider emits):
     /workspace/{room_id}/files/{path:path}           POST  → mkdir
     /workspace/{room_id}/files/{path:path}           DELETE→ rm
 """
+
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from pathlib import Path
 from typing import List
@@ -35,8 +35,10 @@ router = APIRouter(prefix="/workspace", tags=["workspace-files"])
 # Dependency
 # ---------------------------------------------------------------------------
 
+
 def _get_git_service() -> GitWorkspaceService:  # pragma: no cover
     from ..main import app
+
     return app.state.git_workspace_service
 
 
@@ -85,6 +87,7 @@ def _resolve(
 # Response models
 # ---------------------------------------------------------------------------
 
+
 class FileStatResponse(BaseModel):
     type: str  # "file" | "directory"
     size: int
@@ -110,6 +113,7 @@ class MkdirRequest(BaseModel):
 # stat
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{room_id}/files/stat", response_model=FileStatResponse)
 @router.get("/{room_id}/files/{file_path:path}/stat", response_model=FileStatResponse)
 async def file_stat(
@@ -133,6 +137,7 @@ async def file_stat(
 # readFile (content)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{room_id}/files/{file_path:path}/content")
 async def read_file_content(
     room_id: str,
@@ -149,6 +154,7 @@ async def read_file_content(
 # ---------------------------------------------------------------------------
 # writeFile (content)
 # ---------------------------------------------------------------------------
+
 
 @router.put("/{room_id}/files/{file_path:path}/content")
 async def write_file_content(
@@ -168,6 +174,7 @@ async def write_file_content(
 # ---------------------------------------------------------------------------
 # readDirectory
 # ---------------------------------------------------------------------------
+
 
 @router.get("/{room_id}/files", response_model=List[DirEntry])
 @router.get("/{room_id}/files/{file_path:path}", response_model=List[DirEntry])
@@ -191,16 +198,19 @@ async def read_directory(
     for child in sorted(resolved.iterdir()):
         if child.name in _HIDDEN_DIRS:
             continue
-        entries.append(DirEntry(
-            name=child.name,
-            type="directory" if child.is_dir() else "file",
-        ))
+        entries.append(
+            DirEntry(
+                name=child.name,
+                type="directory" if child.is_dir() else "file",
+            )
+        )
     return entries
 
 
 # ---------------------------------------------------------------------------
 # rename
 # ---------------------------------------------------------------------------
+
 
 @router.post("/{room_id}/files/{file_path:path}/rename")
 async def rename_file(
@@ -225,6 +235,7 @@ async def rename_file(
 # createDirectory
 # ---------------------------------------------------------------------------
 
+
 @router.post("/{room_id}/files/{file_path:path}")
 async def create_directory(
     room_id: str,
@@ -244,6 +255,7 @@ async def create_directory(
 # delete
 # ---------------------------------------------------------------------------
 
+
 @router.delete("/{room_id}/files/{file_path:path}")
 async def delete_file(
     room_id: str,
@@ -261,11 +273,11 @@ async def delete_file(
         else:
             try:
                 resolved.rmdir()
-            except OSError:
+            except OSError as exc:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
                     "Directory not empty; use recursive=true",
-                )
+                ) from exc
     else:
         resolved.unlink()
     return {"ok": True}
@@ -275,16 +287,17 @@ async def delete_file(
 # search (text grep)
 # ---------------------------------------------------------------------------
 
+
 class SearchRequest(BaseModel):
     pattern: str
-    glob: str = ""          # e.g. "*.py", empty = all files
+    glob: str = ""  # e.g. "*.py", empty = all files
     max_results: int = 200
 
 
 class SearchMatch(BaseModel):
     path: str
-    line: int       # 1-based
-    text: str       # line content
+    line: int  # 1-based
+    text: str  # line content
     col_start: int  # 0-based byte offset
     col_end: int
 
@@ -302,7 +315,6 @@ async def search_text(
 ) -> SearchResponse:
     """Run a ripgrep / grep over the worktree and return matches."""
     import asyncio as _aio
-    import re as _re
 
     wt = svc.get_worktree_path(room_id)
     if wt is None:
@@ -310,8 +322,10 @@ async def search_text(
 
     # Try ripgrep first, fall back to grep
     rg_args = [
-        "rg", "--json", "--max-count=5",
-        f"--max-filesize=1M",
+        "rg",
+        "--json",
+        "--max-count=5",
+        "--max-filesize=1M",
     ]
     for br in _BLOCKED_ROOTS:
         rg_args += [f"--glob=!{br}"]
@@ -328,8 +342,7 @@ async def search_text(
         stdout_b, _ = await proc.communicate()
     except FileNotFoundError:
         # rg not installed — fall back to grep
-        grep_args = ["grep", "-rn", "--include=" + (body.glob or "*"),
-                      "-m", "5", body.pattern, str(wt)]
+        grep_args = ["grep", "-rn", "--include=" + (body.glob or "*"), "-m", "5", body.pattern, str(wt)]
         proc = await _aio.create_subprocess_exec(
             *grep_args,
             stdout=_aio.subprocess.PIPE,
@@ -352,19 +365,22 @@ async def search_text(
                 continue
             text = parts[2]
             idx = text.lower().find(body.pattern.lower())
-            matches.append(SearchMatch(
-                path=fpath,
-                line=line_num,
-                text=text,
-                col_start=max(idx, 0),
-                col_end=max(idx, 0) + len(body.pattern),
-            ))
+            matches.append(
+                SearchMatch(
+                    path=fpath,
+                    line=line_num,
+                    text=text,
+                    col_start=max(idx, 0),
+                    col_end=max(idx, 0) + len(body.pattern),
+                )
+            )
             if len(matches) >= body.max_results:
                 return SearchResponse(matches=matches, truncated=True)
         return SearchResponse(matches=matches)
 
     # Parse ripgrep JSON output
     import json as _json
+
     matches = []
     wt_str = str(wt) + "/"
     for raw_line in stdout_b.decode(errors="replace").splitlines():
@@ -377,13 +393,15 @@ async def search_text(
         data = obj["data"]
         fpath = data["path"]["text"].replace(wt_str, "", 1)
         for sub in data.get("submatches", []):
-            matches.append(SearchMatch(
-                path=fpath,
-                line=data["line_number"],
-                text=data["lines"]["text"].rstrip("\n"),
-                col_start=sub["start"],
-                col_end=sub["end"],
-            ))
+            matches.append(
+                SearchMatch(
+                    path=fpath,
+                    line=data["line_number"],
+                    text=data["lines"]["text"].rstrip("\n"),
+                    col_start=sub["start"],
+                    col_end=sub["end"],
+                )
+            )
             if len(matches) >= body.max_results:
                 return SearchResponse(matches=matches, truncated=True)
 

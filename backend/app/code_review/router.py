@@ -4,11 +4,12 @@ Endpoints:
     POST /api/code-review/review        — run a multi-agent code review
     POST /api/code-review/review/stream  — SSE streaming version
 """
+
 from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -33,7 +34,9 @@ class CodeReviewRequest(BaseModel):
         description="Git ref spec, e.g. 'main...feature/branch' or 'HEAD~5'.",
     )
     max_agents: int = Field(
-        default=5, ge=1, le=7,
+        default=5,
+        ge=1,
+        le=7,
         description="Max specialized agents to run in parallel.",
     )
 
@@ -90,21 +93,25 @@ class CodeReviewResponse(BaseModel):
 
 def _get_git_workspace_service():
     from app.main import app
+
     return app.state.git_workspace_service
 
 
 def _get_agent_provider():
     from app.main import app
+
     return getattr(app.state, "agent_provider", None)
 
 
 def _get_explorer_provider():
     from app.main import app
+
     return getattr(app.state, "explorer_provider", None)
 
 
 def _get_trace_writer():
     from app.main import app
+
     return getattr(app.state, "trace_writer", None)
 
 
@@ -118,7 +125,6 @@ async def code_review(
     req: CodeReviewRequest,
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
-
     explorer_provider=Depends(_get_explorer_provider),
     trace_writer=Depends(_get_trace_writer),
 ) -> CodeReviewResponse:
@@ -162,7 +168,6 @@ async def code_review_stream(
     req: CodeReviewRequest,
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
-
     explorer_provider=Depends(_get_explorer_provider),
     trace_writer=Depends(_get_trace_writer),
 ):
@@ -223,8 +228,8 @@ async def code_review_stream(
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
-            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
+            "X-Accel-Buffering": "no",  # disable nginx proxy buffering
+            "X-Content-Type-Options": "nosniff",  # prevent proxy content sniffing
             "Connection": "keep-alive",
         },
     )

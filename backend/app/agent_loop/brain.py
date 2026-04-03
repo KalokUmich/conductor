@@ -12,6 +12,7 @@ Design principles:
   - Concurrency limited via semaphore (default: 3 concurrent sub-agents)
   - Partial failure in swarms: succeeded agents' findings are still returned
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from app.code_tools.executor import ToolExecutor
 from app.code_tools.schemas import ToolResult
+
 from .config import BrainExecutorConfig
 
 logger = logging.getLogger(__name__)
@@ -31,12 +33,12 @@ logger = logging.getLogger(__name__)
 # Module-level constants
 # ---------------------------------------------------------------------------
 
-_SUMMARY_TRUNCATE_LEN = 120    # max chars per tool-call summary in condense_result
-_MAX_CONTEXT_CHUNKS = 10       # cap on context chunks returned to Brain (prevents bloat)
-_MAX_TOOLS_SUMMARY = 15        # cap on tool-call summary lines returned to Brain
-_MAX_BRAIN_RESERVE = 100_000   # upper bound on tokens Brain reserves for its own calls
-_MIN_AGENT_BUDGET = 50_000     # floor budget allocated to any sub-agent
-_MAX_AGENT_BUDGET = 500_000    # ceiling budget allocated to any sub-agent
+_SUMMARY_TRUNCATE_LEN = 120  # max chars per tool-call summary in condense_result
+_MAX_CONTEXT_CHUNKS = 10  # cap on context chunks returned to Brain (prevents bloat)
+_MAX_TOOLS_SUMMARY = 15  # cap on tool-call summary lines returned to Brain
+_MAX_BRAIN_RESERVE = 100_000  # upper bound on tokens Brain reserves for its own calls
+_MIN_AGENT_BUDGET = 50_000  # floor budget allocated to any sub-agent
+_MAX_AGENT_BUDGET = 800_000  # ceiling budget allocated to any sub-agent
 _DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is generous
 
 
@@ -52,12 +54,13 @@ class AgentFindings:
     Contains enough for Brain to judge quality and suggest new directions,
     without the full tool call history or intermediate LLM reasoning.
     """
+
     answer: str = ""
     context_chunks: List[Dict[str, Any]] = field(default_factory=list)
     files_accessed: List[str] = field(default_factory=list)
     tools_summary: List[str] = field(default_factory=list)
     gaps_identified: List[str] = field(default_factory=list)
-    confidence: str = "medium"          # high | medium | low
+    confidence: str = "medium"  # high | medium | low
     iterations: int = 0
     tool_calls_made: int = 0
     duration_ms: float = 0.0
@@ -80,7 +83,6 @@ def condense_result(result) -> Dict[str, Any]:
         tools_summary, gaps_identified, confidence, iterations,
         tool_calls_made, duration_ms, error.
     """
-    from .service import AgentResult  # lazy: avoids circular import (brain ↔ service)
 
     # Build tools summary from thinking steps
     tools_summary = []
@@ -90,7 +92,7 @@ def condense_result(result) -> Dict[str, Any]:
     if hasattr(result, "thinking_steps"):
         for step in result.thinking_steps:
             if hasattr(step, "kind"):
-                kind = step.kind if isinstance(step.kind, str) else step.kind
+                kind = step.kind
                 tool = step.tool if hasattr(step, "tool") else ""
                 summary = step.summary if hasattr(step, "summary") else ""
             else:
@@ -110,19 +112,19 @@ def condense_result(result) -> Dict[str, Any]:
             if hasattr(chunk, "file_path"):
                 fp = chunk.file_path
                 files_accessed.add(fp)
-                chunks_data.append({
-                    "file_path": fp,
-                    "start_line": getattr(chunk, "start_line", 0),
-                    "end_line": getattr(chunk, "end_line", 0),
-                    "content": getattr(chunk, "content", "")[:500],
-                })
+                chunks_data.append(
+                    {
+                        "file_path": fp,
+                        "start_line": getattr(chunk, "start_line", 0),
+                        "end_line": getattr(chunk, "end_line", 0),
+                        "content": getattr(chunk, "content", "")[:500],
+                    }
+                )
 
     # Determine confidence from evidence quality
     answer = result.answer or ""
     confidence = "high"
-    if not answer or len(answer) < 50:
-        confidence = "low"
-    elif result.tool_calls_made < 2:
+    if not answer or len(answer) < 50 or result.tool_calls_made < 2:
         confidence = "low"
     elif "not found" in answer.lower() or "unable to" in answer.lower():
         confidence = "medium"
@@ -188,7 +190,9 @@ class BrainBudgetManager:
                 allocated = _MIN_AGENT_BUDGET
                 logger.warning(
                     "Budget low (%d remaining), allocating minimum %d to %s",
-                    available, allocated, agent_name,
+                    available,
+                    allocated,
+                    agent_name,
                 )
             else:
                 # Give sub-agents enough budget to work properly.
@@ -197,7 +201,9 @@ class BrainBudgetManager:
                 allocated = max(allocated, _DEFAULT_AGENT_BUDGET)
             logger.info(
                 "Budget allocated %d tokens to %s (remaining: %d)",
-                allocated, agent_name, available - allocated,
+                allocated,
+                agent_name,
+                available - allocated,
             )
             return allocated
 
@@ -230,12 +236,12 @@ class AgentToolExecutor(ToolExecutor):
     def __init__(
         self,
         inner_executor: ToolExecutor,
-        agent_registry: Dict[str, Any],       # name → AgentConfig
-        swarm_registry: Dict[str, Any],        # name → SwarmConfig
-        agent_provider,                        # AIProvider for sub-agents (explorer/Haiku)
-        strong_provider=None,                  # AIProvider for strong model (Sonnet)
+        agent_registry: Dict[str, Any],  # name → AgentConfig
+        swarm_registry: Dict[str, Any],  # name → SwarmConfig
+        agent_provider,  # AIProvider for sub-agents (explorer/Haiku)
+        strong_provider=None,  # AIProvider for strong model (Sonnet)
         config: Optional[BrainExecutorConfig] = None,
-        brain_config: Optional[Any] = None,    # BrainConfig
+        brain_config: Optional[Any] = None,  # BrainConfig
         trace_writer=None,
         event_sink: Optional[asyncio.Queue] = None,
         budget_manager: Optional[BrainBudgetManager] = None,
@@ -311,11 +317,13 @@ class AgentToolExecutor(ToolExecutor):
         }
         logger.info(
             "[Brain] Plan created: mode=%s, agents=%s",
-            self._plan["mode"], self._plan["agents"],
+            self._plan["mode"],
+            self._plan["agents"],
         )
 
         if self._event_sink:
             from app.workflow.engine import WorkflowEvent
+
             await self._event_sink.put(WorkflowEvent("plan_created", self._plan))
 
         return ToolResult(
@@ -345,10 +353,16 @@ class AgentToolExecutor(ToolExecutor):
 
         if self._event_sink:
             from app.workflow.engine import WorkflowEvent
-            await self._event_sink.put(WorkflowEvent("transfer_initiated", {
-                "brain": brain_name,
-                "params": params,
-            }))
+
+            await self._event_sink.put(
+                WorkflowEvent(
+                    "transfer_initiated",
+                    {
+                        "brain": brain_name,
+                        "params": params,
+                    },
+                )
+            )
 
         return ToolResult(
             tool_name="transfer_to_brain",
@@ -367,6 +381,7 @@ class AgentToolExecutor(ToolExecutor):
     def _build_dynamic_config(self, params: Dict[str, Any]) -> Any:
         """Build an ephemeral AgentConfig from dynamic dispatch params."""
         from app.workflow.models import AgentConfig, AgentLimits
+
         skill = params.get("skill", "")
         return AgentConfig(
             name=f"dynamic_{skill or 'explorer'}",
@@ -400,7 +415,7 @@ class AgentToolExecutor(ToolExecutor):
                 tool_name="dispatch_agent",
                 success=False,
                 error=f"Max agent depth ({self._max_depth}) reached. "
-                      f"Use your available code tools to investigate directly.",
+                f"Use your available code tools to investigate directly.",
             )
 
         # Resolve agent config: template mode vs dynamic mode
@@ -427,32 +442,41 @@ class AgentToolExecutor(ToolExecutor):
                 tool_name="dispatch_agent",
                 success=False,
                 error="Either 'template' or 'tools' must be provided. "
-                      "Use template= for pre-defined agents, or tools= to "
-                      "compose an agent dynamically.",
+                "Use template= for pre-defined agents, or tools= to "
+                "compose an agent dynamically.",
             )
 
         logger.info(
             "[Brain] Dispatching agent '%s' (depth=%d, mode=%s, model=%s, query='%s')",
-            agent_name, self._current_depth + 1,
+            agent_name,
+            self._current_depth + 1,
             "template" if template else "dynamic",
-            resolved_model, query[:80],
+            resolved_model,
+            query[:80],
         )
 
         # Emit dispatch event for UI
         if self._event_sink:
             from app.workflow.engine import WorkflowEvent
-            await self._event_sink.put(WorkflowEvent("agent_dispatched", {
-                "agent_name": agent_name,
-                "query": query,
-                "depth": self._current_depth + 1,
-                "mode": "template" if template else "dynamic",
-            }))
+
+            await self._event_sink.put(
+                WorkflowEvent(
+                    "agent_dispatched",
+                    {
+                        "agent_name": agent_name,
+                        "query": query,
+                        "depth": self._current_depth + 1,
+                        "mode": "template" if template else "dynamic",
+                    },
+                )
+            )
 
         # Select provider based on resolved model
         provider = self._strong_provider if resolved_model == "strong" else self._agent_provider
 
         # Allocate budget — respect agent's own budget_tokens as cap
         from .budget import BudgetConfig  # lazy: avoids circular import (brain ↔ budget)
+
         if self._budget_manager:
             pool_tokens = await self._budget_manager.allocate(agent_name, weight)
             agent_cap = agent_config.limits.budget_tokens
@@ -493,8 +517,9 @@ class AgentToolExecutor(ToolExecutor):
         agent_tool_names.append("signal_blocker")
 
         # Build and run sub-agent (4-layer prompt architecture)
-        from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
         from .config import AgentLoopConfig
+        from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
+
         svc = AgentLoopService(
             provider=provider,
             config=AgentLoopConfig(
@@ -532,6 +557,7 @@ class AgentToolExecutor(ToolExecutor):
             if self._event_sink:
                 result = None
                 from .service import AgentResult  # lazy: avoids circular import (brain ↔ service)
+
                 agent_result = AgentResult()
                 async for event in svc.run_stream(
                     query=query,
@@ -541,6 +567,7 @@ class AgentToolExecutor(ToolExecutor):
                     # Handle signal_blocker: respond from Brain's Q&A cache or with guidance
                     if event.kind == "signal_blocker":
                         from .signal_blocker import respond_to_signal
+
                         sig_session = event.data.get("session_id", "")
                         sig_reason = event.data.get("reason", "")
                         sig_options = event.data.get("options", [])
@@ -555,8 +582,9 @@ class AgentToolExecutor(ToolExecutor):
                         elif not response:
                             response = "Continue with your best judgment based on the evidence."
                         respond_to_signal(sig_session, response)
-                        logger.info("[Brain] Responded to signal from %s: %s → %s",
-                                    agent_name, sig_reason[:50], response[:50])
+                        logger.info(
+                            "[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50]
+                        )
                         continue  # don't forward signal_blocker to UI
 
                     # Forward agent events with agent_name tag
@@ -576,12 +604,13 @@ class AgentToolExecutor(ToolExecutor):
                         # Collect thinking steps
                         raw_steps = event.data.get("thinking_steps", [])
                         from .service import ThinkingStep
+
                         agent_result.thinking_steps = [
-                            ThinkingStep(**s) if isinstance(s, dict) else s
-                            for s in raw_steps
+                            ThinkingStep(**s) if isinstance(s, dict) else s for s in raw_steps
                         ]
                         if event.kind == "context_chunk":
                             from .service import ContextChunk
+
                             agent_result.context_chunks.append(ContextChunk(**event.data))
                 result = agent_result
             else:
@@ -600,20 +629,29 @@ class AgentToolExecutor(ToolExecutor):
             # Emit completion event
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
+
                 findings = condense_result(result)
                 # Budget exhaustion = agent finished with useful data, not a failure
                 has_answer = bool(result.answer and result.answer.strip())
                 status = "done" if has_answer else ("error" if result.error else "done")
-                await self._event_sink.put(WorkflowEvent("agent_complete", {
-                    "agent_name": agent_name,
-                    "status": status,
-                    "confidence": findings["confidence"],
-                    "duration_ms": elapsed,
-                }))
+                await self._event_sink.put(
+                    WorkflowEvent(
+                        "agent_complete",
+                        {
+                            "agent_name": agent_name,
+                            "status": status,
+                            "confidence": findings["confidence"],
+                            "duration_ms": elapsed,
+                        },
+                    )
+                )
 
             logger.info(
                 "[Brain] Agent '%s' completed in %.0fms (iterations=%d, tools=%d)",
-                agent_name, elapsed, result.iterations, result.tool_calls_made,
+                agent_name,
+                elapsed,
+                result.iterations,
+                result.tool_calls_made,
             )
 
             condensed = condense_result(result)
@@ -621,22 +659,34 @@ class AgentToolExecutor(ToolExecutor):
             condensed["need_brain_review"] = agent_config.quality.need_brain_review
             return ToolResult(tool_name="dispatch_agent", success=True, data=condensed)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("[Brain] Agent '%s' timed out after %.0fms", agent_name, elapsed)
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
-                await self._event_sink.put(WorkflowEvent("agent_complete", {
-                    "agent_name": agent_name,
-                    "status": "timeout",
-                    "confidence": "low",
-                    "duration_ms": elapsed,
-                }))
+
+                await self._event_sink.put(
+                    WorkflowEvent(
+                        "agent_complete",
+                        {
+                            "agent_name": agent_name,
+                            "status": "timeout",
+                            "confidence": "low",
+                            "duration_ms": elapsed,
+                        },
+                    )
+                )
             return ToolResult(
                 tool_name="dispatch_agent",
                 success=True,  # partial success — Brain can still use whatever was found
-                data={"answer": "", "error": "Agent timed out", "confidence": "low",
-                      "files_accessed": [], "tools_summary": [], "gaps_identified": []},
+                data={
+                    "answer": "",
+                    "error": "Agent timed out",
+                    "confidence": "low",
+                    "files_accessed": [],
+                    "tools_summary": [],
+                    "gaps_identified": [],
+                },
             )
         except asyncio.CancelledError:
             raise
@@ -645,12 +695,18 @@ class AgentToolExecutor(ToolExecutor):
             logger.error("[Brain] Agent '%s' failed: %s", agent_name, exc)
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
-                await self._event_sink.put(WorkflowEvent("agent_complete", {
-                    "agent_name": agent_name,
-                    "status": "error",
-                    "confidence": "low",
-                    "duration_ms": elapsed,
-                }))
+
+                await self._event_sink.put(
+                    WorkflowEvent(
+                        "agent_complete",
+                        {
+                            "agent_name": agent_name,
+                            "status": "error",
+                            "confidence": "low",
+                            "duration_ms": elapsed,
+                        },
+                    )
+                )
             return ToolResult(
                 tool_name="dispatch_agent",
                 success=False,
@@ -674,11 +730,10 @@ class AgentToolExecutor(ToolExecutor):
                 tool_name="dispatch_swarm",
                 success=False,
                 error=f"Unknown swarm '{swarm_name}'. Available: {available}. "
-                      f"For single-agent tasks, use dispatch_agent instead.",
+                f"For single-agent tasks, use dispatch_agent instead.",
             )
         agent_names = preset.agents
-        logger.info("[Brain] Dispatching swarm '%s' (%d agents): %s",
-                    swarm_name, len(agent_names), agent_names)
+        logger.info("[Brain] Dispatching swarm '%s' (%d agents): %s", swarm_name, len(agent_names), agent_names)
 
         if not agent_names:
             return ToolResult(
@@ -690,11 +745,17 @@ class AgentToolExecutor(ToolExecutor):
         # Emit swarm dispatch event for UI
         if self._event_sink:
             from app.workflow.engine import WorkflowEvent
-            await self._event_sink.put(WorkflowEvent("swarm_dispatched", {
-                "swarm_name": swarm_name or "custom",
-                "agents": agent_names,
-                "query": query,
-            }))
+
+            await self._event_sink.put(
+                WorkflowEvent(
+                    "swarm_dispatched",
+                    {
+                        "swarm_name": swarm_name or "custom",
+                        "agents": agent_names,
+                        "query": query,
+                    },
+                )
+            )
 
         # Run agents in parallel with concurrency limit
         semaphore = asyncio.Semaphore(self._max_concurrent)
@@ -705,10 +766,12 @@ class AgentToolExecutor(ToolExecutor):
             agent_focus = getattr(agent_config, "focus", "") if agent_config else ""
             agent_query = f"{agent_focus}\n\n{query}" if agent_focus else query
             async with semaphore:
-                result = await self._dispatch_agent({
-                    "agent_name": name,
-                    "query": agent_query,
-                })
+                result = await self._dispatch_agent(
+                    {
+                        "agent_name": name,
+                        "query": agent_query,
+                    }
+                )
                 return {"agent": name, **(result.data if result.data else {"error": result.error})}
 
         raw_results = await asyncio.gather(
@@ -721,12 +784,14 @@ class AgentToolExecutor(ToolExecutor):
         for name, result in zip(agent_names, raw_results):
             if isinstance(result, Exception):
                 logger.warning("[Brain] Swarm agent '%s' raised: %s", name, result)
-                findings.append({
-                    "agent": name,
-                    "answer": "",
-                    "error": str(result),
-                    "confidence": "low",
-                })
+                findings.append(
+                    {
+                        "agent": name,
+                        "answer": "",
+                        "error": str(result),
+                        "confidence": "low",
+                    }
+                )
             else:
                 findings.append(result)
 

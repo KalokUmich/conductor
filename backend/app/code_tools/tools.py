@@ -3,15 +3,16 @@
 Each tool operates within a *workspace_path* sandbox. All file paths
 accepted and returned are **relative** to the workspace root.
 """
+
 from __future__ import annotations
 
+import contextlib
 import fnmatch
+import json as _json
 import logging
 import os
 import re
-import json as _json
 import subprocess
-import time as _time
 from collections import Counter, deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,12 +20,11 @@ from typing import Any, Dict, List, Optional
 from pydantic import ValidationError
 
 from .schemas import (
+    TOOL_PARAM_MODELS,
     AstMatch,
-    BlameEntry,
     CalleeInfo,
     CallerInfo,
     DependencyInfo,
-    DiffFileEntry,
     FileEntry,
     GitCommit,
     GrepMatch,
@@ -32,7 +32,6 @@ from .schemas import (
     SymbolLocation,
     TestMatch,
     TestOutlineEntry,
-    TOOL_PARAM_MODELS,
     ToolResult,
 )
 
@@ -40,9 +39,24 @@ logger = logging.getLogger(__name__)
 
 # Directories to always exclude from traversal
 _EXCLUDED_DIRS = {
-    ".git", ".hg", ".svn", "__pycache__", "node_modules", "target",
-    "dist", "vendor", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-    ".tox", "build", ".next", ".nuxt", ".yarn", ".pnp",
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    "target",
+    "dist",
+    "vendor",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    "build",
+    ".next",
+    ".nuxt",
+    ".yarn",
+    ".pnp",
     ".conductor",
 }
 
@@ -50,13 +64,48 @@ _MAX_FILE_SIZE = 512_000  # 500 KB — skip larger files in search/parse
 
 # Binary/media file extensions to skip in grep searches
 _BINARY_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".avi",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".rar", ".7z",
-    ".woff", ".woff2", ".ttf", ".eot",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".pyc", ".pyo", ".class", ".o", ".so", ".dll", ".dylib",
-    ".exe", ".bin", ".dat", ".db", ".sqlite",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".bmp",
+    ".ico",
+    ".svg",
+    ".webp",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".ogg",
+    ".webm",
+    ".avi",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".xz",
+    ".rar",
+    ".7z",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".pyc",
+    ".pyo",
+    ".class",
+    ".o",
+    ".so",
+    ".dll",
+    ".dylib",
+    ".exe",
+    ".bin",
+    ".dat",
+    ".db",
+    ".sqlite",
 }
 
 
@@ -149,13 +198,32 @@ def _walk_files(
 
 
 _FILE_TYPE_MAP = {
-    "py": "*.py", "js": "*.js", "ts": "*.ts", "tsx": "*.tsx",
-    "java": "*.java", "go": "*.go", "rust": "*.rs", "rs": "*.rs",
-    "c": "*.c", "cpp": "*.cpp", "h": "*.h", "rb": "*.rb",
-    "php": "*.php", "swift": "*.swift", "kt": "*.kt", "scala": "*.scala",
-    "css": "*.css", "html": "*.html", "json": "*.json", "yaml": "*.yaml",
-    "yml": "*.yml", "xml": "*.xml", "sql": "*.sql", "sh": "*.sh",
-    "md": "*.md", "txt": "*.txt",
+    "py": "*.py",
+    "js": "*.js",
+    "ts": "*.ts",
+    "tsx": "*.tsx",
+    "java": "*.java",
+    "go": "*.go",
+    "rust": "*.rs",
+    "rs": "*.rs",
+    "c": "*.c",
+    "cpp": "*.cpp",
+    "h": "*.h",
+    "rb": "*.rb",
+    "php": "*.php",
+    "swift": "*.swift",
+    "kt": "*.kt",
+    "scala": "*.scala",
+    "css": "*.css",
+    "html": "*.html",
+    "json": "*.json",
+    "yaml": "*.yaml",
+    "yml": "*.yml",
+    "xml": "*.xml",
+    "sql": "*.sql",
+    "sh": "*.sh",
+    "md": "*.md",
+    "txt": "*.txt",
 }
 
 
@@ -181,7 +249,8 @@ def grep(
         include_glob = _FILE_TYPE_MAP.get(file_type.lower())
         if not include_glob:
             return ToolResult(
-                tool_name="grep", success=False,
+                tool_name="grep",
+                success=False,
                 error=f"Unknown file_type '{file_type}'. Supported: {', '.join(sorted(_FILE_TYPE_MAP))}",
             )
 
@@ -207,13 +276,20 @@ def grep(
         glob_dropped = False
     else:
         files_to_search, skipped_size, skipped_glob, dirs_excluded = _walk_files(
-            search_root, ws, include_glob,
+            search_root,
+            ws,
+            include_glob,
         )
         logger.info(
             "grep: pattern=%r path=%r files_to_search=%d "
             "skipped_size=%d skipped_glob=%d dirs_excluded=%d include_glob=%r",
-            pattern, path, len(files_to_search),
-            skipped_size, skipped_glob, dirs_excluded, include_glob,
+            pattern,
+            path,
+            len(files_to_search),
+            skipped_size,
+            skipped_glob,
+            dirs_excluded,
+            include_glob,
         )
         # Self-healing: if include_glob filtered out ALL files, retry without
         # it. The LLM often guesses the wrong file extension (e.g. *.py for a
@@ -221,12 +297,14 @@ def grep(
         glob_dropped = False
         if not files_to_search and include_glob and skipped_glob > 0:
             logger.warning(
-                "grep: include_glob=%r filtered out all %d files — "
-                "retrying without glob filter",
-                include_glob, skipped_glob,
+                "grep: include_glob=%r filtered out all %d files — retrying without glob filter",
+                include_glob,
+                skipped_glob,
             )
             files_to_search, skipped_size, _, dirs_excluded = _walk_files(
-                search_root, ws, None,
+                search_root,
+                ws,
+                None,
             )
             glob_dropped = True
             logger.info(
@@ -237,7 +315,7 @@ def grep(
     compiled = re.compile(pattern, re_flags)
     matches: List[Dict] = []
     file_counts: Dict[str, int] = {}  # for count mode
-    seen_files: List[str] = []        # for files_only mode
+    seen_files: List[str] = []  # for files_only mode
     read_errors = 0
 
     for fp in files_to_search:
@@ -267,13 +345,15 @@ def grep(
                     # Find line numbers of each match
                     lines = text.split("\n")
                     for m in compiled.finditer(text):
-                        line_num = text[:m.start()].count("\n") + 1
+                        line_num = text[: m.start()].count("\n") + 1
                         match_line = lines[line_num - 1] if line_num <= len(lines) else ""
-                        matches.append(GrepMatch(
-                            file_path=rel_path,
-                            line_number=line_num,
-                            content=match_line.rstrip()[:500],
-                        ).model_dump())
+                        matches.append(
+                            GrepMatch(
+                                file_path=rel_path,
+                                line_number=line_num,
+                                content=match_line.rstrip()[:500],
+                            ).model_dump()
+                        )
                         if len(matches) >= max_results:
                             break
             continue
@@ -302,11 +382,13 @@ def grep(
                         content = "\n".join(ctx_parts)[:1000]
                     else:
                         content = line.rstrip()[:500]
-                    matches.append(GrepMatch(
-                        file_path=rel_path,
-                        line_number=i + 1,
-                        content=content,
-                    ).model_dump())
+                    matches.append(
+                        GrepMatch(
+                            file_path=rel_path,
+                            line_number=i + 1,
+                            content=content,
+                        ).model_dump()
+                    )
                     if len(matches) >= max_results:
                         break
 
@@ -318,8 +400,9 @@ def grep(
         data = [GrepMatch(file_path=f, line_number=0, content="").model_dump() for f in seen_files]
         truncated = len(seen_files) >= max_results
     elif output_mode == "count":
-        data = [GrepMatch(file_path=f, line_number=0, content=f"{c} matches").model_dump()
-                for f, c in file_counts.items()]
+        data = [
+            GrepMatch(file_path=f, line_number=0, content=f"{c} matches").model_dump() for f, c in file_counts.items()
+        ]
         truncated = len(file_counts) >= max_results
     else:
         data = matches
@@ -327,7 +410,11 @@ def grep(
 
     logger.info(
         "grep: pattern=%r matches=%d read_errors=%d glob_dropped=%s mode=%s",
-        pattern, len(data), read_errors, glob_dropped, output_mode,
+        pattern,
+        len(data),
+        read_errors,
+        glob_dropped,
+        output_mode,
     )
     return ToolResult(
         tool_name="grep",
@@ -354,6 +441,7 @@ def read_file(
 
     # Track read state for file_edit/file_write read-before-write checks
     from .file_edit_tools import record_file_read
+
     record_file_read(str(fp), text)
 
     lines = text.split("\n")
@@ -367,12 +455,12 @@ def read_file(
         s = (start_line or 1) - 1
         e = end_line or total
         selected = lines[s:e]
-        content = "\n".join(f"{s + i + 1:>4} | {l}" for i, l in enumerate(selected))
+        content = "\n".join(f"{s + i + 1:>4} | {line}" for i, line in enumerate(selected))
         truncated = e < total
     else:
         if total > _AUTO_TRUNCATE_LINES:
             selected = lines[:_AUTO_TRUNCATE_LINES]
-            content = "\n".join(f"{i + 1:>4} | {l}" for i, l in enumerate(selected))
+            content = "\n".join(f"{i + 1:>4} | {line}" for i, line in enumerate(selected))
             content += (
                 f"\n\n... (showing first {_AUTO_TRUNCATE_LINES} of {total} lines) "
                 f"Use file_outline to see all definitions, then read_file with "
@@ -380,7 +468,7 @@ def read_file(
             )
             truncated = True
         else:
-            content = "\n".join(f"{i + 1:>4} | {l}" for i, l in enumerate(lines))
+            content = "\n".join(f"{i + 1:>4} | {line}" for i, line in enumerate(lines))
             truncated = False
 
     ws = Path(workspace).resolve()
@@ -434,9 +522,13 @@ def list_files(
                 size = fp.stat().st_size
             except OSError:
                 size = None
-            entries.append(FileEntry(
-                path=str(rel / f), is_dir=False, size=size,
-            ).model_dump())
+            entries.append(
+                FileEntry(
+                    path=str(rel / f),
+                    is_dir=False,
+                    size=size,
+                ).model_dump()
+            )
 
         if len(entries) >= max_entries:
             break
@@ -458,7 +550,10 @@ def _get_git_head(workspace: str) -> Optional[str]:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=workspace, capture_output=True, text=True, timeout=5,
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()
@@ -472,9 +567,13 @@ def _serialize_definitions(index: Dict[str, list]) -> Dict[str, list]:
     out: Dict[str, list] = {}
     for rel, defs in index.items():
         out[rel] = [
-            {"name": d.name, "kind": d.kind,
-             "start_line": d.start_line, "end_line": d.end_line,
-             "signature": getattr(d, "signature", "")}
+            {
+                "name": d.name,
+                "kind": d.kind,
+                "start_line": d.start_line,
+                "end_line": d.end_line,
+                "signature": getattr(d, "signature", ""),
+            }
             for d in defs
         ]
     return out
@@ -483,6 +582,7 @@ def _serialize_definitions(index: Dict[str, list]) -> Dict[str, list]:
 def _deserialize_definitions(raw: Dict[str, list]) -> Dict[str, list]:
     """Convert JSON dicts back to SimpleNamespace objects (duck-typed)."""
     from types import SimpleNamespace
+
     out: Dict[str, list] = {}
     for rel, defs in raw.items():
         out[rel] = [SimpleNamespace(**d) for d in defs]
@@ -510,14 +610,12 @@ def _load_disk_cache(workspace: str) -> Optional[tuple]:
             index = _deserialize_definitions(raw_index)
             if not index:
                 logger.warning(
-                    "Disk cache has 0 definitions — discarding stale cache "
-                    "(workspace=%s, head=%s)",
-                    workspace, head[:8],
+                    "Disk cache has 0 definitions — discarding stale cache (workspace=%s, head=%s)",
+                    workspace,
+                    head[:8],
                 )
-                try:
+                with contextlib.suppress(OSError):
                     path.unlink(missing_ok=True)
-                except OSError:
-                    pass
                 return None
             return index, head
     except (OSError, _json.JSONDecodeError, KeyError):
@@ -549,7 +647,7 @@ def _get_symbol_index(workspace: str) -> Optional[Dict[str, list]]:
     3. **Full scan** — AST walk, written to memory + disk.
     """
     try:
-        from app.repo_graph.parser import extract_definitions, detect_language
+        from app.repo_graph.parser import detect_language, extract_definitions
     except ImportError as exc:
         logger.warning("Symbol index unavailable: cannot import parser (%s)", exc)
         return None
@@ -563,7 +661,8 @@ def _get_symbol_index(workspace: str) -> Optional[Dict[str, list]]:
         if cached_head == current_head:
             logger.debug(
                 "Symbol index in-memory hit: %d files, head=%s",
-                len(index), (current_head or "")[:8],
+                len(index),
+                (current_head or "")[:8],
             )
             return index
 
@@ -575,7 +674,8 @@ def _get_symbol_index(workspace: str) -> Optional[Dict[str, list]]:
             if disk_head == current_head:
                 logger.debug(
                     "Symbol index disk hit: %d files, head=%s",
-                    len(disk_index), current_head[:8],
+                    len(disk_index),
+                    current_head[:8],
                 )
                 _symbol_index_cache[workspace] = (disk_index, current_head)
                 return disk_index
@@ -625,9 +725,13 @@ def _get_symbol_index(workspace: str) -> Optional[Dict[str, list]]:
     logger.info(
         "Symbol index built: %d files with %d definitions "
         "(scanned=%d, skipped_lang=%d, skipped_size=%d, workspace=%s, head=%s)",
-        len(index), total_defs, files_scanned,
-        files_skipped_lang, files_skipped_size,
-        workspace, (current_head or "")[:8],
+        len(index),
+        total_defs,
+        files_scanned,
+        files_skipped_lang,
+        files_skipped_size,
+        workspace,
+        (current_head or "")[:8],
     )
 
     cache_head = current_head or ""
@@ -651,16 +755,12 @@ def invalidate_symbol_cache(workspace: Optional[str] = None) -> None:
     """Clear symbol index cache (in-memory + disk)."""
     if workspace:
         _symbol_index_cache.pop(workspace, None)
-        try:
+        with contextlib.suppress(OSError):
             _disk_cache_path(workspace).unlink(missing_ok=True)
-        except OSError:
-            pass
     else:
         for ws in list(_symbol_index_cache.keys()):
-            try:
+            with contextlib.suppress(OSError):
                 _disk_cache_path(ws).unlink(missing_ok=True)
-            except OSError:
-                pass
         _symbol_index_cache.clear()
 
 
@@ -733,7 +833,7 @@ def _classify_symbol_role(
         try:
             full_path = Path(workspace).resolve() / file_path
             if full_path.is_file() and full_path.stat().st_size < _MAX_FILE_SIZE:
-                with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                with open(full_path, encoding="utf-8", errors="replace") as fh:
                     all_lines = fh.readlines()
                 # Grab up to 5 lines before the symbol definition
                 deco_start = max(0, start_line - 6)  # 0-indexed
@@ -802,10 +902,12 @@ def glob_files(
             stat = match.stat()
         except OSError:
             continue
-        results.append({
-            "path": str(rel),
-            "size": stat.st_size,
-        })
+        results.append(
+            {
+                "path": str(rel),
+                "size": stat.st_size,
+            }
+        )
 
     # Sort by modification time descending (most recent first)
     results.sort(key=lambda r: -Path(ws / r["path"]).stat().st_mtime)
@@ -838,16 +940,19 @@ def find_symbol(
     index = _get_symbol_index(workspace)
     if index is None:
         return ToolResult(
-            tool_name="find_symbol", success=False,
+            tool_name="find_symbol",
+            success=False,
             error="Symbol index not available (parser import failed — check tree-sitter-languages install).",
         )
     if not index:
         logger.warning(
             "find_symbol('%s'): index is empty (0 files indexed) for workspace=%s",
-            name, workspace,
+            name,
+            workspace,
         )
         return ToolResult(
-            tool_name="find_symbol", data=[],
+            tool_name="find_symbol",
+            data=[],
             error="Symbol index is empty — no parseable source files found in workspace.",
         )
 
@@ -880,15 +985,19 @@ def find_symbol(
             results.append(d)
 
     # Sort: role priority first, then exact match before substring match
-    results.sort(key=lambda r: (
-        _ROLE_PRIORITY.get(r.get("role", "unknown"), 99),
-        0 if r["name"].lower() == name_lower else 1,
-    ))
+    results.sort(
+        key=lambda r: (
+            _ROLE_PRIORITY.get(r.get("role", "unknown"), 99),
+            0 if r["name"].lower() == name_lower else 1,
+        )
+    )
 
     logger.info(
         "find_symbol('%s'%s): %d results from %d indexed files",
-        name, f", kind={kind}" if kind else "",
-        len(results), len(index),
+        name,
+        f", kind={kind}" if kind else "",
+        len(results),
+        len(index),
     )
     return ToolResult(tool_name="find_symbol", data=results)
 
@@ -910,7 +1019,7 @@ def find_references(
         return ToolResult(tool_name="find_references", success=False, error=grep_result.error)
 
     # Filter grep hits through AST reference data for files that support it
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import detect_language, extract_definitions
 
     ws = Path(workspace).resolve()
     matches = grep_result.data or []
@@ -929,27 +1038,33 @@ def find_references(
                 ref_lines = {r.line for r in symbols.references if r.name == symbol_name}
                 for m in file_matches:
                     if m["line_number"] in ref_lines:
-                        validated.append(ReferenceLocation(
-                            file_path=m["file_path"],
-                            line_number=m["line_number"],
-                            content=m["content"],
-                        ).model_dump())
+                        validated.append(
+                            ReferenceLocation(
+                                file_path=m["file_path"],
+                                line_number=m["line_number"],
+                                content=m["content"],
+                            ).model_dump()
+                        )
             except Exception:  # TODO: narrow once extract_definitions exception surface is known
                 # Fall back to grep matches for this file
                 for m in file_matches:
-                    validated.append(ReferenceLocation(
-                        file_path=m["file_path"],
-                        line_number=m["line_number"],
-                        content=m["content"],
-                    ).model_dump())
+                    validated.append(
+                        ReferenceLocation(
+                            file_path=m["file_path"],
+                            line_number=m["line_number"],
+                            content=m["content"],
+                        ).model_dump()
+                    )
         else:
             # Non-parseable files: keep grep matches as-is
             for m in file_matches:
-                validated.append(ReferenceLocation(
-                    file_path=m["file_path"],
-                    line_number=m["line_number"],
-                    content=m["content"],
-                ).model_dump())
+                validated.append(
+                    ReferenceLocation(
+                        file_path=m["file_path"],
+                        line_number=m["line_number"],
+                        content=m["content"],
+                    ).model_dump()
+                )
 
     return ToolResult(tool_name="find_references", data=validated)
 
@@ -997,7 +1112,8 @@ def get_dependencies(
     graph = _ensure_graph(workspace, _graph_service)
     if graph is None:
         return ToolResult(
-            tool_name="get_dependencies", success=False,
+            tool_name="get_dependencies",
+            success=False,
             error="Dependency graph not available (missing networkx or tree-sitter).",
         )
 
@@ -1058,7 +1174,8 @@ def get_dependents(
     graph = _ensure_graph(workspace, _graph_service)
     if graph is None:
         return ToolResult(
-            tool_name="get_dependents", success=False,
+            tool_name="get_dependents",
+            success=False,
             error="Dependency graph not available (missing networkx or tree-sitter).",
         )
 
@@ -1135,12 +1252,14 @@ def git_log(
         if len(parts) >= 2:
             full_hash = parts[0]
             hashes.append(full_hash)
-            commits.append(GitCommit(
-                hash=full_hash[:8],
-                message=parts[1],
-                author=parts[2] if len(parts) > 2 else "",
-                date=parts[3] if len(parts) > 3 else "",
-            ).model_dump())
+            commits.append(
+                GitCommit(
+                    hash=full_hash[:8],
+                    message=parts[1],
+                    author=parts[2] if len(parts) > 2 else "",
+                    date=parts[3] if len(parts) > 3 else "",
+                ).model_dump()
+            )
 
     # Step 2: get --stat for each commit (files changed + line counts)
     if hashes:
@@ -1212,113 +1331,343 @@ _DIFF_STATUS_MAP = {
 # Category display order (lower = review first)
 _CATEGORY_ORDER = {
     "business_logic": 1,
-    "controller":     2,
-    "model":          3,
-    "repository":     4,
-    "config":         5,
-    "test":           6,
-    "docs":           7,
-    "generated":      8,
+    "controller": 2,
+    "model": 3,
+    "repository": 4,
+    "config": 5,
+    "test": 6,
+    "docs": 7,
+    "generated": 8,
 }
 
 # Patterns checked against the lowercased full path and filename.
 # Order matters: first match wins.
 _FILE_PRIORITY_RULES: List[tuple] = [
     # --- generated / vendor / skip ---
-    ("generated",      lambda p, f: any(x in p for x in (
-        "/generated/", "/gen/", "/vendor/", "/node_modules/",
-        "/dist/", "/build/", "/__pycache__/", "/target/classes/",
-    ))),
-    ("generated",      lambda p, f: f.endswith((
-        ".lock", ".min.js", ".min.css", ".map", ".pb.go", ".pb.h",
-        ".generated.ts", ".generated.java", ".g.dart",
-    ))),
-    ("generated",      lambda p, f: f in (
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "go.sum",
-        "poetry.lock", "Cargo.lock", "Gemfile.lock", "composer.lock",
-    )),
-
+    (
+        "generated",
+        lambda p, f: any(
+            x in p
+            for x in (
+                "/generated/",
+                "/gen/",
+                "/vendor/",
+                "/node_modules/",
+                "/dist/",
+                "/build/",
+                "/__pycache__/",
+                "/target/classes/",
+            )
+        ),
+    ),
+    (
+        "generated",
+        lambda p, f: f.endswith(
+            (
+                ".lock",
+                ".min.js",
+                ".min.css",
+                ".map",
+                ".pb.go",
+                ".pb.h",
+                ".generated.ts",
+                ".generated.java",
+                ".g.dart",
+            )
+        ),
+    ),
+    (
+        "generated",
+        lambda p, f: (
+            f
+            in (
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                "go.sum",
+                "poetry.lock",
+                "Cargo.lock",
+                "Gemfile.lock",
+                "composer.lock",
+            )
+        ),
+    ),
     # --- docs ---
-    ("docs",           lambda p, f: f.endswith((".md", ".rst", ".txt", ".adoc"))),
-    ("docs",           lambda p, f: f in ("LICENSE", "CHANGELOG", "AUTHORS", "CONTRIBUTING")),
-
+    ("docs", lambda p, f: f.endswith((".md", ".rst", ".txt", ".adoc"))),
+    ("docs", lambda p, f: f in ("LICENSE", "CHANGELOG", "AUTHORS", "CONTRIBUTING")),
     # --- tests ---
-    ("test",           lambda p, f: "/test/" in p or "/tests/" in p or "/spec/" in p
-                                    or "/__tests__/" in p or "/test_" in f),
-    ("test",           lambda p, f: f.startswith("test_") or f.endswith((
-        "_test.py", "_test.go", "_test.rs", "_test.dart",
-        ".test.ts", ".test.js", ".test.tsx", ".test.jsx",
-        ".spec.ts", ".spec.js", ".spec.tsx", ".spec.jsx",
-        "test.java", "tests.java", "spec.java",
-        "_test.rb", "_spec.rb",
-    ))),
-
+    ("test", lambda p, f: "/test/" in p or "/tests/" in p or "/spec/" in p or "/__tests__/" in p or "/test_" in f),
+    (
+        "test",
+        lambda p, f: (
+            f.startswith("test_")
+            or f.endswith(
+                (
+                    "_test.py",
+                    "_test.go",
+                    "_test.rs",
+                    "_test.dart",
+                    ".test.ts",
+                    ".test.js",
+                    ".test.tsx",
+                    ".test.jsx",
+                    ".spec.ts",
+                    ".spec.js",
+                    ".spec.tsx",
+                    ".spec.jsx",
+                    "test.java",
+                    "tests.java",
+                    "spec.java",
+                    "_test.rb",
+                    "_spec.rb",
+                )
+            )
+        ),
+    ),
     # --- config / infra ---
-    ("config",         lambda p, f: f.endswith((
-        ".yml", ".yaml", ".toml", ".ini", ".cfg", ".env",
-        ".properties", ".xml", ".gradle", ".sbt",
-        "dockerfile", ".dockerignore",
-    ))),
-    ("config",         lambda p, f: f in (
-        "pom.xml", "build.gradle", "settings.gradle",
-        "makefile", "cmakelists.txt", "cargo.toml", "go.mod", "go.sum",
-        "package.json", "tsconfig.json", "webpack.config.js", "vite.config.ts",
-        ".eslintrc.js", ".prettierrc", "pyproject.toml", "setup.py", "setup.cfg",
-        "gemfile", "rakefile", "composer.json",
-    )),
-    ("config",         lambda p, f: "/config/" in p or "/infra/" in p
-                                    or "/deploy/" in p or "/.github/" in p),
-
+    (
+        "config",
+        lambda p, f: f.endswith(
+            (
+                ".yml",
+                ".yaml",
+                ".toml",
+                ".ini",
+                ".cfg",
+                ".env",
+                ".properties",
+                ".xml",
+                ".gradle",
+                ".sbt",
+                "dockerfile",
+                ".dockerignore",
+            )
+        ),
+    ),
+    (
+        "config",
+        lambda p, f: (
+            f
+            in (
+                "pom.xml",
+                "build.gradle",
+                "settings.gradle",
+                "makefile",
+                "cmakelists.txt",
+                "cargo.toml",
+                "go.mod",
+                "go.sum",
+                "package.json",
+                "tsconfig.json",
+                "webpack.config.js",
+                "vite.config.ts",
+                ".eslintrc.js",
+                ".prettierrc",
+                "pyproject.toml",
+                "setup.py",
+                "setup.cfg",
+                "gemfile",
+                "rakefile",
+                "composer.json",
+            )
+        ),
+    ),
+    ("config", lambda p, f: "/config/" in p or "/infra/" in p or "/deploy/" in p or "/.github/" in p),
     # --- repository / data access ---
-    ("repository",     lambda p, f: any(x in f for x in (
-        "repository", "repo", "dao", "mapper", "store",
-    )) and not f.endswith((".md", ".txt"))),
-    ("repository",     lambda p, f: "/repository/" in p or "/repositories/" in p
-                                    or "/dao/" in p or "/mappers/" in p),
-
+    (
+        "repository",
+        lambda p, f: (
+            any(
+                x in f
+                for x in (
+                    "repository",
+                    "repo",
+                    "dao",
+                    "mapper",
+                    "store",
+                )
+            )
+            and not f.endswith((".md", ".txt"))
+        ),
+    ),
+    ("repository", lambda p, f: "/repository/" in p or "/repositories/" in p or "/dao/" in p or "/mappers/" in p),
     # --- model / entity / schema ---
-    ("model",          lambda p, f: any(x in f for x in (
-        "model", "entity", "schema", "dto", "vo", "pojo",
-        "dataclass", "struct", "type", "proto",
-    )) and not f.endswith((".md", ".txt"))),
-    ("model",          lambda p, f: any(x in p for x in (
-        "/model/", "/models/", "/entity/", "/entities/",
-        "/schema/", "/schemas/", "/dto/", "/types/", "/domain/",
-        "/proto/", "/graphql/",
-    ))),
-
+    (
+        "model",
+        lambda p, f: (
+            any(
+                x in f
+                for x in (
+                    "model",
+                    "entity",
+                    "schema",
+                    "dto",
+                    "vo",
+                    "pojo",
+                    "dataclass",
+                    "struct",
+                    "type",
+                    "proto",
+                )
+            )
+            and not f.endswith((".md", ".txt"))
+        ),
+    ),
+    (
+        "model",
+        lambda p, f: any(
+            x in p
+            for x in (
+                "/model/",
+                "/models/",
+                "/entity/",
+                "/entities/",
+                "/schema/",
+                "/schemas/",
+                "/dto/",
+                "/types/",
+                "/domain/",
+                "/proto/",
+                "/graphql/",
+            )
+        ),
+    ),
     # --- controller / handler / route / API ---
-    ("controller",     lambda p, f: any(x in f for x in (
-        "controller", "handler", "router", "route", "endpoint",
-        "resource", "resolver", "view", "api",
-    )) and not f.endswith((".md", ".txt"))),
-    ("controller",     lambda p, f: any(x in p for x in (
-        "/controller/", "/controllers/", "/handler/", "/handlers/",
-        "/router/", "/routers/", "/routes/", "/api/", "/endpoint/",
-        "/resource/", "/resources/", "/resolvers/", "/views/",
-    ))),
-
+    (
+        "controller",
+        lambda p, f: (
+            any(
+                x in f
+                for x in (
+                    "controller",
+                    "handler",
+                    "router",
+                    "route",
+                    "endpoint",
+                    "resource",
+                    "resolver",
+                    "view",
+                    "api",
+                )
+            )
+            and not f.endswith((".md", ".txt"))
+        ),
+    ),
+    (
+        "controller",
+        lambda p, f: any(
+            x in p
+            for x in (
+                "/controller/",
+                "/controllers/",
+                "/handler/",
+                "/handlers/",
+                "/router/",
+                "/routers/",
+                "/routes/",
+                "/api/",
+                "/endpoint/",
+                "/resource/",
+                "/resources/",
+                "/resolvers/",
+                "/views/",
+            )
+        ),
+    ),
     # --- business logic (highest priority source code) ---
-    ("business_logic", lambda p, f: any(x in f for x in (
-        "service", "usecase", "interactor", "manager", "processor",
-        "provider", "facade", "orchestrator", "workflow", "engine",
-        "validator", "checker", "consumer", "producer", "listener",
-        "subscriber", "publisher", "worker", "job", "task",
-        "middleware", "interceptor", "filter", "guard",
-        "helper", "util", "utils",
-    )) and not f.endswith((".md", ".txt"))),
-    ("business_logic", lambda p, f: any(x in p for x in (
-        "/service/", "/services/", "/usecase/", "/usecases/",
-        "/core/", "/business/", "/logic/", "/impl/",
-    ))),
-
+    (
+        "business_logic",
+        lambda p, f: (
+            any(
+                x in f
+                for x in (
+                    "service",
+                    "usecase",
+                    "interactor",
+                    "manager",
+                    "processor",
+                    "provider",
+                    "facade",
+                    "orchestrator",
+                    "workflow",
+                    "engine",
+                    "validator",
+                    "checker",
+                    "consumer",
+                    "producer",
+                    "listener",
+                    "subscriber",
+                    "publisher",
+                    "worker",
+                    "job",
+                    "task",
+                    "middleware",
+                    "interceptor",
+                    "filter",
+                    "guard",
+                    "helper",
+                    "util",
+                    "utils",
+                )
+            )
+            and not f.endswith((".md", ".txt"))
+        ),
+    ),
+    (
+        "business_logic",
+        lambda p, f: any(
+            x in p
+            for x in (
+                "/service/",
+                "/services/",
+                "/usecase/",
+                "/usecases/",
+                "/core/",
+                "/business/",
+                "/logic/",
+                "/impl/",
+            )
+        ),
+    ),
     # --- fallback: any source code file → business_logic ---
-    ("business_logic", lambda p, f: f.endswith((
-        ".java", ".py", ".go", ".rs", ".ts", ".tsx", ".js", ".jsx",
-        ".kt", ".scala", ".rb", ".php", ".cs", ".cpp", ".c", ".h",
-        ".swift", ".dart", ".ex", ".exs", ".clj", ".hs", ".lua",
-        ".r", ".R", ".jl", ".zig", ".nim", ".v", ".ml", ".fs",
-    ))),
+    (
+        "business_logic",
+        lambda p, f: f.endswith(
+            (
+                ".java",
+                ".py",
+                ".go",
+                ".rs",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".kt",
+                ".scala",
+                ".rb",
+                ".php",
+                ".cs",
+                ".cpp",
+                ".c",
+                ".h",
+                ".swift",
+                ".dart",
+                ".ex",
+                ".exs",
+                ".clj",
+                ".hs",
+                ".lua",
+                ".r",
+                ".R",
+                ".jl",
+                ".zig",
+                ".nim",
+                ".v",
+                ".ml",
+                ".fs",
+            )
+        ),
+    ),
 ]
 
 
@@ -1361,7 +1710,8 @@ def git_diff_files(
     if numstat_raw.startswith("(git") or status_raw.startswith("(git"):
         error_msg = numstat_raw if numstat_raw.startswith("(git") else status_raw
         return ToolResult(
-            tool_name="git_diff_files", success=False,
+            tool_name="git_diff_files",
+            success=False,
             error=f"Git command failed: {error_msg}",
         )
 
@@ -1416,10 +1766,12 @@ def git_diff_files(
     for entry in entries:
         entry["category"] = _classify_file_priority(entry["path"])
 
-    entries.sort(key=lambda e: (
-        _CATEGORY_ORDER.get(e["category"], 50),   # tier first
-        -(e["additions"] + e["deletions"]),        # then by change size desc
-    ))
+    entries.sort(
+        key=lambda e: (
+            _CATEGORY_ORDER.get(e["category"], 50),  # tier first
+            -(e["additions"] + e["deletions"]),  # then by change size desc
+        )
+    )
 
     return ToolResult(
         tool_name="git_diff_files",
@@ -1456,7 +1808,8 @@ def ast_search(
     ast_grep_bin = _find_ast_grep()
     if ast_grep_bin is None:
         return ToolResult(
-            tool_name="ast_search", success=False,
+            tool_name="ast_search",
+            success=False,
             error="ast-grep not installed. Install with: pip install ast-grep-cli",
         )
 
@@ -1471,7 +1824,10 @@ def ast_search(
 
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30,
             cwd=workspace,
         )
     except subprocess.TimeoutExpired:
@@ -1479,7 +1835,8 @@ def ast_search(
 
     if proc.returncode not in (0, 1):  # 1 = no matches
         return ToolResult(
-            tool_name="ast_search", success=False,
+            tool_name="ast_search",
+            success=False,
             error=f"ast-grep error: {proc.stderr.strip()[:500]}",
         )
 
@@ -1515,13 +1872,15 @@ def ast_search(
         if len(text) > 1000:
             text = text[:997] + "..."
 
-        results.append(AstMatch(
-            file_path=rel,
-            start_line=start.get("line", 0) + 1,
-            end_line=end.get("line", 0) + 1,
-            text=text,
-            meta_variables=meta,
-        ).model_dump())
+        results.append(
+            AstMatch(
+                file_path=rel,
+                start_line=start.get("line", 0) + 1,
+                end_line=end.get("line", 0) + 1,
+                text=text,
+                meta_variables=meta,
+            ).model_dump()
+        )
 
     return ToolResult(
         tool_name="ast_search",
@@ -1536,7 +1895,7 @@ def get_callees(
     file: str,
 ) -> ToolResult:
     """Find all functions/methods called within a specific function body."""
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import detect_language, extract_definitions
 
     fp = _resolve(workspace, file)
     if not fp.is_file():
@@ -1561,7 +1920,8 @@ def get_callees(
 
     if target_def is None:
         return ToolResult(
-            tool_name="get_callees", success=False,
+            tool_name="get_callees",
+            success=False,
             error=f"Function '{function_name}' not found in {file}",
         )
 
@@ -1571,10 +1931,7 @@ def get_callees(
     # infer the end by looking for the next top-level definition or EOF.
     end_line = target_def.end_line
     if end_line <= target_def.start_line:
-        next_starts = sorted(
-            d.start_line for d in symbols.definitions
-            if d.start_line > target_def.start_line
-        )
+        next_starts = sorted(d.start_line for d in symbols.definitions if d.start_line > target_def.start_line)
         end_line = (next_starts[0] - 1) if next_starts else len(lines)
 
     # Extract lines of the function body
@@ -1582,7 +1939,7 @@ def get_callees(
 
     # Find function calls in the body using regex
     # Matches: name(...), obj.name(...), but not def name(... or class name(
-    call_pattern = re.compile(r'(?<!\bdef\s)(?<!\bclass\s)\b([a-zA-Z_]\w*)\s*\(')
+    call_pattern = re.compile(r"(?<!\bdef\s)(?<!\bclass\s)\b([a-zA-Z_]\w*)\s*\(")
     ws = Path(workspace).resolve()
 
     seen: set = set()
@@ -1596,11 +1953,13 @@ def get_callees(
                 continue
             if callee_name not in seen:
                 seen.add(callee_name)
-                callees.append(CalleeInfo(
-                    callee_name=callee_name,
-                    file_path=str(fp.relative_to(ws)),
-                    line=line_no,
-                ).model_dump())
+                callees.append(
+                    CalleeInfo(
+                        callee_name=callee_name,
+                        file_path=str(fp.relative_to(ws)),
+                        line=line_no,
+                    ).model_dump()
+                )
 
     return ToolResult(tool_name="get_callees", data=callees)
 
@@ -1611,7 +1970,7 @@ def get_callers(
     path: Optional[str] = None,
 ) -> ToolResult:
     """Find all functions/methods that call a given function."""
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import detect_language, extract_definitions
 
     ws = Path(workspace).resolve()
     search_root = _resolve(workspace, path or ".")
@@ -1619,7 +1978,7 @@ def get_callers(
         return ToolResult(tool_name="get_callers", success=False, error=f"Path not found: {path}")
 
     # Regex: function_name followed by ( — a call site
-    call_re = re.compile(rf'\b{re.escape(function_name)}\s*\(')
+    call_re = re.compile(rf"\b{re.escape(function_name)}\s*\(")
 
     callers: List[Dict] = []
     for dirpath, dirnames, filenames in os.walk(search_root):
@@ -1655,36 +2014,77 @@ def get_callers(
                 # Infer end_line when regex fallback sets it == start_line
                 end_ln = defn.end_line
                 if end_ln <= defn.start_line:
-                    next_starts = sorted(
-                        d.start_line for d in symbols.definitions
-                        if d.start_line > defn.start_line
-                    )
+                    next_starts = sorted(d.start_line for d in symbols.definitions if d.start_line > defn.start_line)
                     end_ln = (next_starts[0] - 1) if next_starts else len(lines)
                 # Skip the definition line itself (def foo(): matches \bfoo\s*\()
                 body_lines = lines[defn.start_line : end_ln]
                 for offset, line in enumerate(body_lines):
                     if call_re.search(line):
-                        callers.append(CallerInfo(
-                            caller_name=defn.name,
-                            caller_kind=defn.kind,
-                            file_path=rel,
-                            line=defn.start_line + 1 + offset,
-                            content=line.strip()[:200],
-                        ).model_dump())
+                        callers.append(
+                            CallerInfo(
+                                caller_name=defn.name,
+                                caller_kind=defn.kind,
+                                file_path=rel,
+                                line=defn.start_line + 1 + offset,
+                                content=line.strip()[:200],
+                            ).model_dump()
+                        )
                         break  # one match per caller is enough
 
     return ToolResult(tool_name="get_callers", data=callers)
 
 
 # Noise words to skip when extracting callees
-_CALL_NOISE = frozenset({
-    "if", "for", "while", "return", "print", "len", "str", "int", "float",
-    "bool", "list", "dict", "set", "tuple", "type", "isinstance", "issubclass",
-    "range", "enumerate", "zip", "map", "filter", "sorted", "reversed",
-    "super", "property", "staticmethod", "classmethod", "getattr", "setattr",
-    "hasattr", "delattr", "open", "repr", "hash", "id", "input", "abs",
-    "min", "max", "sum", "round", "any", "all", "next", "iter",
-})
+_CALL_NOISE = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "return",
+        "print",
+        "len",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "type",
+        "isinstance",
+        "issubclass",
+        "range",
+        "enumerate",
+        "zip",
+        "map",
+        "filter",
+        "sorted",
+        "reversed",
+        "super",
+        "property",
+        "staticmethod",
+        "classmethod",
+        "getattr",
+        "setattr",
+        "hasattr",
+        "delattr",
+        "open",
+        "repr",
+        "hash",
+        "id",
+        "input",
+        "abs",
+        "min",
+        "max",
+        "sum",
+        "round",
+        "any",
+        "all",
+        "next",
+        "iter",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1713,6 +2113,7 @@ def _ensure_graph(workspace: str, graph_service=None):
     else:
         try:
             from app.repo_graph.graph import build_dependency_graph
+
             graph = build_dependency_graph(workspace)
         except ImportError:
             logger.warning("repo_graph not available — graph tools disabled.")
@@ -1833,13 +2234,16 @@ def git_show(
         diff_args += ["--", str(fp)]
     diff_raw = _run_git(workspace, diff_args, max_output=100_000)
 
-    return ToolResult(tool_name="git_show", data={
-        "commit_hash": commit_hash[:8],
-        "author": author,
-        "date": date,
-        "message": message,
-        "diff": diff_raw,
-    })
+    return ToolResult(
+        tool_name="git_show",
+        data={
+            "commit_hash": commit_hash[:8],
+            "author": author,
+            "date": date,
+            "message": message,
+            "diff": diff_raw,
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1993,12 +2397,14 @@ def find_tests(
                     key = (rel, test_fn["name"])
                     if key not in seen:
                         seen.add(key)
-                        results.append(TestMatch(
-                            test_file=rel,
-                            test_function=test_fn["name"],
-                            line_number=test_fn["line"],
-                            context=line_text.strip()[:200],
-                        ).model_dump())
+                        results.append(
+                            TestMatch(
+                                test_file=rel,
+                                test_function=test_fn["name"],
+                                line_number=test_fn["line"],
+                                context=line_text.strip()[:200],
+                            ).model_dump()
+                        )
 
             if len(results) >= 50:
                 break
@@ -2020,9 +2426,7 @@ _PY_MOCK_RE = [
     re.compile(r"monkeypatch\.setattr\((.+?),"),
     re.compile(r"(\w+)\s*=\s*(?:Mock|MagicMock|AsyncMock)\("),
 ]
-_PY_ASSERT_RE = re.compile(
-    r"(assert\s+.{0,80}|self\.assert\w+\(.{0,60}|pytest\.raises\(.{0,60}\))"
-)
+_PY_ASSERT_RE = re.compile(r"(assert\s+.{0,80}|self\.assert\w+\(.{0,60}|pytest\.raises\(.{0,60}\))")
 _PY_FIXTURE_RE = re.compile(r"def\s+test_\w+\(([^)]*)\)")
 
 _JS_MOCK_RE = [
@@ -2075,18 +2479,16 @@ def _py_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
     for i, line in enumerate(lines):
         cm = _PY_CLASS_DEF.match(line)
         if cm:
-            defs.append({"name": cm.group(2), "kind": "test_class",
-                         "line": i + 1, "indent": len(cm.group(1))})
+            defs.append({"name": cm.group(2), "kind": "test_class", "line": i + 1, "indent": len(cm.group(1))})
             continue
         fm = _PY_TEST_DEF.match(line)
         if fm:
-            defs.append({"name": fm.group(2), "kind": "test_function",
-                         "line": i + 1, "indent": len(fm.group(1))})
+            defs.append({"name": fm.group(2), "kind": "test_function", "line": i + 1, "indent": len(fm.group(1))})
 
     # Compute end_line for each def (next def at same/lesser indent, or EOF)
     for idx, d in enumerate(defs):
         end = len(lines)
-        for nxt in defs[idx + 1:]:
+        for nxt in defs[idx + 1 :]:
             if nxt["indent"] <= d["indent"]:
                 end = nxt["line"] - 1
                 break
@@ -2138,15 +2540,17 @@ def _py_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
                     name = f"{prev['name']}::{d['name']}"
                     break
 
-        entries.append(TestOutlineEntry(
-            name=name,
-            kind=d["kind"],
-            line_number=d["line"],
-            end_line=d["end_line"],
-            mocks=mocks[:10],
-            assertions=assertions[:10],
-            fixtures=fixtures,
-        ))
+        entries.append(
+            TestOutlineEntry(
+                name=name,
+                kind=d["kind"],
+                line_number=d["line"],
+                end_line=d["end_line"],
+                mocks=mocks[:10],
+                assertions=assertions[:10],
+                fixtures=fixtures,
+            )
+        )
 
     return entries
 
@@ -2175,9 +2579,13 @@ def _js_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
         if dm:
             desc_name = dm.group(2)
             full_name = " > ".join(describe_stack + [desc_name]) if describe_stack else desc_name
-            entries.append(TestOutlineEntry(
-                name=full_name, kind="describe_block", line_number=i + 1,
-            ))
+            entries.append(
+                TestOutlineEntry(
+                    name=full_name,
+                    kind="describe_block",
+                    line_number=i + 1,
+                )
+            )
             describe_stack.append(desc_name)
             describe_depths.append(brace_depth - 1)
             continue
@@ -2206,11 +2614,15 @@ def _js_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
                 if am:
                     assertions.append(am.group(1).strip()[:80])
 
-            entries.append(TestOutlineEntry(
-                name=full_name, kind="test_function",
-                line_number=i + 1,
-                mocks=mocks[:10], assertions=assertions[:10],
-            ))
+            entries.append(
+                TestOutlineEntry(
+                    name=full_name,
+                    kind="test_function",
+                    line_number=i + 1,
+                    mocks=mocks[:10],
+                    assertions=assertions[:10],
+                )
+            )
 
     return entries
 
@@ -2223,9 +2635,7 @@ _JAVA_MOCK_RE = [
     re.compile(r"@SpyBean\b"),
     re.compile(r"(?:Mockito\.)?(?:mock|spy|when)\((.{0,60}?)\)"),
 ]
-_JAVA_ASSERT_RE = re.compile(
-    r"(assert\w+\(.{0,80}|assertThat\(.{0,80}|verify\(.{0,60})"
-)
+_JAVA_ASSERT_RE = re.compile(r"(assert\w+\(.{0,80}|assertThat\(.{0,80}|verify\(.{0,60})")
 
 
 def _java_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
@@ -2244,7 +2654,6 @@ def _java_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
     i = 0
     while i < len(lines):
         if _JAVA_TEST_ANNOTATION.match(lines[i]):
-            annotation_line = i
             # Advance past annotations to find the method def
             j = i + 1
             while j < len(lines):
@@ -2271,15 +2680,17 @@ def _java_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
                         for m in mp.finditer(body_text):
                             val = m.group(1).strip()[:60] if m.lastindex else m.group(0).strip()[:60]
                             mocks.append(val)
-                    assertions = [
-                        m.group(1).strip()[:80]
-                        for m in _JAVA_ASSERT_RE.finditer(body_text)
-                    ]
-                    entries.append(TestOutlineEntry(
-                        name=full_name, kind="test_function",
-                        line_number=j + 1, end_line=end_line,
-                        mocks=mocks[:10], assertions=assertions[:10],
-                    ))
+                    assertions = [m.group(1).strip()[:80] for m in _JAVA_ASSERT_RE.finditer(body_text)]
+                    entries.append(
+                        TestOutlineEntry(
+                            name=full_name,
+                            kind="test_function",
+                            line_number=j + 1,
+                            end_line=end_line,
+                            mocks=mocks[:10],
+                            assertions=assertions[:10],
+                        )
+                    )
                     i = end_line
                     break
                 stripped = lines[j].strip()
@@ -2298,8 +2709,7 @@ def _go_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
     """Parse Go test file for Test*/Benchmark* functions, assertions."""
     entries: List[TestOutlineEntry] = []
     go_assert_re = re.compile(
-        r"(t\.(?:Error|Fatal|Log|Run|Helper|Skip|Parallel)\w*\(.{0,60}|"
-        r"assert\.\w+\(.{0,60}|require\.\w+\(.{0,60})"
+        r"(t\.(?:Error|Fatal|Log|Run|Helper|Skip|Parallel)\w*\(.{0,60}|" r"assert\.\w+\(.{0,60}|require\.\w+\(.{0,60})"
     )
     go_mock_re = re.compile(r"(gomock\.NewController|mock\.\w+)")
 
@@ -2324,11 +2734,16 @@ def _go_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
         body_text = "\n".join(body_lines)
         assertions = [m.group(1).strip()[:80] for m in go_assert_re.finditer(body_text)]
         mocks = [m.group(1).strip()[:60] for m in go_mock_re.finditer(body_text)]
-        entries.append(TestOutlineEntry(
-            name=func_name, kind="test_function",
-            line_number=i + 1, end_line=end_line,
-            mocks=mocks[:10], assertions=assertions[:10],
-        ))
+        entries.append(
+            TestOutlineEntry(
+                name=func_name,
+                kind="test_function",
+                line_number=i + 1,
+                end_line=end_line,
+                mocks=mocks[:10],
+                assertions=assertions[:10],
+            )
+        )
     return entries
 
 
@@ -2336,17 +2751,15 @@ def _rust_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
     """Parse Rust test file for #[test] / #[tokio::test] functions, assertions."""
     entries: List[TestOutlineEntry] = []
     rust_assert_re = re.compile(
-        r"(assert!\(.{0,80}|assert_eq!\(.{0,80}|assert_ne!\(.{0,80}|"
-        r"panic!\(.{0,60}|should_panic)"
+        r"(assert!\(.{0,80}|assert_eq!\(.{0,80}|assert_ne!\(.{0,80}|" r"panic!\(.{0,60}|should_panic)"
     )
     # Detect mod tests { ... } block
     mod_test_re = re.compile(r"^\s*mod\s+tests\b")
-    in_test_mod = False
 
     i = 0
     while i < len(lines):
         if mod_test_re.match(lines[i]):
-            in_test_mod = True
+            pass  # Reserved for future use (e.g. scoping test functions)
 
         if _RUST_TEST_ATTR.match(lines[i]):
             # Advance to the fn def
@@ -2369,15 +2782,16 @@ def _rust_test_outline(lines: List[str]) -> List[TestOutlineEntry]:
                             end_line = k + 1
                             break
                     body_text = "\n".join(body_lines)
-                    assertions = [
-                        m.group(1).strip()[:80]
-                        for m in rust_assert_re.finditer(body_text)
-                    ]
-                    entries.append(TestOutlineEntry(
-                        name=func_name, kind="test_function",
-                        line_number=j + 1, end_line=end_line,
-                        assertions=assertions[:10],
-                    ))
+                    assertions = [m.group(1).strip()[:80] for m in rust_assert_re.finditer(body_text)]
+                    entries.append(
+                        TestOutlineEntry(
+                            name=func_name,
+                            kind="test_function",
+                            line_number=j + 1,
+                            end_line=end_line,
+                            assertions=assertions[:10],
+                        )
+                    )
                     i = end_line
                     break
                 stripped = lines[j].strip()
@@ -2412,17 +2826,15 @@ def trace_variable(
     Backward: find where the value originates — callers that pass this
     parameter, plus source patterns (HTTP request, config, DB result).
     """
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import detect_language, extract_definitions
 
     fp = _resolve(workspace, file)
     if not fp.is_file():
-        return ToolResult(tool_name="trace_variable", success=False,
-                          error=f"File not found: {file}")
+        return ToolResult(tool_name="trace_variable", success=False, error=f"File not found: {file}")
 
     lang = detect_language(str(fp))
     if lang is None:
-        return ToolResult(tool_name="trace_variable", success=False,
-                          error=f"Unsupported language: {file}")
+        return ToolResult(tool_name="trace_variable", success=False, error=f"Unsupported language: {file}")
 
     try:
         source = fp.read_text(errors="replace")
@@ -2441,7 +2853,8 @@ def trace_variable(
                 break
         if target_def is None:
             return ToolResult(
-                tool_name="trace_variable", success=False,
+                tool_name="trace_variable",
+                success=False,
                 error=f"Function '{function_name}' not found in {file}",
             )
     else:
@@ -2456,7 +2869,8 @@ def trace_variable(
                 break
         if target_def is None:
             return ToolResult(
-                tool_name="trace_variable", success=False,
+                tool_name="trace_variable",
+                success=False,
                 error=f"No function in {file} references '{variable_name}'",
             )
 
@@ -2485,7 +2899,11 @@ def trace_variable(
 
     if direction == "forward":
         result["flows_to"] = _find_forward_flows(
-            workspace, body_lines, start_line, all_names, symbols,
+            workspace,
+            body_lines,
+            start_line,
+            all_names,
+            symbols,
         )
         result["sinks"] = _detect_sinks(body_lines, start_line, all_names)
     else:
@@ -2493,7 +2911,9 @@ def trace_variable(
         param_pos = _get_param_position(target_def, variable_name, lines)
         if param_pos is not None:
             result["flows_from"] = _find_backward_flows(
-                workspace, target_def.name, param_pos,
+                workspace,
+                target_def.name,
+                param_pos,
             )
         result["sources"] = _detect_sources(body_lines, start_line, variable_name)
 
@@ -2504,16 +2924,17 @@ def _infer_end_line(defn, all_defs, total_lines: int) -> int:
     """Infer a function's end line when the parser only gives start_line."""
     if defn.end_line > defn.start_line:
         return defn.end_line
-    next_starts = sorted(
-        d.start_line for d in all_defs if d.start_line > defn.start_line
-    )
+    next_starts = sorted(d.start_line for d in all_defs if d.start_line > defn.start_line)
     return (next_starts[0] - 1) if next_starts else total_lines
 
 
 # -- Alias detection --------------------------------------------------------
 
+
 def _find_aliases(
-    body_lines: List[str], start_line: int, variable: str,
+    body_lines: List[str],
+    start_line: int,
+    variable: str,
 ) -> List[Dict[str, Any]]:
     """Find variable aliases within a function body.
 
@@ -2542,11 +2963,13 @@ def _find_aliases(
                     alias = m.group(1)
                     if alias not in known and alias not in ("self", "cls", "this"):
                         known.add(alias)
-                        aliases.append({
-                            "name": alias,
-                            "line": start_line + offset,
-                            "expression": stripped[:200],
-                        })
+                        aliases.append(
+                            {
+                                "name": alias,
+                                "line": start_line + offset,
+                                "expression": stripped[:200],
+                            }
+                        )
                         found_new = True
         if not found_new:
             break
@@ -2555,6 +2978,7 @@ def _find_aliases(
 
 
 # -- Forward flow detection -------------------------------------------------
+
 
 def _find_forward_flows(
     workspace: str,
@@ -2611,8 +3035,7 @@ def _find_forward_flows(
                         params = callee_info["params"]
                         # Adjust for self/cls in method calls
                         effective_idx = arg_idx
-                        if as_param := (params[effective_idx]
-                                        if effective_idx < len(params) else None):
+                        if as_param := (params[effective_idx] if effective_idx < len(params) else None):
                             confidence = "high"
                         else:
                             as_param = f"arg[{arg_idx}]"
@@ -2713,7 +3136,6 @@ def _resolve_callee(workspace: str, func_name: str) -> Optional[Dict[str, Any]]:
     if index is None:
         return None
 
-    ws = Path(workspace).resolve()
     for rel, definitions in index.items():
         for defn in definitions:
             if defn.name == func_name and defn.kind in ("function", "method"):
@@ -2751,13 +3173,13 @@ def _parse_params_from_signature(sig: str) -> List[str]:
 
 # -- Backward flow detection ------------------------------------------------
 
+
 def _get_param_position(defn, variable_name: str, lines: List[str]) -> Optional[int]:
     """Find the 0-based position of variable_name in the function's parameter list."""
     sig = defn.signature
-    if not sig:
+    if not sig and defn.start_line - 1 < len(lines):
         # Fallback: read the def line from source
-        if defn.start_line - 1 < len(lines):
-            sig = lines[defn.start_line - 1]
+        sig = lines[defn.start_line - 1]
     if not sig:
         return None
     params = _parse_params_from_signature(sig)
@@ -2773,7 +3195,7 @@ def _find_backward_flows(
     param_pos: int,
 ) -> List[Dict[str, Any]]:
     """Find callers and determine what value they pass for the target parameter."""
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import detect_language, extract_definitions
 
     ws = Path(workspace).resolve()
     call_re = re.compile(rf"\b{re.escape(func_name)}\s*\(")
@@ -2817,22 +3239,27 @@ def _find_backward_flows(
                         arg_parts = _split_call_args(args_str)
                         if param_pos < len(arg_parts):
                             arg_expr = arg_parts[param_pos].strip()
-                            flows.append({
-                                "caller_file": rel,
-                                "caller_function": caller_def.name,
-                                "arg_expression": arg_expr,
-                                "call_line": caller_def.start_line + off,
-                                "param_position": param_pos,
-                                "confidence": "high",
-                            })
+                            flows.append(
+                                {
+                                    "caller_file": rel,
+                                    "caller_function": caller_def.name,
+                                    "arg_expression": arg_expr,
+                                    "call_line": caller_def.start_line + off,
+                                    "param_position": param_pos,
+                                    "confidence": "high",
+                                }
+                            )
 
     return flows
 
 
 # -- Sink / source pattern detection ----------------------------------------
 
+
 def _detect_sinks(
-    body_lines: List[str], start_line: int, all_names: set,
+    body_lines: List[str],
+    start_line: int,
+    all_names: set,
 ) -> List[Dict[str, Any]]:
     """Detect data sink patterns (ORM, SQL, HTTP, return, log)."""
     sinks: List[Dict[str, Any]] = []
@@ -2840,36 +3267,60 @@ def _detect_sinks(
 
     patterns: List[tuple] = [
         # ORM filter patterns
-        ("orm_filter", re.compile(
-            rf"\.(?:filter|filter_by|where|having)\s*\([^)]*\b({names_pattern})\b",
-        )),
-        ("orm_get", re.compile(
-            rf"\.(?:get|get_or_404|first_or_404|find|findOne|findUnique|findFirst)\s*\([^)]*\b({names_pattern})\b",
-        )),
+        (
+            "orm_filter",
+            re.compile(
+                rf"\.(?:filter|filter_by|where|having)\s*\([^)]*\b({names_pattern})\b",
+            ),
+        ),
+        (
+            "orm_get",
+            re.compile(
+                rf"\.(?:get|get_or_404|first_or_404|find|findOne|findUnique|findFirst)\s*\([^)]*\b({names_pattern})\b",
+            ),
+        ),
         # JPA / Spring Data patterns
-        ("jpa_query", re.compile(
-            rf"\.(?:findBy\w*|getBy\w*|deleteBy\w*|countBy\w*|existsBy\w*)\s*\([^)]*\b({names_pattern})\b",
-        )),
+        (
+            "jpa_query",
+            re.compile(
+                rf"\.(?:findBy\w*|getBy\w*|deleteBy\w*|countBy\w*|existsBy\w*)\s*\([^)]*\b({names_pattern})\b",
+            ),
+        ),
         # SQL parameter patterns (use .* instead of [^)]* to handle nested parens in SQL strings)
-        ("sql_param", re.compile(
-            rf"\.(?:execute|executemany|raw|nativeQuery)\b.*\b({names_pattern})\b",
-        )),
-        ("sql_fstring", re.compile(
-            rf"(?:SELECT|INSERT|UPDATE|DELETE|WHERE|SET|VALUES)[^;]*\b({names_pattern})\b",
-            re.IGNORECASE,
-        )),
+        (
+            "sql_param",
+            re.compile(
+                rf"\.(?:execute|executemany|raw|nativeQuery)\b.*\b({names_pattern})\b",
+            ),
+        ),
+        (
+            "sql_fstring",
+            re.compile(
+                rf"(?:SELECT|INSERT|UPDATE|DELETE|WHERE|SET|VALUES)[^;]*\b({names_pattern})\b",
+                re.IGNORECASE,
+            ),
+        ),
         # HTTP outbound body
-        ("http_body", re.compile(
-            rf"(?:json|data|body|params)\s*[:=]\s*\{{[^}}]*\b({names_pattern})\b",
-        )),
+        (
+            "http_body",
+            re.compile(
+                rf"(?:json|data|body|params)\s*[:=]\s*\{{[^}}]*\b({names_pattern})\b",
+            ),
+        ),
         # Return
-        ("return", re.compile(
-            rf"\breturn\b[^;\n]*\b({names_pattern})\b",
-        )),
+        (
+            "return",
+            re.compile(
+                rf"\breturn\b[^;\n]*\b({names_pattern})\b",
+            ),
+        ),
         # Logging
-        ("log", re.compile(
-            rf"(?:logger?|console|log)\.\w+\([^)]*\b({names_pattern})\b",
-        )),
+        (
+            "log",
+            re.compile(
+                rf"(?:logger?|console|log)\.\w+\([^)]*\b({names_pattern})\b",
+            ),
+        ),
     ]
 
     seen: set = set()
@@ -2883,19 +3334,23 @@ def _detect_sinks(
                 key = (kind, start_line + offset)
                 if key not in seen:
                     seen.add(key)
-                    sinks.append({
-                        "kind": kind,
-                        "expression": stripped[:200],
-                        "line": start_line + offset,
-                        "matched_variable": m.group(1),
-                        "confidence": "high",
-                    })
+                    sinks.append(
+                        {
+                            "kind": kind,
+                            "expression": stripped[:200],
+                            "line": start_line + offset,
+                            "matched_variable": m.group(1),
+                            "confidence": "high",
+                        }
+                    )
 
     return sinks
 
 
 def _detect_sources(
-    body_lines: List[str], start_line: int, variable: str,
+    body_lines: List[str],
+    start_line: int,
+    variable: str,
 ) -> List[Dict[str, Any]]:
     """Detect data source patterns (HTTP request, config, DB result)."""
     sources: List[Dict[str, Any]] = []
@@ -2903,33 +3358,50 @@ def _detect_sources(
 
     patterns: List[tuple] = [
         # HTTP request sources
-        ("http_request", re.compile(
-            rf"\b{var_esc}\s*=\s*.*(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)"
-            rf"|(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)\s*"
-            rf"(?:\[|\.get\(|\.)\s*['\"]?{var_esc}",
-        )),
+        (
+            "http_request",
+            re.compile(
+                rf"\b{var_esc}\s*=\s*.*(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)"
+                rf"|(?:request|req)\s*\.\s*(?:json|body|form|args|params|query|data)\s*"
+                rf"(?:\[|\.get\(|\.)\s*['\"]?{var_esc}",
+            ),
+        ),
         # Java annotations (on previous line or same line)
-        ("http_annotation", re.compile(
-            rf"@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)\b.*\b{var_esc}\b"
-            rf"|\b{var_esc}\b.*@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)",
-        )),
+        (
+            "http_annotation",
+            re.compile(
+                rf"@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)\b.*\b{var_esc}\b"
+                rf"|\b{var_esc}\b.*@(?:RequestParam|PathVariable|RequestBody|QueryParam|PathParam|Body)",
+            ),
+        ),
         # Pydantic / dataclass model field
-        ("model_field", re.compile(
-            rf"\b{var_esc}\s*[=:]\s*Field\s*\("
-            rf"|\b{var_esc}\s*:\s*\w+.*=\s*Field\s*\(",
-        )),
+        (
+            "model_field",
+            re.compile(
+                rf"\b{var_esc}\s*[=:]\s*Field\s*\(" rf"|\b{var_esc}\s*:\s*\w+.*=\s*Field\s*\(",
+            ),
+        ),
         # Config / settings
-        ("config", re.compile(
-            rf"\b{var_esc}\s*=\s*.*(?:settings|config|env|os\.environ)",
-        )),
+        (
+            "config",
+            re.compile(
+                rf"\b{var_esc}\s*=\s*.*(?:settings|config|env|os\.environ)",
+            ),
+        ),
         # DB query result
-        ("db_result", re.compile(
-            rf"\b{var_esc}\s*=\s*.*\.(?:fetchone|fetchall|first|scalar|one|all|execute)\s*\(",
-        )),
+        (
+            "db_result",
+            re.compile(
+                rf"\b{var_esc}\s*=\s*.*\.(?:fetchone|fetchall|first|scalar|one|all|execute)\s*\(",
+            ),
+        ),
         # Dict / object destructuring
-        ("destructure", re.compile(
-            rf"\b{var_esc}\s*=\s*\w+\s*\[\s*['\"]",
-        )),
+        (
+            "destructure",
+            re.compile(
+                rf"\b{var_esc}\s*=\s*\w+\s*\[\s*['\"]",
+            ),
+        ),
     ]
 
     for offset, line in enumerate(body_lines):
@@ -2938,12 +3410,14 @@ def _detect_sources(
             continue
         for kind, pat in patterns:
             if pat.search(stripped):
-                sources.append({
-                    "kind": kind,
-                    "expression": stripped[:200],
-                    "line": start_line + offset,
-                    "confidence": "high",
-                })
+                sources.append(
+                    {
+                        "kind": kind,
+                        "expression": stripped[:200],
+                        "line": start_line + offset,
+                        "confidence": "high",
+                    }
+                )
 
     return sources
 
@@ -2954,23 +3428,48 @@ def _detect_sources(
 
 _SIDE_EFFECT_PATTERNS = {
     "db_write": [
-        "session.add", "session.commit", ".save()", ".create(",
-        ".update(", ".delete(", "bulk_create", ".objects.create",
-        "INSERT", "UPDATE", "db.add", "db.flush", "db.execute",
+        "session.add",
+        "session.commit",
+        ".save()",
+        ".create(",
+        ".update(",
+        ".delete(",
+        "bulk_create",
+        ".objects.create",
+        "INSERT",
+        "UPDATE",
+        "db.add",
+        "db.flush",
+        "db.execute",
     ],
     "http_call": [
-        "requests.", "httpx.", "aiohttp.", "fetch(",
-        "urllib", "ClientSession",
+        "requests.",
+        "httpx.",
+        "aiohttp.",
+        "fetch(",
+        "urllib",
+        "ClientSession",
     ],
     "event_publish": [
-        "publish(", "emit(", "send_event(", "dispatch(",
-        "notify(", "event_bus.", "broker.",
+        "publish(",
+        "emit(",
+        "send_event(",
+        "dispatch(",
+        "notify(",
+        "event_bus.",
+        "broker.",
     ],
     "file_write": [
-        ".write(", "mkdir(", "shutil.", "copyfile",
+        ".write(",
+        "mkdir(",
+        "shutil.",
+        "copyfile",
     ],
     "cache_write": [
-        "cache.set", "redis.", "memcached.", ".cache(",
+        "cache.set",
+        "redis.",
+        "memcached.",
+        ".cache(",
     ],
 }
 
@@ -2998,10 +3497,30 @@ def _extract_callees_from_body(body_lines: List[str]) -> List[str]:
         for m in call_re.finditer(line):
             name = m.group(1)
             # Skip common builtins / keywords
-            if name in ("if", "for", "while", "return", "print", "len",
-                        "str", "int", "float", "bool", "list", "dict",
-                        "set", "tuple", "range", "super", "isinstance",
-                        "hasattr", "getattr", "setattr", "type", "None"):
+            if name in (
+                "if",
+                "for",
+                "while",
+                "return",
+                "print",
+                "len",
+                "str",
+                "int",
+                "float",
+                "bool",
+                "list",
+                "dict",
+                "set",
+                "tuple",
+                "range",
+                "super",
+                "isinstance",
+                "hasattr",
+                "getattr",
+                "setattr",
+                "type",
+                "None",
+            ):
                 continue
             if name not in seen:
                 seen.add(name)
@@ -3043,7 +3562,9 @@ def _extract_symbols_rich(lines: List[str], lang: Optional[str]) -> List[Dict[st
         func_re = re.compile(r"^(\s*)(?:export\s+)?(?:async\s+)?(?:function\s+)?(\w+)\s*\(([^)]*)\)")
     elif lang == "java":
         class_re = re.compile(r"^(\s*)(?:public|private|protected|abstract|final|static)?\s*class\s+(\w+)")
-        func_re = re.compile(r"^(\s*)(?:public|private|protected)?\s*(?:static\s+)?(?:\w[\w<>\[\],\s]*?)\s+(\w+)\s*\(([^)]*)\)")
+        func_re = re.compile(
+            r"^(\s*)(?:public|private|protected)?\s*(?:static\s+)?(?:\w[\w<>\[\],\s]*?)\s+(\w+)\s*\(([^)]*)\)"
+        )
     elif lang == "go":
         class_re = re.compile(r"^(\s*)type\s+(\w+)\s+struct")
         func_re = re.compile(r"^(\s*)func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(([^)]*)\)")
@@ -3057,11 +3578,17 @@ def _extract_symbols_rich(lines: List[str], lang: Optional[str]) -> List[Dict[st
     for i, line in enumerate(lines):
         cm = class_re.match(line)
         if cm:
-            symbols.append({
-                "name": cm.group(2), "kind": "class",
-                "indent": len(cm.group(1)), "start_line": i + 1,
-                "end_line": i + 1, "signature": line.strip(), "parent": None,
-            })
+            symbols.append(
+                {
+                    "name": cm.group(2),
+                    "kind": "class",
+                    "indent": len(cm.group(1)),
+                    "start_line": i + 1,
+                    "end_line": i + 1,
+                    "signature": line.strip(),
+                    "parent": None,
+                }
+            )
             continue
         fm = func_re.match(line)
         if fm:
@@ -3077,15 +3604,21 @@ def _extract_symbols_rich(lines: List[str], lang: Optional[str]) -> List[Dict[st
                 if prev["kind"] == "class" and prev["indent"] < indent:
                     parent = prev["name"]
                     break
-            symbols.append({
-                "name": name, "kind": kind,
-                "indent": indent, "start_line": i + 1,
-                "end_line": i + 1, "signature": line.strip(), "parent": parent,
-            })
+            symbols.append(
+                {
+                    "name": name,
+                    "kind": kind,
+                    "indent": indent,
+                    "start_line": i + 1,
+                    "end_line": i + 1,
+                    "signature": line.strip(),
+                    "parent": parent,
+                }
+            )
 
     # Compute end_line for each symbol
     for idx, sym in enumerate(symbols):
-        for nxt in symbols[idx + 1:]:
+        for nxt in symbols[idx + 1 :]:
             if nxt["indent"] <= sym["indent"]:
                 sym["end_line"] = nxt["start_line"] - 1
                 break
@@ -3109,8 +3642,7 @@ def compressed_view(
 
     fp = _resolve(workspace, file_path)
     if not fp.is_file():
-        return ToolResult(tool_name="compressed_view", success=False,
-                          error=f"File not found: {file_path}")
+        return ToolResult(tool_name="compressed_view", success=False, error=f"File not found: {file_path}")
 
     try:
         source = fp.read_text(errors="replace")
@@ -3125,9 +3657,11 @@ def compressed_view(
 
     if focus:
         focus_lower = focus.lower()
-        symbols = [s for s in symbols
-                   if focus_lower in s["name"].lower()
-                   or (s.get("parent") and focus_lower in s["parent"].lower())]
+        symbols = [
+            s
+            for s in symbols
+            if focus_lower in s["name"].lower() or (s.get("parent") and focus_lower in s["parent"].lower())
+        ]
 
     ws = Path(workspace).resolve()
     rel_path = str(fp.relative_to(ws))
@@ -3167,8 +3701,12 @@ def compressed_view(
 
     return ToolResult(
         tool_name="compressed_view",
-        data={"content": "\n".join(output_lines), "path": rel_path,
-              "total_lines": total_lines, "symbol_count": len(symbols)},
+        data={
+            "content": "\n".join(output_lines),
+            "path": rel_path,
+            "total_lines": total_lines,
+            "symbol_count": len(symbols),
+        },
     )
 
 
@@ -3180,13 +3718,12 @@ def module_summary(
 
     Saves ~95% tokens vs reading all files. Results are computed from AST analysis.
     """
-    from app.repo_graph.parser import extract_definitions, detect_language
+    from app.repo_graph.parser import extract_definitions
 
     ws = Path(workspace).resolve()
     mod_dir = _resolve(workspace, module_path)
     if not mod_dir.is_dir():
-        return ToolResult(tool_name="module_summary", success=False,
-                          error=f"Directory not found: {module_path}")
+        return ToolResult(tool_name="module_summary", success=False, error=f"Directory not found: {module_path}")
 
     # Collect source files (all supported languages)
     _LANG_EXTS = {".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".cpp"}
@@ -3202,9 +3739,10 @@ def module_summary(
                 source_files.append(Path(dirpath) / f)
 
     if not source_files:
-        return ToolResult(tool_name="module_summary",
-                          data={"content": f"## Module: {module_path}\nNo source files found.",
-                                "file_count": 0, "loc": 0})
+        return ToolResult(
+            tool_name="module_summary",
+            data={"content": f"## Module: {module_path}\nNo source files found.", "file_count": 0, "loc": 0},
+        )
 
     total_loc = 0
     all_classes: List[str] = []
@@ -3240,12 +3778,9 @@ def module_summary(
 
     # Classify notable symbols
     services = [c for c in all_classes if "Service" in c or "Manager" in c]
-    models = [c for c in all_classes
-              if any(kw in c for kw in ("Model", "Schema", "Entity", "DTO"))]
-    controllers = [c for c in all_classes
-                   if any(kw in c for kw in ("Controller", "Router", "Handler", "View"))]
-    remaining_classes = [c for c in all_classes
-                         if c not in services and c not in models and c not in controllers]
+    models = [c for c in all_classes if any(kw in c for kw in ("Model", "Schema", "Entity", "DTO"))]
+    controllers = [c for c in all_classes if any(kw in c for kw in ("Controller", "Router", "Handler", "View"))]
+    remaining_classes = [c for c in all_classes if c not in services and c not in models and c not in controllers]
 
     # Build summary text
     rel_module = str(mod_dir.relative_to(ws))
@@ -3261,8 +3796,7 @@ def module_summary(
         lines.append(f"Other Classes: {', '.join(remaining_classes[:15])}")
 
     # Show top functions (by heuristic importance)
-    notable_fns = [f for f in all_functions
-                   if not f.startswith("_") and f not in ("__init__", "setUp", "tearDown")]
+    notable_fns = [f for f in all_functions if not f.startswith("_") and f not in ("__init__", "setUp", "tearDown")]
     if notable_fns:
         lines.append(f"Key Functions ({len(notable_fns)} total): {', '.join(notable_fns[:20])}")
 
@@ -3282,8 +3816,7 @@ def module_summary(
 
     return ToolResult(
         tool_name="module_summary",
-        data={"content": "\n".join(lines), "file_count": len(source_files),
-              "loc": total_loc},
+        data={"content": "\n".join(lines), "file_count": len(source_files), "loc": total_loc},
     )
 
 
@@ -3305,22 +3838,20 @@ def expand_symbol(
     if file_path:
         fp = _resolve(workspace, file_path)
         if not fp.is_file():
-            return ToolResult(tool_name="expand_symbol", success=False,
-                              error=f"File not found: {file_path}")
+            return ToolResult(tool_name="expand_symbol", success=False, error=f"File not found: {file_path}")
 
         syms = extract_definitions(str(fp), fp.read_bytes())
         matches = [s for s in syms.definitions if s.name == symbol_name]
         if not matches:
             # Try substring match
-            matches = [s for s in syms.definitions
-                       if symbol_name.lower() in s.name.lower()]
+            matches = [s for s in syms.definitions if symbol_name.lower() in s.name.lower()]
 
         if not matches:
             available = [s.name for s in syms.definitions][:20]
             return ToolResult(
-                tool_name="expand_symbol", success=False,
-                error=f"Symbol '{symbol_name}' not found in {file_path}. "
-                      f"Available: {', '.join(available)}",
+                tool_name="expand_symbol",
+                success=False,
+                error=f"Symbol '{symbol_name}' not found in {file_path}. Available: {', '.join(available)}",
             )
 
         sym = matches[0]
@@ -3356,17 +3887,14 @@ def expand_symbol(
 
         for f in filenames:
             fpath = Path(dirpath) / f
-            if fpath.suffix not in (".py", ".js", ".jsx", ".ts", ".tsx",
-                                     ".java", ".go", ".rs", ".c", ".cpp"):
+            if fpath.suffix not in (".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".go", ".rs", ".c", ".cpp"):
                 continue
             if fpath.stat().st_size > _MAX_FILE_SIZE:
                 continue
             try:
                 syms = extract_definitions(str(fpath), fpath.read_bytes())
                 for s in syms.definitions:
-                    if s.name == symbol_name:
-                        candidates.append((s, fpath))
-                    elif symbol_name.lower() in s.name.lower() and not candidates:
+                    if s.name == symbol_name or (symbol_name.lower() in s.name.lower() and not candidates):
                         candidates.append((s, fpath))
             except (OSError, UnicodeDecodeError):
                 continue
@@ -3377,7 +3905,8 @@ def expand_symbol(
 
     if not candidates:
         return ToolResult(
-            tool_name="expand_symbol", success=False,
+            tool_name="expand_symbol",
+            success=False,
             error=f"Symbol '{symbol_name}' not found in the workspace.",
         )
 
@@ -3403,8 +3932,7 @@ def expand_symbol(
     # If multiple candidates, show alternatives
     if len(candidates) > 1:
         data["alternatives"] = [
-            {"name": s.name, "file_path": str(fp.relative_to(ws)),
-             "kind": s.kind, "line": s.start_line}
+            {"name": s.name, "file_path": str(fp.relative_to(ws)), "kind": s.kind, "line": s.start_line}
             for s, fp in candidates[1:5]
         ]
 
@@ -3453,7 +3981,12 @@ _PATTERN_CATEGORIES = {
         (re.compile(r"(?i)\.lock\(\)|\.tryLock\(|\.unlock\("), "lock method call"),
     ],
     "check_then_act": [
-        (re.compile(r"(?i)if\s+.*(?:exists?|is_?available|has_?\w+|count)\s*[:(].*\n\s*(?:create|insert|save|update|delete|remove)"), "check-then-act (multi-line)"),
+        (
+            re.compile(
+                r"(?i)if\s+.*(?:exists?|is_?available|has_?\w+|count)\s*[:(].*\n\s*(?:create|insert|save|update|delete|remove)"
+            ),
+            "check-then-act (multi-line)",
+        ),
         (re.compile(r"(?i)if\s+not\s+.*(?:exists?|find|get)\b.*:\s*$"), "check-then-act guard"),
         (re.compile(r"(?i)\.get_or_create\b|\.find_or_create\b|\.upsert\b"), "atomic alternative (good)"),
         (re.compile(r"(?i)if\s+.*is\s+None.*:\s*\n\s*\w+\s*="), "null-check-then-assign"),
@@ -3499,7 +4032,8 @@ def detect_patterns(
 
     if not scan_root.exists():
         return ToolResult(
-            tool_name="detect_patterns", success=False,
+            tool_name="detect_patterns",
+            success=False,
             error=f"Path not found: {path or '.'}",
         )
 
@@ -3509,9 +4043,9 @@ def detect_patterns(
         valid = {c for c in categories if c in _PATTERN_CATEGORIES}
         if not valid:
             return ToolResult(
-                tool_name="detect_patterns", success=False,
-                error=f"Unknown categories: {categories}. "
-                f"Valid: {sorted(_PATTERN_CATEGORIES.keys())}",
+                tool_name="detect_patterns",
+                success=False,
+                error=f"Unknown categories: {categories}. Valid: {sorted(_PATTERN_CATEGORIES.keys())}",
             )
         active_categories = {k: v for k, v in _PATTERN_CATEGORIES.items() if k in valid}
 
@@ -3540,10 +4074,28 @@ def detect_patterns(
                 # Only scan source-like files
                 ext = fpath.suffix.lower()
                 if ext in {
-                    ".py", ".java", ".kt", ".scala", ".go", ".rs",
-                    ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
-                    ".rb", ".php", ".cs", ".cpp", ".c", ".h",
-                    ".yaml", ".yml", ".toml", ".properties",
+                    ".py",
+                    ".java",
+                    ".kt",
+                    ".scala",
+                    ".go",
+                    ".rs",
+                    ".js",
+                    ".ts",
+                    ".jsx",
+                    ".tsx",
+                    ".mjs",
+                    ".cjs",
+                    ".rb",
+                    ".php",
+                    ".cs",
+                    ".cpp",
+                    ".c",
+                    ".h",
+                    ".yaml",
+                    ".yml",
+                    ".toml",
+                    ".properties",
                 }:
                     files_to_scan.append(fpath)
 
@@ -3567,20 +4119,19 @@ def detect_patterns(
                 for pat, desc in patterns:
                     if pat.search(line):
                         cat_list = results_by_category.setdefault(cat_name, [])
-                        cat_list.append({
-                            "file": rel_path,
-                            "line": line_num,
-                            "pattern": desc,
-                            "snippet": line.strip()[:200],
-                        })
+                        cat_list.append(
+                            {
+                                "file": rel_path,
+                                "line": line_num,
+                                "pattern": desc,
+                                "snippet": line.strip()[:200],
+                            }
+                        )
                         total_matches += 1
                         break  # one match per line per category
 
     # Build summary
-    summary = {
-        cat: len(matches)
-        for cat, matches in results_by_category.items()
-    }
+    summary = {cat: len(matches) for cat, matches in results_by_category.items()}
 
     data = {
         "summary": summary,
@@ -3609,7 +4160,6 @@ def _detect_test_runner(workspace: str, test_file: str) -> tuple:
     Returns (command_list, description) or raises ValueError.
     """
     ext = Path(test_file).suffix.lower()
-    name = Path(test_file).name
 
     if ext == ".py":
         # Python: prefer pytest, fall back to unittest
@@ -3649,7 +4199,8 @@ def run_test(
     fp = _resolve(workspace, test_file)
     if not fp.exists():
         return ToolResult(
-            tool_name="run_test", success=False,
+            tool_name="run_test",
+            success=False,
             error=f"Test file not found: {test_file}",
         )
 
@@ -3721,12 +4272,14 @@ def run_test(
         )
     except FileNotFoundError as e:
         return ToolResult(
-            tool_name="run_test", success=False,
+            tool_name="run_test",
+            success=False,
             error=f"Test runner not found: {e}",
         )
     except OSError as exc:
         return ToolResult(
-            tool_name="run_test", success=False,
+            tool_name="run_test",
+            success=False,
             error=f"Test execution failed: {exc}",
         )
 
@@ -3762,10 +4315,7 @@ def git_hotspots(
         if line:
             counts[line] += 1
 
-    hotspots = [
-        {"file": f, "change_count": c}
-        for f, c in counts.most_common(top_n)
-    ]
+    hotspots = [{"file": f, "change_count": c} for f, c in counts.most_common(top_n)]
 
     # --- recently active (last 7 days) ---
     raw_recent = _run_git(
@@ -3779,10 +4329,7 @@ def git_hotspots(
         if line:
             recent_counts[line] += 1
 
-    recently_active = [
-        {"file": f, "change_count": c}
-        for f, c in recent_counts.most_common(top_n)
-    ]
+    recently_active = [{"file": f, "change_count": c} for f, c in recent_counts.most_common(top_n)]
 
     return ToolResult(
         tool_name="git_hotspots",
@@ -3801,36 +4348,57 @@ def git_hotspots(
 # Pre-compiled patterns for route detection across frameworks.
 _ENDPOINT_PATTERNS: List[tuple] = [
     # Python Flask/FastAPI — @app.get("/path") or @router.post("/path")
-    (re.compile(
-        r'@(?:app|router)\.(get|post|put|delete|patch|options|head)\s*\(\s*["\']([^"\']+)["\']',
-        re.IGNORECASE,
-    ), "fastapi/flask"),
+    (
+        re.compile(
+            r'@(?:app|router)\.(get|post|put|delete|patch|options|head)\s*\(\s*["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        ),
+        "fastapi/flask",
+    ),
     # Python @app.route("/path", methods=[...])
-    (re.compile(
-        r'@(?:app|blueprint|bp)\s*\.\s*route\s*\(\s*["\']([^"\']+)["\']',
-        re.IGNORECASE,
-    ), "flask-route"),
+    (
+        re.compile(
+            r'@(?:app|blueprint|bp)\s*\.\s*route\s*\(\s*["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        ),
+        "flask-route",
+    ),
     # Django path() / url()
-    (re.compile(
-        r"""(?:path|url)\s*\(\s*[r]?['"]([^'"]+)['"]""",
-    ), "django"),
+    (
+        re.compile(
+            r"""(?:path|url)\s*\(\s*[r]?['"]([^'"]+)['"]""",
+        ),
+        "django",
+    ),
     # Django REST @api_view
-    (re.compile(
-        r'@api_view\s*\(\s*\[([^\]]*)\]',
-    ), "django-rest"),
+    (
+        re.compile(
+            r"@api_view\s*\(\s*\[([^\]]*)\]",
+        ),
+        "django-rest",
+    ),
     # Java Spring — @GetMapping("/path")
-    (re.compile(
-        r'@(Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=\s*)?["\']?([^"\')\s,]+)',
-    ), "spring"),
+    (
+        re.compile(
+            r'@(Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=\s*)?["\']?([^"\')\s,]+)',
+        ),
+        "spring",
+    ),
     # JS/TS Express — router.get("/path") or app.post("/path")
-    (re.compile(
-        r'(?:router|app)\.(get|post|put|delete|patch|all|use)\s*\(\s*["\']([^"\']+)["\']',
-    ), "express"),
+    (
+        re.compile(
+            r'(?:router|app)\.(get|post|put|delete|patch|all|use)\s*\(\s*["\']([^"\']+)["\']',
+        ),
+        "express",
+    ),
     # Go — r.GET("/path", ...) or http.HandleFunc("/path", ...)
-    (re.compile(
-        r'(?:r|router|mux)\.(GET|POST|PUT|DELETE|PATCH|Handle|HandleFunc)\s*\(\s*["\']([^"\']+)["\']',
-        re.IGNORECASE,
-    ), "go"),
+    (
+        re.compile(
+            r'(?:r|router|mux)\.(GET|POST|PUT|DELETE|PATCH|Handle|HandleFunc)\s*\(\s*["\']([^"\']+)["\']',
+            re.IGNORECASE,
+        ),
+        "go",
+    ),
 ]
 
 
@@ -3848,15 +4416,25 @@ def list_endpoints(
     scan_root = _resolve(workspace, path) if path else ws
     if not scan_root.exists():
         return ToolResult(
-            tool_name="list_endpoints", success=False,
+            tool_name="list_endpoints",
+            success=False,
             error=f"Path not found: {path or '.'}",
         )
 
     max_results = max(1, min(int(max_results), 500))
 
     source_exts = {
-        ".py", ".java", ".kt", ".scala", ".go",
-        ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
+        ".py",
+        ".java",
+        ".kt",
+        ".scala",
+        ".go",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".mjs",
+        ".cjs",
     }
 
     files_to_scan: List[Path] = []
@@ -3919,13 +4497,15 @@ def list_endpoints(
                     method = groups[0].upper()
                     route_path = groups[1] if len(groups) > 1 else ""
 
-                endpoints.append({
-                    "method": method,
-                    "path": route_path,
-                    "file": rel_path,
-                    "line": line_num,
-                    "framework": framework,
-                })
+                endpoints.append(
+                    {
+                        "method": method,
+                        "path": route_path,
+                        "file": rel_path,
+                        "line": line_num,
+                        "framework": framework,
+                    }
+                )
                 break  # one match per line
 
     return ToolResult(
@@ -3940,16 +4520,15 @@ def list_endpoints(
 # ---------------------------------------------------------------------------
 
 # Patterns per language family
-_PY_DEF_RE = re.compile(r'^\s*((?:async\s+)?def|class)\s+(\w+)')
+_PY_DEF_RE = re.compile(r"^\s*((?:async\s+)?def|class)\s+(\w+)")
 _PY_DOCSTRING_START_RE = re.compile(r'''^\s*("""|\'\'\'|r"""|r\'\'\')(.*)''')
-_JSDOC_BLOCK_START_RE = re.compile(r'^\s*/\*\*')
-_JSDOC_BLOCK_END_RE = re.compile(r'\*/')
+_JSDOC_BLOCK_START_RE = re.compile(r"^\s*/\*\*")
+_JSDOC_BLOCK_END_RE = re.compile(r"\*/")
 _JS_DECL_RE = re.compile(
-    r'^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?'
-    r'(?:function\s+(\w+)|class\s+(\w+)|(?:const|let|var)\s+(\w+))',
+    r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?" r"(?:function\s+(\w+)|class\s+(\w+)|(?:const|let|var)\s+(\w+))",
 )
-_GO_COMMENT_RE = re.compile(r'^\s*//\s?(.*)')
-_GO_FUNC_RE = re.compile(r'^func\s+(?:\([^)]+\)\s+)?(\w+)')
+_GO_COMMENT_RE = re.compile(r"^\s*//\s?(.*)")
+_GO_FUNC_RE = re.compile(r"^func\s+(?:\([^)]+\)\s+)?(\w+)")
 
 
 def extract_docstrings(
@@ -3964,7 +4543,8 @@ def extract_docstrings(
     fp = _resolve(workspace, path)
     if not fp.is_file():
         return ToolResult(
-            tool_name="extract_docstrings", success=False,
+            tool_name="extract_docstrings",
+            success=False,
             error=f"File not found: {path}",
         )
 
@@ -3972,7 +4552,8 @@ def extract_docstrings(
         content = fp.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         return ToolResult(
-            tool_name="extract_docstrings", success=False,
+            tool_name="extract_docstrings",
+            success=False,
             error=str(exc),
         )
 
@@ -4015,7 +4596,7 @@ def _extract_py_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
             # multi-line signatures we must scan forward.
             j = i
             while j < len(lines):
-                if re.search(r':\s*(?:#.*)?$', lines[j]):
+                if re.search(r":\s*(?:#.*)?$", lines[j]):
                     j += 1  # move past the colon line
                     break
                 j += 1
@@ -4029,9 +4610,9 @@ def _extract_py_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                 if dm:
                     quote = dm.group(1).replace("r", "")
                     doc_lines = [dm.group(2)]
-                    if quote in lines[j][lines[j].index(quote) + len(quote):]:
+                    if quote in lines[j][lines[j].index(quote) + len(quote) :]:
                         # Single-line docstring
-                        rest = lines[j][lines[j].index(quote) + len(quote):]
+                        rest = lines[j][lines[j].index(quote) + len(quote) :]
                         end_idx = rest.index(quote)
                         doc_text = rest[:end_idx].strip()
                     else:
@@ -4043,13 +4624,15 @@ def _extract_py_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                             doc_lines.append(lines[k].split(quote)[0])
                         doc_text = "\n".join(doc_lines).strip()
 
-                    results.append({
-                        "symbol": name,
-                        "kind": kind,
-                        "file": rel_path,
-                        "line": def_line,
-                        "docstring": doc_text[:2000],
-                    })
+                    results.append(
+                        {
+                            "symbol": name,
+                            "kind": kind,
+                            "file": rel_path,
+                            "line": def_line,
+                            "docstring": doc_text[:2000],
+                        }
+                    )
         i += 1
     return results
 
@@ -4072,7 +4655,6 @@ def _extract_jsdoc_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                 j += 1
 
             doc_text = "\n".join(doc_lines).strip()
-            doc_start = i + 1
 
             # Look ahead for a declaration
             k = j + 1
@@ -4084,13 +4666,15 @@ def _extract_jsdoc_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                 if dm:
                     name = dm.group(1) or dm.group(2) or dm.group(3)
                     kind = "class" if dm.group(2) else "function"
-                    results.append({
-                        "symbol": name,
-                        "kind": kind,
-                        "file": rel_path,
-                        "line": k + 1,
-                        "docstring": doc_text[:2000],
-                    })
+                    results.append(
+                        {
+                            "symbol": name,
+                            "kind": kind,
+                            "file": rel_path,
+                            "line": k + 1,
+                            "docstring": doc_text[:2000],
+                        }
+                    )
                 elif "@" in lines[k]:
                     # Java annotation — look one more line
                     k2 = k + 1
@@ -4098,33 +4682,36 @@ def _extract_jsdoc_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                         k2 += 1
                     if k2 < len(lines):
                         dm2 = re.match(
-                            r'\s*(?:public|private|protected|static|final|abstract|\s)*'
-                            r'(?:class|interface|enum)\s+(\w+)',
+                            r"\s*(?:public|private|protected|static|final|abstract|\s)*"
+                            r"(?:class|interface|enum)\s+(\w+)",
                             lines[k2],
                         )
                         if dm2:
-                            results.append({
-                                "symbol": dm2.group(1),
-                                "kind": "class",
-                                "file": rel_path,
-                                "line": k2 + 1,
-                                "docstring": doc_text[:2000],
-                            })
-                        else:
-                            # Possibly a method
-                            dm3 = re.match(
-                                r'\s*(?:public|private|protected|static|final|abstract|\s)*'
-                                r'\w+\s+(\w+)\s*\(',
-                                lines[k2],
-                            )
-                            if dm3:
-                                results.append({
-                                    "symbol": dm3.group(1),
-                                    "kind": "function",
+                            results.append(
+                                {
+                                    "symbol": dm2.group(1),
+                                    "kind": "class",
                                     "file": rel_path,
                                     "line": k2 + 1,
                                     "docstring": doc_text[:2000],
-                                })
+                                }
+                            )
+                        else:
+                            # Possibly a method
+                            dm3 = re.match(
+                                r"\s*(?:public|private|protected|static|final|abstract|\s)*" r"\w+\s+(\w+)\s*\(",
+                                lines[k2],
+                            )
+                            if dm3:
+                                results.append(
+                                    {
+                                        "symbol": dm3.group(1),
+                                        "kind": "function",
+                                        "file": rel_path,
+                                        "line": k2 + 1,
+                                        "docstring": doc_text[:2000],
+                                    }
+                                )
 
             i = j + 1
         else:
@@ -4154,13 +4741,15 @@ def _extract_go_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
                     break
 
             if doc_lines:
-                results.append({
-                    "symbol": func_name,
-                    "kind": "function",
-                    "file": rel_path,
-                    "line": i + 1,
-                    "docstring": "\n".join(doc_lines).strip()[:2000],
-                })
+                results.append(
+                    {
+                        "symbol": func_name,
+                        "kind": "function",
+                        "file": rel_path,
+                        "line": i + 1,
+                        "docstring": "\n".join(doc_lines).strip()[:2000],
+                    }
+                )
         i += 1
     return results
 
@@ -4172,9 +4761,9 @@ def _extract_go_docstrings(lines: List[str], rel_path: str) -> List[Dict]:
 # Patterns for ORM model detection
 _ORM_CLASS_PATTERNS = [
     # Python SQLAlchemy / Flask-SQLAlchemy
-    re.compile(r'class\s+(\w+)\s*\(.*(?:Base|db\.Model|DeclarativeBase|Model)\s*.*\)'),
+    re.compile(r"class\s+(\w+)\s*\(.*(?:Base|db\.Model|DeclarativeBase|Model)\s*.*\)"),
     # Python Django
-    re.compile(r'class\s+(\w+)\s*\(.*models\.Model.*\)'),
+    re.compile(r"class\s+(\w+)\s*\(.*models\.Model.*\)"),
 ]
 _TABLE_NAME_PATTERNS = [
     # SQLAlchemy __tablename__
@@ -4184,18 +4773,18 @@ _TABLE_NAME_PATTERNS = [
 ]
 _FIELD_PATTERNS = [
     # SQLAlchemy Column(Type, ...)  or mapped_column(Type, ...)
-    (re.compile(r'(\w+)\s*[=:]\s*(?:Column|mapped_column)\s*\(\s*(\w+)'), "sqlalchemy"),
+    (re.compile(r"(\w+)\s*[=:]\s*(?:Column|mapped_column)\s*\(\s*(\w+)"), "sqlalchemy"),
     # Django models.Field
-    (re.compile(r'(\w+)\s*=\s*models\.(\w+)\s*\('), "django"),
+    (re.compile(r"(\w+)\s*=\s*models\.(\w+)\s*\("), "django"),
     # Java JPA @Column on a field
-    (re.compile(r'(?:private|protected|public)\s+(\w+(?:<[^>]+>)?)\s+(\w+)\s*;'), "jpa"),
+    (re.compile(r"(?:private|protected|public)\s+(\w+(?:<[^>]+>)?)\s+(\w+)\s*;"), "jpa"),
     # TypeORM @Column()
-    (re.compile(r'(\w+)\s*[?!]?\s*:\s*(\w+)'), "typeorm"),
+    (re.compile(r"(\w+)\s*[?!]?\s*:\s*(\w+)"), "typeorm"),
 ]
-_JAVA_ENTITY_RE = re.compile(r'@Entity')
-_JAVA_CLASS_RE = re.compile(r'(?:public\s+)?class\s+(\w+)')
-_TS_ENTITY_RE = re.compile(r'@Entity\s*\(')
-_TS_CLASS_RE = re.compile(r'(?:export\s+)?class\s+(\w+)')
+_JAVA_ENTITY_RE = re.compile(r"@Entity")
+_JAVA_CLASS_RE = re.compile(r"(?:public\s+)?class\s+(\w+)")
+_TS_ENTITY_RE = re.compile(r"@Entity\s*\(")
+_TS_CLASS_RE = re.compile(r"(?:export\s+)?class\s+(\w+)")
 
 
 def db_schema(
@@ -4212,15 +4801,22 @@ def db_schema(
     scan_root = _resolve(workspace, path) if path else ws
     if not scan_root.exists():
         return ToolResult(
-            tool_name="db_schema", success=False,
+            tool_name="db_schema",
+            success=False,
             error=f"Path not found: {path or '.'}",
         )
 
     max_results = max(1, min(int(max_results), 200))
 
     source_exts = {
-        ".py", ".java", ".kt", ".scala",
-        ".js", ".ts", ".jsx", ".tsx",
+        ".py",
+        ".java",
+        ".kt",
+        ".scala",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
     }
 
     files_to_scan: List[Path] = []
@@ -4272,7 +4868,9 @@ def db_schema(
 
 
 def _extract_py_orm_models(
-    lines: List[str], rel_path: str, limit: int,
+    lines: List[str],
+    rel_path: str,
+    limit: int,
 ) -> List[Dict]:
     """Extract Python ORM model definitions (SQLAlchemy / Django)."""
     results: List[Dict] = []
@@ -4302,30 +4900,34 @@ def _extract_py_orm_models(
                             table_name = tm.group(1)
 
                     # Check for field definitions
-                    for fp, framework in _FIELD_PATTERNS[:2]:  # sqlalchemy, django only
+                    for fp, _ in _FIELD_PATTERNS[:2]:  # sqlalchemy, django only
                         fm = fp.search(lines[j])
                         if fm:
                             fname = fm.group(1)
                             ftype = fm.group(2)
                             if not fname.startswith("_"):
-                                fields.append({
-                                    "name": fname,
-                                    "type": ftype,
-                                    "line": j + 1,
-                                })
+                                fields.append(
+                                    {
+                                        "name": fname,
+                                        "type": ftype,
+                                        "line": j + 1,
+                                    }
+                                )
                     j += 1
                 elif stripped and not stripped.startswith("#") and not stripped.startswith("@"):
                     break
                 else:
                     j += 1
 
-            results.append({
-                "name": model_name,
-                "table_name": table_name or model_name.lower(),
-                "file": rel_path,
-                "line": class_line,
-                "fields": fields,
-            })
+            results.append(
+                {
+                    "name": model_name,
+                    "table_name": table_name or model_name.lower(),
+                    "file": rel_path,
+                    "line": class_line,
+                    "fields": fields,
+                }
+            )
             i = j
         else:
             i += 1
@@ -4334,7 +4936,9 @@ def _extract_py_orm_models(
 
 
 def _extract_jpa_models(
-    lines: List[str], rel_path: str, limit: int,
+    lines: List[str],
+    rel_path: str,
+    limit: int,
 ) -> List[Dict]:
     """Extract Java/Kotlin JPA entity definitions."""
     results: List[Dict] = []
@@ -4361,7 +4965,6 @@ def _extract_jpa_models(
             if class_name:
                 fields: List[Dict] = []
                 # Scan class body for fields
-                k = j + 1
                 brace_depth = 0
                 for k_line in range(j, len(lines)):
                     brace_depth += lines[k_line].count("{") - lines[k_line].count("}")
@@ -4369,19 +4972,23 @@ def _extract_jpa_models(
                         break
                     fm = _FIELD_PATTERNS[2][0].search(lines[k_line])
                     if fm:
-                        fields.append({
-                            "name": fm.group(2),
-                            "type": fm.group(1),
-                            "line": k_line + 1,
-                        })
+                        fields.append(
+                            {
+                                "name": fm.group(2),
+                                "type": fm.group(1),
+                                "line": k_line + 1,
+                            }
+                        )
 
-                results.append({
-                    "name": class_name,
-                    "table_name": table_name or class_name.lower(),
-                    "file": rel_path,
-                    "line": class_line,
-                    "fields": fields,
-                })
+                results.append(
+                    {
+                        "name": class_name,
+                        "table_name": table_name or class_name.lower(),
+                        "file": rel_path,
+                        "line": class_line,
+                        "fields": fields,
+                    }
+                )
             i = j + 1
         else:
             i += 1
@@ -4390,7 +4997,9 @@ def _extract_jpa_models(
 
 
 def _extract_typeorm_models(
-    lines: List[str], rel_path: str, limit: int,
+    lines: List[str],
+    rel_path: str,
+    limit: int,
 ) -> List[Dict]:
     """Extract TypeORM entity definitions."""
     results: List[Dict] = []
@@ -4407,30 +5016,32 @@ def _extract_typeorm_models(
                     fields: List[Dict] = []
 
                     # Scan body — look for @Column() annotations followed by field
-                    k = j + 1
                     brace_depth = 0
                     for k_line in range(j, len(lines)):
                         brace_depth += lines[k_line].count("{") - lines[k_line].count("}")
                         if brace_depth <= 0 and k_line > j:
                             break
-                        if re.search(r'@Column\s*\(', lines[k_line]):
+                        if re.search(r"@Column\s*\(", lines[k_line]) and k_line + 1 < len(lines):
                             # Next line should have the field
-                            if k_line + 1 < len(lines):
-                                fm = _FIELD_PATTERNS[3][0].search(lines[k_line + 1])
-                                if fm:
-                                    fields.append({
+                            fm = _FIELD_PATTERNS[3][0].search(lines[k_line + 1])
+                            if fm:
+                                fields.append(
+                                    {
                                         "name": fm.group(1),
                                         "type": fm.group(2),
                                         "line": k_line + 2,
-                                    })
+                                    }
+                                )
 
-                    results.append({
-                        "name": class_name,
-                        "table_name": class_name.lower(),
-                        "file": rel_path,
-                        "line": class_line,
-                        "fields": fields,
-                    })
+                    results.append(
+                        {
+                            "name": class_name,
+                            "table_name": class_name.lower(),
+                            "file": rel_path,
+                            "line": class_line,
+                            "fields": fields,
+                        }
+                    )
                     i = k_line + 1
                     break
                 j += 1
@@ -4481,17 +5092,20 @@ TOOL_REGISTRY = {
 # --- Browser tools (Playwright) ---
 try:
     from app.browser.tools import BROWSER_TOOL_REGISTRY
+
     TOOL_REGISTRY.update(BROWSER_TOOL_REGISTRY)
 except ImportError:
     logger.debug("Browser tools unavailable (playwright not installed)")
 
 # --- File editing tools ---
-from .file_edit_tools import FILE_EDIT_TOOL_REGISTRY
+from .file_edit_tools import FILE_EDIT_TOOL_REGISTRY  # noqa: E402
+
 TOOL_REGISTRY.update(FILE_EDIT_TOOL_REGISTRY)
 
 # --- Jira integration tools ---
 try:
     from app.integrations.jira.tools import JIRA_TOOL_REGISTRY
+
     TOOL_REGISTRY.update(JIRA_TOOL_REGISTRY)
 except ImportError:
     logger.debug("Jira tools unavailable")
@@ -4511,12 +5125,12 @@ def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
     #   'end_line": 234</parameter>\n<parameter name="path'
     # with the actual value of 'path' as the dict value for that key.
     # Detect and reconstruct the intended parameters.
-    _XML_FRAG_RE = re.compile(r'</parameter>|<parameter\s')
+    _XML_FRAG_RE = re.compile(r"</parameter>|<parameter\s")
     if any(_XML_FRAG_RE.search(str(k)) for k in params):
         repaired: Dict[str, Any] = {}
         for key, val in params.items():
             key_str = str(key)
-            if '</parameter>' not in key_str and '<parameter' not in key_str:
+            if "</parameter>" not in key_str and "<parameter" not in key_str:
                 # Clean key — keep as-is
                 repaired[key_str] = val
                 continue
@@ -4524,14 +5138,16 @@ def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
             # Typical pattern: '{key1}": {val1}</parameter>\n<parameter name="{key2}'
             # where val is the dict value for key2.
             # Extract the first key (before any quote/colon/closing tag)
-            first_key_m = re.match(r'([a-zA-Z_][a-zA-Z0-9_]*)', key_str)
+            first_key_m = re.match(r"([a-zA-Z_][a-zA-Z0-9_]*)", key_str)
             # Extract embedded value after first key (digits, possibly with quotes)
             embedded_val_m = re.search(
-                r'["\s:]+\s*([^<]+?)\s*</parameter>', key_str,
+                r'["\s:]+\s*([^<]+?)\s*</parameter>',
+                key_str,
             )
             # Extract the last parameter name
             last_key_m = re.search(
-                r'<parameter\s+name=["\']([a-zA-Z_][a-zA-Z0-9_]*)', key_str,
+                r'<parameter\s+name=["\']([a-zA-Z_][a-zA-Z0-9_]*)',
+                key_str,
             )
             if first_key_m and embedded_val_m:
                 fk = first_key_m.group(1)
@@ -4550,7 +5166,9 @@ def _repair_tool_params(tool_name: str, params: Dict[str, Any]) -> Dict[str, Any
         if repaired:
             logger.warning(
                 "Repaired XML-garbled params for %s: %s → %s",
-                tool_name, list(params.keys()), list(repaired.keys()),
+                tool_name,
+                list(params.keys()),
+                list(repaired.keys()),
             )
             params = repaired
 

@@ -1,4 +1,5 @@
 """Tests for the Evidence Evaluator."""
+
 from app.agent_loop.evidence import check_evidence
 
 
@@ -70,7 +71,9 @@ class TestCheckEvidence:
 
     def test_short_answer_always_passes(self):
         """Very short answers (yes/no/one-liner) skip the check."""
-        ev = check_evidence("No, that function doesn't exist.", tool_calls_made=0, files_accessed=0, remaining_iterations=10)
+        ev = check_evidence(
+            "No, that function doesn't exist.", tool_calls_made=0, files_accessed=0, remaining_iterations=10
+        )
         assert ev.passed is True
 
     def test_passes_when_no_budget_remaining(self):

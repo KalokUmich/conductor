@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
-
 
 # ---------------------------------------------------------------------------
 # Enumerations
@@ -15,24 +14,24 @@ from pydantic import BaseModel, Field
 class GitAuthMode(str, Enum):
     """Authentication strategy for git operations."""
 
-    TOKEN = "token"       # Mode A – backend holds a PAT in memory
-    DELEGATE = "delegate" # Mode B – client supplies credentials on demand
+    TOKEN = "token"  # Mode A – backend holds a PAT in memory
+    DELEGATE = "delegate"  # Mode B – client supplies credentials on demand
 
 
 class WorkspaceMode(str, Enum):
     """Whether the workspace is a git worktree or a locally-mounted folder."""
 
-    GIT = "git"      # Backend cloned the repo and created a worktree
+    GIT = "git"  # Backend cloned the repo and created a worktree
     LOCAL = "local"  # Host registered a local filesystem path (read-only for guests)
 
 
 class WorktreeStatus(str, Enum):
     """Lifecycle state of a git worktree."""
 
-    PENDING   = "pending"    # created, but clone/checkout not yet complete
-    READY     = "ready"      # worktree is fully checked out
-    SYNCING   = "syncing"    # an operation (push/pull) is in flight
-    ERROR     = "error"      # last operation failed
+    PENDING = "pending"  # created, but clone/checkout not yet complete
+    READY = "ready"  # worktree is fully checked out
+    SYNCING = "syncing"  # an operation (push/pull) is in flight
+    ERROR = "error"  # last operation failed
     DESTROYED = "destroyed"  # teardown complete, path removed
 
 
@@ -59,16 +58,16 @@ class DelegateAuthRequest(BaseModel):
     """Sent by backend → client when a git operation needs credentials (Mode B)."""
 
     request_id: str = Field(..., description="Opaque ID used to correlate request/response.")
-    repo_url:   str = Field(..., description="Remote URL that triggered the auth challenge.")
-    operation:  str = Field(..., description="git verb, e.g. ‘clone’, ‘fetch’, ‘push’.")
+    repo_url: str = Field(..., description="Remote URL that triggered the auth challenge.")
+    operation: str = Field(..., description="git verb, e.g. ‘clone’, ‘fetch’, ‘push’.")
 
 
 class DelegateAuthResponse(BaseModel):
     """Sent by client → backend in reply to *DelegateAuthRequest* (Mode B)."""
 
     request_id: str
-    token:      str
-    username:   Optional[str] = None
+    token: str
+    username: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -79,9 +78,9 @@ class DelegateAuthResponse(BaseModel):
 class WorkspaceCreateRequest(BaseModel):
     """Payload to create a new git-backed workspace for a room."""
 
-    room_id:     str  = Field(..., description="Unique room identifier.")
-    repo_url:    str  = Field(..., description="Remote git repository URL.")
-    base_branch: str  = Field(default="main", description="Branch to base the worktree on.")
+    room_id: str = Field(..., description="Unique room identifier.")
+    repo_url: str = Field(..., description="Remote git repository URL.")
+    base_branch: str = Field(default="main", description="Branch to base the worktree on.")
     credentials: Optional[CredentialPayload] = Field(
         default=None,
         description="Required when auth_mode=token; omitted for delegate mode.",
@@ -91,40 +90,40 @@ class WorkspaceCreateRequest(BaseModel):
 class CloneProgress(BaseModel):
     """Real-time progress of a git clone operation."""
 
-    phase: str = ""              # "counting", "compressing", "receiving", "resolving"
-    percent: int = 0             # 0–100
-    current: int = 0             # objects / deltas processed so far
-    total: int = 0               # total objects / deltas
-    bytes_received: str = ""     # e.g. "123.45 MiB"
-    throughput: str = ""         # e.g. "5.67 MiB/s"
+    phase: str = ""  # "counting", "compressing", "receiving", "resolving"
+    percent: int = 0  # 0–100
+    current: int = 0  # objects / deltas processed so far
+    total: int = 0  # total objects / deltas
+    bytes_received: str = ""  # e.g. "123.45 MiB"
+    throughput: str = ""  # e.g. "5.67 MiB/s"
 
 
 class WorkspaceInfo(BaseModel):
     """Public state of a workspace, safe to return over the API."""
 
-    room_id:      str
-    repo_url:     str
-    branch:       str
+    room_id: str
+    repo_url: str
+    branch: str
     worktree_path: str
-    status:       WorktreeStatus
-    mode:         WorkspaceMode = WorkspaceMode.GIT
-    created_at:   datetime
-    last_synced:  Optional[datetime] = None
-    error_detail: Optional[str]      = None
+    status: WorktreeStatus
+    mode: WorkspaceMode = WorkspaceMode.GIT
+    created_at: datetime
+    last_synced: Optional[datetime] = None
+    error_detail: Optional[str] = None
     clone_progress: Optional[CloneProgress] = None
 
 
 class WorkspaceSyncRequest(BaseModel):
     """Ask the backend to pull the latest remote changes into the worktree."""
 
-    room_id:   str
-    rebase:    bool = Field(default=False, description="Use rebase instead of merge.")
+    room_id: str
+    rebase: bool = Field(default=False, description="Use rebase instead of merge.")
 
 
 class WorkspaceSyncResult(BaseModel):
-    room_id:   str
-    success:   bool
-    message:   str
+    room_id: str
+    success: bool
+    message: str
     conflicts: List[str] = Field(default_factory=list)
 
 
@@ -133,30 +132,30 @@ class WorkspaceCommitRequest(BaseModel):
 
     room_id: str
     message: str = Field(..., description="Commit message.")
-    author_name:  Optional[str] = None
+    author_name: Optional[str] = None
     author_email: Optional[str] = None
 
 
 class WorkspaceCommitResult(BaseModel):
     room_id: str
     success: bool
-    sha:     Optional[str] = None   # commit SHA on success
+    sha: Optional[str] = None  # commit SHA on success
     message: str
 
 
 class WorkspacePushRequest(BaseModel):
     """Push the worktree branch to the remote."""
 
-    room_id:     str
-    force:       bool = Field(default=False, description="Force-push (use with caution).")
+    room_id: str
+    force: bool = Field(default=False, description="Force-push (use with caution).")
 
 
 class WorkspacePushResult(BaseModel):
-    room_id:     str
-    success:     bool
-    remote_url:  Optional[str] = None
-    pushed_sha:  Optional[str] = None
-    message:     str
+    room_id: str
+    success: bool
+    remote_url: Optional[str] = None
+    pushed_sha: Optional[str] = None
+    message: str
 
 
 class WorkspaceDestroyResult(BaseModel):
@@ -173,18 +172,18 @@ class WorkspaceDestroyResult(BaseModel):
 class FileSyncEvent(BaseModel):
     """Emitted by the backend to all room participants when the worktree changes."""
 
-    event:     str              = "file_sync"
-    room_id:   str
+    event: str = "file_sync"
+    room_id: str
     changeset: List[FileChange]
-    sync_id:   str              = Field(..., description="Monotonically increasing counter.")
+    sync_id: str = Field(..., description="Monotonically increasing counter.")
 
 
 class FileChange(BaseModel):
     """A single file modification within a FileSyncEvent."""
 
-    path:      str
-    operation: str   # "added" | "modified" | "deleted"
-    content:   Optional[str] = None   # None for deletions
+    path: str
+    operation: str  # "added" | "modified" | "deleted"
+    content: Optional[str] = None  # None for deletions
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +211,9 @@ class SetupAndIndexRequest(BaseModel):
     room_id: str = Field(..., description="Unique room identifier.")
     repo_url: str = Field(..., description="Remote git repository URL.")
     source_branch: str = Field(default="main", description="Remote branch to base the worktree on.")
-    working_branch: Optional[str] = Field(default=None, description="Custom branch name. Defaults to session/{room_id}.")
+    working_branch: Optional[str] = Field(
+        default=None, description="Custom branch name. Defaults to session/{room_id}."
+    )
     credentials: Optional[CredentialPayload] = Field(
         default=None,
         description="Required for private repos.",
@@ -235,20 +236,20 @@ class SetupAndIndexResult(BaseModel):
 class LocalWorkspaceRequest(BaseModel):
     """Register a local filesystem path as the workspace for a room."""
 
-    room_id:    str = Field(..., description="Unique room identifier.")
+    room_id: str = Field(..., description="Unique room identifier.")
     local_path: str = Field(..., description="Absolute path on the host machine.")
 
 
 class LocalWorkspaceResult(BaseModel):
     """Result of registering a local workspace."""
 
-    room_id:   str
+    room_id: str
     workspace: WorkspaceInfo
-    message:   str
+    message: str
 
 
 class GitWorkspaceHealth(BaseModel):
-    status:       str   # "ok" | "degraded" | "error"
+    status: str  # "ok" | "degraded" | "error"
     active_rooms: int
-    git_version:  str
-    detail:       Optional[str] = None
+    git_version: str
+    detail: Optional[str] = None

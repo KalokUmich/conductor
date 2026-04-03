@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-04-01
+Last updated: 2026-04-03
 
 ## Current State
 
@@ -1104,6 +1104,96 @@ Interactive companion system in the VS Code extension WebView — a visual masco
 - Claude Code BUDDY system (`reference/claude-code/buddy/`): deterministic gacha, Mulberry32 PRNG, 18 species, 5-stat system, ASCII sprites, speech bubbles
 - Key differences: VS Code WebView allows richer visuals (CSS animations, SVG, canvas) vs terminal ASCII
 
+## Phase 11: Engineering Infrastructure (PLANNED)
+
+Identified 2026-04-03 via architecture audit. Core agent/AI architecture scores 8.6/10 against industry benchmarks (Claude Code, Cursor, Copilot, Devin), but engineering infrastructure lags at 3-6/10. This phase closes that gap.
+
+### 11.1 CI/CD Pipeline (HIGH PRIORITY)
+No automated testing or deployment pipeline exists. Tests require manual `make test` execution.
+
+- [ ] `.github/workflows/test.yml` — run `make test-backend` + `make test-parity` on every PR
+- [ ] Coverage gate: fail PR if coverage drops below 80%
+- [ ] `.github/workflows/build.yml` — build Docker image on merge to main, push to registry
+- [ ] Branch protection: require passing CI + 1 approval before merge
+- [ ] Automated dependency updates (Dependabot or Renovate)
+
+### 11.2 Linting & Formatting (COMPLETE — 2026-04-03)
+Ruff + Black configured and applied to entire backend. All 2218 initial violations resolved: 472 auto-fixed (imports, formatting), 163 manually fixed (raise-from, unused vars, simplifications, real bugs), cosmetic modernization rules (UP006/UP035/UP045) deferred. Zero violations remaining.
+
+- [x] `pyproject.toml` — ruff (linter + isort) + black (formatter) configured
+- [x] `.pre-commit-config.yaml` — hooks for: ruff, ruff-format, black, trailing whitespace, YAML check
+- [x] `make lint` + `make format` + `make lint-check` Makefile targets
+- [x] ESLint safety rules upgraded from "warn" to "error" (`semi`, `curly`, `eqeqeq`, `no-throw-literal`)
+- [x] `ruff` + `black` added to `requirements.txt`
+- [x] All 163 manual violations fixed: B904 (46 raise-from), F841 (44 unused vars), B007/RUF059 (20 loop vars), SIM (25 simplifications), misc (28)
+- [x] 5 real bugs fixed (F821 undefined names in prompts.py + service.py)
+- [x] All 1656 tests passing, `make lint-check` clean
+- [ ] CI: fail on lint errors (depends on 11.1)
+
+### 11.3 Type Checking (MEDIUM PRIORITY)
+Python type annotations exist (~70% coverage) but no enforcement. No mypy configuration.
+
+- [ ] `pyproject.toml` `[tool.mypy]` with `strict = true` (or incremental rollout with `--disallow-untyped-defs`)
+- [ ] Fix existing type errors surfaced by mypy
+- [ ] TypeScript `strict` mode enabled in extension `tsconfig.json`
+- [ ] CI: run mypy + tsc --noEmit as quality gates
+
+### 11.4 Prompt Caching (HIGH PRIORITY)
+Layer 3 (project context, workspace layout, skills) is constant per session but re-transmitted every iteration, wasting ~10-20% tokens.
+
+- [ ] Wrap Layer 3 content in Anthropic API `cache_control` blocks (`{"type": "ephemeral"}`)
+- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Expected impact: 10-20% input token cost reduction on multi-iteration sessions
+- [ ] Extend to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
+
+### 11.5 Observability Expansion (MEDIUM PRIORITY)
+Langfuse `@observe` only covers workflow engine. Agent loop and code review pipeline lack tracing.
+
+- [ ] `@observe` on `AgentLoopService.run_stream()` — trace iterations, tool calls, budget signals
+- [ ] `@observe` on `PRBrainOrchestrator` — trace 6-phase pipeline, per-agent timings
+- [ ] `track_generation()` on every LLM call in agent loop (model name + token usage for cost)
+- [ ] Correlation IDs: pass trace ID through WebSocket → agent loop → tool calls
+- [ ] `/health` endpoint with deep checks (Postgres, Redis, AI provider, Langfuse)
+
+### 11.6 Extension Test Coverage (MEDIUM PRIORITY)
+Backend has 1667 tests across 44 files. Extension has only 3 validation scripts.
+
+- [ ] Unit tests for each tool runner tier: `astToolRunner.test.ts`, `complexToolRunner.test.ts`, `subprocessTools.test.ts`
+- [ ] Unit tests for `localToolDispatcher.ts` routing logic
+- [ ] Unit tests for `conductorStateMachine.ts` FSM transitions
+- [ ] Integration tests for WebSocket chat (mock server)
+- [ ] `npm test` in CI alongside backend tests
+
+### 11.7 Deployment Maturity (LOWER PRIORITY)
+Docker Compose exists for local dev. No production deployment story.
+
+- [ ] `docker-compose.prod.yaml` with resource limits, health checks, restart policies
+- [ ] Multi-stage Dockerfile with BuildKit caching (reduce image size)
+- [ ] `docs/DEPLOYMENT.md` — production setup guide (Docker Compose, ECS, K8s)
+- [ ] Helm chart or Kustomize base for Kubernetes deployment
+- [ ] Version tagging strategy (semver) + CHANGELOG.md
+- [ ] Secret management documentation (rotation, vault integration)
+
+### 11.8 Custom Error Handling (LOWER PRIORITY)
+All exceptions are built-in or Pydantic. No retry logic for transient failures.
+
+- [ ] `app/exceptions.py` — custom exceptions: `WorkspaceNotFoundError`, `GitOperationError`, `AIProviderError`, `BudgetExhaustedError`
+- [ ] Retry decorator for transient failures (Bedrock throttling, Postgres connection drops)
+- [ ] Exponential backoff for external API calls (Jira, AI providers)
+- [ ] Error categorization in Langfuse traces (transient vs permanent)
+
+### Dependency Graph
+```
+11.1 (CI/CD) ──────────────────> foundation for all others
+11.2 (Linting) ────────────────> standalone, enforced by 11.1
+11.3 (Type Checking) ──────────> standalone, enforced by 11.1
+11.4 (Prompt Caching) ─────────> standalone, measured by 11.5
+11.5 (Observability) ──────────> standalone
+11.6 (Extension Tests) ────────> enforced by 11.1
+11.7 (Deployment) ─────────────> benefits from 11.1 (image build)
+11.8 (Error Handling) ─────────> measured by 11.5
+```
+
 ## Milestone Summary
 
 | Milestone | Status | Completed |
@@ -1125,6 +1215,7 @@ Interactive companion system in the VS Code extension WebView — a visual masco
 | Phase 8: Infrastructure & UI Hardening | ✅ Complete | Sprint 12 |
 | Phase 9: Claude Code Pattern Adoption | 🟢 In Progress | Sprint 13+ |
 | Phase 10: Companion & Developer Experience | 🟡 Planned | Sprint 14+ |
+| Phase 11: Engineering Infrastructure | 🟡 Planned | Sprint 13+ |
 
 ## Architecture Decision Log
 

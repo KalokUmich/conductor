@@ -10,18 +10,14 @@ fallback).
 
 Total: 72 tests
 """
+
 from __future__ import annotations
 
 import sys
-import types
-import os
 import textwrap
-import pytest
-import numpy as np
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+import types
 from collections import defaultdict
-
+from unittest.mock import MagicMock
 
 # ---------------------------------------------------------------------------
 # Stubs for heavy deps
@@ -113,24 +109,23 @@ _stub("sqlite_vec")
 # Real imports
 # ---------------------------------------------------------------------------
 
-from app.repo_graph.parser import (  # noqa: E402
-    SymbolDef,
-    SymbolRef,
-    FileSymbols,
-    detect_language,
-    extract_definitions,
-    extract_references,
-    _extract_with_regex,
-)
-from app.repo_graph.graph import (  # noqa: E402
+from app.repo_graph.graph import (
+    DependencyGraph,
     FileNode,
     GraphEdge,
-    DependencyGraph,
     build_dependency_graph,
     rank_files,
 )
-from app.repo_graph.service import RepoMapService  # noqa: E402
-
+from app.repo_graph.parser import (
+    FileSymbols,
+    SymbolDef,
+    SymbolRef,
+    _extract_with_regex,
+    detect_language,
+    extract_definitions,
+    extract_references,
+)
+from app.repo_graph.service import RepoMapService
 
 # ===================================================================
 # Parser tests
@@ -322,9 +317,7 @@ class TestBuildDependencyGraph:
 
     def test_two_files_with_reference(self, tmp_path):
         (tmp_path / "utils.py").write_text("def helper():\n    pass\n")
-        (tmp_path / "main.py").write_text(
-            "from utils import helper\ndef main():\n    helper()\n"
-        )
+        (tmp_path / "main.py").write_text("from utils import helper\ndef main():\n    helper()\n")
         graph = build_dependency_graph(str(tmp_path))
         assert graph.stats["total_files"] == 2
 

@@ -4,6 +4,7 @@ Assigns a final score to each finding based on severity, confidence,
 evidence quality, and proximity to core business logic. Then sorts
 findings by score to present the most important issues first.
 """
+
 from __future__ import annotations
 
 from typing import List
@@ -82,9 +83,12 @@ def score_and_rank(
         scored.append((final_score, f))
 
     # Sort: praise last, then by score descending
-    scored.sort(key=lambda pair: (
-        0 if pair[1].severity == Severity.PRAISE else 1,
-        pair[0],
-    ), reverse=True)
+    scored.sort(
+        key=lambda pair: (
+            0 if pair[1].severity == Severity.PRAISE else 1,
+            pair[0],
+        ),
+        reverse=True,
+    )
 
     return [f for _, f in scored]

@@ -2,16 +2,14 @@
 
 Uses mocked Playwright objects to avoid needing a real browser.
 """
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, PropertyMock
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from app.code_tools.schemas import (
     TOOL_DEFINITIONS,
     TOOL_PARAM_MODELS,
-    ToolResult,
     WebClickParams,
     WebExtractParams,
     WebFillParams,
@@ -19,7 +17,6 @@ from app.code_tools.schemas import (
     WebScreenshotParams,
     WebSearchParams,
 )
-
 
 # ---------------------------------------------------------------------------
 # Schema tests
@@ -159,8 +156,7 @@ class TestWebSearch:
 
         page = _make_mock_page()
         page.eval_on_selector_all.return_value = [
-            {"title": f"Result {i}", "url": f"https://example.com/{i}", "snippet": f"Snippet {i}"}
-            for i in range(15)
+            {"title": f"Result {i}", "url": f"https://example.com/{i}", "snippet": f"Snippet {i}"} for i in range(15)
         ]
         mock_get_service.return_value = _make_mock_service(page)
 
@@ -181,7 +177,6 @@ class TestWebSearch:
         result = web_search(workspace="/tmp/ws", query="test")
         assert result.success is False
         assert "Browser crashed" in result.error
-
 
 
 class TestWebNavigate:
@@ -451,5 +446,3 @@ class TestBrowserToolRegistry:
 # ---------------------------------------------------------------------------
 # Query classifier integration
 # ---------------------------------------------------------------------------
-
-

@@ -26,6 +26,9 @@ make run-backend    # start backend (dev mode, auto-reload)
 make test           # run all tests (backend + extension)
 make package        # compile and package extension as .vsix
 make test-parity    # validate Python↔TS tool parity
+make lint           # lint backend Python (ruff, auto-fix)
+make format         # format backend Python (black + ruff format)
+make lint-check     # lint + format check (CI mode, no changes)
 make langfuse-up    # start self-hosted Langfuse (port 3001)
 make update-prompt-library   # download latest prompts.chat CSV (agent design reference)
 ```
@@ -86,6 +89,18 @@ LANGFUSE_PUBLIC_KEY=...               # Observability
 LANGFUSE_SECRET_KEY=...
 ```
 See `docs/GUIDE.md` §21.7 for the full variable reference.
+
+## Code Quality
+
+Backend Python code is enforced by **ruff** (linter + isort) and **black** (formatter), configured in `pyproject.toml`.
+
+- `make lint` — auto-fix lint issues
+- `make format` — auto-format with black + ruff
+- `make lint-check` — CI mode (no changes, exits non-zero on violation)
+- All new code must pass `make lint-check` before commit
+- Pre-commit hooks available: `pip install pre-commit && pre-commit install`
+
+Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `curly`, `eqeqeq`, `no-throw-literal`) set to `error`.
 
 ## Testing Notes
 

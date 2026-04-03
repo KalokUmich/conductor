@@ -6,6 +6,7 @@ Checked after each LLM call to signal convergence or forced conclusion.
 Reference: "How Do Coding Agents Spend Your Money?" (ICLR 2026)
 https://openreview.net/forum?id=1bUeVB3fov
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -21,11 +22,11 @@ class BudgetSignal(Enum):
 
 @dataclass
 class BudgetConfig:
-    max_input_tokens: int = 1_000_000     # Total input token budget per session
-    warning_threshold: float = 0.7        # 70% — inject warning into prompt
-    critical_threshold: float = 0.9       # 90% — force conclusion
-    max_iterations: int = 50              # Hard iteration cap
-    diminishing_returns_window: int = 3   # N iterations with no new info
+    max_input_tokens: int = 1_000_000  # Total input token budget per session
+    warning_threshold: float = 0.7  # 70% — inject warning into prompt
+    critical_threshold: float = 0.9  # 90% — force conclusion
+    max_iterations: int = 50  # Hard iteration cap
+    diminishing_returns_window: int = 3  # N iterations with no new info
 
 
 @dataclass
@@ -107,10 +108,7 @@ class BudgetController:
         if len(self.iteration_history) < window:
             return False
         recent = self.iteration_history[-window:]
-        return all(
-            m.new_files_accessed == 0 and m.new_symbols_found == 0
-            for m in recent
-        )
+        return all(m.new_files_accessed == 0 and m.new_symbols_found == 0 for m in recent)
 
     @property
     def budget_context(self) -> str:

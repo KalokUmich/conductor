@@ -15,9 +15,9 @@ Run with:
     make integration-test                          # via Makefile
     pytest tests/test_agent_loop_integration.py -v -s -m integration --timeout=180
 """
+
 from __future__ import annotations
 
-import os
 import textwrap
 import time
 from dataclasses import dataclass, field
@@ -27,10 +27,9 @@ from typing import Dict, List, Optional
 import pytest
 import yaml
 
-from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
 from app.agent_loop.service import AgentLoopService, AgentResult
+from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
 from app.code_tools.tools import invalidate_graph_cache
-
 
 # ---------------------------------------------------------------------------
 # Helpers & multi-model support
@@ -89,6 +88,7 @@ _skip_no_creds = pytest.mark.skipif(
 @dataclass
 class ModelRunResult:
     """Stores the result of a single model run for comparison."""
+
     model_name: str
     model_id: str
     answer: str = ""
@@ -108,8 +108,7 @@ def _print_comparison(results: List[ModelRunResult]) -> None:
     for r in results:
         status = "✅ PASS" if not r.failed_checks else "❌ FAIL"
         print(f"\n--- {r.model_name} ({r.model_id}) --- {status}")
-        print(f"    Iterations: {r.iterations}  |  Tool calls: {r.tool_calls}  |  "
-              f"Duration: {r.duration_ms:.0f}ms")
+        print(f"    Iterations: {r.iterations}  |  Tool calls: {r.tool_calls}  |  Duration: {r.duration_ms:.0f}ms")
         if r.failed_checks:
             print(f"    ❌ Failed: {', '.join(r.failed_checks)}")
         if r.passed_checks:
@@ -136,7 +135,10 @@ def _build_noise_files(root: Path) -> None:
     """Add 40+ noise/decoy files to make the repo realistic and hard to navigate."""
 
     # ---- Config & CI noise ----
-    _write_file(root, "Makefile", """\
+    _write_file(
+        root,
+        "Makefile",
+        """\
         .PHONY: build test lint deploy
         build:
         \t@echo "Building..."
@@ -146,16 +148,24 @@ def _build_noise_files(root: Path) -> None:
         \truff check .
         deploy:
         \t./scripts/deploy.sh
-    """)
-    _write_file(root, "Dockerfile", """\
+    """,
+    )
+    _write_file(
+        root,
+        "Dockerfile",
+        """\
         FROM python:3.12-slim
         WORKDIR /app
         COPY requirements.txt .
         RUN pip install -r requirements.txt
         COPY . .
         CMD ["uvicorn", "main:app", "--host", "0.0.0.0"]
-    """)
-    _write_file(root, "docker-compose.yml", """\
+    """,
+    )
+    _write_file(
+        root,
+        "docker-compose.yml",
+        """\
         version: "3.8"
         services:
           app:
@@ -168,8 +178,12 @@ def _build_noise_files(root: Path) -> None:
               POSTGRES_DB: loanapp
           redis:
             image: redis:7
-    """)
-    _write_file(root, "requirements.txt", """\
+    """,
+    )
+    _write_file(
+        root,
+        "requirements.txt",
+        """\
         fastapi==0.104.1
         uvicorn==0.24.0
         sqlalchemy==2.0.23
@@ -178,8 +192,12 @@ def _build_noise_files(root: Path) -> None:
         celery==5.3.6
         boto3==1.29.4
         httpx==0.25.2
-    """)
-    _write_file(root, ".github/workflows/ci.yml", """\
+    """,
+    )
+    _write_file(
+        root,
+        ".github/workflows/ci.yml",
+        """\
         name: CI
         on: [push, pull_request]
         jobs:
@@ -189,9 +207,13 @@ def _build_noise_files(root: Path) -> None:
               - uses: actions/checkout@v4
               - run: pip install -r requirements.txt
               - run: pytest tests/ -v
-    """)
+    """,
+    )
     _write_file(root, "config/__init__.py", "")
-    _write_file(root, "config/settings.py", """\
+    _write_file(
+        root,
+        "config/settings.py",
+        """\
         \"\"\"Application settings loaded from environment.\"\"\"
         import os
 
@@ -203,8 +225,12 @@ def _build_noise_files(root: Path) -> None:
         MAX_LOAN_AMOUNT = 500000
         MIN_CREDIT_SCORE = 500
         REVIEW_TIMEOUT_HOURS = 48
-    """)
-    _write_file(root, "config/database.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "config/database.py",
+        """\
         \"\"\"Database connection and session management.\"\"\"
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
@@ -219,11 +245,15 @@ def _build_noise_files(root: Path) -> None:
                 yield db
             finally:
                 db.close()
-    """)
+    """,
+    )
 
     # ---- DB models (decoys — mention "steps" and "status" a lot) ----
     _write_file(root, "models/__init__.py", "")
-    _write_file(root, "models/application.py", """\
+    _write_file(
+        root,
+        "models/application.py",
+        """\
         \"\"\"Loan application database model.\"\"\"
         from sqlalchemy import Column, Integer, String, DateTime, Enum
         from sqlalchemy.orm import declarative_base
@@ -239,8 +269,12 @@ def _build_noise_files(root: Path) -> None:
             current_step = Column(String, default="submitted")  # DECOY: not the journey steps
             created_at = Column(DateTime)
             updated_at = Column(DateTime)
-    """)
-    _write_file(root, "models/user.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "models/user.py",
+        """\
         \"\"\"User and applicant models.\"\"\"
         from sqlalchemy import Column, Integer, String, Boolean
         from models.application import Base
@@ -260,8 +294,12 @@ def _build_noise_files(root: Path) -> None:
             last_name = Column(String)
             ssn_hash = Column(String)
             credit_score = Column(Integer)
-    """)
-    _write_file(root, "models/document.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "models/document.py",
+        """\
         \"\"\"Document metadata model.\"\"\"
         from sqlalchemy import Column, Integer, String, DateTime
         from models.application import Base
@@ -274,11 +312,15 @@ def _build_noise_files(root: Path) -> None:
             file_path = Column(String)
             status = Column(String, default="pending")  # pending, verified, rejected
             uploaded_at = Column(DateTime)
-    """)
+    """,
+    )
 
     # ---- Auth service (unrelated) ----
     _write_file(root, "services/auth/__init__.py", "")
-    _write_file(root, "services/auth/service.py", """\
+    _write_file(
+        root,
+        "services/auth/service.py",
+        """\
         \"\"\"Authentication and authorization service.\"\"\"
         import hashlib
         from models.user import User
@@ -295,8 +337,12 @@ def _build_noise_files(root: Path) -> None:
             def verify_token(self, token: str) -> dict:
                 \"\"\"Verify and decode a JWT token.\"\"\"
                 pass
-    """)
-    _write_file(root, "services/auth/middleware.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "services/auth/middleware.py",
+        """\
         \"\"\"Authentication middleware for FastAPI.\"\"\"
 
         class AuthMiddleware:
@@ -305,11 +351,15 @@ def _build_noise_files(root: Path) -> None:
                 if not token:
                     return {"error": "Unauthorized"}
                 return await call_next(request)
-    """)
+    """,
+    )
 
     # ---- Cache service (unrelated) ----
     _write_file(root, "services/cache/__init__.py", "")
-    _write_file(root, "services/cache/redis_client.py", """\
+    _write_file(
+        root,
+        "services/cache/redis_client.py",
+        """\
         \"\"\"Redis cache client for application data.\"\"\"
         import redis
         from config.settings import REDIS_URL
@@ -329,11 +379,15 @@ def _build_noise_files(root: Path) -> None:
                 self.client.delete(f"app:{app_id}")
                 self.client.delete(f"app:{app_id}:status")
                 self.client.delete(f"app:{app_id}:score")
-    """)
+    """,
+    )
 
     # ---- Notifications service (uses word "flow" — decoy!) ----
     _write_file(root, "services/notifications/__init__.py", "")
-    _write_file(root, "services/notifications/flow.py", """\
+    _write_file(
+        root,
+        "services/notifications/flow.py",
+        """\
         \"\"\"Notification flow engine.
 
         This manages the NOTIFICATION flow — which notifications to send and when.
@@ -362,8 +416,12 @@ def _build_noise_files(root: Path) -> None:
 
             def _send_email(self, template: str, app_id: str):
                 pass
-    """)
-    _write_file(root, "services/notifications/templates.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "services/notifications/templates.py",
+        """\
         \"\"\"Email templates for notifications.\"\"\"
 
         TEMPLATES = {
@@ -374,11 +432,15 @@ def _build_noise_files(root: Path) -> None:
             "rejection_notification": "We regret to inform you that your application was not approved.",
             "disbursement_confirmation": "Funds have been transferred. Transaction ID: {tx_id}.",
         }
-    """)
+    """,
+    )
 
     # ---- Reporting service (unrelated) ----
     _write_file(root, "services/reporting/__init__.py", "")
-    _write_file(root, "services/reporting/dashboard.py", """\
+    _write_file(
+        root,
+        "services/reporting/dashboard.py",
+        """\
         \"\"\"Dashboard reporting service for management.\"\"\"
 
         class DashboardService:
@@ -390,11 +452,15 @@ def _build_noise_files(root: Path) -> None:
                 \"\"\"Performance metrics per journey step — avg time, failure rate.\"\"\"
                 # NOTE: This queries step metrics, but does NOT define the steps themselves.
                 return {}
-    """)
+    """,
+    )
 
     # ---- Audit service (unrelated) ----
     _write_file(root, "services/audit/__init__.py", "")
-    _write_file(root, "services/audit/logger.py", """\
+    _write_file(
+        root,
+        "services/audit/logger.py",
+        """\
         \"\"\"Audit logging for compliance.\"\"\"
         import json
         from datetime import datetime
@@ -410,11 +476,15 @@ def _build_noise_files(root: Path) -> None:
                 }
                 # In production: write to audit DB / S3
                 print(json.dumps(entry))
-    """)
+    """,
+    )
 
     # ---- LEGACY: deprecated old journey (BIG DECOY) ----
     _write_file(root, "services/legacy/__init__.py", "")
-    _write_file(root, "services/legacy/journey_v1.py", """\
+    _write_file(
+        root,
+        "services/legacy/journey_v1.py",
+        """\
         \"\"\"DEPRECATED: Old 3-step journey from v1.0.
 
         This was the original loan journey before the v2.0 rewrite.
@@ -432,8 +502,12 @@ def _build_noise_files(root: Path) -> None:
             \"\"\"DEPRECATED: v1.0 journey runner.\"\"\"
             def run(self, application_id: str):
                 raise NotImplementedError("Use LoanJourneyOrchestrator instead")
-    """)
-    _write_file(root, "services/legacy/old_workflow.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "services/legacy/old_workflow.py",
+        """\
         \"\"\"DEPRECATED: Old workflow utilities from the initial prototype.\"\"\"
 
         def execute_workflow(steps: list, context: dict) -> dict:
@@ -442,11 +516,15 @@ def _build_noise_files(root: Path) -> None:
             for step in steps:
                 results[step] = {"status": "completed"}
             return results
-    """)
+    """,
+    )
 
     # ---- DECOY: utils/steps.py (mentions "steps" but is about config steps) ----
     _write_file(root, "utils/__init__.py", "")
-    _write_file(root, "utils/steps.py", """\
+    _write_file(
+        root,
+        "utils/steps.py",
+        """\
         \"\"\"Configuration deployment steps utility.
 
         This module handles the DEPLOYMENT steps for configuration updates,
@@ -466,8 +544,12 @@ def _build_noise_files(root: Path) -> None:
             for step in DEPLOYMENT_STEPS:
                 print(f"Running deployment step: {step}")
             return True
-    """)
-    _write_file(root, "utils/helpers.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "utils/helpers.py",
+        """\
         \"\"\"Miscellaneous utility functions.\"\"\"
         import hashlib
         import uuid
@@ -483,8 +565,12 @@ def _build_noise_files(root: Path) -> None:
 
         def validate_email(email: str) -> bool:
             return "@" in email and "." in email.split("@")[1]
-    """)
-    _write_file(root, "utils/validators.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "utils/validators.py",
+        """\
         \"\"\"Input validation utilities.\"\"\"
 
         def validate_loan_amount(amount: int) -> bool:
@@ -499,12 +585,16 @@ def _build_noise_files(root: Path) -> None:
             if data.get("amount") and not validate_loan_amount(data["amount"]):
                 errors.append("amount must be between 1,000 and 500,000")
             return errors
-    """)
+    """,
+    )
 
     # ---- Deep nesting: infrastructure ----
     _write_file(root, "infrastructure/__init__.py", "")
     _write_file(root, "infrastructure/db/__init__.py", "")
-    _write_file(root, "infrastructure/db/migrations/001_create_tables.py", """\
+    _write_file(
+        root,
+        "infrastructure/db/migrations/001_create_tables.py",
+        """\
         \"\"\"Migration 001: Create initial tables.\"\"\"
 
         def upgrade(conn):
@@ -521,8 +611,12 @@ def _build_noise_files(root: Path) -> None:
 
         def downgrade(conn):
             conn.execute("DROP TABLE IF EXISTS applications;")
-    """)
-    _write_file(root, "infrastructure/db/migrations/002_add_documents.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "infrastructure/db/migrations/002_add_documents.py",
+        """\
         \"\"\"Migration 002: Add documents table.\"\"\"
 
         def upgrade(conn):
@@ -538,9 +632,13 @@ def _build_noise_files(root: Path) -> None:
 
         def downgrade(conn):
             conn.execute("DROP TABLE IF EXISTS documents;")
-    """)
+    """,
+    )
     _write_file(root, "infrastructure/messaging/__init__.py", "")
-    _write_file(root, "infrastructure/messaging/events.py", """\
+    _write_file(
+        root,
+        "infrastructure/messaging/events.py",
+        """\
         \"\"\"Event definitions for the message bus.\"\"\"
 
         class ApplicationEvent:
@@ -556,8 +654,12 @@ def _build_noise_files(root: Path) -> None:
         SCORING_COMPLETED = "scoring.completed"
         REVIEW_COMPLETED = "review.completed"
         LOAN_DISBURSED = "loan.disbursed"
-    """)
-    _write_file(root, "infrastructure/messaging/broker.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "infrastructure/messaging/broker.py",
+        """\
         \"\"\"Message broker for async event processing.\"\"\"
 
         class MessageBroker:
@@ -570,11 +672,15 @@ def _build_noise_files(root: Path) -> None:
             def publish(self, event):
                 for handler in self._handlers.get(event.event_type, []):
                     handler(event)
-    """)
+    """,
+    )
 
     # ---- API routes (decoy entry points) ----
     _write_file(root, "api/__init__.py", "")
-    _write_file(root, "api/routes.py", """\
+    _write_file(
+        root,
+        "api/routes.py",
+        """\
         \"\"\"FastAPI route definitions.\"\"\"
 
         from fastapi import APIRouter, Depends
@@ -601,8 +707,12 @@ def _build_noise_files(root: Path) -> None:
         async def get_journey_status(app_id: str):
             \"\"\"Get current journey progress.\"\"\"
             pass
-    """)
-    _write_file(root, "api/admin_routes.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "api/admin_routes.py",
+        """\
         \"\"\"Admin API routes.\"\"\"
         from fastapi import APIRouter
 
@@ -615,19 +725,27 @@ def _build_noise_files(root: Path) -> None:
         @admin_router.get("/applications/pending-review")
         async def pending_reviews():
             return []
-    """)
-    _write_file(root, "main.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "main.py",
+        """\
         \"\"\"Application entry point.\"\"\"
         from fastapi import FastAPI
         from api.routes import router
 
         app = FastAPI(title="Loan Application System")
         app.include_router(router, prefix="/api")
-    """)
+    """,
+    )
 
     # ---- Tests (realistic test files) ----
     _write_file(root, "tests/__init__.py", "")
-    _write_file(root, "tests/test_auth.py", """\
+    _write_file(
+        root,
+        "tests/test_auth.py",
+        """\
         \"\"\"Tests for authentication service.\"\"\"
         import pytest
         from services.auth.service import AuthService
@@ -641,8 +759,12 @@ def _build_noise_files(root: Path) -> None:
                 pass
             def test_verify_token(self):
                 pass
-    """)
-    _write_file(root, "tests/test_scoring.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "tests/test_scoring.py",
+        """\
         \"\"\"Tests for credit scoring engine.\"\"\"
         import pytest
 
@@ -653,8 +775,12 @@ def _build_noise_files(root: Path) -> None:
                 pass
             def test_score_no_history(self):
                 pass
-    """)
-    _write_file(root, "tests/test_journey.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "tests/test_journey.py",
+        """\
         \"\"\"Tests for the loan journey orchestrator.\"\"\"
         import pytest
 
@@ -669,8 +795,12 @@ def _build_noise_files(root: Path) -> None:
                 pass
             def test_manual_review_rejection(self):
                 pass
-    """)
-    _write_file(root, "tests/conftest.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "tests/conftest.py",
+        """\
         \"\"\"Shared test fixtures.\"\"\"
         import pytest
 
@@ -681,10 +811,14 @@ def _build_noise_files(root: Path) -> None:
                 "amount": 50000,
                 "email": "john@example.com",
             }
-    """)
+    """,
+    )
 
     # ---- Marketing doc (mentions "customer journey" but is not code!) ----
-    _write_file(root, "docs/customer_journey.md", """\
+    _write_file(
+        root,
+        "docs/customer_journey.md",
+        """\
         # Customer Journey Map
 
         This document describes the CUSTOMER EXPERIENCE journey — the steps
@@ -699,8 +833,12 @@ def _build_noise_files(root: Path) -> None:
 
         > Note: For the technical implementation steps, see the codebase
         > under `services/journey/`.
-    """)
-    _write_file(root, "docs/api_reference.md", """\
+    """,
+    )
+    _write_file(
+        root,
+        "docs/api_reference.md",
+        """\
         # API Reference
 
         ## POST /api/applications
@@ -711,15 +849,23 @@ def _build_noise_files(root: Path) -> None:
 
         ## POST /api/applications/{id}/start
         Start processing the loan application through the journey pipeline.
-    """)
+    """,
+    )
 
     # ---- Scripts (noise) ----
-    _write_file(root, "scripts/deploy.sh", """\
+    _write_file(
+        root,
+        "scripts/deploy.sh",
+        """\
         #!/bin/bash
         echo "Deploying application..."
         docker-compose up -d
-    """)
-    _write_file(root, "scripts/seed_data.py", """\
+    """,
+    )
+    _write_file(
+        root,
+        "scripts/seed_data.py",
+        """\
         \"\"\"Seed the database with test data.\"\"\"
 
         def seed():
@@ -729,14 +875,18 @@ def _build_noise_files(root: Path) -> None:
             ]
             for app in applications:
                 print(f"Seeding application: {app}")
-    """)
+    """,
+    )
 
 
 def _build_core_journey_files(root: Path) -> None:
     """Build the actual journey orchestration files (the signal in the noise)."""
 
     # README — intentionally brief, does NOT list all steps explicitly
-    _write_file(root, "README.md", """\
+    _write_file(
+        root,
+        "README.md",
+        """\
         # Loan Application System
 
         A microservices-based loan origination platform.
@@ -753,13 +903,17 @@ def _build_core_journey_files(root: Path) -> None:
         entry point is `main.py` which registers API routes.
 
         For deployment, see `scripts/deploy.sh` and the CI pipeline in `.github/`.
-    """)
+    """,
+    )
 
     # Journey orchestrator — THE key file (buried among 8+ service dirs)
     journey_dir = root / "services" / "journey"
     journey_dir.mkdir(parents=True, exist_ok=True)
     _write_file(root, "services/journey/__init__.py", "")
-    _write_file(root, "services/journey/orchestrator.py", """\
+    _write_file(
+        root,
+        "services/journey/orchestrator.py",
+        """\
         \"\"\"Loan application journey orchestrator.
 
         Defines the complete sequence of steps a loan application goes through.
@@ -852,56 +1006,77 @@ def _build_core_journey_files(root: Path) -> None:
                 tx = disburse_funds(self.application_id)
                 self.completed_steps.append("fund_disbursement")
                 return {"step": "fund_disbursement", "transaction": tx}
-    """)
+    """,
+    )
 
     # Review sub-module (in journey/)
-    _write_file(root, "services/journey/review.py", """\
+    _write_file(
+        root,
+        "services/journey/review.py",
+        """\
         \"\"\"Manual review step for loan applications.\"\"\"
 
         def manual_review(application_id: str) -> bool:
             \"\"\"Send application to human reviewer queue. Returns approval decision.\"\"\"
             return True
-    """)
+    """,
+    )
 
     # KYC service
     _write_file(root, "services/kyc/__init__.py", "")
-    _write_file(root, "services/kyc/verifier.py", """\
+    _write_file(
+        root,
+        "services/kyc/verifier.py",
+        """\
         \"\"\"KYC identity verification service.\"\"\"
 
         def verify_identity(application_id: str) -> bool:
             \"\"\"Verify applicant identity against government databases.\"\"\"
             return True
-    """)
+    """,
+    )
 
     # Scoring service
     _write_file(root, "services/scoring/__init__.py", "")
-    _write_file(root, "services/scoring/engine.py", """\
+    _write_file(
+        root,
+        "services/scoring/engine.py",
+        """\
         \"\"\"Credit scoring engine.\"\"\"
 
         def calculate_credit_score(application_id: str) -> int:
             \"\"\"Calculate credit score from financial history. Range: 300-850.\"\"\"
             return 720
-    """)
+    """,
+    )
 
     # Documents service
     _write_file(root, "services/documents/__init__.py", "")
-    _write_file(root, "services/documents/collector.py", """\
+    _write_file(
+        root,
+        "services/documents/collector.py",
+        """\
         \"\"\"Document collection and validation.\"\"\"
 
         def collect_documents(application_id: str) -> list:
             \"\"\"Collect required documents: ID, income proof, address proof.\"\"\"
             return ["id_document", "income_proof", "address_proof"]
-    """)
+    """,
+    )
 
     # Disbursement service
     _write_file(root, "services/disbursement/__init__.py", "")
-    _write_file(root, "services/disbursement/processor.py", """\
+    _write_file(
+        root,
+        "services/disbursement/processor.py",
+        """\
         \"\"\"Fund disbursement processor.\"\"\"
 
         def disburse_funds(application_id: str) -> dict:
             \"\"\"Transfer approved loan amount to applicant's bank account.\"\"\"
             return {"transaction_id": "TX-12345", "status": "completed"}
-    """)
+    """,
+    )
 
 
 @pytest.fixture()
@@ -916,8 +1091,6 @@ def loan_journey_repo(tmp_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Unit tests for query classification helper
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -961,8 +1134,7 @@ async def _run_agent(
     model_name = {v: k for k, v in _COMPARE_MODELS.items()}.get(model_id, model_id)
     provider = _make_provider(model_id=model_id)
     if provider is None:
-        return ModelRunResult(model_name=model_name, model_id=model_id,
-                              error="No credentials")
+        return ModelRunResult(model_name=model_name, model_id=model_id, error="No credentials")
 
     agent = AgentLoopService(provider=provider, max_iterations=max_iterations)
     t0 = time.monotonic()
@@ -1003,11 +1175,11 @@ class TestHighLevelQueryIntegration:
             str(loan_journey_repo),
         )
         answer = r.answer.lower()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[{r.model_name}] {r.iterations} iters, {r.tool_calls} calls, {r.duration_ms:.0f}ms")
-        print(f"{'='*60}\n{r.answer}\n{'='*60}\n")
+        print(f"{'=' * 60}\n{r.answer}\n{'=' * 60}\n")
 
-        passed, failed = _check_journey_answer(answer)
+        _, failed = _check_journey_answer(answer)
         assert not failed, f"Failed checks: {failed}"
         assert r.iterations <= 10, f"Too many iterations: {r.iterations}"
         assert r.error is None, f"Agent error: {r.error}"
@@ -1021,9 +1193,9 @@ class TestHighLevelQueryIntegration:
             str(loan_journey_repo),
         )
         answer = r.answer.lower()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[{r.model_name}] {r.iterations} iters, {r.tool_calls} calls, {r.duration_ms:.0f}ms")
-        print(f"{'='*60}\n{r.answer}\n{'='*60}\n")
+        print(f"{'=' * 60}\n{r.answer}\n{'=' * 60}\n")
 
         assert "journey" in answer, "Missing journey module"
         assert "kyc" in answer or "identity" in answer, "Missing KYC module"
@@ -1042,11 +1214,11 @@ class TestHighLevelQueryIntegration:
             str(loan_journey_repo),
         )
         answer = r.answer.lower()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[VAGUE QUERY] {r.iterations} iters, {r.tool_calls} calls")
-        print(f"{'='*60}\n{r.answer}\n{'='*60}\n")
+        print(f"{'=' * 60}\n{r.answer}\n{'=' * 60}\n")
 
-        passed, failed = _check_journey_answer(answer)
+        _, failed = _check_journey_answer(answer)
         # Allow at most 1 missing step for vague queries
         assert len(failed) <= 1, f"Too many failed checks for vague query: {failed}"
         assert r.iterations <= 12, f"Too many iterations: {r.iterations}"
@@ -1060,9 +1232,9 @@ class TestHighLevelQueryIntegration:
             str(loan_journey_repo),
         )
         answer = r.answer.lower()
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[DECOY RESISTANCE] {r.iterations} iters, {r.tool_calls} calls")
-        print(f"{'='*60}\n{r.answer}\n{'='*60}\n")
+        print(f"{'=' * 60}\n{r.answer}\n{'=' * 60}\n")
 
         # Should NOT mention legacy 3-step journey
         assert "basic_check" not in answer, "Answer includes deprecated legacy step"
@@ -1070,7 +1242,7 @@ class TestHighLevelQueryIntegration:
         # Should NOT include notification flow steps
         assert "welcome_email" not in answer, "Answer includes notification flow step"
         # Should mention the real 5 steps
-        passed, failed = _check_journey_answer(answer)
+        _, failed = _check_journey_answer(answer)
         assert not failed, f"Failed checks: {failed}"
 
 
@@ -1102,9 +1274,7 @@ class TestMultiModelComparison:
 
         # Both models should pass all checks
         for r in results:
-            assert not r.failed_checks, (
-                f"{r.model_name} failed: {r.failed_checks}"
-            )
+            assert not r.failed_checks, f"{r.model_name} failed: {r.failed_checks}"
 
     @pytest.mark.asyncio
     async def test_compare_vague_query(self, loan_journey_repo: Path):
@@ -1124,6 +1294,4 @@ class TestMultiModelComparison:
 
         # Both models: allow at most 1 missed check
         for r in results:
-            assert len(r.failed_checks) <= 1, (
-                f"{r.model_name} failed too many checks: {r.failed_checks}"
-            )
+            assert len(r.failed_checks) <= 1, f"{r.model_name} failed too many checks: {r.failed_checks}"

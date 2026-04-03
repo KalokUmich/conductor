@@ -4,6 +4,7 @@ Provides:
   POST /api/context/query        — run an agent loop to answer a code question
                                    (supports optional code_context for snippet-based queries)
 """
+
 from __future__ import annotations
 
 import json
@@ -14,9 +15,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .service import AgentEvent, AgentLoopService, AgentResult
-from .budget import BudgetConfig
 from app.code_tools.executor import LocalToolExecutor, RemoteToolExecutor, ToolExecutor
+
+from .service import AgentLoopService, AgentResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def _get_code_explorer_workflow():
     if _workflow_cache is None:
         try:
             from app.workflow.loader import load_workflow
+
             _workflow_cache = load_workflow("workflows/code_explorer.yaml")
             logger.info("Loaded code-explorer workflow for query routing (%d routes)", len(_workflow_cache.routes))
         except Exception as exc:
@@ -50,6 +52,7 @@ def _get_code_explorer_workflow():
 
 class CodeContext(BaseModel):
     """Optional code snippet context anchoring the user's question."""
+
     code: str = Field(..., description="Selected code snippet.")
     file_path: str = Field(..., description="Workspace-relative path of the file.")
     language: str = Field(default="", description="VS Code language ID, e.g. 'typescript'.")
@@ -68,7 +71,7 @@ class ContextQueryRequest(BaseModel):
     code_context: Optional[CodeContext] = Field(
         default=None,
         description="Optional code snippet the user is asking about. "
-                    "Injected prominently into the agent's system prompt.",
+        "Injected prominently into the agent's system prompt.",
     )
 
 
@@ -109,6 +112,7 @@ class ContextQueryResponse(BaseModel):
 
 def _get_git_workspace_service():
     from app.main import app
+
     return app.state.git_workspace_service
 
 
@@ -155,7 +159,7 @@ def _extract_workflow_result(wf_context: dict):
 
     # Prefer synthesize stage (judge output)
     synth = stage_results.get("synthesize", {})
-    for agent_name, result in synth.items():
+    for _, result in synth.items():
         if isinstance(result, dict) and result.get("answer"):
             answer = result["answer"]
             break
@@ -163,7 +167,7 @@ def _extract_workflow_result(wf_context: dict):
     # If no synthesize, use explore stage
     if not answer:
         explore = stage_results.get("explore", stage_results.get("investigate", {}))
-        for agent_name, result in explore.items():
+        for _, result in explore.items():
             if isinstance(result, dict):
                 if result.get("answer"):
                     answer = result["answer"]
@@ -188,19 +192,21 @@ def _build_executor(git_workspace, room_id: str, worktree_path) -> ToolExecutor:
 def _get_agent_provider():
     """Get the AI provider configured for agent loop."""
     from app.main import app
+
     return getattr(app.state, "agent_provider", None)
 
 
 def _get_trace_writer():
     """Get the TraceWriter from app state (created during lifespan)."""
     from app.main import app
-    return getattr(app.state, "trace_writer", None)
 
+    return getattr(app.state, "trace_writer", None)
 
 
 def _get_explorer_provider():
     """Get the sub-agent model used for code exploration (thinking disabled for Alibaba)."""
     from app.main import app
+
     return getattr(app.state, "explorer_provider", None)
 
 
@@ -253,8 +259,7 @@ def _ensure_query(req: ContextQueryRequest) -> str:
     if req.code_context:
         lang = req.code_context.language or "code"
         return (
-            f"Explain this {lang} code: what it does, its inputs and outputs, "
-            "and any key dependencies or side-effects."
+            f"Explain this {lang} code: what it does, its inputs and outputs, and any key dependencies or side-effects."
         )
     return req.query
 
@@ -265,7 +270,6 @@ async def context_query(
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
     trace_writer=Depends(_get_trace_writer),
-
     explorer_provider=Depends(_get_explorer_provider),
 ) -> ContextQueryResponse:
     """Run an agent loop to find relevant code context and answer a question.
@@ -276,7 +280,9 @@ async def context_query(
     """
     # Resolve per-room model overrides (falls back to global defaults)
     agent_provider, explorer_provider = await _resolve_room_providers(
-        req.room_id, agent_provider, explorer_provider,
+        req.room_id,
+        agent_provider,
+        explorer_provider,
     )
 
     if agent_provider is None:
@@ -297,7 +303,10 @@ async def context_query(
     executor = _build_executor(git_workspace, req.room_id, worktree_path)
     logger.info(
         "Tool executor: %s (room=%s, local=%s, workspace=%s)",
-        type(executor).__name__, req.room_id, is_local, worktree_path,
+        type(executor).__name__,
+        req.room_id,
+        is_local,
+        worktree_path,
     )
 
     # For local workspaces, fetch the repo graph from the extension (lazy-built)
@@ -312,12 +321,12 @@ async def context_query(
     workflow = _get_code_explorer_workflow()
     if workflow:
         from app.workflow.engine import WorkflowEngine
+
         engine = WorkflowEngine(
             provider=agent_provider,
             explorer_provider=explorer_provider,
             trace_writer=trace_writer,
             tool_executor=executor,
-
         )
         wf_context: Dict[str, Any] = {
             "query_text": query,
@@ -334,7 +343,6 @@ async def context_query(
             provider=agent_provider,
             max_iterations=req.max_iterations,
             trace_writer=trace_writer,
-
             explorer_provider=explorer_provider,
             tool_executor=executor,
         )
@@ -351,19 +359,25 @@ async def context_query(
 
     chunks = [
         ContextChunkResponse(
-            file_path=c.file_path, content=c.content,
-            start_line=c.start_line, end_line=c.end_line,
+            file_path=c.file_path,
+            content=c.content,
+            start_line=c.start_line,
+            end_line=c.end_line,
             source_tool=c.source_tool,
         )
         for c in (chunks_raw or [])
-        if hasattr(c, 'file_path')
+        if hasattr(c, "file_path")
     ]
 
     return ContextQueryResponse(
-        room_id=req.room_id, query=req.query, answer=answer or "",
-        context_chunks=chunks, thinking_steps=[],
+        room_id=req.room_id,
+        query=req.query,
+        answer=answer or "",
+        context_chunks=chunks,
+        thinking_steps=[],
         tool_calls_made=total_tool_calls or 0,
-        iterations=total_iters or 0, duration_ms=total_ms or 0,
+        iterations=total_iters or 0,
+        duration_ms=total_ms or 0,
         error=None,
     )
 
@@ -374,7 +388,6 @@ async def context_query_stream(
     git_workspace=Depends(_get_git_workspace_service),
     agent_provider=Depends(_get_agent_provider),
     trace_writer=Depends(_get_trace_writer),
-
     explorer_provider=Depends(_get_explorer_provider),
 ):
     """SSE streaming version of context_query.
@@ -394,7 +407,9 @@ async def context_query_stream(
     """
     # Resolve per-room model overrides (falls back to global defaults)
     agent_provider, explorer_provider = await _resolve_room_providers(
-        req.room_id, agent_provider, explorer_provider,
+        req.room_id,
+        agent_provider,
+        explorer_provider,
     )
 
     if agent_provider is None:
@@ -415,7 +430,10 @@ async def context_query_stream(
     executor = _build_executor(git_workspace, req.room_id, worktree_path)
     logger.info(
         "Tool executor: %s (room=%s, local=%s, workspace=%s)",
-        type(executor).__name__, req.room_id, is_local, worktree_path,
+        type(executor).__name__,
+        req.room_id,
+        is_local,
+        worktree_path,
     )
 
     # Ensure query text (generate default when code_context is present but query is empty)
@@ -432,6 +450,7 @@ async def context_query_stream(
         # Use Brain orchestrator — it replaces the classifier + pipeline.
         # Brain dispatches specialist agents via dispatch_agent/dispatch_swarm.
         from app.workflow.engine import WorkflowEngine
+
         engine = WorkflowEngine(
             provider=agent_provider,
             explorer_provider=explorer_provider,
@@ -458,8 +477,8 @@ async def context_query_stream(
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
-            "X-Accel-Buffering": "no",          # disable nginx proxy buffering
-            "X-Content-Type-Options": "nosniff", # prevent proxy content sniffing
+            "X-Accel-Buffering": "no",  # disable nginx proxy buffering
+            "X-Content-Type-Options": "nosniff",  # prevent proxy content sniffing
             "Connection": "keep-alive",
         },
     )
@@ -472,6 +491,7 @@ async def context_query_stream(
 
 class AskUserAnswerRequest(BaseModel):
     """Request body for submitting the user's answer to an agent question."""
+
     answer: str = Field(..., description="The user's answer to the agent's question.")
 
 
@@ -502,5 +522,3 @@ async def submit_ask_user_answer(
         )
 
     return {"status": "ok", "session_id": session_id}
-
-

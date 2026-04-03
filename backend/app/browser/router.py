@@ -3,6 +3,7 @@
 Provides direct access to Playwright browser tools for web browsing,
 form filling, screenshots, and data extraction.
 """
+
 from __future__ import annotations
 
 import logging

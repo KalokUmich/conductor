@@ -6,6 +6,7 @@ code modifications based on natural language instructions.
 Currently uses MockAgent for testing. Future versions will integrate
 with LLM providers (OpenAI, Anthropic, etc.) for actual AI generation.
 """
+
 from fastapi import APIRouter
 
 from .mock_agent import mock_agent
@@ -52,4 +53,3 @@ async def generate_changes(request: GenerateChangesRequest) -> GenerateChangesRe
         }
     """
     return mock_agent.generate_changes(request)
-

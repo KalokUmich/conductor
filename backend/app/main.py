@@ -9,17 +9,19 @@ Lifespan initializes:
   * Ngrok tunnel (when enabled) for external access from VS Code webview
 
 """
+
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from .ai_provider.resolver import ProviderResolver, set_resolver
 from .config import (
     AppSettings,
     _find_config_file,
@@ -27,9 +29,8 @@ from .config import (
     get_config,
     load_settings,
 )
-from .git_workspace.service import GitWorkspaceService
 from .git_workspace.delegate_broker import DelegateBroker
-from .ai_provider.resolver import ProviderResolver, set_resolver
+from .git_workspace.service import GitWorkspaceService
 from .ngrok_service import get_public_url, start_ngrok, stop_ngrok
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Logging configuration
 # ---------------------------------------------------------------------------
+
 
 def _configure_logging() -> None:
     """Set up logging for all app.* loggers.
@@ -51,6 +53,7 @@ def _configure_logging() -> None:
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("boto3").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
+
 
 _configure_logging()
 
@@ -71,12 +74,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Docker Compose where data and app tiers start concurrently), we retry up to
     # 5 times with a 2-second delay before giving up.
     import asyncio as _asyncio
-    from .db.engine import init_db, close_db
+
+    from .db.engine import close_db, init_db
+
     _engine = None
     _pg_url = settings.build_postgres_url()
     for _attempt in range(1, 6):
         try:
             from sqlalchemy import text as _sql_text
+
             _engine = await init_db(
                 url=_pg_url,
                 pool_size=settings.postgres.pool_size,
@@ -90,7 +96,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         except Exception as exc:
             logger.warning(
                 "PostgreSQL unavailable (attempt %d/5): %s — retrying in 2s",
-                _attempt, exc,
+                _attempt,
+                exc,
             )
             _engine = None
             if _attempt < 5:
@@ -102,9 +109,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Initialize singleton services with DB engine ----
     if app.state.db_engine:
         try:
-            from .todos.service import TODOService
             from .audit.service import AuditLogService
             from .files.service import FileStorageService
+            from .todos.service import TODOService
+
             TODOService.get_instance(engine=app.state.db_engine)
             AuditLogService.get_instance(engine=app.state.db_engine)
             FileStorageService.get_instance(engine=app.state.db_engine)
@@ -114,14 +122,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             app.state.db_engine = None  # mark as unusable so routers return 503
 
     # ---- Redis ----
-    from .db.redis import init_redis, close_redis
+    from .db.redis import close_redis, init_redis
+
     redis_client = await init_redis(url=settings.build_redis_url())
     app.state.redis = redis_client
 
     # ---- Wire Redis into Chat Manager ----
     from .chat.manager import manager as chat_manager
+
     if redis_client:
         from .chat.redis_store import RedisChatStore
+
         chat_manager._redis_store = RedisChatStore(redis_client)
         logger.info("Chat Redis store: enabled (TTL=6h)")
 
@@ -129,6 +140,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     chat_persistence = None
     if app.state.db_engine:
         from .chat.persistence import ChatPersistenceService
+
         chat_persistence = ChatPersistenceService(app.state.db_engine)
         chat_manager._persistence = chat_persistence
         logger.info("Chat persistence: enabled (micro-batch, batch_size=3)")
@@ -137,13 +149,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.chat_persistence = chat_persistence
 
     # ---- Git Workspace ----
-    git_service    = GitWorkspaceService()
+    git_service = GitWorkspaceService()
     delegate_broker = DelegateBroker()
     if settings.git_workspace.enabled:
         await git_service.initialize(settings.git_workspace)
         logger.info("Git Workspace module initialized.")
     app.state.git_workspace_service = git_service
-    app.state.delegate_broker       = delegate_broker
+    app.state.delegate_broker = delegate_broker
 
     # ---- AI Provider Resolver ----
     agent_provider = None
@@ -190,15 +202,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ---- Session Trace Writer ----
     from .agent_loop.trace import TraceWriter
+
     trace_writer = TraceWriter.from_settings(settings.trace, engine=app.state.db_engine)
     app.state.trace_writer = trace_writer
     logger.info(
         "Trace writer: enabled=%s, backend=%s",
-        settings.trace.enabled, settings.trace.backend,
+        settings.trace.enabled,
+        settings.trace.backend,
     )
 
     # ---- Langfuse Observability ----
     from .workflow.observability import init_langfuse
+
     langfuse_ok = init_langfuse(settings)
     if langfuse_ok:
         logger.info("Langfuse observability: enabled (host=%s)", settings.langfuse.host)
@@ -210,7 +225,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Required for VS Code Remote-WSL: the webview runs in the Windows
     # Electron process and cannot reach WSL's localhost directly.
     _settings_raw = _load_yaml(_find_config_file("conductor.settings.yaml"))
-    _secrets_raw  = _load_yaml(_find_config_file("conductor.secrets.yaml"))
+    _secrets_raw = _load_yaml(_find_config_file("conductor.secrets.yaml"))
     ngrok_cfg = _settings_raw.get("ngrok", {})
     ngrok_sec = _secrets_raw.get("ngrok", {})
 
@@ -224,14 +239,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if ngrok_url:
             logger.info("Ngrok tunnel active: %s", ngrok_url)
         else:
-            logger.warning(
-                "Failed to start ngrok tunnel. "
-                "Falling back to localhost:%s", settings.server.port
-            )
+            logger.warning("Failed to start ngrok tunnel. Falling back to localhost:%s", settings.server.port)
     else:
         logger.info(
             "Ngrok disabled. Server running on http://%s:%s",
-            settings.server.host, settings.server.port,
+            settings.server.host,
+            settings.server.port,
         )
 
     # ---- Bedrock Model Catalog ----
@@ -240,6 +253,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _bdr = _catalog_config.ai_providers.aws_bedrock
         bedrock_region = _bdr.region or "eu-west-2"
         from .langextract.catalog import BedrockCatalog
+
         catalog = BedrockCatalog(
             region=bedrock_region,
             access_key_id=_bdr.access_key_id or None,
@@ -256,15 +270,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Jira Integration ----
     conductor_cfg = get_config()
     if conductor_cfg.jira.enabled and conductor_cfg.jira_secrets.client_id:
-        from .integrations.jira.service import JiraOAuthService
         from .integrations.jira.models import JiraFieldOption
+        from .integrations.jira.service import JiraOAuthService
+
         # Build redirect_uri from public URL or localhost
         public_url = get_public_url() or settings.server.public_url or f"http://localhost:{settings.server.port}"
         redirect_uri = f"{public_url}/api/integrations/jira/callback"
-        static_teams = [
-            JiraFieldOption(id=t.id, name=t.name)
-            for t in conductor_cfg.jira.teams
-        ] or None
+        static_teams = [JiraFieldOption(id=t.id, name=t.name) for t in conductor_cfg.jira.teams] or None
         jira_service = JiraOAuthService(
             client_id=conductor_cfg.jira_secrets.client_id,
             client_secret=conductor_cfg.jira_secrets.client_secret,
@@ -274,13 +286,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if static_teams:
             logger.info("Jira integration: loaded %d static teams from config", len(static_teams))
         app.state.jira_service = jira_service
-        app.state.jira_allowed_projects = set(
-            k.upper() for k in conductor_cfg.jira.allowed_projects
-        )
+        app.state.jira_allowed_projects = set(k.upper() for k in conductor_cfg.jira.allowed_projects)
         if app.state.jira_allowed_projects:
             logger.info("Jira integration: project filter = %s", app.state.jira_allowed_projects)
         # Initialize Jira tools for agent loop
         from .integrations.jira.tools import init_jira_tools
+
         init_jira_tools(jira_service, app.state.jira_allowed_projects)
         logger.info("Jira integration: enabled (redirect=%s)", redirect_uri)
     else:
@@ -293,6 +304,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Shutdown ----
     stop_ngrok()
     from .workflow.observability import flush as langfuse_flush
+
     langfuse_flush()
     # Flush chat persistence buffers before shutdown
     if chat_persistence:
@@ -300,6 +312,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shut down browser service if it was used
     try:
         from .browser.service import shutdown_browser_service
+
         shutdown_browser_service()
     except ImportError:
         pass
@@ -317,23 +330,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app(settings: AppSettings | None = None) -> FastAPI:
     """Application factory."""
     app = FastAPI(
-        title       = "Conducator",
-        description = "Real-time collaborative coding backend",
-        version     = "2.0.0",
-        lifespan    = lifespan,
+        title="Conducator",
+        description="Real-time collaborative coding backend",
+        version="2.0.0",
+        lifespan=lifespan,
     )
 
     # --- CORS ---
     _s = settings or load_settings()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins      = _s.server.allowed_origins,
-        allow_credentials  = True,
-        allow_methods      = ["*"],
-        allow_headers      = ["*"],
+        allow_origins=_s.server.allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
         # vscode-webview://<id> origins are not matchable as literal strings;
         # use a regex so any webview origin is accepted.
-        allow_origin_regex = r"vscode-webview://.*",
+        allow_origin_regex=r"vscode-webview://.*",
     )
 
     # --- Private Network Access (PNA) middleware ---
@@ -360,17 +373,19 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
                 if method == "OPTIONS" and pna_requested == "true":
                     # Respond to PNA preflight immediately — do NOT call the app
                     origin = headers.get(b"origin", b"*").decode()
-                    await send({
-                        "type": "http.response.start",
-                        "status": 204,
-                        "headers": [
-                            (b"access-control-allow-origin", origin.encode()),
-                            (b"access-control-allow-private-network", b"true"),
-                            (b"access-control-allow-methods", b"*"),
-                            (b"access-control-allow-headers", b"*"),
-                            (b"access-control-max-age", b"7200"),
-                        ],
-                    })
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 204,
+                            "headers": [
+                                (b"access-control-allow-origin", origin.encode()),
+                                (b"access-control-allow-private-network", b"true"),
+                                (b"access-control-allow-methods", b"*"),
+                                (b"access-control-allow-headers", b"*"),
+                                (b"access-control-max-age", b"7200"),
+                            ],
+                        }
+                    )
                     await send({"type": "http.response.body", "body": b""})
                     return
 
@@ -405,30 +420,29 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.add_middleware(PrivateNetworkAccessMiddleware)
 
     # --- Routers ---
-    from .git_workspace.router import router as git_workspace_router
-    from .code_tools.router    import router as code_tools_router
-    from .agent_loop.router    import router as agent_loop_router
-    from .ai_provider.router   import router as ai_provider_router
-    from .audit.router         import router as audit_router
-    from .policy.router        import router as policy_router
-    from .chat.router          import router as chat_router
+    from .agent.router import router as agent_router
+    from .agent_loop.router import router as agent_loop_router
+    from .ai_provider.router import router as ai_provider_router
+    from .audit.router import router as audit_router
+    from .auth.router import router as auth_router
+    from .chat.router import router as chat_router
     from .chat.settings_router import router as chat_settings_router
-    from .agent.router         import router as agent_router
-    from .auth.router          import router as auth_router
-    from .files.router         import router as files_router
-    from .todos.router         import router as todos_router
-    from .workspace_files.router import router as workspace_files_router
-    from .langextract.router     import router as langextract_router
-    from .code_review.router     import router as code_review_router
-    from .workflow.router         import router as workflow_router, brain_router
+    from .code_review.router import router as code_review_router
+    from .code_tools.router import router as code_tools_router
+    from .files.router import router as files_router
+    from .git_workspace.router import router as git_workspace_router
     from .integrations.jira.router import router as jira_router
+    from .langextract.router import router as langextract_router
+    from .policy.router import router as policy_router
+    from .todos.router import router as todos_router
+    from .workflow.router import brain_router
+    from .workflow.router import router as workflow_router
+    from .workspace_files.router import router as workspace_files_router
 
     # Browser tools (optional — only available when playwright is installed)
     _browser_router = None
-    try:
+    with suppress(ImportError):
         from .browser.router import router as _browser_router
-    except ImportError:
-        pass
 
     app.include_router(git_workspace_router)
     app.include_router(code_tools_router)

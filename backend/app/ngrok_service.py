@@ -17,6 +17,7 @@ Usage:
     # Get the public URL later
     url = get_public_url()
 """
+
 import logging
 from typing import Optional
 
@@ -27,11 +28,7 @@ _tunnel = None
 logger = logging.getLogger(__name__)
 
 
-def start_ngrok(
-    port: int = 8000,
-    authtoken: Optional[str] = None,
-    region: str = "us"
-) -> Optional[str]:
+def start_ngrok(port: int = 8000, authtoken: Optional[str] = None, region: str = "us") -> Optional[str]:
     """Start ngrok tunnel and return the public URL.
 
     Uses pyngrok library which handles ngrok binary download automatically.
@@ -47,7 +44,7 @@ def start_ngrok(
     global _public_url, _tunnel
 
     try:
-        from pyngrok import ngrok, conf
+        from pyngrok import conf, ngrok
 
         # Configure ngrok
         if authtoken:
@@ -69,9 +66,7 @@ def start_ngrok(
         return _public_url
 
     except ImportError:
-        logger.error(
-            "pyngrok not installed. Install with: pip install pyngrok"
-        )
+        logger.error("pyngrok not installed. Install with: pip install pyngrok")
         return None
     except Exception as e:
         logger.error(f"Failed to start ngrok: {e}")
@@ -89,10 +84,10 @@ def stop_ngrok() -> None:
 
     try:
         from pyngrok import ngrok
+
         ngrok.kill()
         _tunnel = None
         _public_url = None
         logger.info("Ngrok tunnel stopped")
     except Exception as e:
         logger.warning(f"Error stopping ngrok: {e}")
-

@@ -7,12 +7,12 @@ Covers:
   - ReviewFinding: structured issue from a review agent
   - ReviewResult: aggregated multi-agent review output
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
-
+from typing import List, Optional
 
 # ---------------------------------------------------------------------------
 # PR context
@@ -21,20 +21,22 @@ from typing import Dict, List, Optional
 
 class FileCategory(str, Enum):
     """File classification for review prioritization."""
-    BUSINESS_LOGIC = "business_logic"   # services, controllers, models
-    TEST = "test"                       # test files
-    CONFIG = "config"                   # yml, properties, env
-    INFRA = "infra"                     # CI/CD, Dockerfile, terraform
-    SCHEMA = "schema"                   # DB migrations, schema files
-    GENERATED = "generated"             # auto-generated, vendor, lock files
+
+    BUSINESS_LOGIC = "business_logic"  # services, controllers, models
+    TEST = "test"  # test files
+    CONFIG = "config"  # yml, properties, env
+    INFRA = "infra"  # CI/CD, Dockerfile, terraform
+    SCHEMA = "schema"  # DB migrations, schema files
+    GENERATED = "generated"  # auto-generated, vendor, lock files
     OTHER = "other"
 
 
 @dataclass
 class ChangedFile:
     """A single file changed in the PR."""
+
     path: str
-    status: str = "modified"     # modified, added, deleted, renamed
+    status: str = "modified"  # modified, added, deleted, renamed
     additions: int = 0
     deletions: int = 0
     category: FileCategory = FileCategory.OTHER
@@ -44,7 +46,8 @@ class ChangedFile:
 @dataclass
 class PRContext:
     """Structured representation of a Pull Request."""
-    diff_spec: str                               # e.g. "main...feature/branch"
+
+    diff_spec: str  # e.g. "main...feature/branch"
     files: List[ChangedFile] = field(default_factory=list)
     total_additions: int = 0
     total_deletions: int = 0
@@ -80,6 +83,7 @@ class RiskProfile:
     Each dimension is scored low/medium/high/critical based on
     the types of changes detected in the PR.
     """
+
     correctness: RiskLevel = RiskLevel.LOW
     concurrency: RiskLevel = RiskLevel.LOW
     security: RiskLevel = RiskLevel.LOW
@@ -90,8 +94,7 @@ class RiskProfile:
         """Return the highest risk level across all dimensions."""
         order = [RiskLevel.LOW, RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL]
         return max(
-            [self.correctness, self.concurrency, self.security,
-             self.reliability, self.operational],
+            [self.correctness, self.concurrency, self.security, self.reliability, self.operational],
             key=lambda r: order.index(r),
         )
 
@@ -105,7 +108,7 @@ class Severity(str, Enum):
     CRITICAL = "critical"
     WARNING = "warning"
     NIT = "nit"
-    PRAISE = "praise"   # positive feedback
+    PRAISE = "praise"  # positive feedback
 
 
 class FindingCategory(str, Enum):
@@ -126,19 +129,20 @@ class ReviewFinding:
     Each finding is produced by a specific agent and includes
     evidence, location, and a suggested fix.
     """
+
     title: str
     category: FindingCategory
     severity: Severity
-    confidence: float = 0.8           # 0.0–1.0
+    confidence: float = 0.8  # 0.0–1.0
     file: str = ""
     start_line: int = 0
     end_line: int = 0
     evidence: List[str] = field(default_factory=list)
-    risk: str = ""                     # human-readable risk explanation
+    risk: str = ""  # human-readable risk explanation
     suggested_fix: str = ""
-    agent: str = ""                    # which agent produced this
-    reasoning: str = ""                # full chain-of-thought why this finding is valid
-    rewrite_guidance: str = ""         # verifier-suggested wording improvements
+    agent: str = ""  # which agent produced this
+    reasoning: str = ""  # full chain-of-thought why this finding is valid
+    rewrite_guidance: str = ""  # verifier-suggested wording improvements
 
     def score(self) -> float:
         """Compute a composite score for ranking."""
@@ -159,6 +163,7 @@ class ReviewFinding:
 @dataclass
 class AgentReviewResult:
     """Output from a single review agent."""
+
     agent_name: str
     findings: List[ReviewFinding] = field(default_factory=list)
     summary: str = ""
@@ -171,6 +176,7 @@ class AgentReviewResult:
 @dataclass
 class ReviewResult:
     """Aggregated result from the multi-agent code review."""
+
     diff_spec: str
     pr_summary: str = ""
     risk_profile: Optional[RiskProfile] = None
@@ -180,8 +186,8 @@ class ReviewResult:
     total_tokens: int = 0
     total_iterations: int = 0
     total_duration_ms: float = 0.0
-    merge_recommendation: str = ""   # "approve", "request_changes", "approve_with_followups"
-    synthesis: str = ""              # final polished review from strong model
+    merge_recommendation: str = ""  # "approve", "request_changes", "approve_with_followups"
+    synthesis: str = ""  # final polished review from strong model
     error: Optional[str] = None
 
     @property

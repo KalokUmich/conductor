@@ -8,6 +8,7 @@ Usage:
     if provider.health_check():
         summary = provider.summarize_structured(messages)
 """
+
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -51,6 +52,10 @@ class ClaudeDirectProvider(AIProvider):
         self.base_url = base_url or self.DEFAULT_BASE_URL
         self._client: Optional[object] = None
 
+    @property
+    def model_name(self) -> str:
+        return self.model
+
     def _get_client(self) -> object:
         """Get or create the Anthropic client.
 
@@ -63,15 +68,15 @@ class ClaudeDirectProvider(AIProvider):
         if self._client is None:
             try:
                 import anthropic
+
                 self._client = anthropic.Anthropic(
                     api_key=self.api_key,
                     base_url=self.base_url,
                 )
-            except ImportError:
+            except ImportError as exc:
                 raise ImportError(
-                    "anthropic package is required for ClaudeDirectProvider. "
-                    "Install it with: pip install anthropic"
-                )
+                    "anthropic package is required for ClaudeDirectProvider. Install it with: pip install anthropic"
+                ) from exc
         return self._client
 
     def health_check(self) -> bool:
@@ -119,10 +124,7 @@ class ClaudeDirectProvider(AIProvider):
             messages=[
                 {
                     "role": "user",
-                    "content": (
-                        "Please provide a concise summary of the following messages:\n\n"
-                        f"{combined_messages}"
-                    ),
+                    "content": (f"Please provide a concise summary of the following messages:\n\n{combined_messages}"),
                 }
             ],
         )
@@ -168,7 +170,7 @@ class ClaudeDirectProvider(AIProvider):
             data = json.loads(response_text)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {response_text}")
-            raise ValueError(f"Invalid JSON response from AI: {e}")
+            raise ValueError(f"Invalid JSON response from AI: {e}") from e
 
         # Validate and extract fields with defaults
         return DecisionSummary(
@@ -212,9 +214,9 @@ class ClaudeDirectProvider(AIProvider):
             messages.append({"role": "assistant", "content": assistant_prefix})
 
         kwargs: dict = {
-            "model":      self.model,
+            "model": self.model,
             "max_tokens": max_tokens,
-            "messages":   messages,
+            "messages": messages,
         }
         if system:
             kwargs["system"] = system
@@ -244,11 +246,13 @@ class ClaudeDirectProvider(AIProvider):
         # Convert tool definitions to Anthropic format
         anthropic_tools = []
         for tool in tools:
-            anthropic_tools.append({
-                "name": tool["name"],
-                "description": tool.get("description", ""),
-                "input_schema": tool.get("input_schema", {}),
-            })
+            anthropic_tools.append(
+                {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "input_schema": tool.get("input_schema", {}),
+                }
+            )
 
         kwargs: dict = {
             "model": self.model,
@@ -269,11 +273,13 @@ class ClaudeDirectProvider(AIProvider):
             if block.type == "text":
                 text_parts.append(block.text)
             elif block.type == "tool_use":
-                tool_calls.append(ToolCall(
-                    id=block.id,
-                    name=block.name,
-                    input=block.input,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=block.id,
+                        name=block.name,
+                        input=block.input,
+                    )
+                )
 
         # Extract token usage from Anthropic Messages API response
         usage = None
@@ -325,12 +331,14 @@ def _converse_to_anthropic(messages: List[Dict[str, Any]]) -> List[Dict[str, Any
                 anthropic_blocks.append({"type": "text", "text": block["text"]})
             elif "toolUse" in block:
                 tu = block["toolUse"]
-                anthropic_blocks.append({
-                    "type": "tool_use",
-                    "id": tu["toolUseId"],
-                    "name": tu["name"],
-                    "input": tu.get("input", {}),
-                })
+                anthropic_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": tu["toolUseId"],
+                        "name": tu["name"],
+                        "input": tu.get("input", {}),
+                    }
+                )
             elif "toolResult" in block:
                 tr = block["toolResult"]
                 result_content = tr.get("content", [])
@@ -339,11 +347,13 @@ def _converse_to_anthropic(messages: List[Dict[str, Any]]) -> List[Dict[str, Any
                     result_text = "\n".join(text_parts)
                 else:
                     result_text = str(result_content)
-                anthropic_blocks.append({
-                    "type": "tool_result",
-                    "tool_use_id": tr["toolUseId"],
-                    "content": result_text,
-                })
+                anthropic_blocks.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tr["toolUseId"],
+                        "content": result_text,
+                    }
+                )
 
         converted.append({"role": role, "content": anthropic_blocks})
     return converted

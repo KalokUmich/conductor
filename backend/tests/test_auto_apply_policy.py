@@ -1,14 +1,15 @@
 """Tests for Auto Apply policy evaluation."""
+
 import pytest
 
 from app.agent.schemas import ChangeSet, ChangeType, FileChange, Range
 from app.policy.auto_apply import (
+    FORBIDDEN_PATHS,
+    MAX_FILES,
+    MAX_LINES_CHANGED,
     AutoApplyPolicy,
     PolicyResult,
     evaluate_auto_apply,
-    MAX_FILES,
-    MAX_LINES_CHANGED,
-    FORBIDDEN_PATHS,
 )
 
 
@@ -41,7 +42,7 @@ class TestAutoApplyPolicyMaxFiles:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -58,7 +59,7 @@ class TestAutoApplyPolicyMaxFiles:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -75,7 +76,7 @@ class TestAutoApplyPolicyMaxFiles:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -95,7 +96,7 @@ class TestAutoApplyPolicyMaxLines:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -111,7 +112,7 @@ class TestAutoApplyPolicyMaxLines:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=50),  # 50 lines
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -127,7 +128,7 @@ class TestAutoApplyPolicyMaxLines:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=20),  # 20 lines > 10
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -140,15 +141,7 @@ class TestAutoApplyPolicyMaxLines:
         policy = AutoApplyPolicy(max_lines_changed=5)
         # Content with 10 lines (9 newlines + 1)
         content = "\n".join([f"line {i}" for i in range(10)])
-        change_set = ChangeSet(
-            changes=[
-                FileChange(
-                    file="new_file.py",
-                    type=ChangeType.CREATE_FILE,
-                    content=content
-                )
-            ]
-        )
+        change_set = ChangeSet(changes=[FileChange(file="new_file.py", type=ChangeType.CREATE_FILE, content=content)])
         result = policy.evaluate(change_set)
         assert result.allowed is False
         assert any("Too many lines" in r for r in result.reasons)
@@ -157,14 +150,17 @@ class TestAutoApplyPolicyMaxLines:
 class TestAutoApplyPolicyForbiddenPaths:
     """Test forbidden paths rule."""
 
-    @pytest.mark.parametrize("forbidden_path", [
-        "infra/terraform/main.tf",
-        "infra/config.yaml",
-        "db/migrations/001.sql",
-        "db/schema.py",
-        "security/auth.py",
-        "security/keys/private.pem",
-    ])
+    @pytest.mark.parametrize(
+        "forbidden_path",
+        [
+            "infra/terraform/main.tf",
+            "infra/config.yaml",
+            "db/migrations/001.sql",
+            "db/schema.py",
+            "security/auth.py",
+            "security/keys/private.pem",
+        ],
+    )
     def test_forbidden_paths_fail(self, forbidden_path: str):
         """Files in forbidden paths should fail."""
         change_set = ChangeSet(
@@ -173,7 +169,7 @@ class TestAutoApplyPolicyForbiddenPaths:
                     file=forbidden_path,
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -181,14 +177,17 @@ class TestAutoApplyPolicyForbiddenPaths:
         assert result.allowed is False
         assert any("Forbidden paths" in r for r in result.reasons)
 
-    @pytest.mark.parametrize("allowed_path", [
-        "src/main.py",
-        "tests/test_main.py",
-        "lib/utils.py",
-        "infrastructure/setup.py",  # Not "infra/"
-        "database/models.py",  # Not "db/"
-        "secure/handler.py",  # Not "security/"
-    ])
+    @pytest.mark.parametrize(
+        "allowed_path",
+        [
+            "src/main.py",
+            "tests/test_main.py",
+            "lib/utils.py",
+            "infrastructure/setup.py",  # Not "infra/"
+            "database/models.py",  # Not "db/"
+            "secure/handler.py",  # Not "security/"
+        ],
+    )
     def test_allowed_paths_pass(self, allowed_path: str):
         """Files not in forbidden paths should pass."""
         change_set = ChangeSet(
@@ -197,7 +196,7 @@ class TestAutoApplyPolicyForbiddenPaths:
                     file=allowed_path,
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -211,9 +210,9 @@ class TestAutoApplyPolicyMultipleViolations:
     def test_multiple_violations_reported(self):
         """All violations should be reported in reasons."""
         policy = AutoApplyPolicy(
-            max_files=0,  # Will fail
-            max_lines_changed=1,  # Will fail (5 lines)
-            forbidden_paths=("src/",)  # Will fail
+            max_files=0,
+            max_lines_changed=1,
+            forbidden_paths=("src/",),  # Will fail  # Will fail (5 lines)  # Will fail
         )
         change_set = ChangeSet(
             changes=[
@@ -221,7 +220,7 @@ class TestAutoApplyPolicyMultipleViolations:
                     file="src/main.py",
                     type=ChangeType.REPLACE_RANGE,
                     range=Range(start=1, end=5),
-                    content="# new content"
+                    content="# new content",
                 )
             ]
         )
@@ -257,6 +256,7 @@ class TestPolicyRouter:
     def test_evaluate_auto_apply_endpoint_allowed(self):
         """Test /policy/evaluate-auto-apply returns allowed=True for safe changes."""
         from fastapi.testclient import TestClient
+
         from app.main import app
 
         client = TestClient(app)
@@ -269,11 +269,11 @@ class TestPolicyRouter:
                             "file": "src/main.py",
                             "type": "replace_range",
                             "range": {"start": 1, "end": 5},
-                            "content": "# new content"
+                            "content": "# new content",
                         }
                     ]
                 }
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -285,6 +285,7 @@ class TestPolicyRouter:
     def test_evaluate_auto_apply_endpoint_denied_too_many_lines(self):
         """Test /policy/evaluate-auto-apply returns allowed=False for too many lines."""
         from fastapi.testclient import TestClient
+
         from app.main import app
 
         client = TestClient(app)
@@ -295,10 +296,15 @@ class TestPolicyRouter:
             json={
                 "change_set": {
                     "changes": [
-                        {"file": "src/main.py", "type": "replace_range", "range": {"start": 1, "end": 60}, "content": "# new content"},
+                        {
+                            "file": "src/main.py",
+                            "type": "replace_range",
+                            "range": {"start": 1, "end": 60},
+                            "content": "# new content",
+                        },
                     ]
                 }
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()
@@ -309,6 +315,7 @@ class TestPolicyRouter:
     def test_evaluate_auto_apply_endpoint_denied_forbidden_path(self):
         """Test /policy/evaluate-auto-apply returns allowed=False for forbidden paths."""
         from fastapi.testclient import TestClient
+
         from app.main import app
 
         client = TestClient(app)
@@ -321,11 +328,11 @@ class TestPolicyRouter:
                             "file": "security/auth.py",
                             "type": "replace_range",
                             "range": {"start": 1, "end": 1},
-                            "content": "# hacked"
+                            "content": "# hacked",
                         }
                     ]
                 }
-            }
+            },
         )
         assert response.status_code == 200
         data = response.json()

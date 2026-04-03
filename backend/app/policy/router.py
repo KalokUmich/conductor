@@ -14,6 +14,7 @@ Usage Flow:
     4. If allowed=true, changes are applied automatically
     5. If allowed=false, user must review and confirm
 """
+
 from typing import List
 
 from fastapi import APIRouter
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 
 from app.agent.schemas import ChangeSet
 from app.config import get_config
+
 from .auto_apply import AutoApplyPolicy, evaluate_auto_apply
 
 router = APIRouter(prefix="/policy", tags=["policy"])
@@ -37,6 +39,7 @@ class PolicyEvaluationRequest(BaseModel):
     Attributes:
         change_set: The ChangeSet to evaluate against policy rules.
     """
+
     change_set: ChangeSet
 
 
@@ -49,6 +52,7 @@ class PolicyEvaluationResponse(BaseModel):
         files_count: Number of files affected by the ChangeSet.
         lines_changed: Total lines changed across all files.
     """
+
     allowed: bool
     reasons: List[str]
     files_count: int
@@ -61,9 +65,7 @@ class PolicyEvaluationResponse(BaseModel):
 
 
 @router.post("/evaluate-auto-apply", response_model=PolicyEvaluationResponse)
-async def evaluate_auto_apply_endpoint(
-    request: PolicyEvaluationRequest
-) -> PolicyEvaluationResponse:
+async def evaluate_auto_apply_endpoint(request: PolicyEvaluationRequest) -> PolicyEvaluationResponse:
     """Evaluate whether a ChangeSet can be auto-applied.
 
     Checks the ChangeSet against safety policy rules:
@@ -101,9 +103,5 @@ async def evaluate_auto_apply_endpoint(
     lines_changed = policy._count_lines_changed(request.change_set)
 
     return PolicyEvaluationResponse(
-        allowed=result.allowed,
-        reasons=result.reasons,
-        files_count=files_count,
-        lines_changed=lines_changed
+        allowed=result.allowed, reasons=result.reasons, files_count=files_count, lines_changed=lines_changed
     )
-

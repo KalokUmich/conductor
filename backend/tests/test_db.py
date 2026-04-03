@@ -1,16 +1,15 @@
 """Tests for the database abstraction layer (engine, models, redis)."""
+
+from datetime import UTC
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.db.models import (
-    Base,
-    RepoToken,
-    SessionTraceRecord,
     AuditLog,
-    FileMetadataRecord,
-    Todo,
     IntegrationToken,
+    Todo,
 )
 
 
@@ -20,9 +19,7 @@ async def test_engine_creates_all_tables(db_engine):
     from sqlalchemy import inspect
 
     async with db_engine.connect() as conn:
-        table_names = await conn.run_sync(
-            lambda sync_conn: inspect(sync_conn).get_table_names()
-        )
+        table_names = await conn.run_sync(lambda sync_conn: inspect(sync_conn).get_table_names())
 
     expected = {
         "repo_tokens",
@@ -65,7 +62,7 @@ async def test_todo_crud(db_engine):
 @pytest.mark.asyncio
 async def test_audit_log_insert(db_engine):
     """Insert and query an audit log entry."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
 
@@ -75,15 +72,13 @@ async def test_audit_log_insert(db_engine):
             changeset_hash="abc123",
             applied_by="user-1",
             mode="manual",
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         session.add(entry)
         await session.commit()
 
     async with session_factory() as session:
-        result = await session.execute(
-            select(AuditLog).where(AuditLog.room_id == "room-1")
-        )
+        result = await session.execute(select(AuditLog).where(AuditLog.room_id == "room-1"))
         rows = result.scalars().all()
         assert len(rows) == 1
         assert rows[0].changeset_hash == "abc123"

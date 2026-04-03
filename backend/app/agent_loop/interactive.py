@@ -14,7 +14,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
-
 # How long the agent loop will wait for a user answer (seconds).
 ASK_USER_TIMEOUT: float = 300.0  # 5 minutes
 

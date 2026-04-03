@@ -1,4 +1,5 @@
 """Tests for PRBrainOrchestrator and related components in app.agent_loop.pr_brain."""
+
 from __future__ import annotations
 
 import json
@@ -7,14 +8,13 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.agent_loop.pr_brain import (
-    PRBrainOrchestrator,
     ArbitrationVerdict,
+    PRBrainOrchestrator,
 )
 from app.workflow.models import PRBrainConfig
 
 # Read max_findings_per_agent from default config (same as config/brains/pr_review.yaml)
 _MAX_FINDINGS_PER_AGENT = PRBrainConfig().post_processing.max_findings_per_agent
-from app.code_tools.schemas import ToolResult
 from app.code_review.models import (
     ChangedFile,
     FileCategory,
@@ -25,8 +25,8 @@ from app.code_review.models import (
     RiskProfile,
     Severity,
 )
+from app.code_tools.schemas import ToolResult
 from app.workflow.models import PRBrainConfig
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -337,19 +337,21 @@ class TestPostProcess:
     def test_post_process_parses_findings(self):
         brain = _make_pr_brain()
         ctx = _make_pr_context()
-        findings_json = json.dumps([
-            {
-                "title": "Null dereference",
-                "severity": "warning",
-                "confidence": 0.85,
-                "file": "app/service.py",
-                "start_line": 10,
-                "end_line": 10,
-                "evidence": ["line 10 dereferences optional"],
-                "risk": "NullPointerException",
-                "suggested_fix": "add null check",
-            }
-        ])
+        findings_json = json.dumps(
+            [
+                {
+                    "title": "Null dereference",
+                    "severity": "warning",
+                    "confidence": 0.85,
+                    "file": "app/service.py",
+                    "start_line": 10,
+                    "end_line": 10,
+                    "evidence": ["line 10 dereferences optional"],
+                    "risk": "NullPointerException",
+                    "suggested_fix": "add null check",
+                }
+            ]
+        )
         results = [_make_tool_result("correctness", f"```json\n{findings_json}\n```")]
         output = brain._post_process(results, ctx)
         assert len(output) >= 1
@@ -454,10 +456,24 @@ class TestParseVerdicts:
     def test_parse_verdicts_valid(self):
         brain = _make_pr_brain()
         findings = [_make_finding(), _make_finding(title="Second finding")]
-        verdicts_json = json.dumps([
-            {"index": 0, "counter_evidence": ["no lock needed here"], "rebuttal_confidence": 0.7, "suggested_severity": "warning", "reason": "already guarded"},
-            {"index": 1, "counter_evidence": [], "rebuttal_confidence": 0.1, "suggested_severity": "critical", "reason": "confirmed issue"},
-        ])
+        verdicts_json = json.dumps(
+            [
+                {
+                    "index": 0,
+                    "counter_evidence": ["no lock needed here"],
+                    "rebuttal_confidence": 0.7,
+                    "suggested_severity": "warning",
+                    "reason": "already guarded",
+                },
+                {
+                    "index": 1,
+                    "counter_evidence": [],
+                    "rebuttal_confidence": 0.1,
+                    "suggested_severity": "critical",
+                    "reason": "confirmed issue",
+                },
+            ]
+        )
         answer = f"<result>\n{verdicts_json}\n</result>"
         verdicts = brain._parse_verdicts(findings, answer)
         assert len(verdicts) == 2
@@ -477,9 +493,17 @@ class TestParseVerdicts:
         brain = _make_pr_brain()
         findings = [_make_finding(), _make_finding(title="F2"), _make_finding(title="F3")]
         # Only verdict for index 1 — indices 0 and 2 should get defaults
-        verdicts_json = json.dumps([
-            {"index": 1, "counter_evidence": ["found counter"], "rebuttal_confidence": 0.6, "suggested_severity": "nit", "reason": "minor"},
-        ])
+        verdicts_json = json.dumps(
+            [
+                {
+                    "index": 1,
+                    "counter_evidence": ["found counter"],
+                    "rebuttal_confidence": 0.6,
+                    "suggested_severity": "nit",
+                    "reason": "minor",
+                },
+            ]
+        )
         answer = f"<result>{verdicts_json}</result>"
         verdicts = brain._parse_verdicts(findings, answer)
         assert len(verdicts) == 3
@@ -501,10 +525,24 @@ class TestParseVerdicts:
         brain = _make_pr_brain()
         findings = [_make_finding(), _make_finding(title="F2"), _make_finding(title="F3")]
         # Return verdicts out of order
-        verdicts_json = json.dumps([
-            {"index": 2, "counter_evidence": [], "rebuttal_confidence": 0.3, "suggested_severity": "warning", "reason": "ok"},
-            {"index": 0, "counter_evidence": [], "rebuttal_confidence": 0.9, "suggested_severity": "nit", "reason": "wrong"},
-        ])
+        verdicts_json = json.dumps(
+            [
+                {
+                    "index": 2,
+                    "counter_evidence": [],
+                    "rebuttal_confidence": 0.3,
+                    "suggested_severity": "warning",
+                    "reason": "ok",
+                },
+                {
+                    "index": 0,
+                    "counter_evidence": [],
+                    "rebuttal_confidence": 0.9,
+                    "suggested_severity": "nit",
+                    "reason": "wrong",
+                },
+            ]
+        )
         answer = f"<result>{verdicts_json}</result>"
         verdicts = brain._parse_verdicts(findings, answer)
         for i, v in enumerate(verdicts):

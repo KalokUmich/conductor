@@ -1,12 +1,12 @@
 """Tests for the Brain orchestrator — AgentToolExecutor, budget, and prompt."""
+
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from app.agent_loop.brain import (
     AgentFindings,
@@ -15,22 +15,19 @@ from app.agent_loop.brain import (
     condense_result,
 )
 from app.agent_loop.prompts import build_brain_prompt
-from app.agent_loop.service import AgentResult, ThinkingStep
+from app.agent_loop.service import AgentResult
 from app.code_tools.schemas import (
     BRAIN_TOOL_DEFINITIONS,
     CreatePlanParams,
     ToolResult,
     get_brain_tool_definitions,
 )
-from app.workflow.loader import load_brain_config, load_swarm_registry, load_agent_registry
+from app.workflow.loader import load_agent_registry, load_brain_config, load_swarm_registry
 from app.workflow.models import (
     AgentConfig,
     AgentLimits,
-    BrainConfig,
-    BrainLimits,
     SwarmConfig,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -82,11 +79,13 @@ def swarm_registry():
 def mock_inner_executor():
     """Mock inner executor that returns a simple tool result."""
     executor = AsyncMock()
-    executor.execute = AsyncMock(return_value=ToolResult(
-        tool_name="grep",
-        success=True,
-        data=[{"file_path": "test.py", "line_number": 1, "content": "def hello():"}],
-    ))
+    executor.execute = AsyncMock(
+        return_value=ToolResult(
+            tool_name="grep",
+            success=True,
+            data=[{"file_path": "test.py", "line_number": 1, "content": "def hello():"}],
+        )
+    )
     return executor
 
 
@@ -104,7 +103,6 @@ def mock_provider():
 
 
 class TestBrainToolDefinitions:
-
     def test_brain_tools_include_dispatch(self):
         assert any(t["name"] == "dispatch_agent" for t in BRAIN_TOOL_DEFINITIONS)
         assert any(t["name"] == "dispatch_swarm" for t in BRAIN_TOOL_DEFINITIONS)
@@ -132,7 +130,6 @@ class TestBrainToolDefinitions:
 
 
 class TestBrainBudgetManager:
-
     @pytest.mark.asyncio
     async def test_allocate_returns_bounded_amount(self):
         mgr = BrainBudgetManager(total_tokens=500_000)
@@ -165,7 +162,6 @@ class TestBrainBudgetManager:
 
 
 class TestCondenseResult:
-
     def test_condense_basic(self):
         result = AgentResult(
             answer="The /api/users endpoint is defined in router.py at line 10. It handles GET requests and returns a list of users from the database.",
@@ -202,9 +198,7 @@ class TestCondenseResult:
 
 
 class TestAgentToolExecutor:
-
-    def _make_executor(self, agent_registry, swarm_registry, mock_inner, mock_provider,
-                       depth=0, max_depth=2):
+    def _make_executor(self, agent_registry, swarm_registry, mock_inner, mock_provider, depth=0, max_depth=2):
         return AgentToolExecutor(
             inner_executor=mock_inner,
             agent_registry=agent_registry,
@@ -217,99 +211,139 @@ class TestAgentToolExecutor:
         )
 
     @pytest.mark.asyncio
-    async def test_passthrough_to_inner(self, agent_registry, swarm_registry,
-                                        mock_inner_executor, mock_provider):
+    async def test_passthrough_to_inner(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """Non-brain tools pass through to inner executor."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
         )
         result = await executor.execute("grep", {"pattern": "hello"})
         assert result.success
         mock_inner_executor.execute.assert_called_once_with("grep", {"pattern": "hello"})
 
     @pytest.mark.asyncio
-    async def test_dispatch_unknown_template(self, agent_registry, swarm_registry,
-                                              mock_inner_executor, mock_provider):
+    async def test_dispatch_unknown_template(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """Dispatching unknown template returns error."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
         )
-        result = await executor.execute("dispatch_agent", {
-            "template": "nonexistent",
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "template": "nonexistent",
+                "query": "test",
+            },
+        )
         assert not result.success
         assert "Unknown agent template" in result.error
 
     @pytest.mark.asyncio
-    async def test_dispatch_backward_compat_agent_name(self, agent_registry, swarm_registry,
-                                                        mock_inner_executor, mock_provider):
+    async def test_dispatch_backward_compat_agent_name(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Legacy agent_name param still works (aliased to template)."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
-            depth=2, max_depth=2,  # force depth error to avoid real agent run
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
+            depth=2,
+            max_depth=2,  # force depth error to avoid real agent run
         )
-        result = await executor.execute("dispatch_agent", {
-            "agent_name": "explore_architecture",
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "agent_name": "explore_architecture",
+                "query": "test",
+            },
+        )
         # Depth error, but it resolved the agent — backward compat works
         assert not result.success
         assert "depth" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_dispatch_max_depth(self, agent_registry, swarm_registry,
-                                      mock_inner_executor, mock_provider):
+    async def test_dispatch_max_depth(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """dispatch_agent at max depth returns error."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
-            depth=2, max_depth=2,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
+            depth=2,
+            max_depth=2,
         )
-        result = await executor.execute("dispatch_agent", {
-            "template": "explore_architecture",
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "template": "explore_architecture",
+                "query": "test",
+            },
+        )
         assert not result.success
         assert "Max agent depth" in result.error
 
     @pytest.mark.asyncio
-    async def test_dispatch_requires_template_or_tools(self, agent_registry, swarm_registry,
-                                                        mock_inner_executor, mock_provider):
+    async def test_dispatch_requires_template_or_tools(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """dispatch_agent without template or tools returns error."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
         )
-        result = await executor.execute("dispatch_agent", {
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "query": "test",
+            },
+        )
         assert not result.success
         assert "template" in result.error.lower() or "tools" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_dispatch_unknown_swarm(self, agent_registry, swarm_registry,
-                                          mock_inner_executor, mock_provider):
+    async def test_dispatch_unknown_swarm(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """Dispatching unknown swarm returns error."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
         )
-        result = await executor.execute("dispatch_swarm", {
-            "swarm_name": "nonexistent",
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_swarm",
+            {
+                "swarm_name": "nonexistent",
+                "query": "test",
+            },
+        )
         assert not result.success
         assert "Unknown swarm" in result.error
 
     @pytest.mark.asyncio
-    async def test_dispatch_swarm_requires_preset(self, agent_registry, swarm_registry,
-                                                   mock_inner_executor, mock_provider):
+    async def test_dispatch_swarm_requires_preset(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Dispatching swarm without a valid preset name returns error."""
         executor = self._make_executor(
-            agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+            agent_registry,
+            swarm_registry,
+            mock_inner_executor,
+            mock_provider,
         )
-        result = await executor.execute("dispatch_swarm", {
-            "swarm_name": "nonexistent_swarm",
-            "query": "test",
-        })
+        result = await executor.execute(
+            "dispatch_swarm",
+            {
+                "swarm_name": "nonexistent_swarm",
+                "query": "test",
+            },
+        )
         assert not result.success
         assert "Unknown swarm" in result.error
         assert "dispatch_agent" in result.error
@@ -321,7 +355,6 @@ class TestAgentToolExecutor:
 
 
 class TestBrainPrompt:
-
     def test_build_prompt_includes_catalog(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(agent_registry, swarm_registry)
         assert "explore_architecture" in prompt
@@ -337,7 +370,8 @@ class TestBrainPrompt:
 
     def test_build_prompt_includes_qa_cache(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(
-            agent_registry, swarm_registry,
+            agent_registry,
+            swarm_registry,
             qa_cache={"payment_system": "Clearer card payments"},
         )
         assert "Clearer card payments" in prompt
@@ -363,6 +397,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_agent_identity(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="explore_architecture",
             agent_description="Maps module structure and dependencies",
@@ -375,6 +410,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_workspace_context(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="test_agent",
             agent_description="Test agent",
@@ -387,6 +423,7 @@ class TestSubAgentSystemPrompt:
     def test_does_not_contain_generic_identity(self, tmp_path):
         """Sub-agent prompt must NOT use the old shared CORE_IDENTITY opener."""
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="security",
             agent_description="Detects vulnerabilities",
@@ -399,6 +436,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_strategy_when_specified(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="correctness",
             agent_description="Finds logic errors",
@@ -410,6 +448,7 @@ class TestSubAgentSystemPrompt:
 
     def test_no_strategy_when_not_specified(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="explore_usage",
             agent_description="Traces user flows",
@@ -421,6 +460,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_signal_blocker_hint(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="test",
             agent_description="Test",
@@ -432,6 +472,7 @@ class TestSubAgentSystemPrompt:
 
     def test_no_signal_blocker_when_disabled(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="test_agent",
             agent_description="Test",
@@ -443,6 +484,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_code_context(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="test",
             agent_description="Test",
@@ -462,6 +504,7 @@ class TestSubAgentSystemPrompt:
 
     def test_includes_risk_context(self, tmp_path):
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="test",
             agent_description="Test",
@@ -474,6 +517,7 @@ class TestSubAgentSystemPrompt:
     def test_layer_separation(self, tmp_path):
         """Layer 1 (identity) should come before Layer 3 (skills)."""
         from app.agent_loop.prompts import build_sub_agent_system_prompt
+
         prompt = build_sub_agent_system_prompt(
             agent_name="explore_implementation",
             agent_description="Traces lifecycles",
@@ -491,7 +535,11 @@ class TestQueryNotContaminatedByRole:
 
     @pytest.mark.asyncio
     async def test_dispatch_does_not_inject_role_in_query(
-        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+        self,
+        agent_registry,
+        swarm_registry,
+        mock_inner_executor,
+        mock_provider,
     ):
         """The query passed to AgentLoopService must NOT contain agent instructions."""
         captured_kwargs = {}
@@ -502,39 +550,56 @@ class TestQueryNotContaminatedByRole:
             captured_kwargs.update(kwargs)
             original_init(self, *args, **kwargs)
 
-        with patch("app.agent_loop.service.AgentLoopService.__init__", capture_init):
-            with patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream:
-                async def empty_stream(*a, **kw):
-                    from app.agent_loop.service import AgentEvent
-                    yield AgentEvent(kind="done", data={
-                        "answer": "test", "tool_calls_made": 0,
-                        "iterations": 0, "duration_ms": 0,
-                        "thinking_steps": [],
-                    })
-                mock_stream.side_effect = empty_stream
+        with (
+            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
+            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
+        ):
 
-                executor = AgentToolExecutor(
-                    inner_executor=mock_inner_executor,
-                    agent_registry=agent_registry,
-                    swarm_registry=swarm_registry,
-                    agent_provider=mock_provider,
-                    workspace_path="/tmp/test",
-                    event_sink=asyncio.Queue(),
+            async def empty_stream(*a, **kw):
+                from app.agent_loop.service import AgentEvent
+
+                yield AgentEvent(
+                    kind="done",
+                    data={
+                        "answer": "test",
+                        "tool_calls_made": 0,
+                        "iterations": 0,
+                        "duration_ms": 0,
+                        "thinking_steps": [],
+                    },
                 )
-                await executor.execute("dispatch_agent", {
+
+            mock_stream.side_effect = empty_stream
+
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_agent",
+                {
                     "agent_name": "explore_architecture",
                     "query": "How does auth work?",
-                })
+                },
+            )
 
-                # Verify the query passed to run_stream is clean
-                call_args = mock_stream.call_args
-                query_arg = call_args[1].get("query", call_args[0][0] if call_args[0] else "")
-                assert "## Your Role" not in query_arg
-                assert "Map the architecture" not in query_arg  # agent instructions
+            # Verify the query passed to run_stream is clean
+            call_args = mock_stream.call_args
+            query_arg = call_args[1].get("query", call_args[0][0] if call_args[0] else "")
+            assert "## Your Role" not in query_arg
+            assert "Map the architecture" not in query_arg  # agent instructions
 
     @pytest.mark.asyncio
     async def test_dispatch_passes_agent_identity(
-        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider,
+        self,
+        agent_registry,
+        swarm_registry,
+        mock_inner_executor,
+        mock_provider,
     ):
         """dispatch_agent must pass agent_identity dict to AgentLoopService via config."""
         captured_kwargs = {}
@@ -545,38 +610,51 @@ class TestQueryNotContaminatedByRole:
             captured_kwargs.update(kwargs)
             original_init(self, *args, **kwargs)
 
-        with patch("app.agent_loop.service.AgentLoopService.__init__", capture_init):
-            with patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream:
-                async def empty_stream(*a, **kw):
-                    from app.agent_loop.service import AgentEvent
-                    yield AgentEvent(kind="done", data={
-                        "answer": "test", "tool_calls_made": 0,
-                        "iterations": 0, "duration_ms": 0,
-                        "thinking_steps": [],
-                    })
-                mock_stream.side_effect = empty_stream
+        with (
+            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
+            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
+        ):
 
-                executor = AgentToolExecutor(
-                    inner_executor=mock_inner_executor,
-                    agent_registry=agent_registry,
-                    swarm_registry=swarm_registry,
-                    agent_provider=mock_provider,
-                    workspace_path="/tmp/test",
-                    event_sink=asyncio.Queue(),
+            async def empty_stream(*a, **kw):
+                from app.agent_loop.service import AgentEvent
+
+                yield AgentEvent(
+                    kind="done",
+                    data={
+                        "answer": "test",
+                        "tool_calls_made": 0,
+                        "iterations": 0,
+                        "duration_ms": 0,
+                        "thinking_steps": [],
+                    },
                 )
-                await executor.execute("dispatch_agent", {
+
+            mock_stream.side_effect = empty_stream
+
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_agent",
+                {
                     "agent_name": "explore_architecture",
                     "query": "How does auth work?",
-                })
+                },
+            )
 
-                # Verify agent_identity was passed via AgentLoopConfig
-                loop_config = captured_kwargs.get("config")
-                assert loop_config is not None, "AgentLoopService must receive an AgentLoopConfig"
-                identity = loop_config.agent_identity
-                assert identity is not None
-                assert identity["name"] == "explore_architecture"
-                assert identity["description"] == "Maps module structure"
-                assert identity["instructions"] == "Map the architecture."
+            # Verify agent_identity was passed via AgentLoopConfig
+            loop_config = captured_kwargs.get("config")
+            assert loop_config is not None, "AgentLoopService must receive an AgentLoopConfig"
+            identity = loop_config.agent_identity
+            assert identity is not None
+            assert identity["name"] == "explore_architecture"
+            assert identity["description"] == "Maps module structure"
+            assert identity["instructions"] == "Map the architecture."
 
 
 # ---------------------------------------------------------------------------
@@ -585,7 +663,6 @@ class TestQueryNotContaminatedByRole:
 
 
 class TestBrainConfigLoading:
-
     def test_load_brain_config(self):
         config = load_brain_config()
         assert config.model == "strong"
@@ -595,10 +672,8 @@ class TestBrainConfigLoading:
 
     def test_load_swarm_registry(self):
         swarms = load_swarm_registry()
-        assert "pr_review" in swarms
         assert "business_flow" in swarms
-        assert len(swarms["pr_review"].agents) == 5
-        assert swarms["pr_review"].mode == "parallel"
+        assert swarms["business_flow"].mode == "parallel"
 
     def test_load_agent_registry(self):
         agents = load_agent_registry()
@@ -612,7 +687,6 @@ class TestBrainConfigLoading:
 
 
 class TestAgentFindings:
-
     def test_defaults(self):
         f = AgentFindings()
         assert f.answer == ""
@@ -637,7 +711,6 @@ class TestAgentFindings:
 
 
 class TestCreatePlan:
-
     @pytest.mark.asyncio
     async def test_create_plan_stores_plan(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         executor = AgentToolExecutor(
@@ -648,11 +721,14 @@ class TestCreatePlan:
             workspace_path="/tmp/ws",
         )
         assert executor._plan is None
-        await executor.execute("create_plan", {
-            "mode": "simple",
-            "reasoning": "Single endpoint lookup",
-            "agents": ["explore_entry_point"],
-        })
+        await executor.execute(
+            "create_plan",
+            {
+                "mode": "simple",
+                "reasoning": "Single endpoint lookup",
+                "agents": ["explore_entry_point"],
+            },
+        )
         assert executor._plan is not None
         assert executor._plan["mode"] == "simple"
         assert executor._plan["agents"] == ["explore_entry_point"]
@@ -669,12 +745,15 @@ class TestCreatePlan:
             workspace_path="/tmp/ws",
             event_sink=event_sink,
         )
-        await executor.execute("create_plan", {
-            "mode": "swarm",
-            "reasoning": "Multi-perspective",
-            "agents": ["correctness", "security"],
-            "query_decomposition": ["auth flow", "input validation"],
-        })
+        await executor.execute(
+            "create_plan",
+            {
+                "mode": "swarm",
+                "reasoning": "Multi-perspective",
+                "agents": ["correctness", "security"],
+                "query_decomposition": ["auth flow", "input validation"],
+            },
+        )
         assert not event_sink.empty()
         event = await event_sink.get()
         assert event.kind == "plan_created"
@@ -683,7 +762,9 @@ class TestCreatePlan:
         assert event.data["query_decomposition"] == ["auth flow", "input validation"]
 
     @pytest.mark.asyncio
-    async def test_create_plan_returns_success(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+    async def test_create_plan_returns_success(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
             agent_registry=agent_registry,
@@ -691,19 +772,24 @@ class TestCreatePlan:
             agent_provider=mock_provider,
             workspace_path="/tmp/ws",
         )
-        result = await executor.execute("create_plan", {
-            "mode": "complex",
-            "reasoning": "Need sequential investigation",
-            "agents": ["explore_root_cause", "explore_config"],
-            "fallback": "Try architecture agent if both fail",
-        })
+        result = await executor.execute(
+            "create_plan",
+            {
+                "mode": "complex",
+                "reasoning": "Need sequential investigation",
+                "agents": ["explore_root_cause", "explore_config"],
+                "fallback": "Try architecture agent if both fail",
+            },
+        )
         assert result.success is True
         assert result.data["status"] == "plan_recorded"
         assert result.data["mode"] == "complex"
         assert result.data["fallback"] == "Try architecture agent if both fail"
 
     @pytest.mark.asyncio
-    async def test_create_plan_without_event_sink(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+    async def test_create_plan_without_event_sink(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """create_plan works without event_sink (no crash)."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -712,10 +798,13 @@ class TestCreatePlan:
             agent_provider=mock_provider,
             workspace_path="/tmp/ws",
         )
-        result = await executor.execute("create_plan", {
-            "mode": "simple",
-            "reasoning": "test",
-        })
+        result = await executor.execute(
+            "create_plan",
+            {
+                "mode": "simple",
+                "reasoning": "test",
+            },
+        )
         assert result.success is True
         assert executor._plan["mode"] == "simple"
 
@@ -729,17 +818,22 @@ class TestCreatePlan:
             agent_provider=mock_provider,
             workspace_path="/tmp/ws",
         )
-        await executor.execute("create_plan", {
-            "mode": "simple",
-            "reasoning": "Quick lookup",
-        })
+        await executor.execute(
+            "create_plan",
+            {
+                "mode": "simple",
+                "reasoning": "Quick lookup",
+            },
+        )
         assert executor._plan["agents"] == []
         assert executor._plan["query_decomposition"] == []
         assert executor._plan["risk"] == ""
         assert executor._plan["fallback"] == ""
 
     @pytest.mark.asyncio
-    async def test_dispatch_works_without_plan(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
+    async def test_dispatch_works_without_plan(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Backward compat: dispatch_agent works without prior create_plan."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -749,10 +843,13 @@ class TestCreatePlan:
             workspace_path="/tmp/ws",
             max_depth=0,  # force depth error to avoid needing real agent run
         )
-        result = await executor.execute("dispatch_agent", {
-            "agent_name": "explore_architecture",
-            "query": "Map the architecture",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "agent_name": "explore_architecture",
+                "query": "Map the architecture",
+            },
+        )
         # Depth error, but it still processed — no plan required
         assert executor._plan is None
         assert result.success is False
@@ -782,7 +879,7 @@ class TestCreatePlan:
 
     def test_create_plan_params_required_fields(self):
         """mode and reasoning are required."""
-        with pytest.raises(Exception):
+        with pytest.raises((TypeError, ValidationError)):
             CreatePlanParams()  # type: ignore[call-arg]
 
 
@@ -795,8 +892,9 @@ class TestDynamicAgentDispatch:
     """Tests for dynamic agent composition (dispatch_agent without template)."""
 
     @pytest.mark.asyncio
-    async def test_dynamic_dispatch_builds_config(self, agent_registry, swarm_registry,
-                                                   mock_inner_executor, mock_provider):
+    async def test_dynamic_dispatch_builds_config(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Dynamic dispatch with tools builds an ephemeral agent config."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -806,21 +904,25 @@ class TestDynamicAgentDispatch:
             workspace_path="/tmp/ws",
             max_depth=0,  # force depth error
         )
-        result = await executor.execute("dispatch_agent", {
-            "query": "Find the auth handler",
-            "tools": ["grep", "find_symbol", "read_file"],
-            "perspective": "Focus on authentication entry points",
-            "skill": "entry_point",
-            "budget_tokens": 150000,
-            "max_iterations": 12,
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "query": "Find the auth handler",
+                "tools": ["grep", "find_symbol", "read_file"],
+                "perspective": "Focus on authentication entry points",
+                "skill": "entry_point",
+                "budget_tokens": 150000,
+                "max_iterations": 12,
+            },
+        )
         # Depth error, but it resolved the dynamic config
         assert not result.success
         assert "depth" in result.error.lower()
 
     @pytest.mark.asyncio
-    async def test_dynamic_dispatch_strong_model(self, agent_registry, swarm_registry,
-                                                  mock_inner_executor, mock_provider):
+    async def test_dynamic_dispatch_strong_model(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Dynamic dispatch with model='strong' selects strong_provider."""
         strong_mock = MagicMock()
         executor = AgentToolExecutor(
@@ -832,17 +934,21 @@ class TestDynamicAgentDispatch:
             workspace_path="/tmp/ws",
             max_depth=0,
         )
-        result = await executor.execute("dispatch_agent", {
-            "query": "Debug the crash",
-            "tools": ["grep", "read_file", "git_blame"],
-            "model": "strong",
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "query": "Debug the crash",
+                "tools": ["grep", "read_file", "git_blame"],
+                "model": "strong",
+            },
+        )
         # Depth error, but verified it would use strong provider
         assert not result.success
 
     @pytest.mark.asyncio
-    async def test_dynamic_dispatch_defaults_to_explorer(self, agent_registry, swarm_registry,
-                                                          mock_inner_executor, mock_provider):
+    async def test_dynamic_dispatch_defaults_to_explorer(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
         """Dynamic dispatch defaults to explorer model."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -852,15 +958,17 @@ class TestDynamicAgentDispatch:
             workspace_path="/tmp/ws",
             max_depth=0,
         )
-        result = await executor.execute("dispatch_agent", {
-            "query": "Find endpoint",
-            "tools": ["grep", "find_symbol"],
-        })
+        result = await executor.execute(
+            "dispatch_agent",
+            {
+                "query": "Find endpoint",
+                "tools": ["grep", "find_symbol"],
+            },
+        )
         assert not result.success
         assert "depth" in result.error.lower()
 
-    def test_build_dynamic_config(self, agent_registry, swarm_registry,
-                                   mock_inner_executor, mock_provider):
+    def test_build_dynamic_config(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """_build_dynamic_config creates valid AgentConfig."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -869,14 +977,16 @@ class TestDynamicAgentDispatch:
             agent_provider=mock_provider,
             workspace_path="/tmp/ws",
         )
-        config = executor._build_dynamic_config({
-            "tools": ["grep", "read_file", "jira_search"],
-            "perspective": "Find auth bugs and create tickets",
-            "skill": "issue_tracking",
-            "model": "explorer",
-            "budget_tokens": 200000,
-            "max_iterations": 15,
-        })
+        config = executor._build_dynamic_config(
+            {
+                "tools": ["grep", "read_file", "jira_search"],
+                "perspective": "Find auth bugs and create tickets",
+                "skill": "issue_tracking",
+                "model": "explorer",
+                "budget_tokens": 200000,
+                "max_iterations": 15,
+            }
+        )
         assert config.name == "dynamic_issue_tracking"
         assert config.skill == "issue_tracking"
         assert config.instructions == "Find auth bugs and create tickets"
@@ -884,8 +994,7 @@ class TestDynamicAgentDispatch:
         assert config.limits.max_iterations == 15
         assert "grep" in config.tool_list
 
-    def test_build_dynamic_config_defaults(self, agent_registry, swarm_registry,
-                                            mock_inner_executor, mock_provider):
+    def test_build_dynamic_config_defaults(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
         """_build_dynamic_config uses sensible defaults."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
@@ -894,9 +1003,11 @@ class TestDynamicAgentDispatch:
             agent_provider=mock_provider,
             workspace_path="/tmp/ws",
         )
-        config = executor._build_dynamic_config({
-            "tools": ["grep"],
-        })
+        config = executor._build_dynamic_config(
+            {
+                "tools": ["grep"],
+            }
+        )
         assert config.name == "dynamic_explorer"
         assert config.limits.budget_tokens == 300_000
         assert config.limits.max_iterations == 20
@@ -937,10 +1048,17 @@ class TestDynamicAgentDispatch:
     def test_enriched_skills_have_content(self):
         """All 9 skill keys have non-empty content in INVESTIGATION_SKILLS."""
         from app.agent_loop.prompts import INVESTIGATION_SKILLS
+
         expected_keys = [
-            "entry_point", "root_cause", "architecture", "impact",
-            "data_lineage", "recent_changes", "code_explanation",
-            "config_analysis", "issue_tracking",
+            "entry_point",
+            "root_cause",
+            "architecture",
+            "impact",
+            "data_lineage",
+            "recent_changes",
+            "code_explanation",
+            "config_analysis",
+            "issue_tracking",
         ]
         for key in expected_keys:
             assert key in INVESTIGATION_SKILLS, f"Missing skill: {key}"
@@ -949,6 +1067,7 @@ class TestDynamicAgentDispatch:
     def test_root_cause_skill_has_systemic_causes(self):
         """root_cause skill includes systemic causes check (from .md)."""
         from app.agent_loop.prompts import INVESTIGATION_SKILLS
+
         skill = INVESTIGATION_SKILLS["root_cause"]
         assert "concurrency" in skill.lower()
         assert "retry" in skill.lower()
@@ -957,12 +1076,14 @@ class TestDynamicAgentDispatch:
     def test_impact_skill_has_amplification(self):
         """impact skill includes amplification risks (from .md)."""
         from app.agent_loop.prompts import INVESTIGATION_SKILLS
+
         skill = INVESTIGATION_SKILLS["impact"]
         assert "amplification" in skill.lower()
 
     def test_code_explanation_skill_has_three_dimensions(self):
         """code_explanation skill includes 3-dimension framework (from .md)."""
         from app.agent_loop.prompts import INVESTIGATION_SKILLS
+
         skill = INVESTIGATION_SKILLS["code_explanation"]
         assert "Business context" in skill
         assert "Mechanism" in skill

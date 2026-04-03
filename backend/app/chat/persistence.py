@@ -7,13 +7,14 @@ ensures stragglers are written even in low-traffic rooms.
 
 Postgres is always the **source of truth**.  Redis is a read cache.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Dict, List, Optional
 
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
@@ -34,6 +35,7 @@ class ChatPersistenceService:
         self._buffers: Dict[str, List[dict]] = {}  # room_id → pending messages
         self._flush_handles: Dict[str, asyncio.TimerHandle] = {}
         self._lock = asyncio.Lock()
+        self._background_tasks: set = set()  # prevent GC of fire-and-forget tasks
 
     # ------------------------------------------------------------------
     # Write path: micro-batch
@@ -50,7 +52,9 @@ class ChatPersistenceService:
                 self._buffers[room_id] = buf[BATCH_SIZE:]
                 self._cancel_timer(room_id)
                 # Fire and forget — don't block the WebSocket handler
-                asyncio.create_task(self._write_batch(room_id, batch))
+                task = asyncio.create_task(self._write_batch(room_id, batch))
+                self._background_tasks.add(task)
+                task.add_done_callback(self._background_tasks.discard)
             else:
                 self._schedule_timer(room_id)
 
@@ -85,6 +89,7 @@ class ChatPersistenceService:
             return
         try:
             from ..db.models import ChatMessageRecord
+
             async with self._session_factory() as session:
                 for m in messages:
                     existing = await session.get(ChatMessageRecord, m["id"])
@@ -93,20 +98,22 @@ class ChatPersistenceService:
                     # Build metadata JSON for structured message types
                     metadata_dict = m.get("metadata")
                     metadata_json = json.dumps(metadata_dict) if metadata_dict else None
-                    session.add(ChatMessageRecord(
-                        id=m["id"],
-                        room_id=room_id,
-                        user_id=m.get("userId", ""),
-                        display_name=m.get("displayName", ""),
-                        role=m.get("role", "guest"),
-                        type=m.get("type", "message"),
-                        content=m.get("content", ""),
-                        identity_source=m.get("identitySource", "anonymous"),
-                        parent_message_id=m.get("parentMessageId"),
-                        ai_data=json.dumps(m["aiData"]) if m.get("aiData") else None,
-                        extra_data=metadata_json,
-                        ts=m.get("ts", 0.0),
-                    ))
+                    session.add(
+                        ChatMessageRecord(
+                            id=m["id"],
+                            room_id=room_id,
+                            user_id=m.get("userId", ""),
+                            display_name=m.get("displayName", ""),
+                            role=m.get("role", "guest"),
+                            type=m.get("type", "message"),
+                            content=m.get("content", ""),
+                            identity_source=m.get("identitySource", "anonymous"),
+                            parent_message_id=m.get("parentMessageId"),
+                            ai_data=json.dumps(m["aiData"]) if m.get("aiData") else None,
+                            extra_data=metadata_json,
+                            ts=m.get("ts", 0.0),
+                        )
+                    )
                 await session.commit()
             logger.debug("Persisted %d messages for room %s", len(messages), room_id)
         except Exception as exc:
@@ -134,10 +141,11 @@ class ChatPersistenceService:
         """
         try:
             from ..db.models import ChatRoom
+
             async with self._session_factory() as session:
                 existing = await session.get(ChatRoom, room_id)
                 if existing:
-                    existing.last_active_at = datetime.now(timezone.utc)
+                    existing.last_active_at = datetime.now(UTC)
                     existing.status = "active"
                     # Update mutable fields if provided
                     if name is not None:
@@ -149,18 +157,20 @@ class ChatPersistenceService:
                     if branch is not None:
                         existing.branch = branch
                 else:
-                    session.add(ChatRoom(
-                        id=room_id,
-                        name=name,
-                        owner_email=owner_email,
-                        owner_provider=owner_provider,
-                        display_name=display_name,
-                        mode=mode,
-                        workspace_path=workspace_path,
-                        repo_url=repo_url,
-                        branch=branch,
-                        status="active",
-                    ))
+                    session.add(
+                        ChatRoom(
+                            id=room_id,
+                            name=name,
+                            owner_email=owner_email,
+                            owner_provider=owner_provider,
+                            display_name=display_name,
+                            mode=mode,
+                            workspace_path=workspace_path,
+                            repo_url=repo_url,
+                            branch=branch,
+                            status="active",
+                        )
+                    )
                 await session.commit()
         except Exception as exc:
             logger.warning("ensure_room failed for %s: %s", room_id, exc)
@@ -169,6 +179,7 @@ class ChatPersistenceService:
         """Set or update the human-readable room name."""
         try:
             from ..db.models import ChatRoom
+
             async with self._session_factory() as session:
                 room = await session.get(ChatRoom, room_id)
                 if room:
@@ -190,8 +201,10 @@ class ChatPersistenceService:
         """Track a participant joining/rejoining a room."""
         try:
             from ..db.models import ChatRoomParticipant
+
             async with self._session_factory() as session:
                 from sqlalchemy import and_
+
                 q = select(ChatRoomParticipant).where(
                     and_(
                         ChatRoomParticipant.room_id == room_id,
@@ -211,15 +224,17 @@ class ChatPersistenceService:
                     if provider:
                         existing.provider = provider
                 else:
-                    session.add(ChatRoomParticipant(
-                        room_id=room_id,
-                        user_id=user_id,
-                        display_name=display_name,
-                        role=role,
-                        identity_source=identity_source,
-                        email=email,
-                        provider=provider,
-                    ))
+                    session.add(
+                        ChatRoomParticipant(
+                            room_id=room_id,
+                            user_id=user_id,
+                            display_name=display_name,
+                            role=role,
+                            identity_source=identity_source,
+                            email=email,
+                            provider=provider,
+                        )
+                    )
                 await session.commit()
         except Exception as exc:
             logger.warning("upsert_participant failed for %s/%s: %s", room_id, user_id, exc)
@@ -228,8 +243,10 @@ class ChatPersistenceService:
         """Mark a participant as having left the room."""
         try:
             from ..db.models import ChatRoomParticipant
+
             async with self._session_factory() as session:
                 from sqlalchemy import and_
+
                 q = select(ChatRoomParticipant).where(
                     and_(
                         ChatRoomParticipant.room_id == room_id,
@@ -240,7 +257,7 @@ class ChatPersistenceService:
                 p = result.scalar_one_or_none()
                 if p:
                     p.is_active = False
-                    p.left_at = datetime.now(timezone.utc)
+                    p.left_at = datetime.now(UTC)
                     await session.commit()
         except Exception as exc:
             logger.warning("mark_participant_left failed for %s/%s: %s", room_id, user_id, exc)
@@ -250,12 +267,9 @@ class ChatPersistenceService:
         await self._flush_buffer(room_id)
         try:
             from ..db.models import ChatRoom
+
             async with self._session_factory() as session:
-                stmt = (
-                    update(ChatRoom)
-                    .where(ChatRoom.id == room_id)
-                    .values(status="ended", ended_at=datetime.now(timezone.utc))
-                )
+                stmt = update(ChatRoom).where(ChatRoom.id == room_id).values(status="ended", ended_at=datetime.now(UTC))
                 await session.execute(stmt)
                 await session.commit()
         except Exception as exc:
@@ -266,6 +280,7 @@ class ChatPersistenceService:
         await self._flush_buffer(room_id)
         try:
             from ..db.models import ChatRoom
+
             async with self._session_factory() as session:
                 await session.execute(delete(ChatRoom).where(ChatRoom.id == room_id))
                 await session.commit()
@@ -285,10 +300,9 @@ class ChatPersistenceService:
         """Load messages from Postgres, optionally filtered by timestamp."""
         try:
             from ..db.models import ChatMessageRecord
+
             async with self._session_factory() as session:
-                q = select(ChatMessageRecord).where(
-                    ChatMessageRecord.room_id == room_id
-                )
+                q = select(ChatMessageRecord).where(ChatMessageRecord.room_id == room_id)
                 if since_ts is not None:
                     q = q.where(ChatMessageRecord.ts > since_ts)
                 q = q.order_by(ChatMessageRecord.ts).limit(limit)
@@ -347,6 +361,7 @@ class ChatPersistenceService:
         """List active/ended rooms for an SSO user."""
         try:
             from ..db.models import ChatRoom
+
             async with self._session_factory() as session:
                 q = (
                     select(ChatRoom)
@@ -377,7 +392,10 @@ class ChatPersistenceService:
             return []
 
     async def get_messages_since(
-        self, room_id: str, since_ts: float, limit: int = 500,
+        self,
+        room_id: str,
+        since_ts: float,
+        limit: int = 500,
     ) -> List[dict]:
         """Incremental sync: messages newer than *since_ts*."""
         return await self.load_messages_from_postgres(room_id, since_ts=since_ts, limit=limit)

@@ -3,10 +3,11 @@
 Provides persistent storage for audit log entries using async SQLAlchemy.
 The service accepts an ``AsyncEngine`` at construction time.
 """
+
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import List, Optional
 
 from sqlalchemy import delete, select
@@ -41,7 +42,7 @@ class AuditLogService:
 
     async def log_apply(self, entry: AuditLogCreate) -> AuditLogEntry:
         """Log an apply operation."""
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
         row = AuditLog(
             room_id=entry.room_id,
             summary_id=entry.summary_id,
@@ -89,9 +90,7 @@ class AuditLogService:
     async def delete_room_logs(self, room_id: str) -> None:
         """Delete all audit entries for a room."""
         async with self._session_factory() as session:
-            await session.execute(
-                delete(AuditLog).where(AuditLog.room_id == room_id)
-            )
+            await session.execute(delete(AuditLog).where(AuditLog.room_id == room_id))
             await session.commit()
             logger.info("[Audit] Deleted audit logs for room %s", room_id)
 

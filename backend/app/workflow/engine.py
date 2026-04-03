@@ -9,6 +9,7 @@ Executes config-driven workflows by:
 The engine does NOT own agent execution logic — it delegates to
 AgentLoopService (explorers) and provider.call_model() (judges).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -20,13 +21,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from app.agent_loop.budget import BudgetConfig
 from app.agent_loop.service import AgentLoopService, AgentResult
 from app.ai_provider.base import AIProvider
-from app.code_tools.schemas import filter_tools
 
 from .classifier_engine import ClassifierEngine
 from .models import (
     AgentConfig,
     ClassifierResult,
-    RouteConfig,
     StageConfig,
     WorkflowConfig,
 )
@@ -132,15 +131,16 @@ class WorkflowEngine:
         # Step 1: Classify — LLM with examples first, keyword fallback
         classifier = ClassifierEngine(workflow)
         classify_result = classifier.classify(context)
-        keyword_route = classify_result.best_route
-        keyword_score = max(classify_result.raw_scores.values()) if classify_result.raw_scores else 0
 
         context["_classify_result"] = classify_result
 
-        yield WorkflowEvent("classify", {
-            "workflow": workflow.name,
-            "result": classify_result.model_dump(),
-        })
+        yield WorkflowEvent(
+            "classify",
+            {
+                "workflow": workflow.name,
+                "result": classify_result.model_dump(),
+            },
+        )
 
         # Step 2: Route and execute — run in background task so we can
         # drain the event queue while agents are working
@@ -173,10 +173,13 @@ class WorkflowEngine:
         duration_ms = (time.monotonic() - start_time) * 1000
         context["_duration_ms"] = duration_ms
 
-        yield WorkflowEvent("done", {
-            "workflow": workflow.name,
-            "duration_ms": duration_ms,
-        })
+        yield WorkflowEvent(
+            "done",
+            {
+                "workflow": workflow.name,
+                "duration_ms": duration_ms,
+            },
+        )
 
         self._event_queue = None
 
@@ -198,12 +201,13 @@ class WorkflowEngine:
         Args:
             context: Must include ``query`` and ``workspace_path``.
         """
-        from .loader import load_brain_config, load_agent_registry, load_swarm_registry
         from app.agent_loop.brain import AgentToolExecutor, BrainBudgetManager
+        from app.agent_loop.budget import BudgetConfig
         from app.agent_loop.prompts import build_brain_prompt
         from app.agent_loop.service import AgentLoopService
-        from app.agent_loop.budget import BudgetConfig
         from app.code_tools.executor import LocalToolExecutor
+
+        from .loader import load_agent_registry, load_brain_config, load_swarm_registry
 
         start_time = time.monotonic()
         brain_config = load_brain_config()
@@ -212,7 +216,9 @@ class WorkflowEngine:
 
         logger.info(
             "Starting Brain orchestrator (agents=%d, swarms=%d, max_iter=%d)",
-            len(agent_registry), len(swarm_registry), brain_config.limits.max_iterations,
+            len(agent_registry),
+            len(swarm_registry),
+            brain_config.limits.max_iterations,
         )
 
         # Set up event queue for streaming
@@ -235,6 +241,7 @@ class WorkflowEngine:
         inner_executor = self._tool_executor or LocalToolExecutor(workspace_path)
 
         from app.agent_loop.config import BrainExecutorConfig
+
         brain_executor = AgentToolExecutor(
             inner_executor=inner_executor,
             agent_registry=agent_registry,
@@ -263,6 +270,7 @@ class WorkflowEngine:
 
         # Create Brain agent loop
         from app.agent_loop.config import AgentLoopConfig
+
         brain = AgentLoopService(
             provider=self._provider,  # strong model for Brain
             config=AgentLoopConfig(
@@ -284,14 +292,10 @@ class WorkflowEngine:
                         # Hand off to specialized brain (one-way)
                         await self._run_specialized_brain(event.data, context)
                         return
-                    await self._event_queue.put(
-                        WorkflowEvent(event.kind, event.data)
-                    )
+                    await self._event_queue.put(WorkflowEvent(event.kind, event.data))
             except Exception as exc:
                 logger.error("Brain failed: %s", exc, exc_info=True)
-                await self._event_queue.put(
-                    WorkflowEvent("error", {"error": str(exc)})
-                )
+                await self._event_queue.put(WorkflowEvent("error", {"error": str(exc)}))
             await self._event_queue.put(None)  # sentinel
 
         task = asyncio.create_task(_execute())
@@ -304,9 +308,10 @@ class WorkflowEngine:
         while True:
             try:
                 event = await asyncio.wait_for(
-                    self._event_queue.get(), timeout=_HEARTBEAT_INTERVAL,
+                    self._event_queue.get(),
+                    timeout=_HEARTBEAT_INTERVAL,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Yield an SSE comment as keepalive (invisible to EventSource clients)
                 yield WorkflowEvent("keepalive", {})
                 continue
@@ -317,10 +322,13 @@ class WorkflowEngine:
         await task
 
         duration_ms = (time.monotonic() - start_time) * 1000
-        yield WorkflowEvent("done", {
-            "workflow": "brain",
-            "duration_ms": duration_ms,
-        })
+        yield WorkflowEvent(
+            "done",
+            {
+                "workflow": "brain",
+                "duration_ms": duration_ms,
+            },
+        )
 
         self._event_queue = None
 
@@ -339,8 +347,9 @@ class WorkflowEngine:
 
         if brain_name == "pr_review":
             from app.agent_loop.pr_brain import PRBrainOrchestrator
-            from .loader import load_pr_brain_config, load_agent_registry
             from app.code_tools.executor import LocalToolExecutor
+
+            from .loader import load_agent_registry, load_pr_brain_config
 
             workspace_path = params.get("workspace_path", context.get("workspace_path", ""))
             diff_spec = params.get("diff_spec", "HEAD~1..HEAD")
@@ -362,13 +371,9 @@ class WorkflowEngine:
                     await self._event_queue.put(event)
             except Exception as exc:
                 logger.error("PR Brain failed: %s", exc, exc_info=True)
-                await self._event_queue.put(
-                    WorkflowEvent("error", {"error": f"PR Brain failed: {exc}"})
-                )
+                await self._event_queue.put(WorkflowEvent("error", {"error": f"PR Brain failed: {exc}"}))
         else:
-            await self._event_queue.put(
-                WorkflowEvent("error", {"error": f"Unknown specialized brain: {brain_name}"})
-            )
+            await self._event_queue.put(WorkflowEvent("error", {"error": f"Unknown specialized brain: {brain_name}"}))
 
         await self._event_queue.put(None)  # sentinel
 
@@ -395,17 +400,23 @@ class WorkflowEngine:
         route = workflow.routes[route_name]
         context["_active_route"] = route_name
 
-        yield WorkflowEvent("route_selected", {
-            "route": route_name,
-            "mode": "first_match",
-        })
+        yield WorkflowEvent(
+            "route_selected",
+            {
+                "route": route_name,
+                "mode": "first_match",
+            },
+        )
 
         # Handle delegate
         if route.delegate:
-            yield WorkflowEvent("delegate", {
-                "route": route_name,
-                "delegate_to": route.delegate,
-            })
+            yield WorkflowEvent(
+                "delegate",
+                {
+                    "route": route_name,
+                    "delegate_to": route.delegate,
+                },
+            )
             # Delegate execution is handled by the caller (service layer)
             # which loads the delegate workflow and calls engine.run() again.
             context["_delegate"] = route.delegate
@@ -413,7 +424,10 @@ class WorkflowEngine:
 
         # Execute the route's pipeline
         async for event in self._run_pipeline(
-            route.pipeline, workflow, context, f"route:{route_name}",
+            route.pipeline,
+            workflow,
+            context,
+            f"route:{route_name}",
         ):
             yield event
 
@@ -446,11 +460,14 @@ class WorkflowEngine:
 
         context["_active_routes"] = active_routes
 
-        yield WorkflowEvent("routes_selected", {
-            "routes": active_routes,
-            "mode": "parallel_all_matching",
-            "all_levels": classify_result.matched_routes,
-        })
+        yield WorkflowEvent(
+            "routes_selected",
+            {
+                "routes": active_routes,
+                "mode": "parallel_all_matching",
+                "all_levels": classify_result.matched_routes,
+            },
+        )
 
         if not active_routes:
             logger.warning("No routes activated for workflow '%s'", workflow.name)
@@ -473,31 +490,43 @@ class WorkflowEngine:
             if semaphore is not None:
                 route_ctx["_llm_semaphore"] = semaphore
             route_ctx["_route_name"] = rname
-            async for event in self._run_pipeline(
-                route.pipeline, workflow, route_ctx, f"route:{rname}",
+            async for _ in self._run_pipeline(
+                route.pipeline,
+                workflow,
+                route_ctx,
+                f"route:{rname}",
             ):
                 pass  # events from parallel routes are not yielded (too noisy)
             route_results[rname] = route_ctx.get("_stage_results", {})
 
         # Dispatch all routes concurrently
-        yield WorkflowEvent("parallel_dispatch", {
-            "routes": active_routes,
-            "count": len(active_routes),
-        })
+        yield WorkflowEvent(
+            "parallel_dispatch",
+            {
+                "routes": active_routes,
+                "count": len(active_routes),
+            },
+        )
 
         await asyncio.gather(*[_run_one_route(rn) for rn in active_routes])
 
         # Merge route results into main context
         context["_route_results"] = route_results
 
-        yield WorkflowEvent("parallel_complete", {
-            "routes": active_routes,
-        })
+        yield WorkflowEvent(
+            "parallel_complete",
+            {
+                "routes": active_routes,
+            },
+        )
 
         # Execute post_pipeline (arbitrate, synthesize, etc.)
         if workflow.post_pipeline:
             async for event in self._run_pipeline(
-                workflow.post_pipeline, workflow, context, "post_pipeline",
+                workflow.post_pipeline,
+                workflow,
+                context,
+                "post_pipeline",
             ):
                 yield event
 
@@ -516,31 +545,30 @@ class WorkflowEngine:
         stage_results = context.setdefault("_stage_results", {})
 
         for stage in stages:
-            yield WorkflowEvent("stage_start", {
-                "stage": stage.stage,
-                "pipeline": pipeline_name,
-                "parallel": stage.parallel,
-                "agent_count": len(stage.agents),
-            })
+            yield WorkflowEvent(
+                "stage_start",
+                {
+                    "stage": stage.stage,
+                    "pipeline": pipeline_name,
+                    "parallel": stage.parallel,
+                    "agent_count": len(stage.agents),
+                },
+            )
 
-            agents = [
-                workflow.resolved_agents[path]
-                for path in stage.agents
-                if path in workflow.resolved_agents
-            ]
+            agents = [workflow.resolved_agents[path] for path in stage.agents if path in workflow.resolved_agents]
 
             if stage.parallel and len(agents) > 1:
                 # Parallel agent dispatch
-                results = await asyncio.gather(*[
-                    self._run_agent(agent, workflow, context)
-                    for agent in agents
-                ])
+                results = await asyncio.gather(*[self._run_agent(agent, workflow, context) for agent in agents])
                 for agent, result in zip(agents, results):
                     if result.get("error"):
                         logger.warning("Agent '%s' failed: %s", agent.name, result["error"])
-                stage_results[stage.stage] = dict(zip(
-                    [a.name for a in agents], results,
-                ))
+                stage_results[stage.stage] = dict(
+                    zip(
+                        [a.name for a in agents],
+                        results,
+                    )
+                )
             else:
                 # Sequential agent dispatch
                 for agent in agents:
@@ -549,10 +577,13 @@ class WorkflowEngine:
                         logger.warning("Agent '%s' failed: %s", agent.name, result["error"])
                     stage_results[stage.stage] = {agent.name: result}
 
-            yield WorkflowEvent("stage_complete", {
-                "stage": stage.stage,
-                "pipeline": pipeline_name,
-            })
+            yield WorkflowEvent(
+                "stage_complete",
+                {
+                    "stage": stage.stage,
+                    "pipeline": pipeline_name,
+                },
+            )
 
     # -----------------------------------------------------------------
     # Agent execution
@@ -614,9 +645,6 @@ class WorkflowEngine:
         # Build query from prompt template + agent instructions
         query = self._build_agent_query(agent, workflow, context)
 
-        # Resolve tools
-        tool_defs = filter_tools(agent.tools.extra) if agent.tools.extra else None
-
         # Pass the workflow route name so the agent uses the correct classification
         # (e.g. "business_flow_tracing") instead of re-classifying independently.
         route_name = context.get("_active_route") or context.get("_route_name", "")
@@ -629,6 +657,7 @@ class WorkflowEngine:
         # when there's NO workflow route to use.
         use_workflow_classification = bool(route_name)
         from app.agent_loop.config import AgentLoopConfig
+
         svc = AgentLoopService(
             provider=provider,
             config=AgentLoopConfig(
@@ -637,7 +666,7 @@ class WorkflowEngine:
                 is_sub_agent=not use_workflow_classification,
                 workflow_config=agent if use_workflow_classification else None,
                 workflow_route_name=route_name,
-                perspective=agent.instructions,     # agent role for scoped verification
+                perspective=agent.instructions,  # agent role for scoped verification
                 interactive=context.get("_interactive", False),
                 agent_identity={
                     "name": agent.name,
@@ -665,9 +694,7 @@ class WorkflowEngine:
             # Forward events immediately so ask_user reaches the client
             # before the generator pauses waiting for the user's answer.
             if self._event_queue is not None:
-                await self._event_queue.put(
-                    WorkflowEvent(event.kind, {"agent": agent.name, **event.data})
-                )
+                await self._event_queue.put(WorkflowEvent(event.kind, {"agent": agent.name, **event.data}))
 
             if event.kind == "done":
                 result = AgentResult(
@@ -796,13 +823,11 @@ class WorkflowEngine:
                     continue
                 answer = result.get("answer", "")
                 if answer:
-                    perspective_answers.append(
-                        f"### Agent: {agent_name}\n\n{answer}"
-                    )
+                    perspective_answers.append(f"### Agent: {agent_name}\n\n{answer}")
                 # Collect context_chunks as raw evidence
                 chunks = result.get("context_chunks", [])
                 for chunk in chunks:
-                    if hasattr(chunk, 'file_path'):
+                    if hasattr(chunk, "file_path"):
                         raw_evidence.append(
                             f"**{chunk.file_path}:{chunk.start_line}-{chunk.end_line}**\n```\n{chunk.content}\n```"
                         )
@@ -826,10 +851,10 @@ class WorkflowEngine:
         route_results = context.get("_route_results", {})
         if route_results:
             findings_parts = []
-            for route_name, stages in route_results.items():
+            for _, stages in route_results.items():
                 if not isinstance(stages, dict):
                     continue
-                for stage_name, agents_dict in stages.items():
+                for _, agents_dict in stages.items():
                     if not isinstance(agents_dict, dict):
                         continue
                     for agent_name, result in agents_dict.items():

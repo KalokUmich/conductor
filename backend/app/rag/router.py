@@ -15,6 +15,7 @@ Scratch directory layout::
         src/
             <relative file paths>
 """
+
 from __future__ import annotations
 
 import logging
@@ -36,32 +37,32 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 
 
 class RagFileChange(BaseModel):
-    path:    str
+    path: str
     content: str
-    action:  Literal["upsert", "delete"]
+    action: Literal["upsert", "delete"]
 
 
 class RagIndexRequest(BaseModel):
     workspace_id: str
-    files:        List[RagFileChange]
+    files: List[RagFileChange]
 
 
 class RagIndexResponse(BaseModel):
-    chunks_added:    int
-    chunks_removed:  int
+    chunks_added: int
+    chunks_removed: int
     files_processed: int
 
 
 class RagSearchFilters(BaseModel):
-    language:     Optional[str] = None
+    language: Optional[str] = None
     file_pattern: Optional[str] = None
 
 
 class RagSearchRequest(BaseModel):
     workspace_id: str
-    query:        str
-    top_k:        Optional[int] = 5
-    filters:      Optional[RagSearchFilters] = None
+    query: str
+    top_k: Optional[int] = 5
+    filters: Optional[RagSearchFilters] = None
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +73,7 @@ class RagSearchRequest(BaseModel):
 def _get_scratch_dir(workspace_id: str) -> Path:
     """Return (and create) the scratch directory for this workspace."""
     from app.config import load_settings
+
     settings = load_settings()
     root = Path(settings.code_search.index_dir) / "rag_upload" / workspace_id
     root.mkdir(parents=True, exist_ok=True)
@@ -95,6 +97,7 @@ def _write_files(scratch: Path, files: List[RagFileChange]) -> int:
 
 def _get_code_search_service():
     from app.main import app
+
     return getattr(app.state, "code_search_service", None)
 
 
@@ -129,9 +132,9 @@ async def rag_reindex(req: RagIndexRequest) -> RagIndexResponse:
     result = await svc.build_index(str(scratch), force_rebuild=True)
 
     return RagIndexResponse(
-        chunks_added    = result.chunks_indexed if result.success else 0,
-        chunks_removed  = 0,
-        files_processed = files_written,
+        chunks_added=result.chunks_indexed if result.success else 0,
+        chunks_removed=0,
+        files_processed=files_written,
     )
 
 
@@ -149,9 +152,9 @@ async def rag_index(req: RagIndexRequest) -> RagIndexResponse:
     result = await svc.build_index(str(scratch), force_rebuild=False)
 
     return RagIndexResponse(
-        chunks_added    = result.chunks_indexed if result.success else 0,
-        chunks_removed  = 0,
-        files_processed = files_written,
+        chunks_added=result.chunks_indexed if result.success else 0,
+        chunks_removed=0,
+        files_processed=files_written,
     )
 
 
@@ -166,14 +169,13 @@ async def rag_search(req: RagSearchRequest) -> dict:
     file_filter = req.filters.file_pattern if req.filters else None
 
     response = await svc.search(
-        query          = req.query,
-        workspace_path = str(scratch),
-        top_k          = req.top_k or 5,
-        file_filter    = file_filter,
+        query=req.query,
+        workspace_path=str(scratch),
+        top_k=req.top_k or 5,
+        file_filter=file_filter,
     )
     return {
-        "query":   response.query,
+        "query": response.query,
         "results": [r.model_dump() for r in response.results],
-        "total":   response.total,
+        "total": response.total,
     }
-

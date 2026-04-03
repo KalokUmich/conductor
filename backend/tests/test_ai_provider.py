@@ -1,4 +1,5 @@
 """Tests for AIProvider interface and implementations."""
+
 import json
 from unittest.mock import MagicMock, patch
 
@@ -41,9 +42,7 @@ class TestClaudeDirectProvider:
     def test_initialization_with_custom_values(self):
         """Test provider initialization with custom values."""
         provider = ClaudeDirectProvider(
-            api_key="custom-key",
-            model="claude-3-opus-20240229",
-            base_url="https://custom.api.com"
+            api_key="custom-key", model="claude-3-opus-20240229", base_url="https://custom.api.com"
         )
         assert provider.api_key == "custom-key"
         assert provider.model == "claude-3-opus-20240229"
@@ -120,16 +119,18 @@ class TestClaudeDirectProvider:
         mock_anthropic.Anthropic.return_value = mock_client
 
         # Mock a valid JSON response
-        json_response = json.dumps({
-            "type": "decision_summary",
-            "topic": "API refactoring",
-            "problem_statement": "Current API is slow",
-            "proposed_solution": "Add caching layer",
-            "requires_code_change": True,
-            "affected_components": ["api.py", "cache.py"],
-            "risk_level": "medium",
-            "next_steps": ["Review PR", "Run tests"]
-        })
+        json_response = json.dumps(
+            {
+                "type": "decision_summary",
+                "topic": "API refactoring",
+                "problem_statement": "Current API is slow",
+                "proposed_solution": "Add caching layer",
+                "requires_code_change": True,
+                "affected_components": ["api.py", "cache.py"],
+                "risk_level": "medium",
+                "next_steps": ["Review PR", "Run tests"],
+            }
+        )
         mock_response = MagicMock()
         mock_response.content = [MagicMock(text=json_response)]
         mock_client.messages.create.return_value = mock_response
@@ -199,7 +200,7 @@ class TestClaudeBedrockProvider:
             aws_secret_access_key="secret",
             aws_session_token="token",
             region_name="eu-west-1",
-            model_id="anthropic.claude-3-opus-20240229-v1:0"
+            model_id="anthropic.claude-3-opus-20240229-v1:0",
         )
         assert provider.aws_access_key_id == "AKIATEST"
         assert provider.aws_secret_access_key == "secret"
@@ -217,9 +218,7 @@ class TestClaudeBedrockProvider:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "ok"}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -246,9 +245,7 @@ class TestClaudeBedrockProvider:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "Bedrock summary result."}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "Bedrock summary result."}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -280,7 +277,7 @@ class TestClaudeBedrockProvider:
                 aws_access_key_id="AKIATEST",
                 aws_secret_access_key="secret123",
                 aws_session_token="token456",
-                region_name="us-west-2"
+                region_name="us-west-2",
             )
             provider._get_client()
 
@@ -298,19 +295,19 @@ class TestClaudeBedrockProvider:
         mock_boto3.client.return_value = mock_client
 
         # Mock a valid JSON response via Converse API
-        json_response = json.dumps({
-            "type": "decision_summary",
-            "topic": "Database migration",
-            "problem_statement": "Need to migrate to PostgreSQL",
-            "proposed_solution": "Use Alembic for migrations",
-            "requires_code_change": True,
-            "affected_components": ["models.py", "migrations/"],
-            "risk_level": "high",
-            "next_steps": ["Backup data", "Test migration"]
-        })
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": json_response}]}}
-        }
+        json_response = json.dumps(
+            {
+                "type": "decision_summary",
+                "topic": "Database migration",
+                "problem_statement": "Need to migrate to PostgreSQL",
+                "proposed_solution": "Use Alembic for migrations",
+                "requires_code_change": True,
+                "affected_components": ["models.py", "migrations/"],
+                "risk_level": "high",
+                "next_steps": ["Backup data", "Test migration"],
+            }
+        )
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": json_response}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -347,9 +344,7 @@ class TestClaudeBedrockProvider:
         mock_boto3.client.return_value = mock_client
 
         # Mock an invalid JSON response via Converse API
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "Not valid JSON at all"}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "Not valid JSON at all"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             provider = ClaudeBedrockProvider()
@@ -406,10 +401,16 @@ def _make_conductor_config(
 ):
     """Helper to build a ConductorConfig for resolver tests."""
     from app.config import (
-        ConductorConfig, SummaryConfig, AIProviderSettingsConfig,
-        AIProvidersSecretsConfig, AWSBedrockSecretsConfig,
-        AnthropicSecretsConfig, OpenAISecretsConfig, AIModelConfig,
+        AIModelConfig,
+        AIProviderSettingsConfig,
+        AIProvidersSecretsConfig,
+        AnthropicSecretsConfig,
+        AWSBedrockSecretsConfig,
+        ConductorConfig,
+        OpenAISecretsConfig,
+        SummaryConfig,
     )
+
     return ConductorConfig(
         summary=SummaryConfig(enabled=enabled, default_model=default_model),
         ai_provider_settings=AIProviderSettingsConfig(
@@ -487,9 +488,7 @@ class TestProviderResolver:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "ok"}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -564,9 +563,7 @@ class TestProviderResolver:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "ok"}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -577,7 +574,7 @@ class TestProviderResolver:
             assert status.active_provider == "aws_bedrock"
             # All 5 provider types are listed
             assert len(status.providers) == 5
-            bedrock_status = [p for p in status.providers if p.name == "aws_bedrock"][0]
+            bedrock_status = next(p for p in status.providers if p.name == "aws_bedrock")
             assert bedrock_status.healthy is True
 
     def test_bedrock_api_key_with_session_token(self):
@@ -594,9 +591,7 @@ class TestProviderResolver:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_boto3.client.return_value = mock_client
-        mock_client.converse.return_value = {
-            "output": {"message": {"content": [{"text": "ok"}]}}
-        }
+        mock_client.converse.return_value = {"output": {"message": {"content": [{"text": "ok"}]}}}
 
         with patch.dict("sys.modules", {"boto3": mock_boto3}):
             resolver = ProviderResolver(config)
@@ -620,16 +615,71 @@ class TestProviderResolver:
         assert result is None
         assert resolver._provider_health.get("aws_bedrock") is False
 
+    def test_get_or_create_provider_caches(self):
+        """get_or_create_provider should cache and reuse provider instances."""
+        from app.ai_provider.resolver import ProviderResolver
+
+        config = _make_conductor_config(
+            enabled=True,
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
+        )
+
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            resolver = ProviderResolver(config)
+            resolver.resolve()
+
+            p1 = resolver.get_or_create_provider("claude-sonnet-4-anthropic")
+            p2 = resolver.get_or_create_provider("claude-sonnet-4-anthropic")
+            assert p1 is not None
+            assert p1 is p2  # same instance (cached)
+
+    def test_get_or_create_provider_unknown_model(self):
+        """get_or_create_provider should return None for unknown model."""
+        from app.ai_provider.resolver import ProviderResolver
+
+        config = _make_conductor_config(enabled=True)
+        resolver = ProviderResolver(config)
+        assert resolver.get_or_create_provider("nonexistent-model") is None
+
+    def test_set_active_model_populates_cache(self):
+        """set_active_model should populate _model_cache."""
+        from app.ai_provider.resolver import ProviderResolver
+
+        config = _make_conductor_config(
+            enabled=True,
+            anthropic_api_key="sk-ant-test",
+            default_model="claude-sonnet-4-anthropic",
+        )
+
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = MagicMock()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            resolver = ProviderResolver(config)
+            resolver.resolve()
+            resolver.set_active_model("claude-sonnet-4-anthropic")
+
+            assert "claude-sonnet-4-anthropic" in resolver._model_cache
+
 
 class TestAIStatusEndpoint:
     """Tests for GET /ai/status endpoint."""
 
     def test_status_when_resolver_not_initialized(self):
         """Endpoint should return disabled status when resolver not set."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         # Create a test app with just the AI router
         test_app = FastAPI()
@@ -649,10 +699,11 @@ class TestAIStatusEndpoint:
 
     def test_status_with_active_provider(self):
         """Endpoint should return correct status with active provider."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -682,7 +733,7 @@ class TestAIStatusEndpoint:
             assert data["summary_enabled"] is True
             assert data["active_provider"] == "aws_bedrock"
             assert len(data["providers"]) == 5
-            bedrock_provider = [p for p in data["providers"] if p["name"] == "aws_bedrock"][0]
+            bedrock_provider = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
             assert bedrock_provider["healthy"] is True
 
         # Clean up
@@ -690,10 +741,11 @@ class TestAIStatusEndpoint:
 
     def test_status_with_no_healthy_provider(self):
         """Endpoint should show null active_provider when none healthy."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -722,7 +774,7 @@ class TestAIStatusEndpoint:
             assert data["summary_enabled"] is True
             assert data["active_provider"] is None
             assert len(data["providers"]) == 5
-            bedrock_provider = [p for p in data["providers"] if p["name"] == "aws_bedrock"][0]
+            bedrock_provider = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
             assert bedrock_provider["healthy"] is False
 
         # Clean up
@@ -734,10 +786,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_returns_503_when_resolver_not_initialized(self):
         """Endpoint should return 503 when resolver is not set."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -746,19 +799,20 @@ class TestSummarizeEndpoint:
         set_resolver(None)
 
         client = TestClient(test_app)
-        response = client.post("/ai/summarize", json={
-            "messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]
-        })
+        response = client.post(
+            "/ai/summarize", json={"messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]}
+        )
 
         assert response.status_code == 503
         assert "not initialized" in response.json()["detail"]
 
     def test_summarize_returns_503_when_summary_disabled(self):
         """Endpoint should return 503 when summary is disabled."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -769,9 +823,9 @@ class TestSummarizeEndpoint:
         set_resolver(resolver)
 
         client = TestClient(test_app)
-        response = client.post("/ai/summarize", json={
-            "messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]
-        })
+        response = client.post(
+            "/ai/summarize", json={"messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]}
+        )
 
         assert response.status_code == 503
         assert "not enabled" in response.json()["detail"]
@@ -781,10 +835,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_returns_503_when_no_active_provider(self):
         """Endpoint should return 503 when no active provider available."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -807,9 +862,9 @@ class TestSummarizeEndpoint:
             set_resolver(resolver)
 
             client = TestClient(test_app)
-            response = client.post("/ai/summarize", json={
-                "messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]
-            })
+            response = client.post(
+                "/ai/summarize", json={"messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]}
+            )
 
             assert response.status_code == 503
             assert "No active AI provider" in response.json()["detail"]
@@ -819,10 +874,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_success(self):
         """Endpoint should return structured summary when provider is available."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -852,28 +908,34 @@ class TestSummarizeEndpoint:
                     # First call: classification
                     json.dumps({"discussion_type": "general", "confidence": 0.8}),
                     # Second call: targeted summary
-                    json.dumps({
-                        "type": "decision_summary",
-                        "topic": "Test topic",
-                        "core_problem": "Test problem",
-                        "proposed_solution": "Test solution",
-                        "requires_code_change": True,
-                        "impact_scope": "module",
-                        "affected_components": ["file1.py", "file2.py"],
-                        "risk_level": "medium",
-                        "next_steps": ["Step 1", "Step 2"]
-                    }),
+                    json.dumps(
+                        {
+                            "type": "decision_summary",
+                            "topic": "Test topic",
+                            "core_problem": "Test problem",
+                            "proposed_solution": "Test solution",
+                            "requires_code_change": True,
+                            "impact_scope": "module",
+                            "affected_components": ["file1.py", "file2.py"],
+                            "risk_level": "medium",
+                            "next_steps": ["Step 1", "Step 2"],
+                        }
+                    ),
                     # Third call: item extraction (stage 4)
-                    json.dumps([{
-                        "id": "item-1",
-                        "type": "code_change",
-                        "title": "Test item",
-                        "problem": "Test problem",
-                        "proposed_change": "Test change",
-                        "targets": ["file1.py"],
-                        "risk_level": "medium",
-                    }])
-                ]
+                    json.dumps(
+                        [
+                            {
+                                "id": "item-1",
+                                "type": "code_change",
+                                "title": "Test item",
+                                "problem": "Test problem",
+                                "proposed_change": "Test change",
+                                "targets": ["file1.py"],
+                                "risk_level": "medium",
+                            }
+                        ]
+                    ),
+                ],
             ):
                 client = TestClient(test_app)
                 response = client.post(
@@ -881,9 +943,9 @@ class TestSummarizeEndpoint:
                     json={
                         "messages": [
                             {"role": "host", "text": "Hello", "timestamp": 1234567890},
-                            {"role": "engineer", "text": "World", "timestamp": 1234567891}
+                            {"role": "engineer", "text": "World", "timestamp": 1234567891},
                         ]
-                    }
+                    },
                 )
 
                 assert response.status_code == 200
@@ -909,10 +971,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_returns_500_on_provider_error(self):
         """Endpoint should return 500 when provider raises an error."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -936,16 +999,11 @@ class TestSummarizeEndpoint:
 
         # Mock summarize_structured to raise an error
         with patch.object(
-            resolver.get_active_provider(),
-            "summarize_structured",
-            side_effect=RuntimeError("Provider error")
+            resolver.get_active_provider(), "summarize_structured", side_effect=RuntimeError("Provider error")
         ):
             client = TestClient(test_app)
             response = client.post(
-                "/ai/summarize",
-                json={
-                    "messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]
-                }
+                "/ai/summarize", json={"messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]}
             )
 
             assert response.status_code == 500
@@ -958,10 +1016,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_empty_messages(self):
         """Endpoint should handle empty messages list with default DecisionSummary."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -998,10 +1057,11 @@ class TestSummarizeEndpoint:
 
     def test_summarize_returns_500_on_json_parsing_error(self):
         """Endpoint should return 500 with retry suggestion when JSON parsing fails."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1027,14 +1087,11 @@ class TestSummarizeEndpoint:
         with patch.object(
             resolver.get_active_provider(),
             "summarize_structured",
-            side_effect=ValueError("Invalid JSON response from AI: Expecting value")
+            side_effect=ValueError("Invalid JSON response from AI: Expecting value"),
         ):
             client = TestClient(test_app)
             response = client.post(
-                "/ai/summarize",
-                json={
-                    "messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]
-                }
+                "/ai/summarize", json={"messages": [{"role": "host", "text": "Hello", "timestamp": 1234567890}]}
             )
 
             assert response.status_code == 500
@@ -1053,26 +1110,30 @@ class TestCodePromptEndpoint:
 
     def test_code_prompt_success(self):
         """Endpoint should return a code prompt from decision summary."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Add user authentication",
-                "problem_statement": "Users cannot log in securely",
-                "proposed_solution": "Implement JWT-based authentication",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py", "auth/middleware.py"],
-                "risk_level": "medium",
-                "next_steps": ["Implement login endpoint", "Add JWT validation"]
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Add user authentication",
+                    "problem_statement": "Users cannot log in securely",
+                    "proposed_solution": "Implement JWT-based authentication",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py", "auth/middleware.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Implement login endpoint", "Add JWT validation"],
+                }
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -1085,27 +1146,31 @@ class TestCodePromptEndpoint:
 
     def test_code_prompt_with_context_snippet(self):
         """Endpoint should include context snippet in the prompt."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Fix login bug",
-                "problem_statement": "Login fails silently",
-                "proposed_solution": "Add error handling",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py"],
-                "risk_level": "low",
-                "next_steps": ["Add try-catch"]
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Fix login bug",
+                    "problem_statement": "Login fails silently",
+                    "proposed_solution": "Add error handling",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py"],
+                    "risk_level": "low",
+                    "next_steps": ["Add try-catch"],
+                },
+                "context_snippet": "def login(username, password):\n    pass",
             },
-            "context_snippet": "def login(username, password):\n    pass"
-        })
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -1115,26 +1180,30 @@ class TestCodePromptEndpoint:
 
     def test_code_prompt_empty_components(self):
         """Endpoint should handle empty affected_components list."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "General improvement",
-                "problem_statement": "Code needs refactoring",
-                "proposed_solution": "Refactor the module",
-                "requires_code_change": True,
-                "affected_components": [],
-                "risk_level": "low",
-                "next_steps": []
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "General improvement",
+                    "problem_statement": "Code needs refactoring",
+                    "proposed_solution": "Refactor the module",
+                    "requires_code_change": True,
+                    "affected_components": [],
+                    "risk_level": "low",
+                    "next_steps": [],
+                }
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -1143,9 +1212,10 @@ class TestCodePromptEndpoint:
 
     def test_code_prompt_invalid_request_missing_summary(self):
         """Endpoint should return 422 for missing decision_summary."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1157,26 +1227,30 @@ class TestCodePromptEndpoint:
 
     def test_code_prompt_invalid_risk_level(self):
         """Endpoint should return 422 for invalid risk_level."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Test",
-                "problem_statement": "Test problem",
-                "proposed_solution": "Test solution",
-                "requires_code_change": True,
-                "affected_components": [],
-                "risk_level": "invalid_level",  # Invalid value
-                "next_steps": []
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Test",
+                    "problem_statement": "Test problem",
+                    "proposed_solution": "Test solution",
+                    "requires_code_change": True,
+                    "affected_components": [],
+                    "risk_level": "invalid_level",  # Invalid value
+                    "next_steps": [],
+                }
+            },
+        )
 
         assert response.status_code == 422
 
@@ -1192,7 +1266,7 @@ class TestGetCodePromptFunction:
             problem_statement="Users cannot log in",
             proposed_solution="Add authentication",
             affected_components=["auth.py", "login.py"],
-            risk_level="medium"
+            risk_level="medium",
         )
 
         assert "Users cannot log in" in prompt
@@ -1211,7 +1285,7 @@ class TestGetCodePromptFunction:
             proposed_solution="Fix the bug",
             affected_components=["login.py"],
             risk_level="low",
-            context_snippet="def login():\n    return None"
+            context_snippet="def login():\n    return None",
         )
 
         assert "def login():" in prompt
@@ -1222,10 +1296,7 @@ class TestGetCodePromptFunction:
         from app.ai_provider.prompts import get_code_prompt
 
         prompt = get_code_prompt(
-            problem_statement="Test",
-            proposed_solution="Test",
-            affected_components=[],
-            risk_level="low"
+            problem_statement="Test", proposed_solution="Test", affected_components=[], risk_level="low"
         )
 
         assert "No specific components identified" in prompt
@@ -1235,10 +1306,7 @@ class TestGetCodePromptFunction:
         from app.ai_provider.prompts import get_code_prompt
 
         prompt = get_code_prompt(
-            problem_statement=None,
-            proposed_solution=None,
-            affected_components=None,
-            risk_level=None
+            problem_statement=None, proposed_solution=None, affected_components=None, risk_level=None
         )
 
         assert "No problem statement provided" in prompt
@@ -1252,8 +1320,8 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_when_resolver_not_initialized(self):
         """call_summary should raise ProviderNotAvailableError when resolver is None."""
-        from app.ai_provider.wrapper import call_summary, ProviderNotAvailableError
         from app.ai_provider.resolver import set_resolver
+        from app.ai_provider.wrapper import ProviderNotAvailableError, call_summary
 
         # Ensure resolver is not set
         set_resolver(None)
@@ -1267,7 +1335,7 @@ class TestAIProviderWrapper:
     def test_call_summary_raises_when_disabled(self):
         """call_summary should raise ProviderNotAvailableError when summary is disabled."""
         from app.ai_provider.resolver import ProviderResolver, set_resolver
-        from app.ai_provider.wrapper import call_summary, ProviderNotAvailableError
+        from app.ai_provider.wrapper import ProviderNotAvailableError, call_summary
 
         config = _make_conductor_config(enabled=False)
         resolver = ProviderResolver(config)
@@ -1285,7 +1353,7 @@ class TestAIProviderWrapper:
     def test_call_summary_raises_when_no_provider_available(self):
         """call_summary should raise ProviderNotAvailableError when no provider is configured."""
         from app.ai_provider.resolver import ProviderResolver, set_resolver
-        from app.ai_provider.wrapper import call_summary, ProviderNotAvailableError
+        from app.ai_provider.wrapper import ProviderNotAvailableError, call_summary
 
         config = _make_conductor_config(enabled=True)
         resolver = ProviderResolver(config)
@@ -1303,9 +1371,9 @@ class TestAIProviderWrapper:
 
     def test_call_summary_success_with_mock_provider(self):
         """call_summary should return DecisionSummary on success."""
+        from app.ai_provider import ChatMessage, DecisionSummary
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.wrapper import call_summary
-        from app.ai_provider import ChatMessage, DecisionSummary
 
         config = _make_conductor_config(
             enabled=True,
@@ -1317,7 +1385,11 @@ class TestAIProviderWrapper:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text='{"topic": "test", "problem_statement": "prob", "proposed_solution": "sol", "requires_code_change": false, "affected_components": [], "risk_level": "low", "next_steps": []}')]
+        mock_response.content = [
+            MagicMock(
+                text='{"topic": "test", "problem_statement": "prob", "proposed_solution": "sol", "requires_code_change": false, "affected_components": [], "risk_level": "low", "next_steps": []}'
+            )
+        ]
         mock_client.messages.create.return_value = mock_response
 
         with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
@@ -1336,9 +1408,9 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_json_parse_error(self):
         """call_summary should raise JSONParseError when response is invalid JSON."""
-        from app.ai_provider.resolver import ProviderResolver, set_resolver
-        from app.ai_provider.wrapper import call_summary, JSONParseError
         from app.ai_provider import ChatMessage
+        from app.ai_provider.resolver import ProviderResolver, set_resolver
+        from app.ai_provider.wrapper import JSONParseError, call_summary
 
         config = _make_conductor_config(
             enabled=True,
@@ -1350,7 +1422,7 @@ class TestAIProviderWrapper:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text='not valid json')]
+        mock_response.content = [MagicMock(text="not valid json")]
         mock_client.messages.create.return_value = mock_response
 
         with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
@@ -1371,9 +1443,9 @@ class TestAIProviderWrapper:
 
     def test_call_summary_raises_provider_call_error_on_exception(self):
         """call_summary should raise ProviderCallError on general exceptions."""
-        from app.ai_provider.resolver import ProviderResolver, set_resolver
-        from app.ai_provider.wrapper import call_summary, ProviderCallError
         from app.ai_provider import ChatMessage
+        from app.ai_provider.resolver import ProviderResolver, set_resolver
+        from app.ai_provider.wrapper import ProviderCallError, call_summary
 
         config = _make_conductor_config(
             enabled=True,
@@ -1389,10 +1461,7 @@ class TestAIProviderWrapper:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
         # First call succeeds (health check), second fails (summarization)
-        mock_client.messages.create.side_effect = [
-            health_check_response,
-            Exception("API error")
-        ]
+        mock_client.messages.create.side_effect = [health_check_response, Exception("API error")]
 
         with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
             resolver = ProviderResolver(config)
@@ -1419,7 +1488,7 @@ class TestAIProviderWrapper:
             proposed_solution="Test solution",
             affected_components=["file1.py", "file2.py"],
             risk_level="medium",
-            context_snippet="def test(): pass"
+            context_snippet="def test(): pass",
         )
 
         assert isinstance(result, str)
@@ -1438,7 +1507,7 @@ class TestAIProviderWrapper:
             problem_statement="Test problem",
             proposed_solution="Test solution",
             affected_components=[],
-            risk_level="low"
+            risk_level="low",
         )
 
         assert isinstance(result, str)
@@ -1447,11 +1516,12 @@ class TestAIProviderWrapper:
     def test_handle_provider_error_converts_to_http_exception(self):
         """handle_provider_error should convert AIProviderError to HTTPException."""
         from fastapi import HTTPException
+
         from app.ai_provider.wrapper import (
-            handle_provider_error,
-            ProviderNotAvailableError,
+            JSONParseError,
             ProviderCallError,
-            JSONParseError
+            ProviderNotAvailableError,
+            handle_provider_error,
         )
 
         # Test ProviderNotAvailableError
@@ -1475,9 +1545,10 @@ class TestAIProviderWrapper:
 
     def test_call_summary_http_convenience_wrapper(self):
         """call_summary_http should convert exceptions to HTTPException."""
-        from app.ai_provider.wrapper import call_summary_http
-        from app.ai_provider.resolver import set_resolver
         from fastapi import HTTPException
+
+        from app.ai_provider.resolver import set_resolver
+        from app.ai_provider.wrapper import call_summary_http
 
         # Ensure resolver is not set
         set_resolver(None)
@@ -1493,15 +1564,18 @@ class TestSummarizeEndpointWithMockProvider:
 
     def test_summarize_with_multiple_message_roles(self):
         """Endpoint should handle messages from different roles (host, engineer, observer)."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
+        config = _make_conductor_config(
+            enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic"
+        )
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1519,28 +1593,33 @@ class TestSummarizeEndpointWithMockProvider:
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "api_design", "confidence": 0.9}),
-                    json.dumps({
-                        "type": "decision_summary",
-                        "topic": "Multi-role discussion",
-                        "core_problem": "Complex problem",
-                        "proposed_solution": "Team solution",
-                        "requires_code_change": True,
-                        "impact_scope": "module",
-                        "affected_components": ["api.py"],
-                        "risk_level": "high",
-                        "next_steps": ["Review", "Implement"]
-                    })
-                ]
+                    json.dumps(
+                        {
+                            "type": "decision_summary",
+                            "topic": "Multi-role discussion",
+                            "core_problem": "Complex problem",
+                            "proposed_solution": "Team solution",
+                            "requires_code_change": True,
+                            "impact_scope": "module",
+                            "affected_components": ["api.py"],
+                            "risk_level": "high",
+                            "next_steps": ["Review", "Implement"],
+                        }
+                    ),
+                ],
             ):
                 client = TestClient(test_app)
-                response = client.post("/ai/summarize", json={
-                    "messages": [
-                        {"role": "host", "text": "Let's discuss the API", "timestamp": 1000},
-                        {"role": "engineer", "text": "I suggest REST", "timestamp": 1001},
-                        {"role": "engineer", "text": "Looks good", "timestamp": 1002},
-                        {"role": "host", "text": "Agreed", "timestamp": 1003}
-                    ]
-                })
+                response = client.post(
+                    "/ai/summarize",
+                    json={
+                        "messages": [
+                            {"role": "host", "text": "Let's discuss the API", "timestamp": 1000},
+                            {"role": "engineer", "text": "I suggest REST", "timestamp": 1001},
+                            {"role": "engineer", "text": "Looks good", "timestamp": 1002},
+                            {"role": "host", "text": "Agreed", "timestamp": 1003},
+                        ]
+                    },
+                )
 
                 assert response.status_code == 200
                 data = response.json()
@@ -1551,15 +1630,18 @@ class TestSummarizeEndpointWithMockProvider:
 
     def test_summarize_with_long_messages(self):
         """Endpoint should handle long message content."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
+        config = _make_conductor_config(
+            enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic"
+        )
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1577,27 +1659,27 @@ class TestSummarizeEndpointWithMockProvider:
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "general", "confidence": 0.7}),
-                    json.dumps({
-                        "type": "decision_summary",
-                        "topic": "Long discussion",
-                        "core_problem": "Detailed problem",
-                        "proposed_solution": "Comprehensive solution",
-                        "requires_code_change": False,
-                        "impact_scope": "local",
-                        "affected_components": [],
-                        "risk_level": "low",
-                        "next_steps": []
-                    })
-                ]
+                    json.dumps(
+                        {
+                            "type": "decision_summary",
+                            "topic": "Long discussion",
+                            "core_problem": "Detailed problem",
+                            "proposed_solution": "Comprehensive solution",
+                            "requires_code_change": False,
+                            "impact_scope": "local",
+                            "affected_components": [],
+                            "risk_level": "low",
+                            "next_steps": [],
+                        }
+                    ),
+                ],
             ):
                 client = TestClient(test_app)
                 # Create a long message (10KB of text)
                 long_text = "This is a detailed technical discussion. " * 250
-                response = client.post("/ai/summarize", json={
-                    "messages": [
-                        {"role": "host", "text": long_text, "timestamp": 1000}
-                    ]
-                })
+                response = client.post(
+                    "/ai/summarize", json={"messages": [{"role": "host", "text": long_text, "timestamp": 1000}]}
+                )
 
                 assert response.status_code == 200
                 assert response.json()["topic"] == "Long discussion"
@@ -1606,10 +1688,11 @@ class TestSummarizeEndpointWithMockProvider:
 
     def test_summarize_fallback_from_bedrock_to_direct(self):
         """Endpoint should work when bedrock fails and falls back to direct."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1646,23 +1729,25 @@ class TestSummarizeEndpointWithMockProvider:
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "general", "confidence": 0.6}),
-                    json.dumps({
-                        "type": "decision_summary",
-                        "topic": "Fallback test",
-                        "core_problem": "Test",
-                        "proposed_solution": "Solution",
-                        "requires_code_change": False,
-                        "impact_scope": "local",
-                        "affected_components": [],
-                        "risk_level": "low",
-                        "next_steps": []
-                    })
-                ]
+                    json.dumps(
+                        {
+                            "type": "decision_summary",
+                            "topic": "Fallback test",
+                            "core_problem": "Test",
+                            "proposed_solution": "Solution",
+                            "requires_code_change": False,
+                            "impact_scope": "local",
+                            "affected_components": [],
+                            "risk_level": "low",
+                            "next_steps": [],
+                        }
+                    ),
+                ],
             ):
                 client = TestClient(test_app)
-                response = client.post("/ai/summarize", json={
-                    "messages": [{"role": "host", "text": "Test", "timestamp": 1000}]
-                })
+                response = client.post(
+                    "/ai/summarize", json={"messages": [{"role": "host", "text": "Test", "timestamp": 1000}]}
+                )
 
                 assert response.status_code == 200
                 assert response.json()["topic"] == "Fallback test"
@@ -1671,9 +1756,10 @@ class TestSummarizeEndpointWithMockProvider:
 
     def test_summarize_invalid_message_format(self):
         """Endpoint should return 422 for invalid message format."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1681,28 +1767,29 @@ class TestSummarizeEndpointWithMockProvider:
         client = TestClient(test_app)
 
         # Missing required fields
-        response = client.post("/ai/summarize", json={
-            "messages": [{"role": "host"}]  # Missing text and timestamp
-        })
+        response = client.post("/ai/summarize", json={"messages": [{"role": "host"}]})  # Missing text and timestamp
         assert response.status_code == 422
 
         # Invalid role
-        response = client.post("/ai/summarize", json={
-            "messages": [{"role": "invalid_role", "text": "Hello", "timestamp": 1000}]
-        })
+        response = client.post(
+            "/ai/summarize", json={"messages": [{"role": "invalid_role", "text": "Hello", "timestamp": 1000}]}
+        )
         assert response.status_code == 422
 
     def test_summarize_with_special_characters(self):
         """Endpoint should handle messages with special characters."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
 
-        config = _make_conductor_config(enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic")
+        config = _make_conductor_config(
+            enabled=True, anthropic_api_key="sk-ant-test", default_model="claude-sonnet-4-anthropic"
+        )
 
         mock_anthropic = MagicMock()
         mock_client = MagicMock()
@@ -1720,26 +1807,35 @@ class TestSummarizeEndpointWithMockProvider:
                 "call_model",
                 side_effect=[
                     json.dumps({"discussion_type": "debugging", "confidence": 0.85}),
-                    json.dumps({
-                        "type": "decision_summary",
-                        "topic": "Special chars",
-                        "core_problem": "Test <script>alert('xss')</script>",
-                        "proposed_solution": "Sanitize input",
-                        "requires_code_change": True,
-                        "impact_scope": "module",
-                        "affected_components": ["security.py"],
-                        "risk_level": "high",
-                        "next_steps": ["Review"]
-                    })
-                ]
+                    json.dumps(
+                        {
+                            "type": "decision_summary",
+                            "topic": "Special chars",
+                            "core_problem": "Test <script>alert('xss')</script>",
+                            "proposed_solution": "Sanitize input",
+                            "requires_code_change": True,
+                            "impact_scope": "module",
+                            "affected_components": ["security.py"],
+                            "risk_level": "high",
+                            "next_steps": ["Review"],
+                        }
+                    ),
+                ],
             ):
                 client = TestClient(test_app)
-                response = client.post("/ai/summarize", json={
-                    "messages": [
-                        {"role": "host", "text": "Test <script>alert('xss')</script> & \"quotes\"", "timestamp": 1000},
-                        {"role": "engineer", "text": "Unicode: 你好 🎉 émojis", "timestamp": 1001}
-                    ]
-                })
+                response = client.post(
+                    "/ai/summarize",
+                    json={
+                        "messages": [
+                            {
+                                "role": "host",
+                                "text": "Test <script>alert('xss')</script> & \"quotes\"",
+                                "timestamp": 1000,
+                            },
+                            {"role": "engineer", "text": "Unicode: 你好 🎉 émojis", "timestamp": 1001},
+                        ]
+                    },
+                )
 
                 assert response.status_code == 200
 
@@ -1751,53 +1847,61 @@ class TestCodePromptEndpointWithMockProvider:
 
     def test_code_prompt_with_all_risk_levels(self):
         """Endpoint should handle all valid risk levels."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
         client = TestClient(test_app)
 
         for risk_level in ["low", "medium", "high"]:
-            response = client.post("/ai/code-prompt", json={
-                "decision_summary": {
-                    "type": "decision_summary",
-                    "topic": f"Test {risk_level}",
-                    "problem_statement": "Problem",
-                    "proposed_solution": "Solution",
-                    "requires_code_change": True,
-                    "affected_components": ["file.py"],
-                    "risk_level": risk_level,
-                    "next_steps": []
-                }
-            })
+            response = client.post(
+                "/ai/code-prompt",
+                json={
+                    "decision_summary": {
+                        "type": "decision_summary",
+                        "topic": f"Test {risk_level}",
+                        "problem_statement": "Problem",
+                        "proposed_solution": "Solution",
+                        "requires_code_change": True,
+                        "affected_components": ["file.py"],
+                        "risk_level": risk_level,
+                        "next_steps": [],
+                    }
+                },
+            )
             assert response.status_code == 200
             assert risk_level in response.json()["code_prompt"]
 
     def test_code_prompt_with_many_components(self):
         """Endpoint should handle many affected components."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
         client = TestClient(test_app)
 
         components = [f"module{i}/file{i}.py" for i in range(20)]
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Large refactor",
-                "problem_statement": "Need to update many files",
-                "proposed_solution": "Batch update",
-                "requires_code_change": True,
-                "affected_components": components,
-                "risk_level": "high",
-                "next_steps": []
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Large refactor",
+                    "problem_statement": "Need to update many files",
+                    "proposed_solution": "Batch update",
+                    "requires_code_change": True,
+                    "affected_components": components,
+                    "risk_level": "high",
+                    "next_steps": [],
+                }
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -1807,9 +1911,10 @@ class TestCodePromptEndpointWithMockProvider:
 
     def test_code_prompt_with_multiline_context(self):
         """Endpoint should handle multiline context snippets."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1823,19 +1928,22 @@ class TestCodePromptEndpointWithMockProvider:
             result.append(item.process())
     return result"""
 
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Refactor function",
-                "problem_statement": "Function is slow",
-                "proposed_solution": "Use list comprehension",
-                "requires_code_change": True,
-                "affected_components": ["utils.py"],
-                "risk_level": "low",
-                "next_steps": []
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Refactor function",
+                    "problem_statement": "Function is slow",
+                    "proposed_solution": "Use list comprehension",
+                    "requires_code_change": True,
+                    "affected_components": ["utils.py"],
+                    "risk_level": "low",
+                    "next_steps": [],
+                },
+                "context_snippet": context,
             },
-            "context_snippet": context
-        })
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -1844,26 +1952,30 @@ class TestCodePromptEndpointWithMockProvider:
 
     def test_code_prompt_without_code_change_required(self):
         """Endpoint should still work when requires_code_change is False."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
         client = TestClient(test_app)
 
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Documentation update",
-                "problem_statement": "Docs are outdated",
-                "proposed_solution": "Update README",
-                "requires_code_change": False,
-                "affected_components": [],
-                "risk_level": "low",
-                "next_steps": ["Update docs"]
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Documentation update",
+                    "problem_statement": "Docs are outdated",
+                    "proposed_solution": "Update README",
+                    "requires_code_change": False,
+                    "affected_components": [],
+                    "risk_level": "low",
+                    "next_steps": ["Update docs"],
+                }
+            },
+        )
 
         assert response.status_code == 200
         assert "code_prompt" in response.json()
@@ -1874,10 +1986,11 @@ class TestAIStatusEndpointHealthChecks:
 
     def test_status_with_mixed_provider_health(self):
         """Endpoint should show correct status when providers have mixed health."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1925,10 +2038,11 @@ class TestAIStatusEndpointHealthChecks:
 
     def test_status_with_bedrock_healthy_first(self):
         """Endpoint should select bedrock when it's healthy (priority order)."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -1972,10 +2086,11 @@ class TestAIStatusEndpointHealthChecks:
 
     def test_status_with_both_providers_unhealthy(self):
         """Endpoint should show no active provider when all fail health checks."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import ProviderResolver, set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -2019,10 +2134,11 @@ class TestAIStatusEndpointHealthChecks:
 
     def test_status_returns_consistent_structure(self):
         """Endpoint should always return consistent JSON structure."""
+        from fastapi import FastAPI
         from fastapi.testclient import TestClient
+
         from app.ai_provider.resolver import set_resolver
         from app.ai_provider.router import router
-        from fastapi import FastAPI
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -2064,7 +2180,7 @@ class TestAISummaryPipeline:
 
     def test_classify_discussion_empty_messages(self):
         """Test classification with empty messages defaults to general."""
-        from app.ai_provider.pipeline import classify_discussion, ClassificationResult
+        from app.ai_provider.pipeline import ClassificationResult, classify_discussion
 
         mock_provider = MagicMock()
         result = classify_discussion([], mock_provider)
@@ -2076,14 +2192,11 @@ class TestAISummaryPipeline:
 
     def test_classify_discussion_success(self):
         """Test successful discussion classification."""
-        from app.ai_provider.pipeline import classify_discussion, ClassificationResult
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import ClassificationResult, classify_discussion
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps({
-            "discussion_type": "api_design",
-            "confidence": 0.85
-        })
+        mock_provider.call_model.return_value = json.dumps({"discussion_type": "api_design", "confidence": 0.85})
 
         messages = [
             ChatMessage(role="host", text="Let's design a new REST API", timestamp=1234567890),
@@ -2099,8 +2212,8 @@ class TestAISummaryPipeline:
 
     def test_classify_discussion_with_markdown_wrapper(self):
         """Test classification handles markdown-wrapped response."""
-        from app.ai_provider.pipeline import classify_discussion
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import classify_discussion
 
         mock_provider = MagicMock()
         mock_provider.call_model.return_value = '```json\n{"discussion_type": "debugging", "confidence": 0.9}\n```'
@@ -2113,14 +2226,11 @@ class TestAISummaryPipeline:
 
     def test_classify_discussion_invalid_type_defaults_to_general(self):
         """Test classification defaults to general for invalid types."""
-        from app.ai_provider.pipeline import classify_discussion
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import classify_discussion
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps({
-            "discussion_type": "unknown_type",
-            "confidence": 0.5
-        })
+        mock_provider.call_model.return_value = json.dumps({"discussion_type": "unknown_type", "confidence": 0.5})
 
         messages = [ChatMessage(role="host", text="Hello", timestamp=1234567890)]
         result = classify_discussion(messages, mock_provider)
@@ -2129,8 +2239,8 @@ class TestAISummaryPipeline:
 
     def test_classify_discussion_invalid_json_raises_error(self):
         """Test classification raises ValueError for invalid JSON."""
-        from app.ai_provider.pipeline import classify_discussion
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import classify_discussion
 
         mock_provider = MagicMock()
         mock_provider.call_model.return_value = "not valid json"
@@ -2142,7 +2252,7 @@ class TestAISummaryPipeline:
 
     def test_generate_targeted_summary_empty_messages(self):
         """Test targeted summary with empty messages returns default."""
-        from app.ai_provider.pipeline import generate_targeted_summary, PipelineSummary
+        from app.ai_provider.pipeline import PipelineSummary, generate_targeted_summary
 
         mock_provider = MagicMock()
         result = generate_targeted_summary([], mock_provider, "general")
@@ -2153,21 +2263,23 @@ class TestAISummaryPipeline:
 
     def test_generate_targeted_summary_success(self):
         """Test successful targeted summary generation."""
-        from app.ai_provider.pipeline import generate_targeted_summary, PipelineSummary
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import PipelineSummary, generate_targeted_summary
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps({
-            "type": "decision_summary",
-            "topic": "API Design Discussion",
-            "core_problem": "Need new endpoints",
-            "proposed_solution": "Create REST API",
-            "requires_code_change": True,
-            "impact_scope": "module",
-            "affected_components": ["api.py", "router.py"],
-            "risk_level": "medium",
-            "next_steps": ["Design endpoints", "Write tests"]
-        })
+        mock_provider.call_model.return_value = json.dumps(
+            {
+                "type": "decision_summary",
+                "topic": "API Design Discussion",
+                "core_problem": "Need new endpoints",
+                "proposed_solution": "Create REST API",
+                "requires_code_change": True,
+                "impact_scope": "module",
+                "affected_components": ["api.py", "router.py"],
+                "risk_level": "medium",
+                "next_steps": ["Design endpoints", "Write tests"],
+            }
+        )
 
         messages = [
             ChatMessage(role="host", text="Let's design the API", timestamp=1234567890),
@@ -2188,8 +2300,8 @@ class TestAISummaryPipeline:
 
     def test_generate_targeted_summary_invalid_json_raises_error(self):
         """Test targeted summary raises ValueError for invalid JSON."""
-        from app.ai_provider.pipeline import generate_targeted_summary
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import generate_targeted_summary
 
         mock_provider = MagicMock()
         mock_provider.call_model.return_value = "not valid json"
@@ -2213,7 +2325,7 @@ class TestAISummaryPipeline:
 
         data = {
             "requires_code_change": False,
-            "proposed_solution": "We need to fix this bug by adding null checks in the handler"
+            "proposed_solution": "We need to fix this bug by adding null checks in the handler",
         }
         assert _infer_requires_code_change(data, "debugging") is True
 
@@ -2221,10 +2333,7 @@ class TestAISummaryPipeline:
         """Test api_design with components requires code change."""
         from app.ai_provider.pipeline import _infer_requires_code_change
 
-        data = {
-            "requires_code_change": False,
-            "affected_components": ["api.py"]
-        }
+        data = {"requires_code_change": False, "affected_components": ["api.py"]}
         assert _infer_requires_code_change(data, "api_design") is True
 
     def test_infer_requires_code_change_respects_ai_for_other_types(self):
@@ -2239,33 +2348,39 @@ class TestAISummaryPipeline:
 
     def test_run_summary_pipeline_complete(self):
         """Test complete pipeline execution."""
-        from app.ai_provider.pipeline import run_summary_pipeline, PipelineSummary
         from app.ai_provider import ChatMessage
+        from app.ai_provider.pipeline import PipelineSummary, run_summary_pipeline
 
         mock_provider = MagicMock()
         # First call for classification, second for summary, third for item extraction
         mock_provider.call_model.side_effect = [
             json.dumps({"discussion_type": "code_change", "confidence": 0.95}),
-            json.dumps({
-                "type": "decision_summary",
-                "topic": "Bug Fix",
-                "core_problem": "Null pointer error",
-                "proposed_solution": "Add null check",
-                "requires_code_change": True,
-                "impact_scope": "local",
-                "affected_components": ["handler.py"],
-                "risk_level": "low",
-                "next_steps": ["Fix the bug"]
-            }),
-            json.dumps([{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Add null check",
-                "problem": "Null pointer error",
-                "proposed_change": "Add null check in handler",
-                "targets": ["handler.py"],
-                "risk_level": "low",
-            }])
+            json.dumps(
+                {
+                    "type": "decision_summary",
+                    "topic": "Bug Fix",
+                    "core_problem": "Null pointer error",
+                    "proposed_solution": "Add null check",
+                    "requires_code_change": True,
+                    "impact_scope": "local",
+                    "affected_components": ["handler.py"],
+                    "risk_level": "low",
+                    "next_steps": ["Fix the bug"],
+                }
+            ),
+            json.dumps(
+                [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Add null check",
+                        "problem": "Null pointer error",
+                        "proposed_change": "Add null check in handler",
+                        "targets": ["handler.py"],
+                        "risk_level": "low",
+                    }
+                ]
+            ),
         ]
 
         messages = [
@@ -2316,8 +2431,8 @@ class TestFormatConversationXml:
 
     def test_format_conversation_xml_structure(self):
         """format_conversation should produce XML message tags."""
-        from app.ai_provider.prompts import format_conversation
         from app.ai_provider import ChatMessage
+        from app.ai_provider.prompts import format_conversation
 
         messages = [
             ChatMessage(role="host", text="Hello team", timestamp=1234567890),
@@ -2341,8 +2456,8 @@ class TestFormatConversationXml:
 
     def test_format_conversation_single_message(self):
         """format_conversation should handle a single message."""
-        from app.ai_provider.prompts import format_conversation
         from app.ai_provider import ChatMessage
+        from app.ai_provider.prompts import format_conversation
 
         messages = [ChatMessage(role="host", text="Just me", timestamp=1234567890)]
         result = format_conversation(messages)
@@ -2559,9 +2674,10 @@ class TestStyleTemplatesEndpoint:
 
     def test_style_templates_returns_200(self):
         """GET /ai/style-templates should return 200 with template list."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -2577,9 +2693,10 @@ class TestStyleTemplatesEndpoint:
 
     def test_style_templates_have_expected_fields(self):
         """Each template should have name, filename, and content fields."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -2596,9 +2713,10 @@ class TestStyleTemplatesEndpoint:
 
     def test_style_templates_include_universal(self):
         """Templates should include the universal style."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
@@ -2689,27 +2807,31 @@ class TestCodePromptEndpointWithDetectedLanguages:
 
     def test_code_prompt_endpoint_with_detected_languages(self):
         """POST /ai/code-prompt with detected_languages should return 200."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Add user authentication",
-                "problem_statement": "Users cannot log in securely",
-                "proposed_solution": "Implement JWT-based authentication",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py"],
-                "risk_level": "medium",
-                "next_steps": ["Implement login endpoint"]
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Add user authentication",
+                    "problem_statement": "Users cannot log in securely",
+                    "proposed_solution": "Implement JWT-based authentication",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Implement login endpoint"],
+                },
+                "detected_languages": ["python"],
             },
-            "detected_languages": ["python"]
-        })
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -2720,26 +2842,30 @@ class TestCodePromptEndpointWithDetectedLanguages:
 
     def test_code_prompt_endpoint_backward_compatible(self):
         """POST /ai/code-prompt without detected_languages should still return 200."""
-        from fastapi.testclient import TestClient
-        from app.ai_provider.router import router
         from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.ai_provider.router import router
 
         test_app = FastAPI()
         test_app.include_router(router)
 
         client = TestClient(test_app)
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Fix login bug",
-                "problem_statement": "Login fails silently",
-                "proposed_solution": "Add error handling",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py"],
-                "risk_level": "low",
-                "next_steps": ["Add try-catch"]
-            }
-        })
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Fix login bug",
+                    "problem_statement": "Login fails silently",
+                    "proposed_solution": "Add error handling",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py"],
+                    "risk_level": "low",
+                    "next_steps": ["Add try-catch"],
+                }
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -2756,6 +2882,7 @@ class TestExtractCodeRelevantItems:
 
     def _make_summary(self, **kwargs):
         from app.ai_provider.pipeline import PipelineSummary
+
         defaults = {
             "topic": "Add user auth",
             "core_problem": "No auth exists",
@@ -2774,17 +2901,19 @@ class TestExtractCodeRelevantItems:
         from app.ai_provider.pipeline import extract_code_relevant_items
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps([
-            {
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Add login endpoint",
-                "problem": "No auth endpoint",
-                "proposed_change": "Create POST /auth/login",
-                "targets": ["auth/login.py"],
-                "risk_level": "medium",
-            }
-        ])
+        mock_provider.call_model.return_value = json.dumps(
+            [
+                {
+                    "id": "item-1",
+                    "type": "code_change",
+                    "title": "Add login endpoint",
+                    "problem": "No auth endpoint",
+                    "proposed_change": "Create POST /auth/login",
+                    "targets": ["auth/login.py"],
+                    "risk_level": "medium",
+                }
+            ]
+        )
 
         summary = self._make_summary()
         items = extract_code_relevant_items(summary, mock_provider)
@@ -2801,24 +2930,26 @@ class TestExtractCodeRelevantItems:
         from app.ai_provider.pipeline import extract_code_relevant_items
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps([
-            {
-                "type": "api_design",
-                "title": "Create endpoint",
-                "problem": "No endpoint",
-                "proposed_change": "Add POST /users",
-                "targets": ["api/users.py"],
-                "risk_level": "low",
-            },
-            {
-                "type": "code_change",
-                "title": "Add middleware",
-                "problem": "No auth check",
-                "proposed_change": "Add auth middleware",
-                "targets": ["middleware/auth.py"],
-                "risk_level": "medium",
-            },
-        ])
+        mock_provider.call_model.return_value = json.dumps(
+            [
+                {
+                    "type": "api_design",
+                    "title": "Create endpoint",
+                    "problem": "No endpoint",
+                    "proposed_change": "Add POST /users",
+                    "targets": ["api/users.py"],
+                    "risk_level": "low",
+                },
+                {
+                    "type": "code_change",
+                    "title": "Add middleware",
+                    "problem": "No auth check",
+                    "proposed_change": "Add auth middleware",
+                    "targets": ["middleware/auth.py"],
+                    "risk_level": "medium",
+                },
+            ]
+        )
 
         summary = self._make_summary()
         items = extract_code_relevant_items(summary, mock_provider)
@@ -2844,15 +2975,19 @@ class TestExtractCodeRelevantItems:
         """Should handle markdown-wrapped JSON responses."""
         from app.ai_provider.pipeline import extract_code_relevant_items
 
-        items_json = json.dumps([{
-            "id": "item-1",
-            "type": "code_change",
-            "title": "Fix bug",
-            "problem": "Bug exists",
-            "proposed_change": "Fix it",
-            "targets": ["app.py"],
-            "risk_level": "low",
-        }])
+        items_json = json.dumps(
+            [
+                {
+                    "id": "item-1",
+                    "type": "code_change",
+                    "title": "Fix bug",
+                    "problem": "Bug exists",
+                    "proposed_change": "Fix it",
+                    "targets": ["app.py"],
+                    "risk_level": "low",
+                }
+            ]
+        )
         mock_provider = MagicMock()
         mock_provider.call_model.return_value = f"```json\n{items_json}\n```"
 
@@ -2867,11 +3002,34 @@ class TestExtractCodeRelevantItems:
         from app.ai_provider.pipeline import extract_code_relevant_items
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps([
-            {"type": "code_change", "title": "A", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
-            {"type": "code_change", "title": "B", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
-            {"type": "code_change", "title": "C", "problem": "", "proposed_change": "", "targets": [], "risk_level": "low"},
-        ])
+        mock_provider.call_model.return_value = json.dumps(
+            [
+                {
+                    "type": "code_change",
+                    "title": "A",
+                    "problem": "",
+                    "proposed_change": "",
+                    "targets": [],
+                    "risk_level": "low",
+                },
+                {
+                    "type": "code_change",
+                    "title": "B",
+                    "problem": "",
+                    "proposed_change": "",
+                    "targets": [],
+                    "risk_level": "low",
+                },
+                {
+                    "type": "code_change",
+                    "title": "C",
+                    "problem": "",
+                    "proposed_change": "",
+                    "targets": [],
+                    "risk_level": "low",
+                },
+            ]
+        )
 
         summary = self._make_summary()
         items = extract_code_relevant_items(summary, mock_provider)
@@ -2883,14 +3041,18 @@ class TestExtractCodeRelevantItems:
         from app.ai_provider.pipeline import extract_code_relevant_items
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps([{
-            "type": "invalid_type",
-            "title": "Test",
-            "problem": "",
-            "proposed_change": "",
-            "targets": [],
-            "risk_level": "low",
-        }])
+        mock_provider.call_model.return_value = json.dumps(
+            [
+                {
+                    "type": "invalid_type",
+                    "title": "Test",
+                    "problem": "",
+                    "proposed_change": "",
+                    "targets": [],
+                    "risk_level": "low",
+                }
+            ]
+        )
 
         summary = self._make_summary()
         items = extract_code_relevant_items(summary, mock_provider)
@@ -2902,14 +3064,18 @@ class TestExtractCodeRelevantItems:
         from app.ai_provider.pipeline import extract_code_relevant_items
 
         mock_provider = MagicMock()
-        mock_provider.call_model.return_value = json.dumps([{
-            "type": "code_change",
-            "title": "Test",
-            "problem": "",
-            "proposed_change": "",
-            "targets": [],
-            "risk_level": "critical",
-        }])
+        mock_provider.call_model.return_value = json.dumps(
+            [
+                {
+                    "type": "code_change",
+                    "title": "Test",
+                    "problem": "",
+                    "proposed_change": "",
+                    "targets": [],
+                    "risk_level": "critical",
+                }
+            ]
+        )
 
         summary = self._make_summary()
         items = extract_code_relevant_items(summary, mock_provider)
@@ -2934,26 +3100,32 @@ class TestPipelineWithItems:
             # Stage 1: classification
             json.dumps({"discussion_type": "code_change", "confidence": 0.9}),
             # Stage 2: targeted summary
-            json.dumps({
-                "topic": "Add auth",
-                "core_problem": "No auth",
-                "proposed_solution": "Add JWT",
-                "requires_code_change": True,
-                "impact_scope": "module",
-                "affected_components": ["auth.py"],
-                "risk_level": "medium",
-                "next_steps": ["Add endpoint"],
-            }),
+            json.dumps(
+                {
+                    "topic": "Add auth",
+                    "core_problem": "No auth",
+                    "proposed_solution": "Add JWT",
+                    "requires_code_change": True,
+                    "impact_scope": "module",
+                    "affected_components": ["auth.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Add endpoint"],
+                }
+            ),
             # Stage 4: item extraction
-            json.dumps([{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Add auth endpoint",
-                "problem": "No auth",
-                "proposed_change": "Create POST /auth",
-                "targets": ["auth.py"],
-                "risk_level": "medium",
-            }]),
+            json.dumps(
+                [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Add auth endpoint",
+                        "problem": "No auth",
+                        "proposed_change": "Create POST /auth",
+                        "targets": ["auth.py"],
+                        "risk_level": "medium",
+                    }
+                ]
+            ),
         ]
 
         messages = [MagicMock(role="host", text="Add auth", timestamp=1234567890)]
@@ -2973,16 +3145,18 @@ class TestPipelineWithItems:
             # Stage 1: classification
             json.dumps({"discussion_type": "code_change", "confidence": 0.9}),
             # Stage 2: targeted summary
-            json.dumps({
-                "topic": "Fix bug",
-                "core_problem": "Bug in auth",
-                "proposed_solution": "Patch the bug",
-                "requires_code_change": True,
-                "impact_scope": "local",
-                "affected_components": ["auth.py"],
-                "risk_level": "low",
-                "next_steps": ["Fix it"],
-            }),
+            json.dumps(
+                {
+                    "topic": "Fix bug",
+                    "core_problem": "Bug in auth",
+                    "proposed_solution": "Patch the bug",
+                    "requires_code_change": True,
+                    "impact_scope": "local",
+                    "affected_components": ["auth.py"],
+                    "risk_level": "low",
+                    "next_steps": ["Fix it"],
+                }
+            ),
             # Stage 4: fails
             Exception("AI failure"),
         ]
@@ -3005,16 +3179,18 @@ class TestPipelineWithItems:
             # Stage 1: classification
             json.dumps({"discussion_type": "general", "confidence": 0.7}),
             # Stage 2: targeted summary
-            json.dumps({
-                "topic": "Team standup",
-                "core_problem": "Weekly planning",
-                "proposed_solution": "Continue current sprint",
-                "requires_code_change": False,
-                "impact_scope": "local",
-                "affected_components": [],
-                "risk_level": "low",
-                "next_steps": ["Continue work"],
-            }),
+            json.dumps(
+                {
+                    "topic": "Team standup",
+                    "core_problem": "Weekly planning",
+                    "proposed_solution": "Continue current sprint",
+                    "requires_code_change": False,
+                    "impact_scope": "local",
+                    "affected_components": [],
+                    "risk_level": "low",
+                    "next_steps": ["Continue work"],
+                }
+            ),
         ]
 
         messages = [MagicMock(role="host", text="Standup", timestamp=1234567890)]

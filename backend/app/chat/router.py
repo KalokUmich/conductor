@@ -23,9 +23,9 @@ Protocol Message Types:
     - read: Mark message as read
     - end_session: Host ends session
 """
+
 import html
 import logging
-import time
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -35,19 +35,18 @@ logger = logging.getLogger(__name__)
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from app.config import get_config
+from app.files.service import FileStorageService
+
 from .manager import (
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
     ChatMessage,
-    ChatMessageInput,
-    IdentitySource,
     MessageType,
     UserRole,
     manager,
-    DEFAULT_PAGE_SIZE,
-    MAX_PAGE_SIZE,
 )
 from .stack_trace_parser import parse_stack_trace
-from app.config import get_config
-from app.files.service import FileStorageService
 
 router = APIRouter()
 
@@ -58,7 +57,7 @@ TEMPLATES_DIR = Path(__file__).parent / "templates"
 @router.get("/chat", response_class=HTMLResponse)
 async def guest_chat_page(
     roomId: str = Query(..., description="Room ID to join"),
-    role: str = Query("engineer", description="User role (host or engineer)")
+    role: str = Query("engineer", description="User role (host or engineer)"),
 ) -> HTMLResponse:
     """Serve the standalone guest chat page.
 
@@ -87,10 +86,7 @@ async def guest_chat_page(
     template = template_path.read_text()
 
     content = template.replace("{{ room_id }}", safe_room_id)
-    content = content.replace(
-        "{{ room_id[:8] }}",
-        safe_room_id[:8] if len(safe_room_id) >= 8 else safe_room_id
-    )
+    content = content.replace("{{ room_id[:8] }}", safe_room_id[:8] if len(safe_room_id) >= 8 else safe_room_id)
     # Role is validated above, so it's safe to use directly
     content = content.replace("{{ role }}", role)
     content = content.replace("{{ role | capitalize }}", role.capitalize())
@@ -102,7 +98,7 @@ async def guest_chat_page(
 async def get_message_history(
     room_id: str,
     before: Optional[float] = Query(None, description="Timestamp cursor (get messages before this time)"),
-    limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Number of messages to return")
+    limit: int = Query(DEFAULT_PAGE_SIZE, ge=1, le=MAX_PAGE_SIZE, description="Number of messages to return"),
 ) -> JSONResponse:
     """Get paginated message history for a room.
 
@@ -139,10 +135,7 @@ async def get_message_history(
             d["codeSnippet"] = d["metadata"]
         history_msgs.append(d)
 
-    return JSONResponse({
-        "messages": history_msgs,
-        "hasMore": has_more
-    })
+    return JSONResponse({"messages": history_msgs, "hasMore": has_more})
 
 
 @router.post("/chat/{room_id}/ai-message")
@@ -174,10 +167,7 @@ async def post_ai_message(
     # Validate message type
     valid_types = ("ai_summary", "ai_code_prompt", "ai_explanation", "ai_answer")
     if message_type not in valid_types:
-        return JSONResponse(
-            {"error": f"Invalid message type: {message_type}"},
-            status_code=400
-        )
+        return JSONResponse({"error": f"Invalid message type: {message_type}"}, status_code=400)
 
     # Parse AI data if provided
     parsed_ai_data = None
@@ -185,10 +175,7 @@ async def post_ai_message(
         try:
             parsed_ai_data = json.loads(ai_data)
         except json.JSONDecodeError:
-            return JSONResponse(
-                {"error": "Invalid ai_data JSON"},
-                status_code=400
-            )
+            return JSONResponse({"error": "Invalid ai_data JSON"}, status_code=400)
 
     # Create AI user ID
     ai_user_id = f"AI-{model_name}"
@@ -218,10 +205,7 @@ async def post_ai_message(
     await manager.add_message(room_id, message)
 
     # Broadcast to all clients in the room
-    await manager.broadcast(
-        {"type": message_type, **message.model_dump()},
-        room_id
-    )
+    await manager.broadcast({"type": message_type, **message.model_dump()}, room_id)
 
     logger.info(f"[AI] Posted {message_type} to room {room_id} from {ai_user_id}")
 
@@ -270,6 +254,7 @@ async def delete_room(room_id: str) -> JSONResponse:
     # Delete audit logs
     try:
         from app.audit.service import AuditLogService
+
         await AuditLogService.get_instance().delete_room_logs(room_id)
     except Exception:
         pass
@@ -280,32 +265,34 @@ async def delete_room(room_id: str) -> JSONResponse:
 @router.get("/chat/{room_id}/status")
 async def room_status(room_id: str) -> JSONResponse:
     """Check if a room exists, its status, and whether it has in-memory state."""
-    has_connections = manager.get_room_size(room_id) > 0
     has_history = len(manager.message_history.get(room_id, [])) > 0
 
     # Check Postgres if no in-memory state
     pg_status = None
     from app.main import app
+
     persistence = getattr(app.state, "chat_persistence", None)
     if persistence and not has_history:
         from app.db.models import ChatRoom
+
         try:
             from sqlalchemy import select as sa_select
+
             async with persistence._session_factory() as session:
-                row = (await session.execute(
-                    sa_select(ChatRoom).where(ChatRoom.id == room_id)
-                )).scalar_one_or_none()
+                row = (await session.execute(sa_select(ChatRoom).where(ChatRoom.id == room_id))).scalar_one_or_none()
                 if row:
                     pg_status = row.status
         except Exception:
             pass
 
-    return JSONResponse({
-        "room_id": room_id,
-        "active_connections": manager.get_room_size(room_id),
-        "has_history": has_history,
-        "pg_status": pg_status,
-    })
+    return JSONResponse(
+        {
+            "room_id": room_id,
+            "active_connections": manager.get_room_size(room_id),
+            "has_history": has_history,
+            "pg_status": pg_status,
+        }
+    )
 
 
 @router.get("/chat/{room_id}/messages/after")
@@ -333,16 +320,19 @@ async def get_messages_after(
 
     # Fall back to Postgres
     from app.main import app
+
     persistence = getattr(app.state, "chat_persistence", None)
     if persistence:
         # Look up the ts of last_id in Postgres
         try:
-            from app.db.models import ChatMessageRecord
             from sqlalchemy import select as sa_select
+
+            from app.db.models import ChatMessageRecord
+
             async with persistence._session_factory() as session:
-                row = (await session.execute(
-                    sa_select(ChatMessageRecord.ts).where(ChatMessageRecord.id == last_id)
-                )).scalar_one_or_none()
+                row = (
+                    await session.execute(sa_select(ChatMessageRecord.ts).where(ChatMessageRecord.id == last_id))
+                ).scalar_one_or_none()
                 if row is not None:
                     pivot_ts = row
         except Exception:
@@ -378,6 +368,7 @@ async def get_messages_since(
 
     # Fall back to Postgres
     from app.main import app
+
     persistence = getattr(app.state, "chat_persistence", None)
     if persistence:
         msgs = await persistence.get_messages_since(room_id, since, limit=limit)
@@ -390,7 +381,7 @@ async def get_messages_since(
 async def websocket_chat_endpoint(
     websocket: WebSocket,
     room_id: str,
-    since: Optional[float] = Query(None, description="Timestamp for message recovery on reconnect")
+    since: Optional[float] = Query(None, description="Timestamp for message recovery on reconnect"),
 ) -> None:
     """WebSocket endpoint for real-time chat in a room.
 
@@ -426,10 +417,7 @@ async def websocket_chat_endpoint(
     # Enforce max_participants from config (0 = no limit)
     max_participants = get_config().session.max_participants
     if max_participants > 0 and manager.get_room_size(room_id) >= max_participants:
-        logger.warning(
-            f"[WS] Room {room_id} is full ({max_participants} participants). "
-            "Rejecting new connection."
-        )
+        logger.warning(f"[WS] Room {room_id} is full ({max_participants} participants). Rejecting new connection.")
         await websocket.close(code=1008)  # 1008 = Policy Violation
         return
 
@@ -447,13 +435,17 @@ async def websocket_chat_endpoint(
     try:
         # SECURITY: Send backend-assigned credentials to client FIRST
         # Client MUST use these credentials for all subsequent operations
-        await websocket.send_json({
-            "type": "connected",
-            "userId": assigned_user_id,
-            "role": assigned_role,
-            "leadId": manager.get_lead_id(room_id)
-        })
-        logger.info(f"[WS] Sent 'connected' with userId={assigned_user_id}, role={assigned_role}, leadId={manager.get_lead_id(room_id)}")
+        await websocket.send_json(
+            {
+                "type": "connected",
+                "userId": assigned_user_id,
+                "role": assigned_role,
+                "leadId": manager.get_lead_id(room_id),
+            }
+        )
+        logger.info(
+            f"[WS] Sent 'connected' with userId={assigned_user_id}, role={assigned_role}, leadId={manager.get_lead_id(room_id)}"
+        )
 
         # Hydrate from Postgres if no in-memory history (room was idle / restarted)
         if not history:
@@ -461,7 +453,8 @@ async def websocket_chat_endpoint(
             if _persistence:
                 try:
                     pg_msgs = await _persistence.hydrate_room(
-                        room_id, redis_store=manager._redis_store,
+                        room_id,
+                        redis_store=manager._redis_store,
                     )
                     if pg_msgs:
                         for m in pg_msgs:
@@ -503,13 +496,15 @@ async def websocket_chat_endpoint(
             history_data.append(d)
         users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
 
-        await websocket.send_json({
-            "type": "history",
-            "messages": history_data,
-            "users": users_data,
-            "leadId": manager.get_lead_id(room_id),
-            "isRecovery": since is not None  # Tell client this is a reconnection
-        })
+        await websocket.send_json(
+            {
+                "type": "history",
+                "messages": history_data,
+                "users": users_data,
+                "leadId": manager.get_lead_id(room_id),
+                "isRecovery": since is not None,  # Tell client this is a reconnection
+            }
+        )
 
         # Main message loop
         while True:
@@ -520,9 +515,7 @@ async def websocket_chat_endpoint(
             # --- Handle JOIN message (user registration) ---
             # SECURITY: Use backend-assigned userId and role, ignore client-provided values
             if message_type == "join":
-                logger.info(
-                    f"[WS] JOIN from backend-assigned userId={assigned_user_id}, role={assigned_role}"
-                )
+                logger.info(f"[WS] JOIN from backend-assigned userId={assigned_user_id}, role={assigned_role}")
                 sso_email = data.get("ssoEmail")
                 sso_provider = data.get("ssoProvider")
                 display_name = data.get("displayName", "")
@@ -532,7 +525,9 @@ async def websocket_chat_endpoint(
                 # before, reuse their original user_id to avoid duplicates.
                 if sso_email:
                     reclaimed_id = manager.reclaim_user_by_sso(
-                        room_id, assigned_user_id, sso_email,
+                        room_id,
+                        assigned_user_id,
+                        sso_email,
                     )
                     if reclaimed_id:
                         assigned_user_id = reclaimed_id
@@ -540,15 +535,15 @@ async def websocket_chat_endpoint(
                         if manager.room_hosts.get(room_id) == assigned_user_id:
                             assigned_role = "host"
                         # Send corrected identity to client
-                        await websocket.send_json({
-                            "type": "connected",
-                            "userId": assigned_user_id,
-                            "role": assigned_role,
-                            "leadId": manager.get_lead_id(room_id),
-                        })
-                        logger.info(
-                            f"[WS] Identity reclaimed via SSO for user {assigned_user_id} in room {room_id}"
+                        await websocket.send_json(
+                            {
+                                "type": "connected",
+                                "userId": assigned_user_id,
+                                "role": assigned_role,
+                                "leadId": manager.get_lead_id(room_id),
+                            }
                         )
+                        logger.info(f"[WS] Identity reclaimed via SSO for user {assigned_user_id} in room {room_id}")
 
                 user = manager.register_user(
                     websocket=websocket,
@@ -562,28 +557,24 @@ async def websocket_chat_endpoint(
                 )
 
                 # SSO reconnect: elevate role if credentials match stored host identity.
-                role_restored = manager.try_restore_host_by_sso(
-                    room_id, assigned_user_id, sso_email, sso_provider
-                )
+                role_restored = manager.try_restore_host_by_sso(room_id, assigned_user_id, sso_email, sso_provider)
                 if role_restored:
                     assigned_role = "host"
-                    logger.info(
-                        f"[WS] Host role restored via SSO for user {assigned_user_id} in room {room_id}"
+                    logger.info(f"[WS] Host role restored via SSO for user {assigned_user_id} in room {room_id}")
+                    await websocket.send_json(
+                        {
+                            "type": "role_restored",
+                            "role": "host",
+                            "leadId": manager.get_lead_id(room_id),
+                        }
                     )
-                    await websocket.send_json({
-                        "type": "role_restored",
-                        "role": "host",
-                        "leadId": manager.get_lead_id(room_id),
-                    })
 
                 # Broadcast updated user list to all clients
                 users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
                 logger.info(f"[WS] Broadcasting user_joined. Total users: {len(users_data)}")
-                await manager.broadcast({
-                    "type": "user_joined",
-                    "user": user.model_dump(),
-                    "users": users_data
-                }, room_id)
+                await manager.broadcast(
+                    {"type": "user_joined", "user": user.model_dump(), "users": users_data}, room_id
+                )
 
                 # Track participant in Postgres
                 _persistence = getattr(manager, "_persistence", None)
@@ -607,25 +598,23 @@ async def websocket_chat_endpoint(
             if message_type == "end_session":
                 # SECURITY: Use backend-assigned userId, not client-provided
                 if not manager.can_end_session(room_id, assigned_user_id):
-                    logger.warning(
-                        f"[WS] Unauthorized end_session attempt by userId={assigned_user_id}"
-                    )
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Only the host can end the session"
-                    })
+                    logger.warning(f"[WS] Unauthorized end_session attempt by userId={assigned_user_id}")
+                    await websocket.send_json({"type": "error", "error": "Only the host can end the session"})
                     continue
 
                 # Check blockers before proceeding
                 from .manager import check_end_chat_blockers
+
                 blockers = check_end_chat_blockers(room_id)
                 if blockers:
                     logger.info(f"[WS] end_session blocked for room {room_id}: {blockers}")
-                    await websocket.send_json({
-                        "type": "end_session_blocked",
-                        "blockers": blockers,
-                        "message": f"Cannot end session: {', '.join(blockers)}",
-                    })
+                    await websocket.send_json(
+                        {
+                            "type": "end_session_blocked",
+                            "blockers": blockers,
+                            "message": f"Cannot end session: {', '.join(blockers)}",
+                        }
+                    )
                     continue
 
                 logger.info(f"[WS] Host {assigned_user_id} ending session for room {room_id}")
@@ -646,10 +635,9 @@ async def websocket_chat_endpoint(
                 except Exception as e:
                     logger.error(f"[WS] Failed to delete files for room {room_id}: {e}")
 
-                await manager.broadcast({
-                    "type": "session_ended",
-                    "message": "Host has ended the chat session"
-                }, room_id)
+                await manager.broadcast(
+                    {"type": "session_ended", "message": "Host has ended the chat session"}, room_id
+                )
 
                 # Clear all room data (in-memory + Redis)
                 await manager.clear_room(room_id)
@@ -669,27 +657,35 @@ async def websocket_chat_endpoint(
                         logger.warning(f"[WS] quit_chat flush failed for {room_id}: {exc}")
 
                 # Send confirmation before disconnecting
-                await websocket.send_json({
-                    "type": "quit_confirmed",
-                    "room_id": room_id,
-                    "message": "Left room. Data preserved.",
-                })
+                await websocket.send_json(
+                    {
+                        "type": "quit_confirmed",
+                        "room_id": room_id,
+                        "message": "Left room. Data preserved.",
+                    }
+                )
 
                 # Disconnect user (reuse existing logic)
                 disconnected_user, lead_reverted = manager.disconnect(websocket, room_id)
                 if disconnected_user:
                     users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
-                    await manager.broadcast({
-                        "type": "user_left",
-                        "user": disconnected_user.model_dump(),
-                        "users": users_data,
-                    }, room_id)
+                    await manager.broadcast(
+                        {
+                            "type": "user_left",
+                            "user": disconnected_user.model_dump(),
+                            "users": users_data,
+                        },
+                        room_id,
+                    )
                     if lead_reverted:
                         new_lead_id = manager.get_lead_id(room_id)
-                        await manager.broadcast({
-                            "type": "lead_changed",
-                            "leadId": new_lead_id,
-                        }, room_id)
+                        await manager.broadcast(
+                            {
+                                "type": "lead_changed",
+                                "leadId": new_lead_id,
+                            },
+                            room_id,
+                        )
                 break  # Exit the WebSocket message loop
 
             # --- Handle TRANSFER_LEAD message (host or current lead only) ---
@@ -697,27 +693,18 @@ async def websocket_chat_endpoint(
             if message_type == "transfer_lead":
                 target_user_id = data.get("targetUserId")
                 if not manager.can_configure(room_id, assigned_user_id):
-                    logger.warning(
-                        f"[WS] Unauthorized transfer_lead attempt by userId={assigned_user_id}"
+                    logger.warning(f"[WS] Unauthorized transfer_lead attempt by userId={assigned_user_id}")
+                    await websocket.send_json(
+                        {"type": "error", "error": "Only the host or current lead can transfer lead"}
                     )
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Only the host or current lead can transfer lead"
-                    })
                     continue
 
                 if not target_user_id or not manager.transfer_lead(room_id, target_user_id):
-                    await websocket.send_json({
-                        "type": "error",
-                        "error": "Invalid target user for lead transfer"
-                    })
+                    await websocket.send_json({"type": "error", "error": "Invalid target user for lead transfer"})
                     continue
 
                 logger.info(f"[WS] Lead transferred to {target_user_id} in room {room_id}")
-                await manager.broadcast({
-                    "type": "lead_changed",
-                    "leadId": target_user_id
-                }, room_id)
+                await manager.broadcast({"type": "lead_changed", "leadId": target_user_id}, room_id)
                 continue
 
             # --- Handle TYPING indicator message ---
@@ -730,10 +717,10 @@ async def websocket_chat_endpoint(
                             "type": "typing",
                             "userId": assigned_user_id,
                             "displayName": user_info.displayName,
-                            "isTyping": data.get("isTyping", True)
+                            "isTyping": data.get("isTyping", True),
                         },
                         room_id,
-                        exclude_websocket=websocket
+                        exclude_websocket=websocket,
                     )
                 continue
 
@@ -745,11 +732,9 @@ async def websocket_chat_endpoint(
                     # Mark message as read and get all readers
                     read_by = manager.mark_message_read(room_id, message_id, assigned_user_id)
                     # Broadcast read receipt to all clients
-                    await manager.broadcast({
-                        "type": "read_receipt",
-                        "messageId": message_id,
-                        "readBy": list(read_by)
-                    }, room_id)
+                    await manager.broadcast(
+                        {"type": "read_receipt", "messageId": message_id, "readBy": list(read_by)}, room_id
+                    )
                 continue
 
             # --- Handle FILE message (broadcast file upload notification) ---
@@ -826,7 +811,9 @@ async def websocket_chat_endpoint(
 
                 broadcast_data = snippet_msg.model_dump()
                 broadcast_data["codeSnippet"] = snippet_meta
-                logger.info(f"[WS] Broadcasting code snippet: {snippet_meta.get('relativePath', 'unknown')} lines {snippet_meta.get('startLine')}-{snippet_meta.get('endLine')}")
+                logger.info(
+                    f"[WS] Broadcasting code snippet: {snippet_meta.get('relativePath', 'unknown')} lines {snippet_meta.get('startLine')}-{snippet_meta.get('endLine')}"
+                )
                 await manager.broadcast(broadcast_data, room_id)
                 continue
 
@@ -895,6 +882,7 @@ async def websocket_chat_endpoint(
             # --- Handle tool_response (from extension's local tool execution) ---
             if message_type == "tool_response":
                 from app.code_tools.proxy import tool_proxy
+
                 tool_proxy.handle_response(data)
                 continue
 
@@ -904,10 +892,7 @@ async def websocket_chat_endpoint(
 
             # Validate: content is required and cannot be empty for regular messages
             if not content or not content.strip():
-                await websocket.send_json({
-                    "type": "error",
-                    "error": "Invalid message format: content is required"
-                })
+                await websocket.send_json({"type": "error", "error": "Invalid message format: content is required"})
                 continue
 
             logger.info(f"[WS] CHAT message from backend-assigned userId={assigned_user_id}: {content[:50]}")
@@ -931,19 +916,13 @@ async def websocket_chat_endpoint(
 
             # Broadcast to all clients in the room
             logger.info(f"[WS] Broadcasting message to {manager.get_room_size(room_id)} connections")
-            await manager.broadcast(
-                {"type": "message", **full_message.model_dump()},
-                room_id
-            )
+            await manager.broadcast({"type": "message", **full_message.model_dump()}, room_id)
 
     except WebSocketDisconnect:
         # Capture identity BEFORE disconnect() removes the websocket mapping.
         pre_info = manager.websocket_to_user.get(websocket)
         pre_user_id = pre_info[1] if pre_info else None
-        is_host_disconnect = (
-            pre_user_id is not None
-            and manager.is_host(room_id, pre_user_id)
-        )
+        is_host_disconnect = pre_user_id is not None and manager.is_host(room_id, pre_user_id)
         host_had_sso = room_id in manager.room_sso_hosts
 
         disconnected_user, lead_reverted = manager.disconnect(websocket, room_id)
@@ -958,37 +937,33 @@ async def websocket_chat_endpoint(
                     logger.warning(f"[WS] mark_participant_left failed: {exc}")
 
             users_data = [u.model_dump() for u in manager.get_room_users(room_id)]
-            await manager.broadcast({
-                "type": "user_left",
-                "user": disconnected_user.model_dump(),
-                "users": users_data
-            }, room_id)
+            await manager.broadcast(
+                {"type": "user_left", "user": disconnected_user.model_dump(), "users": users_data}, room_id
+            )
 
             # If lead reverted to host on disconnect, broadcast lead_changed
             if lead_reverted:
                 new_lead_id = manager.get_lead_id(room_id)
                 logger.info(f"[WS] Lead reverted to host {new_lead_id} in room {room_id}")
-                await manager.broadcast({
-                    "type": "lead_changed",
-                    "leadId": new_lead_id
-                }, room_id)
+                await manager.broadcast({"type": "lead_changed", "leadId": new_lead_id}, room_id)
 
         # Non-SSO host disconnect: purge history and audit logs.
         if is_host_disconnect and not host_had_sso:
-            logger.info(
-                f"[WS] Non-SSO host {pre_user_id} left room {room_id} "
-                "— clearing history and audit logs"
-            )
+            logger.info(f"[WS] Non-SSO host {pre_user_id} left room {room_id} — clearing history and audit logs")
             await manager.clear_message_history(room_id)
             try:
                 from app.audit.service import AuditLogService
+
                 await AuditLogService.get_instance().delete_room_logs(room_id)
             except Exception as exc:
                 logger.error(f"[WS] Could not delete audit logs for room {room_id}: {exc}")
-            await manager.broadcast({
-                "type": "history_cleared",
-                "reason": "host_session_ended",
-            }, room_id)
+            await manager.broadcast(
+                {
+                    "type": "history_cleared",
+                    "reason": "host_session_ended",
+                },
+                room_id,
+            )
 
     except Exception as exc:
         logger.exception(
@@ -997,4 +972,3 @@ async def websocket_chat_endpoint(
         )
         manager.disconnect(websocket, room_id)
         raise
-

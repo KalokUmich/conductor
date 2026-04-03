@@ -21,6 +21,7 @@ Future LLM Integration:
     - Generates contextual changes based on instructions
     - Respects change limits from configuration
 """
+
 import os
 from typing import List, Optional
 
@@ -73,16 +74,9 @@ class MockAgent:
             summary = "Create helper and config modules"
             message = f"Generated {len(file_changes)} new files"
 
-        change_set = ChangeSet(
-            changes=file_changes,
-            summary=summary
-        )
+        change_set = ChangeSet(changes=file_changes, summary=summary)
 
-        return GenerateChangesResponse(
-            success=True,
-            change_set=change_set,
-            message=message
-        )
+        return GenerateChangesResponse(success=True, change_set=change_set, message=message)
 
     def _generate_realistic_changes(self, request: GenerateChangesRequest) -> List[FileChange]:
         """
@@ -117,11 +111,7 @@ def format_output(data: str) -> str:
     """Format data for output."""
     return f"[OUTPUT] {data}"
 '''
-        changes.append(FileChange(
-            file=helper_path,
-            type=ChangeType.CREATE_FILE,
-            content=helper_content
-        ))
+        changes.append(FileChange(file=helper_path, type=ChangeType.CREATE_FILE, content=helper_content))
 
         # 2. Create config.py
         config_path = os.path.join(base_path, "config.py") if base_path else "config.py"
@@ -131,25 +121,23 @@ def format_output(data: str) -> str:
 DEBUG = True
 VERSION = "1.0.0"
 '''
-        changes.append(FileChange(
-            file=config_path,
-            type=ChangeType.CREATE_FILE,
-            content=config_content
-        ))
+        changes.append(FileChange(file=config_path, type=ChangeType.CREATE_FILE, content=config_content))
 
         # 3. Modify original file - add imports at the top (only if file_path provided)
         if request.file_path:
-            import_content = '''from helper import format_output
+            import_content = """from helper import format_output
 from config import DEBUG, VERSION
 
-'''
-            changes.append(FileChange(
-                file=request.file_path,
-                type=ChangeType.REPLACE_RANGE,
-                range=Range(start=1, end=1),
-                content=import_content,
-                original_content=self._get_first_line(request.file_content)
-            ))
+"""
+            changes.append(
+                FileChange(
+                    file=request.file_path,
+                    type=ChangeType.REPLACE_RANGE,
+                    range=Range(start=1, end=1),
+                    content=import_content,
+                    original_content=self._get_first_line(request.file_content),
+                )
+            )
 
         return changes
 
@@ -172,4 +160,3 @@ from config import DEBUG, VERSION
 
 # Singleton instance for convenience
 mock_agent = MockAgent()
-

@@ -1,21 +1,20 @@
 """Tests for the agent loop service and message format conversion."""
+
 from __future__ import annotations
 
 import json
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from typing import List
 
 import pytest
 
+from app.agent_loop.prompts import build_system_prompt, scan_workspace_layout
+from app.agent_loop.service import AgentLoopService
 from app.ai_provider.base import AIProvider, ToolCall, ToolUseResponse
 from app.ai_provider.claude_direct import _converse_to_anthropic
 from app.ai_provider.openai_provider import _converse_to_openai
-from app.agent_loop.prompts import build_system_prompt, scan_workspace_layout
-from app.agent_loop.service import AgentLoopService, AgentResult, ThinkingStep
 from app.code_tools.tools import invalidate_graph_cache
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -25,7 +24,8 @@ from app.code_tools.tools import invalidate_graph_cache
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "auth.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "auth.py").write_text(
+        textwrap.dedent("""\
         import jwt
 
         def authenticate(token: str) -> bool:
@@ -38,8 +38,10 @@ def workspace(tmp_path: Path) -> Path:
         def get_user(token: str) -> dict:
             payload = jwt.decode(token, "secret", algorithms=["HS256"])
             return {"user_id": payload["sub"]}
-    """))
-    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "router.py").write_text(
+        textwrap.dedent("""\
         from app.auth import authenticate
 
         def login_endpoint(request):
@@ -47,7 +49,8 @@ def workspace(tmp_path: Path) -> Path:
             if authenticate(token):
                 return {"status": "ok"}
             return {"status": "unauthorized"}
-    """))
+    """)
+    )
     invalidate_graph_cache()
     return tmp_path
 
@@ -58,6 +61,10 @@ class MockProvider(AIProvider):
     def __init__(self, responses: List[ToolUseResponse]):
         self._responses = list(responses)
         self._call_count = 0
+
+    @property
+    def model_name(self) -> str:
+        return "mock-model"
 
     def health_check(self) -> bool:
         return True
@@ -89,9 +96,11 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_direct_answer(self, workspace):
         """Model answers immediately without using tools."""
-        provider = MockProvider([
-            ToolUseResponse(text="The answer is 42.", stop_reason="end_turn"),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(text="The answer is 42.", stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("What is the answer?", str(workspace))
 
@@ -103,19 +112,21 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_single_tool_call(self, workspace):
         """Model calls one tool then answers."""
-        provider = MockProvider([
-            # First response: call grep
-            ToolUseResponse(
-                text="Let me search for authentication code.",
-                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
-                stop_reason="tool_use",
-            ),
-            # Second response: answer
-            ToolUseResponse(
-                text="I found the authenticate function in app/auth.py.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                # First response: call grep
+                ToolUseResponse(
+                    text="Let me search for authentication code.",
+                    tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                    stop_reason="tool_use",
+                ),
+                # Second response: answer
+                ToolUseResponse(
+                    text="I found the authenticate function in app/auth.py.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("How does auth work?", str(workspace))
 
@@ -126,25 +137,27 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_multiple_tool_calls(self, workspace):
         """Model calls multiple tools across iterations."""
-        provider = MockProvider([
-            # Iteration 1: grep
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
-                stop_reason="tool_use",
-            ),
-            # Iteration 2: read the file
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # Iteration 3: answer
-            ToolUseResponse(
-                text="Authentication uses JWT tokens.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                # Iteration 1: grep
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                    stop_reason="tool_use",
+                ),
+                # Iteration 2: read the file
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc2", name="read_file", input={"path": "app/auth.py"})],
+                    stop_reason="tool_use",
+                ),
+                # Iteration 3: answer
+                ToolUseResponse(
+                    text="Authentication uses JWT tokens.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=10)
         result = await agent.run("How does auth work?", str(workspace))
 
@@ -192,17 +205,19 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_tool_error_doesnt_crash(self, workspace):
         """If a tool fails, the error is passed back to the model."""
-        provider = MockProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc1", name="read_file", input={"path": "nonexistent.py"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="File not found, but I can still answer.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc1", name="read_file", input={"path": "nonexistent.py"})],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(
+                    text="File not found, but I can still answer.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("Read nonexistent file", str(workspace))
 
@@ -213,17 +228,19 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_find_symbol_tool(self, workspace):
         """Agent can use find_symbol."""
-        provider = MockProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc1", name="find_symbol", input={"name": "authenticate"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="Found authenticate in auth.py.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc1", name="find_symbol", input={"name": "authenticate"})],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(
+                    text="Found authenticate in auth.py.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("Where is authenticate defined?", str(workspace))
 
@@ -233,20 +250,22 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_multiple_tools_in_one_turn(self, workspace):
         """Model calls two tools in a single turn."""
-        provider = MockProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[
-                    ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"}),
-                    ToolCall(id="tc2", name="list_files", input={"directory": "app"}),
-                ],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="Found it.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[
+                        ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"}),
+                        ToolCall(id="tc2", name="list_files", input={"directory": "app"}),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(
+                    text="Found it.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("Find auth", str(workspace))
 
@@ -256,25 +275,27 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_thinking_steps_collected(self, workspace):
         """Thinking steps are accumulated across iterations."""
-        provider = MockProvider([
-            # Iteration 1: thinking text + tool call
-            ToolUseResponse(
-                text="Let me search for authentication code.",
-                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
-                stop_reason="tool_use",
-            ),
-            # Iteration 2: another tool call (no thinking text)
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # Iteration 3: final answer
-            ToolUseResponse(
-                text="Authentication uses JWT tokens.",
-                stop_reason="end_turn",
-            ),
-        ])
+        provider = MockProvider(
+            [
+                # Iteration 1: thinking text + tool call
+                ToolUseResponse(
+                    text="Let me search for authentication code.",
+                    tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                    stop_reason="tool_use",
+                ),
+                # Iteration 2: another tool call (no thinking text)
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc2", name="read_file", input={"path": "app/auth.py"})],
+                    stop_reason="tool_use",
+                ),
+                # Iteration 3: final answer
+                ToolUseResponse(
+                    text="Authentication uses JWT tokens.",
+                    stop_reason="end_turn",
+                ),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=10)
         result = await agent.run("How does auth work?", str(workspace))
 
@@ -296,9 +317,11 @@ class TestAgentLoop:
     @pytest.mark.asyncio
     async def test_thinking_steps_empty_for_direct_answer(self, workspace):
         """No thinking steps when model answers immediately."""
-        provider = MockProvider([
-            ToolUseResponse(text="The answer is 42.", stop_reason="end_turn"),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(text="The answer is 42.", stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         result = await agent.run("What is the answer?", str(workspace))
 
@@ -315,14 +338,16 @@ class TestAgentLoop:
                 call_log.append(messages)
                 return original_chat(self, messages, tools, max_tokens, system)
 
-        provider = TrackingProvider([
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(text="Found it.", stop_reason="end_turn"),
-        ])
+        provider = TrackingProvider(
+            [
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "authenticate"})],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(text="Found it.", stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         await agent.run("Find auth", str(workspace))
 
@@ -331,9 +356,7 @@ class TestAgentLoop:
         last_user_msg = call_log[1][-1]
         assert last_user_msg["role"] == "user"
         # Should contain both toolResult and text (budget note)
-        content_kinds = {
-            list(block.keys())[0] for block in last_user_msg["content"]
-        }
+        content_kinds = {next(iter(block.keys())) for block in last_user_msg["content"]}
         assert "toolResult" in content_kinds
         assert "text" in content_kinds
         # Budget text should mention iteration count
@@ -368,15 +391,17 @@ class TestAgentLoop:
                 resp = super().chat_with_tools(messages, tools, max_tokens, system)
                 return resp
 
-        provider = TrackingProvider([
-            # grep returns 0 results
-            ToolUseResponse(
-                text="",
-                tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "nonexistent_xyz"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(text="Not found.", stop_reason="end_turn"),
-        ])
+        provider = TrackingProvider(
+            [
+                # grep returns 0 results
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[ToolCall(id="tc1", name="grep", input={"pattern": "nonexistent_xyz"})],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(text="Not found.", stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         await agent.run("Find xyz", str(workspace))
 
@@ -404,21 +429,23 @@ class TestAgentLoop:
                 resp = super().chat_with_tools(messages, tools, max_tokens, system)
                 return resp
 
-        provider = TrackingProvider([
-            # Read files from 5 different directories
-            ToolUseResponse(
-                text="",
-                tool_calls=[
-                    ToolCall(id="tc1", name="read_file", input={"path": "svc_a/mod.py"}),
-                    ToolCall(id="tc2", name="read_file", input={"path": "svc_b/mod.py"}),
-                    ToolCall(id="tc3", name="read_file", input={"path": "svc_c/mod.py"}),
-                    ToolCall(id="tc4", name="read_file", input={"path": "svc_d/mod.py"}),
-                    ToolCall(id="tc5", name="read_file", input={"path": "svc_e/mod.py"}),
-                ],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(text="Found it.", stop_reason="end_turn"),
-        ])
+        provider = TrackingProvider(
+            [
+                # Read files from 5 different directories
+                ToolUseResponse(
+                    text="",
+                    tool_calls=[
+                        ToolCall(id="tc1", name="read_file", input={"path": "svc_a/mod.py"}),
+                        ToolCall(id="tc2", name="read_file", input={"path": "svc_b/mod.py"}),
+                        ToolCall(id="tc3", name="read_file", input={"path": "svc_c/mod.py"}),
+                        ToolCall(id="tc4", name="read_file", input={"path": "svc_d/mod.py"}),
+                        ToolCall(id="tc5", name="read_file", input={"path": "svc_e/mod.py"}),
+                    ],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(text="Found it.", stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(provider=provider, max_iterations=5)
         await agent.run("Find something", str(workspace))
 
@@ -443,22 +470,24 @@ class TestAgentLoop:
             "delegates to a service which calls the repository."
         )
         # First response: a tool call to ensure tool_calls_made >= 2 and files_accessed >= 1
-        provider = MockProvider([
-            ToolUseResponse(
-                text="Let me look.",
-                tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
-                stop_reason="tool_use",
-            ),
-            ToolUseResponse(
-                text="Let me read.",
-                tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
-                stop_reason="tool_use",
-            ),
-            # Three consecutive vague answers — only 2 retries allowed
-            ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
-            ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
-            ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
-        ])
+        provider = MockProvider(
+            [
+                ToolUseResponse(
+                    text="Let me look.",
+                    tool_calls=[ToolCall(id="t1", name="grep", input={"pattern": "auth"})],
+                    stop_reason="tool_use",
+                ),
+                ToolUseResponse(
+                    text="Let me read.",
+                    tool_calls=[ToolCall(id="t2", name="read_file", input={"path": "app/auth.py"})],
+                    stop_reason="tool_use",
+                ),
+                # Three consecutive vague answers — only 2 retries allowed
+                ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
+                ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
+                ToolUseResponse(text=vague_answer, stop_reason="end_turn"),
+            ]
+        )
         agent = AgentLoopService(
             provider=provider,
             max_iterations=10,
@@ -480,12 +509,14 @@ class TestAgentLoop:
 
 # TestCompletenessVerifier removed — completeness check replaced by Brain review.
 
+
 class TestCompletenessModule:
     """Unit tests for the completeness module itself."""
 
     @pytest.mark.asyncio
     async def test_parse_sufficient(self):
         from app.agent_loop.completeness import _parse_response
+
         result = _parse_response('{"sufficient": true}')
         assert result.sufficient is True
         assert result.hints == []
@@ -493,6 +524,7 @@ class TestCompletenessModule:
     @pytest.mark.asyncio
     async def test_parse_insufficient(self):
         from app.agent_loop.completeness import _parse_response
+
         result = _parse_response('{"sufficient": false, "hints": ["Check SQL", "Trace appeal"]}')
         assert result.sufficient is False
         assert len(result.hints) == 2
@@ -501,6 +533,7 @@ class TestCompletenessModule:
     @pytest.mark.asyncio
     async def test_parse_code_block_wrapped(self):
         from app.agent_loop.completeness import _parse_response
+
         result = _parse_response('```json\n{"sufficient": false, "hints": ["Look deeper"]}\n```')
         assert result.sufficient is False
         assert result.hints == ["Look deeper"]
@@ -508,6 +541,7 @@ class TestCompletenessModule:
     @pytest.mark.asyncio
     async def test_parse_invalid_json_defaults_sufficient(self):
         from app.agent_loop.completeness import _parse_response
+
         result = _parse_response("I think this is sufficient")
         assert result.sufficient is True
         assert result.hints == []
@@ -515,6 +549,7 @@ class TestCompletenessModule:
     @pytest.mark.asyncio
     async def test_build_tool_summary(self):
         from app.agent_loop.completeness import _build_tool_summary
+
         history = [
             {"tool": "grep", "params": {"pattern": "auth"}, "summary": "5 results"},
             {"tool": "read_file", "params": {"path": "auth.py"}, "summary": "42 lines"},
@@ -527,11 +562,13 @@ class TestCompletenessModule:
     @pytest.mark.asyncio
     async def test_build_tool_summary_empty(self):
         from app.agent_loop.completeness import _build_tool_summary
+
         assert _build_tool_summary([]) == "(none)"
 
     @pytest.mark.asyncio
     async def test_build_tool_summary_truncation(self):
         from app.agent_loop.completeness import _build_tool_summary
+
         history = [{"tool": f"tool_{i}", "params": {}, "summary": ""} for i in range(50)]
         summary = _build_tool_summary(history, max_entries=5)
         assert "tool_0" in summary
@@ -878,7 +915,9 @@ class TestBuildSystemPrompt:
         how_idx = prompt.index("How to investigate")
         ask_idx = prompt.index("ask_user")
         angles_idx = prompt.index("multiple angles")
-        assert how_idx < ask_idx < angles_idx, "ask_user guidance should be between 'How to investigate' and 'multiple angles'"
+        assert how_idx < ask_idx < angles_idx, (
+            "ask_user guidance should be between 'How to investigate' and 'multiple angles'"
+        )
 
     def test_non_interactive_no_ask_user(self, tmp_path: Path):
         """Non-interactive mode has no ask_user guidance."""
@@ -900,17 +939,26 @@ class TestClearOldToolResults:
 
     def test_clears_old_results_beyond_cutoff(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         messages = self._build_messages(8)  # 4 turn-pairs
         _clear_old_tool_results(messages, keep_recent=2)
         # First 2 turn-pairs should be cleared, last 2 kept
-        cleared = [m for m in messages if m.get("role") == "user"
-                   and isinstance(m.get("content"), list)
-                   and any(b.get("toolResult", {}).get("content", [{}])[0].get("text", "").startswith("[cleared]")
-                           for b in m["content"] if "toolResult" in b)]
+        cleared = [
+            m
+            for m in messages
+            if m.get("role") == "user"
+            and isinstance(m.get("content"), list)
+            and any(
+                b.get("toolResult", {}).get("content", [{}])[0].get("text", "").startswith("[cleared]")
+                for b in m["content"]
+                if "toolResult" in b
+            )
+        ]
         assert len(cleared) == 2
 
     def test_preserves_recent_results(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         messages = self._build_messages(8)
         _clear_old_tool_results(messages, keep_recent=2)
         # Last 2 user messages should NOT be cleared
@@ -924,6 +972,7 @@ class TestClearOldToolResults:
 
     def test_metadata_summary_used_for_grep(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         messages = self._build_messages_with_tool("grep", {"pattern": "auth", "path": "src/"}, 6)
         _clear_old_tool_results(messages, keep_recent=1)
         # Check that the cleared message uses the summary template
@@ -935,12 +984,20 @@ class TestClearOldToolResults:
 
     def test_fallback_when_no_tool_use_match(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         # Build messages without matching assistant tool_use blocks
         messages = [
-            {"role": "user", "content": [{"toolResult": {
-                "toolUseId": "orphan-id",
-                "content": [{"text": '{"some": "data"}'}],
-            }}]},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "toolResult": {
+                            "toolUseId": "orphan-id",
+                            "content": [{"text": '{"some": "data"}'}],
+                        }
+                    }
+                ],
+            },
             {"role": "assistant", "content": [{"text": "reply"}]},
             {"role": "user", "content": [{"text": "next question"}]},
             {"role": "assistant", "content": [{"text": "next reply"}]},
@@ -953,6 +1010,7 @@ class TestClearOldToolResults:
 
     def test_too_few_messages_no_clearing(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         messages = self._build_messages(4)  # 2 turn-pairs
         original_texts = []
         for m in messages:
@@ -974,6 +1032,7 @@ class TestClearOldToolResults:
 
     def test_already_cleared_not_double_cleared(self):
         from app.agent_loop.service import _clear_old_tool_results
+
         messages = self._build_messages(8)
         _clear_old_tool_results(messages, keep_recent=2)
         # Get the cleared text
@@ -991,29 +1050,47 @@ class TestClearOldToolResults:
         for i in range(count):
             if i % 2 == 0:
                 # Assistant message with tool_use
-                messages.append({
-                    "role": "assistant",
-                    "content": [{
-                        "toolUse": {
-                            "toolUseId": f"tu-{i}",
-                            "name": "grep",
-                            "input": {"pattern": "test", "path": "."},
-                        }
-                    }],
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "toolUseId": f"tu-{i}",
+                                    "name": "grep",
+                                    "input": {"pattern": "test", "path": "."},
+                                }
+                            }
+                        ],
+                    }
+                )
             else:
                 # User message with toolResult
-                messages.append({
-                    "role": "user",
-                    "content": [{
-                        "toolResult": {
-                            "toolUseId": f"tu-{i-1}",
-                            "content": [{"text": json.dumps([
-                                {"file_path": f"file{i}.py", "line_number": i, "content": f"match {i}"},
-                            ])}],
-                        }
-                    }],
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": f"tu-{i - 1}",
+                                    "content": [
+                                        {
+                                            "text": json.dumps(
+                                                [
+                                                    {
+                                                        "file_path": f"file{i}.py",
+                                                        "line_number": i,
+                                                        "content": f"match {i}",
+                                                    },
+                                                ]
+                                            )
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                    }
+                )
         return messages
 
     @staticmethod
@@ -1022,27 +1099,49 @@ class TestClearOldToolResults:
         messages = []
         for i in range(count):
             if i % 2 == 0:
-                messages.append({
-                    "role": "assistant",
-                    "content": [{
-                        "toolUse": {
-                            "toolUseId": f"tu-{i}",
-                            "name": tool_name,
-                            "input": params,
-                        }
-                    }],
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "toolUse": {
+                                    "toolUseId": f"tu-{i}",
+                                    "name": tool_name,
+                                    "input": params,
+                                }
+                            }
+                        ],
+                    }
+                )
             else:
-                messages.append({
-                    "role": "user",
-                    "content": [{
-                        "toolResult": {
-                            "toolUseId": f"tu-{i-1}",
-                            "content": [{"text": json.dumps([
-                                {"file_path": "src/auth.py", "line_number": 10, "content": "def authenticate()"},
-                                {"file_path": "src/auth.py", "line_number": 20, "content": "def verify_token()"},
-                            ])}],
-                        }
-                    }],
-                })
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "toolResult": {
+                                    "toolUseId": f"tu-{i - 1}",
+                                    "content": [
+                                        {
+                                            "text": json.dumps(
+                                                [
+                                                    {
+                                                        "file_path": "src/auth.py",
+                                                        "line_number": 10,
+                                                        "content": "def authenticate()",
+                                                    },
+                                                    {
+                                                        "file_path": "src/auth.py",
+                                                        "line_number": 20,
+                                                        "content": "def verify_token()",
+                                                    },
+                                                ]
+                                            )
+                                        }
+                                    ],
+                                }
+                            }
+                        ],
+                    }
+                )
         return messages

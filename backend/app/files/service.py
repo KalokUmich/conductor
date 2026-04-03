@@ -3,10 +3,11 @@
 Handles file storage on disk and metadata tracking in PostgreSQL (async SQLAlchemy).
 Files are stored in: uploads/{room_id}/{uuid}.{ext}
 """
+
 import logging
 import shutil
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,7 +15,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from ..db.models import FileMetadataRecord
-from .schemas import FileMetadata, FileType, get_file_type, MAX_FILE_SIZE_BYTES
+from .schemas import MAX_FILE_SIZE_BYTES, FileMetadata, FileType, get_file_type
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +67,7 @@ class FileStorageService:
         """Save an uploaded file to disk and record metadata."""
         size_bytes = len(content)
         if size_bytes > MAX_FILE_SIZE_BYTES:
-            raise ValueError(
-                f"File size ({size_bytes} bytes) exceeds limit "
-                f"({MAX_FILE_SIZE_BYTES} bytes = 20MB)"
-            )
+            raise ValueError(f"File size ({size_bytes} bytes) exceeds limit ({MAX_FILE_SIZE_BYTES} bytes = 20MB)")
 
         file_id = str(uuid.uuid4())
         ext = Path(filename).suffix.lower() or ""
@@ -83,7 +81,7 @@ class FileStorageService:
         file_path.write_bytes(content)
         logger.info("Saved file: %s (%d bytes)", file_path, size_bytes)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         metadata = FileMetadata(
             id=file_id,
             room_id=room_id,
@@ -117,9 +115,7 @@ class FileStorageService:
     async def get_file(self, file_id: str) -> Optional[FileMetadata]:
         """Get file metadata by ID."""
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(FileMetadataRecord).where(FileMetadataRecord.id == file_id)
-            )
+            result = await session.execute(select(FileMetadataRecord).where(FileMetadataRecord.id == file_id))
             row = result.scalar_one_or_none()
             if not row:
                 return None
@@ -160,9 +156,7 @@ class FileStorageService:
             logger.info("Deleted directory: %s", room_dir)
 
         async with self._session_factory() as session:
-            await session.execute(
-                delete(FileMetadataRecord).where(FileMetadataRecord.room_id == room_id)
-            )
+            await session.execute(delete(FileMetadataRecord).where(FileMetadataRecord.room_id == room_id))
             await session.commit()
 
         logger.info("Deleted %d file records for room %s", file_count, room_id)

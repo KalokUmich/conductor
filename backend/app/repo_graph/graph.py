@@ -7,6 +7,7 @@ Builds a directed graph where:
 
 Uses NetworkX for graph storage and PageRank computation.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,16 +31,18 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FileNode:
     """A node in the dependency graph representing a source file."""
-    path:        str
+
+    path: str
     definitions: List[SymbolDef] = field(default_factory=list)
-    in_degree:   int = 0  # files that depend on this file
-    out_degree:  int = 0  # files this file depends on
-    pagerank:    float = 0.0
+    in_degree: int = 0  # files that depend on this file
+    out_degree: int = 0  # files this file depends on
+    pagerank: float = 0.0
 
 
 @dataclass
 class GraphEdge:
     """A directed edge: source_file references symbols defined in target_file."""
+
     source: str
     target: str
     weight: int = 1
@@ -49,10 +52,11 @@ class GraphEdge:
 @dataclass
 class DependencyGraph:
     """The complete dependency graph for a repository."""
-    nodes:   Dict[str, FileNode]
-    edges:   List[GraphEdge]
-    graph:   nx.DiGraph
-    stats:   Dict[str, int] = field(default_factory=dict)
+
+    nodes: Dict[str, FileNode]
+    edges: List[GraphEdge]
+    graph: nx.DiGraph
+    stats: Dict[str, int] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -75,16 +79,17 @@ def build_dependency_graph_from_json(raw_data: Dict) -> DependencyGraph:
     for rel_path, fdata in files_raw.items():
         defs = [
             SymbolDef(
-                name=d["name"], kind=d["kind"],
+                name=d["name"],
+                kind=d["kind"],
                 file_path=d["file_path"],
-                start_line=d["start_line"], end_line=d["end_line"],
+                start_line=d["start_line"],
+                end_line=d["end_line"],
                 signature=d.get("signature", d["name"]),
             )
             for d in fdata.get("definitions", [])
         ]
         refs = [
-            SymbolRef(name=r["name"], file_path=r["file_path"], line=r["line"])
-            for r in fdata.get("references", [])
+            SymbolRef(name=r["name"], file_path=r["file_path"], line=r["line"]) for r in fdata.get("references", [])
         ]
         file_symbols[rel_path] = FileSymbols(
             file_path=rel_path,
@@ -120,16 +125,19 @@ def build_dependency_graph(
     DependencyGraph
     """
     ws = Path(workspace_path)
-    exclude = set(exclude_patterns or [
-        "**/node_modules/**",
-        "**/.git/**",
-        "**/venv/**",
-        "**/__pycache__/**",
-        "**/dist/**",
-        "**/build/**",
-        "**/.mypy_cache/**",
-        "**/.pytest_cache/**",
-    ])
+    exclude = set(
+        exclude_patterns
+        or [
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/venv/**",
+            "**/__pycache__/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.mypy_cache/**",
+            "**/.pytest_cache/**",
+        ]
+    )
 
     # 1. Collect file symbols
     if file_symbols is None:
@@ -169,14 +177,14 @@ def build_dependency_graph(
     # Update degree info
     for fpath in nodes:
         if fpath in G:
-            nodes[fpath].in_degree  = G.in_degree(fpath)
+            nodes[fpath].in_degree = G.in_degree(fpath)
             nodes[fpath].out_degree = G.out_degree(fpath)
 
     stats = {
-        "total_files":      len(nodes),
-        "total_edges":      len(edges),
+        "total_files": len(nodes),
+        "total_edges": len(edges),
         "total_definitions": sum(len(fs.definitions) for fs in file_symbols.values()),
-        "total_references":  sum(len(fs.references) for fs in file_symbols.values()),
+        "total_references": sum(len(fs.references) for fs in file_symbols.values()),
     }
 
     logger.info(
@@ -225,7 +233,7 @@ def _scan_workspace(ws: Path, exclude: Set[str]) -> Dict[str, FileSymbols]:
 
         try:
             source = path.read_bytes()
-        except (OSError, IOError):
+        except OSError:
             continue
 
         # Skip large files (>500KB) to avoid slowdowns

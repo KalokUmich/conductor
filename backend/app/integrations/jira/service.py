@@ -6,6 +6,7 @@ Implements Atlassian OAuth 2.0 authorization code flow:
 3. Fetch accessible resources to get cloudId
 4. Use tokens for Jira REST API calls with auto-refresh
 """
+
 from __future__ import annotations
 
 import logging
@@ -70,6 +71,7 @@ class JiraOAuthService:
         self._pending_states[state] = time.time()
 
         from urllib.parse import urlencode
+
         params = {
             "audience": "api.atlassian.com",
             "client_id": self.client_id,
@@ -134,7 +136,8 @@ class JiraOAuthService:
                 token_pair.site_url = resource.get("url", "")
                 logger.info(
                     "Jira OAuth: connected to %s (cloudId=%s)",
-                    token_pair.site_url, token_pair.cloud_id,
+                    token_pair.site_url,
+                    token_pair.cloud_id,
                 )
 
             # Store tokens
@@ -247,7 +250,8 @@ class JiraOAuthService:
 
         async with httpx.AsyncClient() as client:
             resp = await client.request(
-                method, url,
+                method,
+                url,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
@@ -261,7 +265,8 @@ class JiraOAuthService:
                 await self._refresh_token()
                 token = self._tokens.access_token  # type: ignore
                 resp = await client.request(
-                    method, url,
+                    method,
+                    url,
                     headers={
                         "Authorization": f"Bearer {token}",
                         "Content-Type": "application/json",
@@ -304,9 +309,7 @@ class JiraOAuthService:
 
     async def get_issue_types(self, project_key: str) -> List[JiraIssueType]:
         """List issue types for a project."""
-        data = await self._api_request(
-            "GET", f"/project/{project_key}/statuses"
-        )
+        data = await self._api_request("GET", f"/project/{project_key}/statuses")
         # The /project/{key}/statuses endpoint returns issue types with statuses.
         # Each item has id, name, subtask.
         seen = set()
@@ -315,11 +318,13 @@ class JiraOAuthService:
             tid = item["id"]
             if tid not in seen:
                 seen.add(tid)
-                types.append(JiraIssueType(
-                    id=tid,
-                    name=item["name"],
-                    subtask=item.get("subtask", False),
-                ))
+                types.append(
+                    JiraIssueType(
+                        id=tid,
+                        name=item["name"],
+                        subtask=item.get("subtask", False),
+                    )
+                )
         return types
 
     async def get_teams(self, project_key: str = "") -> List[JiraFieldOption]:
@@ -334,7 +339,7 @@ class JiraOAuthService:
                 params["query"] = ""
             data = await self._api_request("GET", "/rest/teams/1.0/teams/find", params=params)
             teams = []
-            for t in (data if isinstance(data, list) else data.get("teams", data.get("results", []))):
+            for t in data if isinstance(data, list) else data.get("teams", data.get("results", [])):
                 tid = str(t.get("id", ""))
                 name = t.get("title", t.get("name", ""))
                 if tid and name:
@@ -366,9 +371,7 @@ class JiraOAuthService:
                 return [], ""
 
             logger.info("Seeding team options from Simple Task (%s) in project %s", seed_id, project_key)
-            data = await self._api_request(
-                "GET", f"/issue/createmeta/{project_key}/issuetypes/{seed_id}"
-            )
+            data = await self._api_request("GET", f"/issue/createmeta/{project_key}/issuetypes/{seed_id}")
             fields_raw = data.get("fields", data.get("values", []))
             if isinstance(fields_raw, dict):
                 fields_list = list(fields_raw.items())
@@ -379,12 +382,9 @@ class JiraOAuthService:
 
             teams: List[JiraFieldOption] = []
             team_field_key = ""
-            exact_key = ""
             for fk, fi in fields_list:
                 name_lower = fi.get("name", "").lower()
                 allowed = fi.get("allowedValues", [])
-                if name_lower == "team":
-                    exact_key = fk
                 if "team" in name_lower and allowed and not teams:
                     team_field_key = fk
                     teams = [
@@ -435,7 +435,8 @@ class JiraOAuthService:
         # Log all field keys and names for debugging
         logger.info(
             "Jira create_meta raw fields for %s/%s: %s",
-            project_key, issue_type_id,
+            project_key,
+            issue_type_id,
             [(fk, fi.get("name", "?")) for fk, fi in fields_list],
         )
 
@@ -461,10 +462,12 @@ class JiraOAuthService:
                 # Exact match — this is the real Team field (e.g. customfield_10001)
                 exact_team_key = field_key
                 for opt in allowed:
-                    exact_team_options.append(JiraFieldOption(
-                        id=str(opt.get("id", "")),
-                        name=opt.get("name", opt.get("value", "")),
-                    ))
+                    exact_team_options.append(
+                        JiraFieldOption(
+                            id=str(opt.get("id", "")),
+                            name=opt.get("name", opt.get("value", "")),
+                        )
+                    )
 
             elif "team" in name_lower:
                 # Fallback: "Tempo Team" etc. — collect options regardless of exact match
@@ -472,10 +475,12 @@ class JiraOAuthService:
                 if not fallback_team_key:
                     fallback_team_key = field_key
                 for opt in allowed:
-                    fallback_team_options.append(JiraFieldOption(
-                        id=str(opt.get("id", "")),
-                        name=opt.get("name", opt.get("value", "")),
-                    ))
+                    fallback_team_options.append(
+                        JiraFieldOption(
+                            id=str(opt.get("id", "")),
+                            name=opt.get("name", opt.get("value", "")),
+                        )
+                    )
 
         # Use the field key that matches the source of the options — IDs are not portable
         # between fields. customfield_10001 ("Team") never has allowedValues, so we always
@@ -508,7 +513,10 @@ class JiraOAuthService:
 
         logger.info(
             "Jira create_meta result: %d priorities, %d components, %d teams (team_field=%s)",
-            len(priorities), len(components), len(teams), team_field_key,
+            len(priorities),
+            len(components),
+            len(teams),
+            team_field_key,
         )
         return JiraCreateMeta(
             priorities=priorities,
@@ -546,9 +554,7 @@ class JiraOAuthService:
             fields["priority"] = {"id": req.priority} if req.priority.isdigit() else {"name": req.priority}
 
         if req.components:
-            fields["components"] = [
-                {"id": c} if c.isdigit() else {"name": c} for c in req.components
-            ]
+            fields["components"] = [{"id": c} if c.isdigit() else {"name": c} for c in req.components]
 
         if req.team and team_field_key:
             # Tempo Team (customfield_10124) expects a bare Long integer, not an object
@@ -571,10 +577,14 @@ class JiraOAuthService:
 
     async def get_issue(self, issue_key: str) -> dict:
         """Get full details of a Jira issue."""
-        data = await self._api_request("GET", f"/issue/{issue_key}", params={
-            "fields": "summary,description,status,priority,assignee,issuetype,"
-                      "components,labels,created,updated,comment,subtasks,parent",
-        })
+        data = await self._api_request(
+            "GET",
+            f"/issue/{issue_key}",
+            params={
+                "fields": "summary,description,status,priority,assignee,issuetype,"
+                "components,labels,created,updated,comment,subtasks,parent",
+            },
+        )
         fields = data.get("fields", {})
 
         # Parse description (ADF → plain text)
@@ -592,21 +602,25 @@ class JiraOAuthService:
             body = c.get("body", "")
             if isinstance(body, dict):
                 body = self._adf_to_text(body)
-            comments.append({
-                "author": c.get("author", {}).get("displayName", ""),
-                "created": c.get("created", ""),
-                "body": body,
-            })
+            comments.append(
+                {
+                    "author": c.get("author", {}).get("displayName", ""),
+                    "created": c.get("created", ""),
+                    "body": body,
+                }
+            )
 
         # Parse subtasks
         subtasks = []
         for st in fields.get("subtasks", []):
             st_fields = st.get("fields", {})
-            subtasks.append({
-                "key": st["key"],
-                "summary": st_fields.get("summary", ""),
-                "status": st_fields.get("status", {}).get("name", ""),
-            })
+            subtasks.append(
+                {
+                    "key": st["key"],
+                    "summary": st_fields.get("summary", ""),
+                    "status": st_fields.get("status", {}).get("name", ""),
+                }
+            )
 
         browse_url = ""
         if self._tokens and self._tokens.site_url:
@@ -674,11 +688,15 @@ class JiraOAuthService:
         if not epic_keys:
             return {}
         keys_str = ", ".join(epic_keys)
-        data = await self._api_request("POST", "/search/jql", json={
-            "jql": f"key IN ({keys_str})",
-            "maxResults": len(epic_keys),
-            "fields": ["summary", "status", "priority", "issuetype", "assignee"],
-        })
+        data = await self._api_request(
+            "POST",
+            "/search/jql",
+            json={
+                "jql": f"key IN ({keys_str})",
+                "maxResults": len(epic_keys),
+                "fields": ["summary", "status", "priority", "issuetype", "assignee"],
+            },
+        )
         result = {}
         for issue in data.get("issues", []):
             fields = issue.get("fields", {})
@@ -689,7 +707,9 @@ class JiraOAuthService:
                 "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
                 "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
                 "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
-                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+                "browse_url": (
+                    f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else ""
+                ),
             }
         return result
 
@@ -722,7 +742,9 @@ class JiraOAuthService:
             "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
             "components": [c.get("name", "") for c in fields.get("components", [])],
             "epic_key": self._extract_epic_key(fields),
-            "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
+            "browse_url": (
+                f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else ""
+            ),
         }
 
     async def list_undone_tickets(self, max_results: int = 30) -> dict:
@@ -743,15 +765,19 @@ class JiraOAuthService:
 
         # Fetch user's tickets
         jql = (
-            'assignee = currentUser() '
-            'AND status NOT IN (Done, Closed, Merged, Resolved) '
-            'ORDER BY priority ASC, updated DESC'
+            "assignee = currentUser() "
+            "AND status NOT IN (Done, Closed, Merged, Resolved) "
+            "ORDER BY priority ASC, updated DESC"
         )
-        data = await self._api_request("POST", "/search/jql", json={
-            "jql": jql,
-            "maxResults": max_results,
-            "fields": fields_list,
-        })
+        data = await self._api_request(
+            "POST",
+            "/search/jql",
+            json={
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": fields_list,
+            },
+        )
         tickets = [self._parse_ticket(issue) for issue in data.get("issues", [])]
 
         # Collect unique epic keys
@@ -767,17 +793,21 @@ class JiraOAuthService:
             # Build JQL for unassigned under these epics
             keys_str = ", ".join(epic_keys)
             unassigned_jql = (
-                f'assignee IS EMPTY '
-                f'AND parent IN ({keys_str}) '
-                f'AND status NOT IN (Done, Closed, Merged, Resolved) '
-                f'ORDER BY priority ASC, updated DESC'
+                f"assignee IS EMPTY "
+                f"AND parent IN ({keys_str}) "
+                f"AND status NOT IN (Done, Closed, Merged, Resolved) "
+                f"ORDER BY priority ASC, updated DESC"
             )
             try:
-                ua_data = await self._api_request("POST", "/search/jql", json={
-                    "jql": unassigned_jql,
-                    "maxResults": 50,
-                    "fields": fields_list,
-                })
+                ua_data = await self._api_request(
+                    "POST",
+                    "/search/jql",
+                    json={
+                        "jql": unassigned_jql,
+                        "maxResults": 50,
+                        "fields": fields_list,
+                    },
+                )
                 for issue in ua_data.get("issues", []):
                     parsed = self._parse_ticket(issue)
                     if parsed["key"] not in my_keys:
@@ -794,24 +824,34 @@ class JiraOAuthService:
     async def search_issues(self, query: str, max_results: int = 10) -> List[dict]:
         """Search Jira issues using JQL text search."""
         jql = f'text ~ "{query}" ORDER BY updated DESC'
-        data = await self._api_request("POST", "/search/jql", json={
-            "jql": jql,
-            "maxResults": max_results,
-            "fields": ["summary", "status", "assignee", "priority", "issuetype"],
-        })
+        data = await self._api_request(
+            "POST",
+            "/search/jql",
+            json={
+                "jql": jql,
+                "maxResults": max_results,
+                "fields": ["summary", "status", "assignee", "priority", "issuetype"],
+            },
+        )
         issues = data.get("issues", [])
         result = []
         for issue in issues:
             fields = issue.get("fields", {})
-            result.append({
-                "key": issue["key"],
-                "summary": fields.get("summary", ""),
-                "status": fields.get("status", {}).get("name", ""),
-                "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
-                "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
-                "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
-                "browse_url": f"{self._tokens.site_url}/browse/{issue['key']}" if self._tokens and self._tokens.site_url else "",
-            })
+            result.append(
+                {
+                    "key": issue["key"],
+                    "summary": fields.get("summary", ""),
+                    "status": fields.get("status", {}).get("name", ""),
+                    "priority": fields.get("priority", {}).get("name", "") if fields.get("priority") else "",
+                    "issuetype": fields.get("issuetype", {}).get("name", "") if fields.get("issuetype") else "",
+                    "assignee": fields.get("assignee", {}).get("displayName", "") if fields.get("assignee") else "",
+                    "browse_url": (
+                        f"{self._tokens.site_url}/browse/{issue['key']}"
+                        if self._tokens and self._tokens.site_url
+                        else ""
+                    ),
+                }
+            )
         return result
 
     # ------------------------------------------------------------------
@@ -827,12 +867,14 @@ class JiraOAuthService:
         transitions = []
         for t in data.get("transitions", []):
             target_name = t.get("to", {}).get("name", "")
-            transitions.append({
-                "id": t["id"],
-                "name": t["name"],
-                "to_status": target_name,
-                "blocked": target_name.lower() in self.BLOCKED_STATUSES,
-            })
+            transitions.append(
+                {
+                    "id": t["id"],
+                    "name": t["name"],
+                    "to_status": target_name,
+                    "blocked": target_name.lower() in self.BLOCKED_STATUSES,
+                }
+            )
         return transitions
 
     async def transition_issue(self, issue_key: str, transition_id: str) -> None:
@@ -850,9 +892,13 @@ class JiraOAuthService:
                 f"Done/Closed/Resolved transitions require manual user action"
             )
 
-        await self._api_request("POST", f"/issue/{issue_key}/transitions", json={
-            "transition": {"id": transition_id},
-        })
+        await self._api_request(
+            "POST",
+            f"/issue/{issue_key}/transitions",
+            json={
+                "transition": {"id": transition_id},
+            },
+        )
         logger.info("Jira: transitioned %s via %s → %s", issue_key, transition_id, target["to_status"])
 
     async def add_comment(self, issue_key: str, body: str) -> dict:
@@ -864,9 +910,13 @@ class JiraOAuthService:
                 {"type": "paragraph", "content": [{"type": "text", "text": body}]},
             ],
         }
-        data = await self._api_request("POST", f"/issue/{issue_key}/comment", json={
-            "body": adf_body,
-        })
+        data = await self._api_request(
+            "POST",
+            f"/issue/{issue_key}/comment",
+            json={
+                "body": adf_body,
+            },
+        )
         return {
             "id": data.get("id", ""),
             "created": data.get("created", ""),

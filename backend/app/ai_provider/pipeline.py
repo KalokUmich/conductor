@@ -9,6 +9,7 @@ Usage:
 
     result = run_summary_pipeline(messages, provider)
 """
+
 import json
 import logging
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ClassificationResult:
     """Result of discussion classification."""
+
     discussion_type: DiscussionType
     confidence: float
 
@@ -35,18 +37,20 @@ class ClassificationResult:
 @dataclass
 class CodeRelevantItem:
     """A discrete, actionable implementation task extracted from the summary."""
-    id: str           # "item-1", "item-2", ...
-    type: str         # api_design|code_change|product_flow|architecture|debugging
-    title: str        # Short imperative title
-    problem: str      # Specific problem this item addresses
+
+    id: str  # "item-1", "item-2", ...
+    type: str  # api_design|code_change|product_flow|architecture|debugging
+    title: str  # Short imperative title
+    problem: str  # Specific problem this item addresses
     proposed_change: str  # What code change to make
-    targets: List[str]    # File paths or component names
-    risk_level: str       # low|medium|high
+    targets: List[str]  # File paths or component names
+    risk_level: str  # low|medium|high
 
 
 @dataclass
 class PipelineSummary:
     """Result of the two-stage summary pipeline."""
+
     type: str = "decision_summary"
     topic: str = ""
     core_problem: str = ""
@@ -204,17 +208,14 @@ def _strip_markdown_code_block(text: str) -> str:
         # Find the end of the first line (e.g., ```json)
         first_newline = text.find("\n")
         if first_newline != -1:
-            text = text[first_newline + 1:]
+            text = text[first_newline + 1 :]
         # Remove trailing ```
         if text.endswith("```"):
             text = text[:-3].strip()
     return text
 
 
-def classify_discussion(
-    messages: List[ChatMessage],
-    provider: AIProvider
-) -> ClassificationResult:
+def classify_discussion(messages: List[ChatMessage], provider: AIProvider) -> ClassificationResult:
     """Classify the discussion type using the AI provider.
 
     Stage 1 of the pipeline: Determines what type of discussion this is
@@ -246,16 +247,13 @@ def classify_discussion(
         data = json.loads(response_text)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse classification JSON: {response_text}")
-        raise ValueError(f"Invalid JSON response from classification: {e}")
+        raise ValueError(f"Invalid JSON response from classification: {e}") from e
 
     discussion_type = data.get("discussion_type", "general")
     confidence = float(data.get("confidence", 0.0))
 
     # Validate discussion type
-    valid_types = [
-        "api_design", "product_flow", "code_change",
-        "architecture", "innovation", "debugging", "general"
-    ]
+    valid_types = ["api_design", "product_flow", "code_change", "architecture", "innovation", "debugging", "general"]
     if discussion_type not in valid_types:
         logger.warning(f"Invalid discussion type '{discussion_type}', defaulting to 'general'")
         discussion_type = "general"
@@ -265,9 +263,7 @@ def classify_discussion(
 
 
 def generate_targeted_summary(
-    messages: List[ChatMessage],
-    provider: AIProvider,
-    discussion_type: DiscussionType
+    messages: List[ChatMessage], provider: AIProvider, discussion_type: DiscussionType
 ) -> PipelineSummary:
     """Generate a targeted summary based on discussion type.
 
@@ -301,7 +297,7 @@ def generate_targeted_summary(
         data = json.loads(response_text)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse summary JSON: {response_text}")
-        raise ValueError(f"Invalid JSON response from summary: {e}")
+        raise ValueError(f"Invalid JSON response from summary: {e}") from e
 
     # Build PipelineSummary with validated fields
     summary = PipelineSummary(
@@ -412,7 +408,7 @@ def extract_code_relevant_items(
         data = json.loads(response_text)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse code-relevant items JSON: {response_text}")
-        raise ValueError(f"Invalid JSON response from code-relevant items extraction: {e}")
+        raise ValueError(f"Invalid JSON response from code-relevant items extraction: {e}") from e
 
     if not isinstance(data, list):
         logger.error(f"Expected JSON array, got: {type(data)}")
@@ -434,15 +430,17 @@ def extract_code_relevant_items(
         # Assign sequential ID if omitted
         item_id = item_data.get("id", f"item-{i + 1}")
 
-        items.append(CodeRelevantItem(
-            id=item_id,
-            type=item_type,
-            title=item_data.get("title", ""),
-            problem=item_data.get("problem", ""),
-            proposed_change=item_data.get("proposed_change", ""),
-            targets=item_data.get("targets", []),
-            risk_level=risk,
-        ))
+        items.append(
+            CodeRelevantItem(
+                id=item_id,
+                type=item_type,
+                title=item_data.get("title", ""),
+                problem=item_data.get("problem", ""),
+                proposed_change=item_data.get("proposed_change", ""),
+                targets=item_data.get("targets", []),
+                risk_level=risk,
+            )
+        )
 
     # Ensure sequential IDs
     for i, item in enumerate(items):
@@ -452,10 +450,7 @@ def extract_code_relevant_items(
     return items
 
 
-def run_summary_pipeline(
-    messages: List[ChatMessage],
-    provider: AIProvider
-) -> PipelineSummary:
+def run_summary_pipeline(messages: List[ChatMessage], provider: AIProvider) -> PipelineSummary:
     """Run the complete two-stage summary pipeline.
 
     This is the main entry point for the pipeline. It:
@@ -511,4 +506,3 @@ def run_summary_pipeline(
     )
 
     return summary
-

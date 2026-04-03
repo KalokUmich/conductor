@@ -1,4 +1,5 @@
 """Tests for auth module (AWS SSO + Google OAuth)."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -147,13 +148,12 @@ class TestSSOServiceGetIdentity:
         mock_oidc_client = MagicMock()
 
         def client_factory(service_name, **kwargs):
-            if service_name == "sso":
-                return mock_sso_client
-            elif service_name == "sts":
-                return mock_sts_client
-            elif service_name == "sso-oidc":
-                return mock_oidc_client
-            return MagicMock()
+            _clients = {
+                "sso": mock_sso_client,
+                "sts": mock_sts_client,
+                "sso-oidc": mock_oidc_client,
+            }
+            return _clients.get(service_name, MagicMock())
 
         mock_boto3.client.side_effect = client_factory
 
@@ -226,9 +226,7 @@ class TestSSOServiceGetIdentity:
             return MagicMock()
 
         mock_boto3.client.side_effect = client_factory
-        mock_sso_client.list_accounts.return_value = {
-            "accountList": [{"accountId": "111", "accountName": "Test"}]
-        }
+        mock_sso_client.list_accounts.return_value = {"accountList": [{"accountId": "111", "accountName": "Test"}]}
         mock_sso_client.list_account_roles.return_value = {"roleList": []}
 
         service = SSOService(start_url="https://d-test.awsapps.com/start")
@@ -247,8 +245,9 @@ class TestSSOEndpoints:
         mock_config = ConductorConfig(sso=SSOConfig(enabled=False))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -265,8 +264,9 @@ class TestSSOEndpoints:
         mock_config = ConductorConfig(sso=SSOConfig(enabled=True, start_url=""))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -297,8 +297,9 @@ class TestSSOEndpoints:
         }
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -315,26 +316,28 @@ class TestSSOEndpoints:
         """SSO poll returns pending when token not ready."""
         from app.config import ConductorConfig, SSOConfig
 
-        mock_config = ConductorConfig(
-            sso=SSOConfig(enabled=True, start_url="https://d-test.awsapps.com/start")
-        )
+        mock_config = ConductorConfig(sso=SSOConfig(enabled=True, start_url="https://d-test.awsapps.com/start"))
         mock_instance = MagicMock()
         mock_service_cls.return_value = mock_instance
         mock_instance.poll_for_token.return_value = None
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
             client = TestClient(test_app)
 
-            response = client.post("/auth/sso/poll", json={
-                "device_code": "dcode",
-                "client_id": "cid",
-                "client_secret": "csecret",
-            })
+            response = client.post(
+                "/auth/sso/poll",
+                json={
+                    "device_code": "dcode",
+                    "client_id": "cid",
+                    "client_secret": "csecret",
+                },
+            )
             assert response.status_code == 200
             assert response.json()["status"] == "pending"
 
@@ -343,9 +346,7 @@ class TestSSOEndpoints:
         """SSO poll returns identity when token is complete."""
         from app.config import ConductorConfig, SSOConfig
 
-        mock_config = ConductorConfig(
-            sso=SSOConfig(enabled=True, start_url="https://d-test.awsapps.com/start")
-        )
+        mock_config = ConductorConfig(sso=SSOConfig(enabled=True, start_url="https://d-test.awsapps.com/start"))
         mock_instance = MagicMock()
         mock_service_cls.return_value = mock_instance
         mock_instance.poll_for_token.return_value = "test-access-token"
@@ -360,18 +361,22 @@ class TestSSOEndpoints:
         }
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
             client = TestClient(test_app)
 
-            response = client.post("/auth/sso/poll", json={
-                "device_code": "dcode",
-                "client_id": "cid",
-                "client_secret": "csecret",
-            })
+            response = client.post(
+                "/auth/sso/poll",
+                json={
+                    "device_code": "dcode",
+                    "client_id": "cid",
+                    "client_secret": "csecret",
+                },
+            )
             assert response.status_code == 200
             data = response.json()
             assert data["status"] == "complete"
@@ -384,18 +389,22 @@ class TestSSOEndpoints:
         mock_config = ConductorConfig(sso=SSOConfig(enabled=False))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
             client = TestClient(test_app)
 
-            response = client.post("/auth/sso/poll", json={
-                "device_code": "dcode",
-                "client_id": "cid",
-                "client_secret": "csecret",
-            })
+            response = client.post(
+                "/auth/sso/poll",
+                json={
+                    "device_code": "dcode",
+                    "client_id": "cid",
+                    "client_secret": "csecret",
+                },
+            )
             assert response.status_code == 400
 
 
@@ -561,8 +570,9 @@ class TestGoogleSSOEndpoints:
         mock_config = ConductorConfig(google_sso=GoogleSSOConfig(enabled=False))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -582,8 +592,9 @@ class TestGoogleSSOEndpoints:
         )
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -616,8 +627,9 @@ class TestGoogleSSOEndpoints:
         }
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -637,7 +649,8 @@ class TestGoogleSSOEndpoints:
         mock_config = ConductorConfig(
             google_sso=GoogleSSOConfig(enabled=True),
             google_sso_secrets=GoogleSSOSecretsConfig(
-                client_id="cid", client_secret="csecret",
+                client_id="cid",
+                client_secret="csecret",
             ),
         )
         mock_instance = MagicMock()
@@ -645,8 +658,9 @@ class TestGoogleSSOEndpoints:
         mock_instance.poll_for_token.return_value = None
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -664,7 +678,8 @@ class TestGoogleSSOEndpoints:
         mock_config = ConductorConfig(
             google_sso=GoogleSSOConfig(enabled=True),
             google_sso_secrets=GoogleSSOSecretsConfig(
-                client_id="cid", client_secret="csecret",
+                client_id="cid",
+                client_secret="csecret",
             ),
         )
         mock_instance = MagicMock()
@@ -678,8 +693,9 @@ class TestGoogleSSOEndpoints:
         }
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -698,8 +714,9 @@ class TestGoogleSSOEndpoints:
         mock_config = ConductorConfig(google_sso=GoogleSSOConfig(enabled=False))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -718,8 +735,9 @@ class TestAuthProvidersEndpoint:
         mock_config = ConductorConfig()
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -739,8 +757,9 @@ class TestAuthProvidersEndpoint:
         )
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -759,8 +778,9 @@ class TestAuthProvidersEndpoint:
         mock_config = ConductorConfig(sso=SSOConfig(enabled=True, start_url=""))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -779,8 +799,9 @@ class TestAuthProvidersEndpoint:
         )
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)
@@ -799,8 +820,9 @@ class TestAuthProvidersEndpoint:
         mock_config = ConductorConfig(google_sso=GoogleSSOConfig(enabled=True))
 
         with patch("app.auth.router.get_config", return_value=mock_config):
-            from app.auth.router import router
             from fastapi import FastAPI
+
+            from app.auth.router import router
 
             test_app = FastAPI()
             test_app.include_router(router)

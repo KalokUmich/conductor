@@ -1,7 +1,6 @@
 """Tests for the token-based budget controller."""
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from app.agent_loop.budget import (
     BudgetConfig,
@@ -9,7 +8,6 @@ from app.agent_loop.budget import (
     BudgetSignal,
     IterationMetrics,
 )
-
 
 # ---------------------------------------------------------------------------
 # BudgetSignal tests
@@ -29,94 +27,130 @@ class TestBudgetSignalNormal:
     def test_multiple_iterations_under_threshold_normal(self):
         bc = BudgetController(BudgetConfig(max_input_tokens=500_000))
         for _ in range(5):
-            bc.track(IterationMetrics(
-                input_tokens=20_000, output_tokens=1_000,
-                new_files_accessed=1, new_symbols_found=1,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=20_000,
+                    output_tokens=1_000,
+                    new_files_accessed=1,
+                    new_symbols_found=1,
+                )
+            )
         # 100K / 500K = 20%
         assert bc.get_signal() == BudgetSignal.NORMAL
 
 
 class TestBudgetSignalWarnConverge:
     def test_warning_at_threshold(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=100_000,
-            warning_threshold=0.7,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=100_000,
+                warning_threshold=0.7,
+            )
+        )
         bc.track(IterationMetrics(input_tokens=75_000, output_tokens=1_000))
         assert bc.get_signal() == BudgetSignal.WARN_CONVERGE
 
     def test_diminishing_returns_triggers_warning(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=1_000_000,
-            diminishing_returns_window=3,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=1_000_000,
+                diminishing_returns_window=3,
+            )
+        )
         # 3 iterations with no new files or symbols
         for _ in range(3):
-            bc.track(IterationMetrics(
-                input_tokens=10_000, output_tokens=500,
-                new_files_accessed=0, new_symbols_found=0,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=10_000,
+                    output_tokens=500,
+                    new_files_accessed=0,
+                    new_symbols_found=0,
+                )
+            )
         assert bc.get_signal() == BudgetSignal.WARN_CONVERGE
 
     def test_diminishing_returns_not_triggered_with_new_files(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=1_000_000,
-            diminishing_returns_window=3,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=1_000_000,
+                diminishing_returns_window=3,
+            )
+        )
         for _ in range(3):
-            bc.track(IterationMetrics(
-                input_tokens=10_000, output_tokens=500,
-                new_files_accessed=1, new_symbols_found=0,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=10_000,
+                    output_tokens=500,
+                    new_files_accessed=1,
+                    new_symbols_found=0,
+                )
+            )
         assert bc.get_signal() == BudgetSignal.NORMAL
 
     def test_diminishing_returns_not_triggered_below_window(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=1_000_000,
-            diminishing_returns_window=3,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=1_000_000,
+                diminishing_returns_window=3,
+            )
+        )
         # Only 2 iterations — below window
         for _ in range(2):
-            bc.track(IterationMetrics(
-                input_tokens=10_000, output_tokens=500,
-                new_files_accessed=0, new_symbols_found=0,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=10_000,
+                    output_tokens=500,
+                    new_files_accessed=0,
+                    new_symbols_found=0,
+                )
+            )
         assert bc.get_signal() == BudgetSignal.NORMAL
 
 
 class TestBudgetSignalForceConclude:
     def test_critical_threshold_forces_conclude(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=100_000,
-            critical_threshold=0.9,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=100_000,
+                critical_threshold=0.9,
+            )
+        )
         bc.track(IterationMetrics(input_tokens=95_000, output_tokens=1_000))
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
     def test_max_iterations_forces_conclude(self):
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=1_000_000,
-            max_iterations=5,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=1_000_000,
+                max_iterations=5,
+            )
+        )
         for _ in range(5):
-            bc.track(IterationMetrics(
-                input_tokens=1_000, output_tokens=100,
-                new_files_accessed=1,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=1_000,
+                    output_tokens=100,
+                    new_files_accessed=1,
+                )
+            )
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
     def test_iteration_limit_checked_before_token_ratio(self):
         """Even with low token usage, hitting max_iterations forces conclude."""
-        bc = BudgetController(BudgetConfig(
-            max_input_tokens=1_000_000,
-            max_iterations=3,
-        ))
+        bc = BudgetController(
+            BudgetConfig(
+                max_input_tokens=1_000_000,
+                max_iterations=3,
+            )
+        )
         for _ in range(3):
-            bc.track(IterationMetrics(
-                input_tokens=100, output_tokens=50,
-                new_files_accessed=1,
-            ))
+            bc.track(
+                IterationMetrics(
+                    input_tokens=100,
+                    output_tokens=50,
+                    new_files_accessed=1,
+                )
+            )
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
 

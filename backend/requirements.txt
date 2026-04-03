@@ -43,3 +43,7 @@ langfuse>=2.0
 # Headless browser for web browsing, form filling, screenshots
 # After install: playwright install chromium
 playwright>=1.40
+
+# --- Dev tools (linting + formatting) ---
+ruff>=0.11.0
+black>=25.1.0

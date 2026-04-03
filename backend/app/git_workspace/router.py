@@ -2,18 +2,17 @@
 
 All endpoints are under the /api/git-workspace prefix (registered in main.py).
 """
+
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
+from .delegate_broker import DelegateBroker
 from .schemas import (
     CredentialPayload,
-    DelegateAuthRequest,
-    DelegateAuthResponse,
     GitWorkspaceHealth,
     ListRemoteBranchesRequest,
     ListRemoteBranchesResponse,
@@ -33,7 +32,6 @@ from .schemas import (
     WorktreeStatus,
 )
 from .service import GitWorkspaceService
-from .delegate_broker import DelegateBroker
 
 logger = logging.getLogger(__name__)
 
@@ -47,11 +45,13 @@ def get_git_service(  # pragma: no cover
     # This will be overridden in tests via app.dependency_overrides
 ) -> GitWorkspaceService:
     from app.main import app  # lazy import to avoid circular dependency
+
     return app.state.git_workspace_service
 
 
 def get_delegate_broker() -> DelegateBroker:  # pragma: no cover
     from app.main import app
+
     return app.state.delegate_broker
 
 
@@ -82,11 +82,9 @@ async def health(
 ) -> GitWorkspaceHealth:
     """Basic health check for the git workspace module."""
     import subprocess
+
     try:
-        result = subprocess.run(
-            ["git", "--version"],
-            capture_output=True, text=True, timeout=5
-        )
+        result = subprocess.run(["git", "--version"], capture_output=True, text=True, timeout=5)
         git_version = result.stdout.strip()
     except Exception as exc:  # pylint: disable=broad-except
         return GitWorkspaceHealth(
@@ -132,7 +130,8 @@ async def register_local_workspace(
         info = svc.register_local_workspace(req.room_id, req.local_path)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc),
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
         ) from exc
     return LocalWorkspaceResult(
         room_id=req.room_id,
@@ -206,6 +205,7 @@ async def index_workspace(
         raise HTTPException(status.HTTP_409_CONFLICT, "Index worktree not available yet")
 
     from app.main import app as _app
+
     code_search_svc = getattr(_app.state, "code_search_service", None)
     if code_search_svc is None:
         return SetupAndIndexResult(

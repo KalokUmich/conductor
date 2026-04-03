@@ -8,6 +8,7 @@ tests catch field-name mismatches before they reach the LLM.
 Run:
     pytest tests/test_tool_parity_subprocess.py -v
 """
+
 import json
 import subprocess
 import sys
@@ -34,12 +35,12 @@ def cli(tool: str, params: dict) -> Dict[str, Any]:
     """Run a tool via ``python -m app.code_tools`` and parse the JSON output."""
     result = subprocess.run(
         [PYTHON, "-m", "app.code_tools", tool, WS, json.dumps(params)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         cwd=str(REPO_ROOT / "backend"),
     )
-    assert result.returncode == 0 or result.stdout, (
-        f"CLI failed: {result.stderr}"
-    )
+    assert result.returncode == 0 or result.stdout, f"CLI failed: {result.stderr}"
     return json.loads(result.stdout)
 
 
@@ -381,12 +382,15 @@ class TestGetCalleesParity:
 class TestTraceVariableParity:
     def test_field_names(self):
         """trace_variable returns {variable, file, function, direction, ...}."""
-        r = direct("trace_variable", {
-            "variable_name": "card_token",
-            "file": "app/service.py",
-            "function_name": "process_payment",
-            "direction": "forward",
-        })
+        r = direct(
+            "trace_variable",
+            {
+                "variable_name": "card_token",
+                "file": "app/service.py",
+                "function_name": "process_payment",
+                "direction": "forward",
+            },
+        )
         if not r["success"] and "networkx" in str(r.get("error", "")):
             pytest.skip("networkx not installed")
         assert r["success"]

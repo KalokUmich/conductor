@@ -21,6 +21,7 @@ Or construct the model directly::
     model = BedrockLanguageModel(model_id="anthropic.claude-sonnet-4-20250514-v1:0")
     result = lx.extract("...", model=model, prompt_description="...")
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,9 +30,8 @@ from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import boto3
-
-from langextract.core.base_model import BaseLanguageModel
 from langextract.core import types as core_types
+from langextract.core.base_model import BaseLanguageModel
 from langextract.providers import router
 
 if TYPE_CHECKING:
@@ -155,9 +155,7 @@ class BedrockLanguageModel(BaseLanguageModel):
 
         return resolved
 
-    def infer(
-        self, batch_prompts: Sequence[str], **kwargs: Any
-    ) -> Iterator[Sequence[core_types.ScoredOutput]]:
+    def infer(self, batch_prompts: Sequence[str], **kwargs: Any) -> Iterator[Sequence[core_types.ScoredOutput]]:
         """Run inference on a batch of prompts."""
         merged = self.merge_kwargs(kwargs)
         call_kwargs: dict[str, Any] = {}
@@ -195,6 +193,7 @@ ClaudeLanguageModel = BedrockLanguageModel
 # ---------------------------------------------------------------------------
 # Register with langextract's provider router
 # ---------------------------------------------------------------------------
+
 
 @router.register(
     # Claude / Anthropic

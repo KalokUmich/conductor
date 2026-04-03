@@ -9,6 +9,7 @@ These schemas are used by:
     - GET /audit/logs: Retrieve audit history
     - AuditLogService: PostgreSQL storage layer
 """
+
 from datetime import datetime
 from enum import Enum
 from typing import Optional
@@ -23,6 +24,7 @@ class ApplyMode(str, Enum):
         MANUAL: User explicitly clicked "Apply" button.
         AUTO: Changes were auto-applied based on policy approval.
     """
+
     MANUAL = "manual"
     AUTO = "auto"
 
@@ -41,15 +43,13 @@ class AuditLogEntry(BaseModel):
         mode: Whether it was manual or auto-applied.
         timestamp: When the changes were applied (UTC).
     """
+
     room_id: str = Field(..., description="Session identifier")
     summary_id: Optional[str] = Field(None, description="Summary reference")
     changeset_hash: str = Field(..., description="Changeset hash")
     applied_by: str = Field(..., description="User who applied")
     mode: ApplyMode = Field(..., description="manual or auto")
-    timestamp: datetime = Field(
-        default_factory=datetime.utcnow,
-        description="When applied (UTC)"
-    )
+    timestamp: datetime = Field(default_factory=datetime.utcnow, description="When applied (UTC)")
 
 
 class AuditLogCreate(BaseModel):
@@ -65,9 +65,9 @@ class AuditLogCreate(BaseModel):
         applied_by: User ID of who applied the changes.
         mode: Whether it was manual or auto-applied.
     """
+
     room_id: str = Field(..., min_length=1, description="Session identifier")
     summary_id: Optional[str] = Field(None, description="Summary reference")
     changeset_hash: str = Field(..., min_length=1, description="Changeset hash")
     applied_by: str = Field(..., min_length=1, description="User who applied")
     mode: ApplyMode = Field(..., description="manual or auto")
-

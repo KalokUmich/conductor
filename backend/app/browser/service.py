@@ -5,6 +5,7 @@ browser and maintains one BrowserContext (with a Page) per session.  Sessions
 are keyed by an opaque string — typically the workspace path so that all
 browser tool calls within a single agent-loop run share the same page.
 """
+
 from __future__ import annotations
 
 import logging

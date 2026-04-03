@@ -9,38 +9,72 @@ For Brain-dispatched sub-agents (primary path):
 Legacy path (standalone / old workflow mode):
   CORE_IDENTITY + STRATEGIES — kept for backward compatibility
 """
+
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
 # Directories to skip during layout scanning (mirrors tools._EXCLUDED_DIRS)
 _EXCLUDED_DIRS: Set[str] = {
-    ".git", ".hg", ".svn", "__pycache__", "node_modules", "target",
-    "dist", "vendor", ".venv", "venv", ".mypy_cache", ".pytest_cache",
-    ".tox", "build", ".next", ".nuxt",
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    "node_modules",
+    "target",
+    "dist",
+    "vendor",
+    ".venv",
+    "venv",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+    "build",
+    ".next",
+    ".nuxt",
 }
 
 # Files that identify a project root / source root
 _PROJECT_MARKERS: Set[str] = {
-    "pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle",
-    "setup.py", "setup.cfg", "pyproject.toml", "requirements.txt",
-    "package.json", "tsconfig.json",
-    "go.mod", "Cargo.toml",
-    "*.csproj", "*.sln",
-    "Makefile", "CMakeLists.txt", "Dockerfile",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "requirements.txt",
+    "package.json",
+    "tsconfig.json",
+    "go.mod",
+    "Cargo.toml",
+    "*.csproj",
+    "*.sln",
+    "Makefile",
+    "CMakeLists.txt",
+    "Dockerfile",
 }
 
 _KEY_DOC_FILES: List[str] = [
-    "README.md", "README.rst", "README.txt", "README",
-    "CLAUDE.md", "ARCHITECTURE.md", "DESIGN.md", "OVERVIEW.md",
-    "CONTRIBUTING.md", "docs/README.md", "docs/architecture.md",
+    "README.md",
+    "README.rst",
+    "README.txt",
+    "README",
+    "CLAUDE.md",
+    "ARCHITECTURE.md",
+    "DESIGN.md",
+    "OVERVIEW.md",
+    "CONTRIBUTING.md",
+    "docs/README.md",
+    "docs/architecture.md",
 ]
 
 _DOC_TRUNCATE_CHARS = 8000
@@ -264,6 +298,7 @@ class SkillMeta:
             searches) or "strong" (Sonnet — slower, smarter, needed for
             complex reasoning like root cause analysis or architecture).
     """
+
     description: str
     when_to_use: str
     when_not: str
@@ -294,7 +329,17 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Build evidence chain from symptom to cause — error messages, call chains, systemic issues, git history.",
         when_to_use='"Why does X fail", "Debug this error", "What causes the crash", "This API returns 500 sometimes", "Payment callbacks fail silently"',
         when_not='"What changed recently" (that\'s recent_changes — no symptom to trace)',
-        tools=["grep", "read_file", "get_callers", "get_callees", "trace_variable", "git_blame", "git_show", "find_tests", "detect_patterns"],
+        tools=[
+            "grep",
+            "read_file",
+            "get_callers",
+            "get_callees",
+            "trace_variable",
+            "git_blame",
+            "git_show",
+            "find_tests",
+            "detect_patterns",
+        ],
         budget=400_000,
         iterations=20,
         model="strong",
@@ -303,7 +348,15 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Map module organization, responsibilities, and dependencies top-down.",
         when_to_use='"How is the project structured", "Show module organization", "What are the main components", "Draw me the architecture"',
         when_not='"How does feature X work" (that\'s code_explanation — specific, not structural)',
-        tools=["module_summary", "detect_patterns", "get_dependencies", "get_dependents", "list_files", "list_endpoints", "extract_docstrings"],
+        tools=[
+            "module_summary",
+            "detect_patterns",
+            "get_dependencies",
+            "get_dependents",
+            "list_files",
+            "list_endpoints",
+            "extract_docstrings",
+        ],
         budget=250_000,
         iterations=15,
     ),
@@ -311,7 +364,16 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Map blast radius of a change — direct dependents, transitive callers, amplification risks.",
         when_to_use='"What breaks if I change X", "Impact of renaming Y", "What depends on this service", "Is it safe to remove Z"',
         when_not='"Why did X break" (that\'s root_cause — backward from symptom)',
-        tools=["find_references", "get_callers", "get_dependents", "get_dependencies", "find_tests", "test_outline", "run_test", "detect_patterns"],
+        tools=[
+            "find_references",
+            "get_callers",
+            "get_dependents",
+            "get_dependencies",
+            "find_tests",
+            "test_outline",
+            "run_test",
+            "detect_patterns",
+        ],
         budget=300_000,
         iterations=18,
     ),
@@ -319,7 +381,15 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Trace data from source to sink through every transformation.",
         when_to_use='"How does data flow from X to Y", "Where is this field stored", "What transformations happen to the input", "Trace the customer data path"',
         when_not='"Where is the config for X" (that\'s config_analysis)',
-        tools=["trace_variable", "find_references", "get_callers", "get_callees", "get_dependencies", "ast_search", "db_schema"],
+        tools=[
+            "trace_variable",
+            "find_references",
+            "get_callers",
+            "get_callees",
+            "get_dependencies",
+            "ast_search",
+            "db_schema",
+        ],
         budget=350_000,
         iterations=20,
     ),
@@ -335,7 +405,15 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Explain code across three dimensions: business context, mechanism, design decisions.",
         when_to_use='"Explain how X works", "What does this class do", "Why is this implemented this way", "Walk me through this function"',
         when_not='"Find the endpoint for X" (that\'s entry_point — location, not explanation)',
-        tools=["read_file", "file_outline", "get_callers", "get_callees", "find_references", "find_tests", "get_dependencies"],
+        tools=[
+            "read_file",
+            "file_outline",
+            "get_callers",
+            "get_callees",
+            "find_references",
+            "find_tests",
+            "get_dependencies",
+        ],
         budget=250_000,
         iterations=15,
     ),
@@ -351,7 +429,17 @@ SKILL_METADATA: Dict[str, SkillMeta] = {
         description="Create, search, or manage tickets with code-aware context.",
         when_to_use='"Create a Jira ticket for this bug", "Search for related tickets", "Update ticket DEV-123", "Break this work into sub-tasks"',
         when_not='"Find the bug in the code" (that\'s root_cause — investigate first)',
-        tools=["jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects", "grep", "read_file", "git_log", "git_diff"],
+        tools=[
+            "jira_search",
+            "jira_get_issue",
+            "jira_create_issue",
+            "jira_update_issue",
+            "jira_list_projects",
+            "grep",
+            "read_file",
+            "git_log",
+            "git_diff",
+        ],
         budget=500_000,
         iterations=15,
     ),
@@ -409,7 +497,6 @@ def _build_skill_catalog() -> str:
 #   - Keep it under 200 words — the agent also receives workspace layout,
 #     project docs, and budget guidance in Layer 3
 INVESTIGATION_SKILLS: Dict[str, str] = {
-
     "business_flow": """\
 ## Investigation skill: Business Flow Tracing
 
@@ -445,7 +532,6 @@ steps (from the domain model flags), not with how the callback handler works \
 internally. Cite the domain model fields and the services that set them — do \
 not narrate the polling interval or document type codes unless asked.
 """,
-
     "entry_point": """\
 ## Investigation skill: Entry Point Discovery
 
@@ -455,7 +541,6 @@ Start narrow, widen only if needed:
 - Use find_symbol for the handler method name
 - Trace one level into the service layer to confirm the entry point
 """,
-
     "root_cause": """\
 ## Investigation skill: Root Cause Analysis
 
@@ -469,7 +554,6 @@ resource leaks (unclosed connections, streams)
 - Check configuration: timeouts, retry limits, feature flags that control behavior
 - Use git_blame on the relevant lines to understand when and why they changed
 """,
-
     "impact": """\
 ## Investigation skill: Impact Analysis
 
@@ -483,7 +567,6 @@ Map the blast radius systematically:
 queue consumers, webhook handlers, or transaction boundaries? These can \
 turn a small change into a wide-reaching failure.
 """,
-
     "architecture": """\
 ## Investigation skill: Architecture Overview
 
@@ -495,7 +578,6 @@ before diving into code — they provide the mental model
 - Use detect_patterns to find architectural patterns (DI, event-driven, etc.)
 - Read key config files that define service boundaries
 """,
-
     "data_lineage": """\
 ## Investigation skill: Data Lineage
 
@@ -505,7 +587,6 @@ Trace data from source to sink:
 - Check persistence layers: what gets written to DB, cache, queue?
 - Look for serialization/deserialization boundaries (JSON, Protobuf, etc.)
 """,
-
     "recent_changes": """\
 ## Investigation skill: Recent Changes
 
@@ -515,7 +596,6 @@ Use git tools systematically:
 - Use git_blame on specific files to trace authorship of key lines
 - Read the affected code with read_file to understand context
 """,
-
     "code_explanation": """\
 ## Investigation skill: Code Explanation
 
@@ -534,7 +614,6 @@ Build understanding from context outward:
 - Use get_callees to understand what this code depends on
 - Check tests for usage examples and expected behavior
 """,
-
     "config_analysis": """\
 ## Investigation skill: Configuration Analysis
 
@@ -549,7 +628,6 @@ variables, constants, feature flags
 Answer with: definition location, list of consumers, behavior each consumer \
 derives from the value.
 """,
-
     "issue_tracking": """\
 ## Investigation skill: Issue Tracking
 
@@ -704,7 +782,6 @@ a Conductor separator with timestamp is inserted automatically
 
 {jira_project_guide}
 """,
-
     "code_review_pr": """\
 ## PR Review — Provability Framework
 
@@ -889,8 +966,7 @@ def build_sub_agent_system_prompt(
     if project_docs:
         docs_section = (
             "### Project documentation (auto-detected)\n"
-            "Use this to understand the project before diving into code.\n\n"
-            + project_docs
+            "Use this to understand the project before diving into code.\n\n" + project_docs
         )
 
     # Resolve investigation skill for this agent
@@ -944,7 +1020,6 @@ def build_sub_agent_system_prompt(
 
 # For non-review queries, no strategy is injected — Claude reasons freely.
 STRATEGIES = {
-
     "code_review": """\
 ## Strategy: Code Review (PR/Diff)
 
@@ -1040,7 +1115,6 @@ Produce a structured review:
 ```
 
 Target: 15-30 iterations. Prioritize business-logic files. Skip generated/vendor files.""",
-
     "recent_changes": """\
 ## Strategy: Recent Changes / Git History
 1. **Start with git_log** to see recent commits (optionally filtered to a file or path).
@@ -1070,6 +1144,7 @@ def _load_jira_project_guide() -> str:
 
     # Try to find the config directory
     from app.workflow.loader import _find_config_dir
+
     try:
         config_dir = _find_config_dir()
         guide_path = config_dir / "jira_project_guide.yaml"
@@ -1096,13 +1171,8 @@ def _read_key_docs(workspace_path: str) -> str:
     seen_names: set = set()
 
     search_dirs = [ws]
-    try:
-        search_dirs.extend(
-            p for p in sorted(ws.iterdir())
-            if p.is_dir() and p.name not in _EXCLUDED_DIRS
-        )
-    except OSError:
-        pass
+    with contextlib.suppress(OSError):
+        search_dirs.extend(p for p in sorted(ws.iterdir()) if p.is_dir() and p.name not in _EXCLUDED_DIRS)
 
     for search_dir in search_dirs:
         for doc_name in _KEY_DOC_FILES:
@@ -1166,10 +1236,7 @@ def scan_workspace_layout(
     # Count top-level directories so we can cap files per directory.
     try:
         top_items = sorted(ws.iterdir())
-        top_dirs = [
-            p.name for p in top_items
-            if p.is_dir() and p.name not in _EXCLUDED_DIRS
-        ]
+        top_dirs = [p.name for p in top_items if p.is_dir() and p.name not in _EXCLUDED_DIRS]
     except OSError:
         top_dirs = []
     # Each top-level dir gets at most this many file entries at depth 1.
@@ -1347,8 +1414,7 @@ def build_system_prompt(
     if project_docs:
         docs_section = (
             "### Project documentation (auto-detected)\n"
-            "Use this to understand the project before diving into code.\n\n"
-            + project_docs
+            "Use this to understand the project before diving into code.\n\n" + project_docs
         )
 
     # Build the interactive step (injected into "How to investigate")
@@ -1722,8 +1788,7 @@ web_extract
     skill_catalog = _build_skill_catalog()
 
     # --- Template catalog (only for swarms/synthesis/arbitration) ---
-    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer",
-                    "pr_arbitrator"}
+    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer", "pr_arbitrator"}
     template_lines = []
     for name, config in sorted(agent_registry.items()):
         if name in _JUDGE_NAMES:

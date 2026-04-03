@@ -3,6 +3,7 @@
 Heavy dependencies are stubbed here so all test modules can import
 application code without needing real installations.
 """
+
 import sys
 import types
 
@@ -19,7 +20,7 @@ def _stub(name: str, **attrs) -> types.ModuleType:
 
 
 # Stub heavy optional dependencies before any app code is imported
-from unittest.mock import MagicMock  # noqa: E402
+from unittest.mock import MagicMock
 
 _stub("tree_sitter_languages")
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)
@@ -36,10 +37,10 @@ _pw_sync = _stub(
 _stub("playwright", sync_api=_pw_sync)
 _stub("playwright.sync_api", **{k: getattr(_pw_sync, k) for k in dir(_pw_sync) if not k.startswith("_")})
 
-import pytest  # noqa: E402
-from fastapi.testclient import TestClient  # noqa: E402
+import pytest
+from fastapi.testclient import TestClient
 
-from app.main import app  # noqa: E402
+from app.main import app
 
 
 @pytest.fixture
@@ -56,7 +57,7 @@ def api_client():
 # Database fixtures (async SQLAlchemy with aiosqlite for unit tests)
 # ---------------------------------------------------------------------------
 
-import pytest_asyncio  # noqa: E402
+import pytest_asyncio
 
 
 @pytest_asyncio.fixture
@@ -67,6 +68,7 @@ async def db_engine():
     Tables are created automatically and dropped after the test.
     """
     from sqlalchemy.ext.asyncio import create_async_engine
+
     from app.db.models import Base
 
     engine = create_async_engine("sqlite+aiosqlite://", echo=False)
@@ -86,6 +88,7 @@ def redis_mock():
     """
     try:
         import fakeredis.aioredis
+
         return fakeredis.aioredis.FakeRedis(decode_responses=True)
     except ImportError:
         return None

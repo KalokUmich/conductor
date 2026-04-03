@@ -13,6 +13,7 @@ Conductor-specific adaptations:
 These tools are NOT in the code_tools TOOL_REGISTRY by default — they are
 registered separately and only available when the agent has write access.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -21,7 +22,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict
 
 from .schemas import ToolResult
 
@@ -56,6 +57,7 @@ def clear_file_read_state() -> None:
 def _content_hash(content: str) -> str:
     """Fast content hash for staleness comparison."""
     import hashlib
+
     return hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()
 
 
@@ -63,15 +65,30 @@ def _content_hash(content: str) -> str:
 # Path safety
 # ---------------------------------------------------------------------------
 
-BLOCKED_DIRS = frozenset({
-    ".git", "node_modules", ".venv", "venv", "__pycache__",
-    ".mypy_cache", ".pytest_cache", ".tox",
-})
+BLOCKED_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".tox",
+    }
+)
 
-BLOCKED_FILES = frozenset({
-    ".env", ".env.local", ".env.production",
-    ".gitconfig", ".bashrc", ".zshrc", ".profile",
-})
+BLOCKED_FILES = frozenset(
+    {
+        ".env",
+        ".env.local",
+        ".env.production",
+        ".gitconfig",
+        ".bashrc",
+        ".zshrc",
+        ".profile",
+    }
+)
 
 # Patterns that suggest secrets
 SECRET_PATTERNS = [
@@ -120,7 +137,8 @@ def _generate_diff(old_content: str, new_content: str, file_path: str) -> str:
     old_lines = old_content.splitlines(keepends=True)
     new_lines = new_content.splitlines(keepends=True)
     diff = difflib.unified_diff(
-        old_lines, new_lines,
+        old_lines,
+        new_lines,
         fromfile=f"a/{file_path}",
         tofile=f"b/{file_path}",
         lineterm="",
@@ -131,6 +149,7 @@ def _generate_diff(old_content: str, new_content: str, file_path: str) -> str:
 # ---------------------------------------------------------------------------
 # file_edit tool
 # ---------------------------------------------------------------------------
+
 
 def file_edit(
     workspace: str,
@@ -155,7 +174,9 @@ def file_edit(
     if not old_string:
         return ToolResult(tool_name=tool_name, success=False, error="old_string cannot be empty")
     if old_string == new_string:
-        return ToolResult(tool_name=tool_name, success=False, error="old_string and new_string are identical — no change needed")
+        return ToolResult(
+            tool_name=tool_name, success=False, error="old_string and new_string are identical — no change needed"
+        )
 
     # Path safety
     target, err = _resolve_safe(workspace, path)
@@ -171,7 +192,8 @@ def file_edit(
     # Read-before-write check
     if abs_path not in _file_read_state:
         return ToolResult(
-            tool_name=tool_name, success=False,
+            tool_name=tool_name,
+            success=False,
             error=f"File has not been read yet. Use read_file on '{path}' first before editing.",
         )
 
@@ -183,7 +205,8 @@ def file_edit(
     _, recorded_mtime, _ = _file_read_state[abs_path]
     if current_mtime > recorded_mtime + 0.5:  # 0.5s tolerance for filesystem lag
         return ToolResult(
-            tool_name=tool_name, success=False,
+            tool_name=tool_name,
+            success=False,
             error=f"File '{path}' has been modified since you last read it. Please read_file again to get the latest content.",
         )
 
@@ -197,12 +220,14 @@ def file_edit(
     count = old_content.count(old_string)
     if count == 0:
         return ToolResult(
-            tool_name=tool_name, success=False,
+            tool_name=tool_name,
+            success=False,
             error=f"old_string not found in '{path}'. Make sure it matches the file content exactly (including whitespace and indentation).",
         )
     if count > 1 and not replace_all:
         return ToolResult(
-            tool_name=tool_name, success=False,
+            tool_name=tool_name,
+            success=False,
             error=f"Found {count} matches of old_string in '{path}'. Set replace_all=true to replace all, or provide more context to make the match unique.",
         )
 
@@ -227,22 +252,32 @@ def file_edit(
     # Update read state
     record_file_read(abs_path, new_content)
 
-    logger.info("file_edit: %s (%d replacement(s), %d→%d bytes)",
-                path, count if replace_all else 1, len(old_content), len(new_content))
+    logger.info(
+        "file_edit: %s (%d replacement(s), %d→%d bytes)",
+        path,
+        count if replace_all else 1,
+        len(old_content),
+        len(new_content),
+    )
 
-    return ToolResult(tool_name=tool_name, success=True, data={
-        "path": path,
-        "replacements": count if replace_all else 1,
-        "diff": diff,
-        "secret_warnings": secret_warnings,
-        "bytes_before": len(old_content),
-        "bytes_after": len(new_content),
-    })
+    return ToolResult(
+        tool_name=tool_name,
+        success=True,
+        data={
+            "path": path,
+            "replacements": count if replace_all else 1,
+            "diff": diff,
+            "secret_warnings": secret_warnings,
+            "bytes_before": len(old_content),
+            "bytes_after": len(new_content),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
 # file_write tool
 # ---------------------------------------------------------------------------
+
 
 def file_write(
     workspace: str,
@@ -268,7 +303,8 @@ def file_write(
     if not is_new:
         if abs_path not in _file_read_state:
             return ToolResult(
-                tool_name=tool_name, success=False,
+                tool_name=tool_name,
+                success=False,
                 error=f"File '{path}' already exists. Use read_file first before overwriting.",
             )
         # Staleness check
@@ -279,7 +315,8 @@ def file_write(
         _, recorded_mtime, _ = _file_read_state[abs_path]
         if current_mtime > recorded_mtime + 0.5:
             return ToolResult(
-                tool_name=tool_name, success=False,
+                tool_name=tool_name,
+                success=False,
                 error=f"File '{path}' has been modified since you last read it. Please read_file again.",
             )
 
@@ -308,13 +345,17 @@ def file_write(
     action = "created" if is_new else "overwritten"
     logger.info("file_write: %s (%s, %d bytes)", path, action, len(content))
 
-    return ToolResult(tool_name=tool_name, success=True, data={
-        "path": path,
-        "action": action,
-        "diff": diff,
-        "secret_warnings": secret_warnings,
-        "bytes": len(content),
-    })
+    return ToolResult(
+        tool_name=tool_name,
+        success=True,
+        data={
+            "path": path,
+            "action": action,
+            "diff": diff,
+            "secret_warnings": secret_warnings,
+            "bytes": len(content),
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

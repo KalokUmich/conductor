@@ -12,10 +12,10 @@ Endpoints:
     GET  /api/integrations/jira/create-meta     — Field metadata for creating an issue
     POST /api/integrations/jira/issues          — Create an issue
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
@@ -91,7 +91,7 @@ p {{ color: #9ca3af; font-size: 0.9rem; }}
 </style></head>
 <body><div class="card">
 <h2>&#10007; Connection Failed</h2>
-<p>{str(e)}</p>
+<p>{e!s}</p>
 </div></body></html>"""
         return HTMLResponse(content=html, status_code=400)
 
@@ -118,7 +118,7 @@ async def oauth_callback_post(request: Request) -> dict:
         }
     except Exception as e:
         logger.error("Jira token exchange failed: %s", e)
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/refresh")
@@ -133,10 +133,10 @@ async def refresh_token(request: Request, req: RefreshTokenRequest) -> dict:
     try:
         return await svc.refresh_token_for_client(req.refresh_token)
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Jira token refresh failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/status")
@@ -186,10 +186,10 @@ async def list_projects(request: Request) -> list:
             projects = [p for p in projects if p.key.upper() in allowed]
         return [p.model_dump() for p in projects]
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to list Jira projects: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/issue-types")
@@ -203,10 +203,10 @@ async def list_issue_types(
         types = await svc.get_issue_types(project_key)
         return [t.model_dump() for t in types]
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to list issue types: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/create-meta")
@@ -221,10 +221,10 @@ async def get_create_meta(
         meta = await svc.get_create_meta(project_key, issue_type_id)
         return meta.model_dump()
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to get create meta: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/issue/{issue_key}")
@@ -234,10 +234,10 @@ async def get_issue(request: Request, issue_key: str) -> dict:
     try:
         return await svc.get_issue(issue_key)
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to get Jira issue %s: %s", issue_key, e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/issue/{issue_key}/transitions")
@@ -247,10 +247,10 @@ async def get_transitions(request: Request, issue_key: str) -> list:
     try:
         return await svc.get_transitions(issue_key)
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to get transitions for %s: %s", issue_key, e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/issue/{issue_key}/transition")
@@ -266,10 +266,10 @@ async def transition_issue(request: Request, issue_key: str) -> dict:
         return {"status": "transitioned", "issue_key": issue_key}
     except RuntimeError as e:
         status = 403 if "require manual" in str(e) else 401
-        raise HTTPException(status_code=status, detail=str(e))
+        raise HTTPException(status_code=status, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to transition %s: %s", issue_key, e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/issue/{issue_key}/comment")
@@ -283,10 +283,10 @@ async def add_comment(request: Request, issue_key: str) -> dict:
     try:
         return await svc.add_comment(issue_key, comment_body)
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to add comment to %s: %s", issue_key, e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/search")
@@ -301,10 +301,10 @@ async def search_issues(
         results = await svc.search_issues(q, max_results=max_results)
         return results
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to search Jira issues: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/undone")
@@ -320,10 +320,10 @@ async def list_undone_tickets(
     try:
         return await svc.list_undone_tickets(max_results=max_results)
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to list undone tickets: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.post("/issues")
@@ -350,7 +350,7 @@ async def create_issue(request: Request, req: CreateIssueRequest) -> dict:
         issue = await svc.create_issue(req, team_field_key=team_field_key)
         return issue.model_dump()
     except RuntimeError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        raise HTTPException(status_code=401, detail=str(e)) from e
     except Exception as e:
         logger.error("Failed to create Jira issue: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

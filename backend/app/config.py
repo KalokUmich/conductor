@@ -31,6 +31,7 @@ Environment variable overrides:
     LANGFUSE_SECRET_KEY              → langfuse.secret_key
     LANGFUSE_HOST                    → langfuse.host
 """
+
 from __future__ import annotations
 
 import logging
@@ -50,25 +51,25 @@ def _env(name: str, default: str = "") -> str:
 
 # Mapping: env var name → path into the secrets_data dict.
 _ENV_SECRETS_MAP = {
-    "CONDUCTOR_POSTGRES_USER":          ("postgres", "user"),
-    "CONDUCTOR_POSTGRES_PASSWORD":      ("postgres", "password"),
-    "CONDUCTOR_ANTHROPIC_API_KEY":      ("ai_providers", "anthropic", "api_key"),
-    "CONDUCTOR_AWS_ACCESS_KEY_ID":      ("ai_providers", "aws_bedrock", "access_key_id"),
-    "CONDUCTOR_AWS_SECRET_ACCESS_KEY":  ("ai_providers", "aws_bedrock", "secret_access_key"),
-    "CONDUCTOR_AWS_SESSION_TOKEN":      ("ai_providers", "aws_bedrock", "session_token"),
-    "CONDUCTOR_AWS_REGION":             ("ai_providers", "aws_bedrock", "region"),
-    "CONDUCTOR_OPENAI_API_KEY":         ("ai_providers", "openai", "api_key"),
-    "CONDUCTOR_ALIBABA_API_KEY":        ("ai_providers", "alibaba", "api_key"),
-    "CONDUCTOR_ALIBABA_BASE_URL":       ("ai_providers", "alibaba", "base_url"),
-    "CONDUCTOR_MOONSHOT_API_KEY":       ("ai_providers", "moonshot", "api_key"),
-    "CONDUCTOR_MOONSHOT_BASE_URL":      ("ai_providers", "moonshot", "base_url"),
-    "CONDUCTOR_JIRA_CLIENT_ID":         ("jira", "client_id"),
-    "CONDUCTOR_JIRA_CLIENT_SECRET":     ("jira", "client_secret"),
-    "CONDUCTOR_GOOGLE_CLIENT_ID":       ("google_sso", "client_id"),
-    "CONDUCTOR_GOOGLE_CLIENT_SECRET":   ("google_sso", "client_secret"),
-    "CONDUCTOR_NGROK_AUTHTOKEN":        ("ngrok", "authtoken"),
-    "LANGFUSE_PUBLIC_KEY":              ("langfuse", "public_key"),
-    "LANGFUSE_SECRET_KEY":              ("langfuse", "secret_key"),
+    "CONDUCTOR_POSTGRES_USER": ("postgres", "user"),
+    "CONDUCTOR_POSTGRES_PASSWORD": ("postgres", "password"),
+    "CONDUCTOR_ANTHROPIC_API_KEY": ("ai_providers", "anthropic", "api_key"),
+    "CONDUCTOR_AWS_ACCESS_KEY_ID": ("ai_providers", "aws_bedrock", "access_key_id"),
+    "CONDUCTOR_AWS_SECRET_ACCESS_KEY": ("ai_providers", "aws_bedrock", "secret_access_key"),
+    "CONDUCTOR_AWS_SESSION_TOKEN": ("ai_providers", "aws_bedrock", "session_token"),
+    "CONDUCTOR_AWS_REGION": ("ai_providers", "aws_bedrock", "region"),
+    "CONDUCTOR_OPENAI_API_KEY": ("ai_providers", "openai", "api_key"),
+    "CONDUCTOR_ALIBABA_API_KEY": ("ai_providers", "alibaba", "api_key"),
+    "CONDUCTOR_ALIBABA_BASE_URL": ("ai_providers", "alibaba", "base_url"),
+    "CONDUCTOR_MOONSHOT_API_KEY": ("ai_providers", "moonshot", "api_key"),
+    "CONDUCTOR_MOONSHOT_BASE_URL": ("ai_providers", "moonshot", "base_url"),
+    "CONDUCTOR_JIRA_CLIENT_ID": ("jira", "client_id"),
+    "CONDUCTOR_JIRA_CLIENT_SECRET": ("jira", "client_secret"),
+    "CONDUCTOR_GOOGLE_CLIENT_ID": ("google_sso", "client_id"),
+    "CONDUCTOR_GOOGLE_CLIENT_SECRET": ("google_sso", "client_secret"),
+    "CONDUCTOR_NGROK_AUTHTOKEN": ("ngrok", "authtoken"),
+    "LANGFUSE_PUBLIC_KEY": ("langfuse", "public_key"),
+    "LANGFUSE_SECRET_KEY": ("langfuse", "secret_key"),
 }
 
 
@@ -90,6 +91,7 @@ def _apply_env_overrides(secrets_data: dict) -> None:
                 d[key] = {}
             d = d[key]
         d[path[-1]] = val
+
 
 logger = logging.getLogger(__name__)
 
@@ -135,12 +137,14 @@ def _load_yaml(path: Optional[Path]) -> Dict[str, Any]:
 
 class PostgresSecrets(BaseModel):
     """Postgres credentials (from conductor.secrets.yaml)."""
+
     user: str = "conductor"
     password: str = "conductor"
 
 
 class RedisSecrets(BaseModel):
     """Redis credentials (from conductor.secrets.yaml)."""
+
     password: str = ""
 
 
@@ -150,21 +154,22 @@ class DatabaseSecrets(BaseModel):
 
 class JWTSecrets(BaseModel):
     secret_key: str = "change-me-in-production"
-    algorithm:  str = "HS256"
+    algorithm: str = "HS256"
 
 
 class LangfuseSecrets(BaseModel):
     """Langfuse API keys (from conductor.secrets.yaml)."""
+
     public_key: str = ""
     secret_key: str = ""
 
 
 class Secrets(BaseModel):
-    database:  DatabaseSecrets  = Field(default_factory=DatabaseSecrets)
-    postgres:  PostgresSecrets  = Field(default_factory=PostgresSecrets)
-    redis:     RedisSecrets     = Field(default_factory=RedisSecrets)
-    jwt:       JWTSecrets       = Field(default_factory=JWTSecrets)
-    langfuse:  LangfuseSecrets  = Field(default_factory=LangfuseSecrets)
+    database: DatabaseSecrets = Field(default_factory=DatabaseSecrets)
+    postgres: PostgresSecrets = Field(default_factory=PostgresSecrets)
+    redis: RedisSecrets = Field(default_factory=RedisSecrets)
+    jwt: JWTSecrets = Field(default_factory=JWTSecrets)
+    langfuse: LangfuseSecrets = Field(default_factory=LangfuseSecrets)
 
 
 # ---------------------------------------------------------------------------
@@ -173,23 +178,23 @@ class Secrets(BaseModel):
 
 
 class ServerSettings(BaseModel):
-    host:         str  = "0.0.0.0"
-    port:         int  = 8000
-    debug:        bool = False
-    reload:       bool = False
-    log_level:    str  = "info"
+    host: str = "0.0.0.0"
+    port: int = 8000
+    debug: bool = False
+    reload: bool = False
+    log_level: str = "info"
     allowed_origins: List[str] = Field(default_factory=lambda: ["*"])
     # Public URL for external access (ngrok, cloudflare tunnel, etc.).
     # When set, this is returned by GET /public-url and used by the extension
     # to build invite links instead of http://localhost:8000.
-    public_url:   str  = ""
+    public_url: str = ""
 
 
 class DatabaseSettings(BaseModel):
-    pool_size:     int = 10
-    max_overflow:  int = 20
-    pool_timeout:  int = 30
-    echo_sql:      bool = False
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    echo_sql: bool = False
 
 
 class PostgresSettings(BaseModel):
@@ -199,6 +204,7 @@ class PostgresSettings(BaseModel):
     The full URL is built at runtime by ``build_postgres_url()``.
     Env var ``DATABASE_URL`` always takes priority over config.
     """
+
     host: str = "localhost"
     port: int = 5432
     database: str = "conductor"
@@ -213,6 +219,7 @@ class RedisSettings(BaseModel):
     The full URL is built at runtime by ``build_redis_url()``.
     Env var ``REDIS_URL`` always takes priority over config.
     """
+
     host: str = "localhost"
     port: int = 6379
     db: int = 0
@@ -220,26 +227,27 @@ class RedisSettings(BaseModel):
 
 
 class AuthSettings(BaseModel):
-    token_expire_minutes:   int  = 60
-    refresh_expire_days:    int  = 7
-    require_email_verify:   bool = False
+    token_expire_minutes: int = 60
+    refresh_expire_days: int = 7
+    require_email_verify: bool = False
 
 
 class RoomSettings(BaseModel):
-    max_participants:       int = 50
-    max_rooms_per_user:     int = 10
+    max_participants: int = 50
+    max_rooms_per_user: int = 10
     session_timeout_minutes: int = 120
-    enable_persistence:     bool = True
+    enable_persistence: bool = True
 
 
 class GitWorkspaceSettings(BaseModel):
     """Configuration for the Git Workspace module."""
-    enabled:                bool                    = True
-    workspaces_dir:         str                     = "./workspaces"
-    git_auth_mode:          Literal["token", "delegate"] = "token"
-    credential_ttl_seconds: int                     = 3600
-    max_worktrees_per_repo: int                     = 20
-    cleanup_on_room_close:  bool                    = True
+
+    enabled: bool = True
+    workspaces_dir: str = "./workspaces"
+    git_auth_mode: Literal["token", "delegate"] = "token"
+    credential_ttl_seconds: int = 3600
+    max_worktrees_per_repo: int = 20
+    cleanup_on_room_close: bool = True
 
 
 class TraceSettings(BaseModel):
@@ -252,11 +260,11 @@ class TraceSettings(BaseModel):
       * ``local``    — JSON files in ``local_path`` (default, gitignored)
       * ``database`` — SQLite / PostgreSQL via ``database_url``
     """
-    enabled:      bool = True
-    backend:      Literal["local", "database"] = "local"
-    local_path:   str  = ".conductor/session_traces"
-    database_url: str  = ""  # e.g. "sqlite:///traces.db" or "postgresql://..."
 
+    enabled: bool = True
+    backend: Literal["local", "database"] = "local"
+    local_path: str = ".conductor/session_traces"
+    database_url: str = ""  # e.g. "sqlite:///traces.db" or "postgresql://..."
 
 
 class LangfuseSettings(BaseModel):
@@ -265,29 +273,31 @@ class LangfuseSettings(BaseModel):
     Self-hosted via docker/docker-compose.langfuse.yaml.
     When disabled, @observe decorators are no-ops (zero overhead).
     """
-    enabled:    bool = False
-    host:       str  = "http://localhost:3001"
+
+    enabled: bool = False
+    host: str = "http://localhost:3001"
 
 
 class CodeSearchSettings(BaseModel):
     """Configuration for code search and repo graph features."""
+
     # -- RepoMap (graph-based context) --
-    repo_map_enabled:    bool = True
-    repo_map_top_n:      int  = 10  # Top N files by PageRank to include in map
+    repo_map_enabled: bool = True
+    repo_map_top_n: int = 10  # Top N files by PageRank to include in map
 
 
 class AppSettings(BaseModel):
-    server:         ServerSettings       = Field(default_factory=ServerSettings)
-    database:       DatabaseSettings     = Field(default_factory=DatabaseSettings)
-    postgres:       PostgresSettings     = Field(default_factory=PostgresSettings)
-    redis:          RedisSettings        = Field(default_factory=RedisSettings)
-    auth:           AuthSettings         = Field(default_factory=AuthSettings)
-    rooms:          RoomSettings         = Field(default_factory=RoomSettings)
-    git_workspace:  GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
-    code_search:    CodeSearchSettings   = Field(default_factory=CodeSearchSettings)
-    trace:          TraceSettings        = Field(default_factory=TraceSettings)
-    langfuse:       LangfuseSettings     = Field(default_factory=LangfuseSettings)
-    secrets:        Secrets              = Field(default_factory=Secrets)
+    server: ServerSettings = Field(default_factory=ServerSettings)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    postgres: PostgresSettings = Field(default_factory=PostgresSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    rooms: RoomSettings = Field(default_factory=RoomSettings)
+    git_workspace: GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
+    code_search: CodeSearchSettings = Field(default_factory=CodeSearchSettings)
+    trace: TraceSettings = Field(default_factory=TraceSettings)
+    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
+    secrets: Secrets = Field(default_factory=Secrets)
 
     def build_postgres_url(self) -> str:
         """Build the full async Postgres URL from settings + secrets."""
@@ -316,10 +326,10 @@ def load_settings() -> AppSettings:
     (see :func:`_find_config_file` for the search order).
     """
     settings_path = _find_config_file("conductor.settings.yaml")
-    secrets_path  = _find_config_file("conductor.secrets.yaml")
+    secrets_path = _find_config_file("conductor.secrets.yaml")
 
     settings_data = _load_yaml(settings_path)
-    secrets_data  = _load_yaml(secrets_path)
+    secrets_data = _load_yaml(secrets_path)
 
     # Apply environment variable overrides to secrets
     _apply_env_overrides(secrets_data)
@@ -329,8 +339,7 @@ def load_settings() -> AppSettings:
 
     app_settings = AppSettings(**settings_data)
     logger.info(
-        "Settings loaded (server=%s:%s, git_workspace.enabled=%s, "
-        "repo_map.enabled=%s)",
+        "Settings loaded (server=%s:%s, git_workspace.enabled=%s, repo_map.enabled=%s)",
         app_settings.server.host,
         app_settings.server.port,
         app_settings.git_workspace.enabled,
@@ -346,26 +355,30 @@ def load_settings() -> AppSettings:
 
 class SummaryConfig(BaseModel):
     """Configuration for AI summarization feature."""
-    enabled:       bool = False
-    default_model: str  = "claude-3-haiku-bedrock"
+
+    enabled: bool = False
+    default_model: str = "claude-3-haiku-bedrock"
 
 
 class AnthropicSecretsConfig(BaseModel):
     """Anthropic API credentials."""
+
     api_key: str = ""
 
 
 class AWSBedrockSecretsConfig(BaseModel):
     """AWS Bedrock credentials."""
-    access_key_id:     str           = ""
-    secret_access_key: str           = ""
-    session_token:     Optional[str] = None
-    region:            str           = "us-east-1"
+
+    access_key_id: str = ""
+    secret_access_key: str = ""
+    session_token: Optional[str] = None
+    region: str = "us-east-1"
 
 
 class OpenAISecretsConfig(BaseModel):
     """OpenAI API credentials."""
-    api_key:      str           = ""
+
+    api_key: str = ""
     organization: Optional[str] = None
 
 
@@ -375,7 +388,8 @@ class AlibabaSecretsConfig(BaseModel):
     Uses an OpenAI-compatible endpoint at DashScope.
     Get your API key from: https://dashscope.console.aliyun.com/
     """
-    api_key:  str = ""
+
+    api_key: str = ""
     base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
@@ -385,26 +399,29 @@ class MoonshotSecretsConfig(BaseModel):
     Uses an OpenAI-compatible endpoint.
     Get your API key from: https://platform.moonshot.ai/
     """
-    api_key:  str = ""
+
+    api_key: str = ""
     base_url: str = "https://api.moonshot.ai/v1"
 
 
 class AIProvidersSecretsConfig(BaseModel):
     """Credentials for all AI providers."""
-    anthropic:   AnthropicSecretsConfig   = Field(default_factory=AnthropicSecretsConfig)
-    aws_bedrock: AWSBedrockSecretsConfig  = Field(default_factory=AWSBedrockSecretsConfig)
-    openai:      OpenAISecretsConfig      = Field(default_factory=OpenAISecretsConfig)
-    alibaba:     AlibabaSecretsConfig     = Field(default_factory=AlibabaSecretsConfig)
-    moonshot:    MoonshotSecretsConfig    = Field(default_factory=MoonshotSecretsConfig)
+
+    anthropic: AnthropicSecretsConfig = Field(default_factory=AnthropicSecretsConfig)
+    aws_bedrock: AWSBedrockSecretsConfig = Field(default_factory=AWSBedrockSecretsConfig)
+    openai: OpenAISecretsConfig = Field(default_factory=OpenAISecretsConfig)
+    alibaba: AlibabaSecretsConfig = Field(default_factory=AlibabaSecretsConfig)
+    moonshot: MoonshotSecretsConfig = Field(default_factory=MoonshotSecretsConfig)
 
 
 class AIProviderSettingsConfig(BaseModel):
     """Enable/disable flags for each AI provider."""
-    anthropic_enabled:      bool = False
-    aws_bedrock_enabled:    bool = False
-    openai_enabled:         bool = False
-    alibaba_enabled:        bool = False
-    moonshot_enabled:       bool = False
+
+    anthropic_enabled: bool = False
+    aws_bedrock_enabled: bool = False
+    openai_enabled: bool = False
+    alibaba_enabled: bool = False
+    moonshot_enabled: bool = False
 
 
 class AIModelConfig(BaseModel):
@@ -416,12 +433,13 @@ class AIModelConfig(BaseModel):
         have thinking/reasoning disabled to maximise content output and
         reduce token waste.  (Typically a fast/cheap model like Flash or Haiku.)
     """
-    id:           str  = ""
-    provider:     str  = ""
-    model_name:   str  = ""
-    display_name: str  = ""
-    enabled:      bool = True
-    explorer:     bool = False
+
+    id: str = ""
+    provider: str = ""
+    model_name: str = ""
+    display_name: str = ""
+    enabled: bool = True
+    explorer: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -431,36 +449,42 @@ class AIModelConfig(BaseModel):
 
 class SSOConfig(BaseModel):
     """AWS SSO configuration."""
-    enabled:   bool = False
-    start_url: str  = ""
-    region:    str  = "us-east-1"
+
+    enabled: bool = False
+    start_url: str = ""
+    region: str = "us-east-1"
 
 
 class GoogleSSOConfig(BaseModel):
     """Google OAuth SSO configuration."""
+
     enabled: bool = False
 
 
 class GoogleSSOSecretsConfig(BaseModel):
     """Google OAuth credentials."""
-    client_id:     str = ""
+
+    client_id: str = ""
     client_secret: str = ""
 
 
 class JiraTeamEntry(BaseModel):
     """A statically configured Atlassian team (UUID + display name)."""
+
     id: str
     name: str
 
 
 class JiraBranchFormats(BaseModel):
     """Branch naming templates for ticket-linked branches."""
+
     feature: str = "feature/{ticket}-{content}"
     bugfix: str = "bugfix/{ticket}-{content}"
 
 
 class JiraSettings(BaseModel):
     """Jira integration configuration."""
+
     enabled: bool = False
     branch_formats: JiraBranchFormats = JiraBranchFormats()
     allowed_projects: List[str] = []  # filter by project key; empty = show all
@@ -469,7 +493,8 @@ class JiraSettings(BaseModel):
 
 class JiraSecretsConfig(BaseModel):
     """Jira OAuth credentials (from conductor.secrets.yaml)."""
-    client_id:     str = ""
+
+    client_id: str = ""
     client_secret: str = ""
 
 
@@ -480,8 +505,9 @@ class JiraSecretsConfig(BaseModel):
 
 class LoggingConfig(BaseModel):
     """Logging and audit configuration."""
-    audit_enabled: bool           = False
-    audit_path:    Optional[str]  = None
+
+    audit_enabled: bool = False
+    audit_path: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -491,19 +517,22 @@ class LoggingConfig(BaseModel):
 
 class PromptConfig(BaseModel):
     """Prompt rendering options."""
+
     output_mode: str = "unified_diff"
 
 
 class AutoApplyLimitsConfig(BaseModel):
     """Limits applied specifically to auto-apply mode."""
+
     max_lines: int = 50
 
 
 class ChangeLimitsConfig(BaseModel):
     """Limits on the size of AI-generated changesets."""
+
     max_files_per_request: int = 2
-    max_total_lines:       int = 50
-    auto_apply:            AutoApplyLimitsConfig = Field(default_factory=AutoApplyLimitsConfig)
+    max_total_lines: int = 50
+    auto_apply: AutoApplyLimitsConfig = Field(default_factory=AutoApplyLimitsConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -513,24 +542,26 @@ class ChangeLimitsConfig(BaseModel):
 
 class SessionConfig(BaseModel):
     """Session / room participation limits."""
+
     max_participants: int = 50
 
 
 class ConductorConfig(BaseModel):
     """Unified top-level configuration used by newer modules."""
-    summary:             SummaryConfig             = Field(default_factory=SummaryConfig)
-    ai_providers:        AIProvidersSecretsConfig  = Field(default_factory=AIProvidersSecretsConfig)
+
+    summary: SummaryConfig = Field(default_factory=SummaryConfig)
+    ai_providers: AIProvidersSecretsConfig = Field(default_factory=AIProvidersSecretsConfig)
     ai_provider_settings: AIProviderSettingsConfig = Field(default_factory=AIProviderSettingsConfig)
-    ai_models:           List[AIModelConfig]       = Field(default_factory=list)
-    sso:                 SSOConfig                 = Field(default_factory=SSOConfig)
-    google_sso:          GoogleSSOConfig           = Field(default_factory=GoogleSSOConfig)
-    google_sso_secrets:  GoogleSSOSecretsConfig    = Field(default_factory=GoogleSSOSecretsConfig)
-    jira:                JiraSettings              = Field(default_factory=JiraSettings)
-    jira_secrets:        JiraSecretsConfig         = Field(default_factory=JiraSecretsConfig)
-    logging:             LoggingConfig             = Field(default_factory=LoggingConfig)
-    prompt:              PromptConfig              = Field(default_factory=PromptConfig)
-    change_limits:       ChangeLimitsConfig        = Field(default_factory=ChangeLimitsConfig)
-    session:             SessionConfig             = Field(default_factory=SessionConfig)
+    ai_models: List[AIModelConfig] = Field(default_factory=list)
+    sso: SSOConfig = Field(default_factory=SSOConfig)
+    google_sso: GoogleSSOConfig = Field(default_factory=GoogleSSOConfig)
+    google_sso_secrets: GoogleSSOSecretsConfig = Field(default_factory=GoogleSSOSecretsConfig)
+    jira: JiraSettings = Field(default_factory=JiraSettings)
+    jira_secrets: JiraSecretsConfig = Field(default_factory=JiraSecretsConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    prompt: PromptConfig = Field(default_factory=PromptConfig)
+    change_limits: ChangeLimitsConfig = Field(default_factory=ChangeLimitsConfig)
+    session: SessionConfig = Field(default_factory=SessionConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +703,10 @@ def load_config(
         ),
         alibaba=AlibabaSecretsConfig(
             api_key=_env("CONDUCTOR_ALIBABA_API_KEY", ali_sec.get("api_key", "")),
-            base_url=_env("CONDUCTOR_ALIBABA_BASE_URL", ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")),
+            base_url=_env(
+                "CONDUCTOR_ALIBABA_BASE_URL",
+                ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
+            ),
         ),
         moonshot=MoonshotSecretsConfig(
             api_key=_env("CONDUCTOR_MOONSHOT_API_KEY", moon_sec.get("api_key", "")),

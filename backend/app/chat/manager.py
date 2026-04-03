@@ -26,6 +26,7 @@ Performance Notes:
     - Uvicorn handles ping/pong at the protocol level (default 20s interval)
     - Message deduplication uses OrderedDict as LRU cache (O(1) lookup)
 """
+
 import asyncio
 import logging
 import time
@@ -67,6 +68,7 @@ class UserRole(str, Enum):
         ENGINEER: Legacy alias for guest (kept for backwards compatibility).
         AI: AI assistant that generates summaries and code prompts.
     """
+
     HOST = "host"
     GUEST = "guest"
     ENGINEER = "engineer"  # Legacy alias
@@ -81,6 +83,7 @@ class IdentitySource(str, Enum):
         NAMED: User provided a custom display name.
         ANONYMOUS: Backend auto-generated name (Guest N).
     """
+
     SSO = "sso"
     NAMED = "named"
     ANONYMOUS = "anonymous"
@@ -96,6 +99,7 @@ class MessageType(str, Enum):
         AI_SUMMARY: AI-generated decision summary.
         AI_CODE_PROMPT: AI-generated code prompt for code agents.
     """
+
     MESSAGE = "message"
     CODE_SNIPPET = "code_snippet"
     FILE = "file"
@@ -114,13 +118,13 @@ class RoomUser(BaseModel):
         role: User's role (host or engineer).
         avatarColor: CSS color name for the user's avatar background.
     """
+
     userId: str = Field(..., description="Unique user ID")
     displayName: str = Field(..., description="Display name shown in UI")
     role: UserRole = Field(..., description="User role (host or engineer)")
     avatarColor: str = Field(default="purple", description="Avatar background color")
     identitySource: IdentitySource = Field(
-        default=IdentitySource.ANONYMOUS,
-        description="How identity was established (sso, named, anonymous)"
+        default=IdentitySource.ANONYMOUS, description="How identity was established (sso, named, anonymous)"
     )
 
 
@@ -140,41 +144,25 @@ class ChatMessage(BaseModel):
         ts: Unix timestamp (seconds since epoch).
         aiData: Optional AI-specific data (for ai_summary and ai_code_prompt types).
     """
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="Unique message ID"
-    )
-    type: MessageType = Field(
-        default=MessageType.MESSAGE,
-        description="Message type"
-    )
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique message ID")
+    type: MessageType = Field(default=MessageType.MESSAGE, description="Message type")
     roomId: str = Field(..., description="Room ID this message belongs to")
     userId: str = Field(..., description="User ID of the sender")
     displayName: str = Field(default="", description="Display name of the sender")
     role: UserRole = Field(..., description="Role of the sender (host or engineer)")
     content: str = Field(..., description="Message content")
-    ts: float = Field(
-        default_factory=time.time,
-        description="Timestamp in seconds since epoch"
-    )
+    ts: float = Field(default_factory=time.time, description="Timestamp in seconds since epoch")
     identitySource: str = Field(
-        default="anonymous",
-        description="How sender identity was established: sso, named, anonymous"
+        default="anonymous", description="How sender identity was established: sso, named, anonymous"
     )
     parentMessageId: Optional[str] = Field(
-        default=None,
-        description="ID of the parent message this is replying to (thread/chain support)"
+        default=None, description="ID of the parent message this is replying to (thread/chain support)"
     )
     # AI-specific data (only for ai_summary and ai_code_prompt types)
-    aiData: Optional[dict] = Field(
-        default=None,
-        description="AI-specific data (summary details or code prompt)"
-    )
+    aiData: Optional[dict] = Field(default=None, description="AI-specific data (summary details or code prompt)")
     # Structured metadata for specific message types (code_snippet: file_path/language, file: file_id, etc.)
-    metadata: Optional[dict] = Field(
-        default=None,
-        description="Type-specific structured data (JSON)"
-    )
+    metadata: Optional[dict] = Field(default=None, description="Type-specific structured data (JSON)")
 
 
 class ChatMessageInput(BaseModel):
@@ -188,6 +176,7 @@ class ChatMessageInput(BaseModel):
         role: Sender's role.
         content: Message text content.
     """
+
     userId: str = Field(..., description="User ID of the sender")
     displayName: str = Field(default="", description="Display name of the sender")
     role: UserRole = Field(..., description="Role of the sender (host or engineer)")
@@ -195,9 +184,7 @@ class ChatMessageInput(BaseModel):
 
 
 # Avatar color palette for guests (Host always gets "amber")
-AVATAR_COLORS = [
-    "purple", "blue", "green", "orange", "pink", "cyan", "yellow", "red"
-]
+AVATAR_COLORS = ["purple", "blue", "green", "orange", "pink", "cyan", "yellow", "red"]
 
 
 # =============================================================================
@@ -270,9 +257,7 @@ class ConnectionManager:
         # Room settings: room_id -> settings dict (e.g., {"code_style": "..."})
         self.room_settings: Dict[str, dict] = {}
 
-    async def connect(
-        self, websocket: WebSocket, room_id: str
-    ) -> Tuple[str, str, List[ChatMessage]]:
+    async def connect(self, websocket: WebSocket, room_id: str) -> Tuple[str, str, List[ChatMessage]]:
         """Accept a WebSocket connection, assign userId/role, and add to room.
 
         SECURITY: This method is responsible for:
@@ -378,7 +363,7 @@ class ConnectionManager:
             displayName=display_name,
             role=role,
             avatarColor=avatar_color,
-            identitySource=resolved_source
+            identitySource=resolved_source,
         )
 
         # Store user in room and create websocket mapping
@@ -394,18 +379,12 @@ class ConnectionManager:
             self.room_sso_users[room_id][sso_email.lower().strip()] = user_id
 
         # Store SSO identity for future reconnect recognition (host only, first time only).
-        if (role == UserRole.HOST
-                and sso_email
-                and sso_provider
-                and room_id not in self.room_sso_hosts):
+        if role == UserRole.HOST and sso_email and sso_provider and room_id not in self.room_sso_hosts:
             self.room_sso_hosts[room_id] = {
                 "email": sso_email.lower().strip(),
                 "provider": sso_provider,
             }
-            logger.info(
-                f"[Manager] Stored SSO host identity for room {room_id}: "
-                f"{sso_email} via {sso_provider}"
-            )
+            logger.info(f"[Manager] Stored SSO host identity for room {room_id}: {sso_email} via {sso_provider}")
 
         return user
 
@@ -451,9 +430,8 @@ class ConnectionManager:
         lead_reverted = False
 
         # Remove from active connections
-        if room_id in self.active_connections:
-            if websocket in self.active_connections[room_id]:
-                self.active_connections[room_id].remove(websocket)
+        if room_id in self.active_connections and websocket in self.active_connections[room_id]:
+            self.active_connections[room_id].remove(websocket)
 
         # Remove user registration
         if websocket in self.websocket_to_user:
@@ -524,20 +502,14 @@ class ConnectionManager:
 
         # Send to all connections concurrently
         results = await asyncio.gather(
-            *[self._safe_send(conn, message) for conn in connections],
-            return_exceptions=True
+            *[self._safe_send(conn, message) for conn in connections], return_exceptions=True
         )
 
         # Remove failed connections
-        failed_connections = [
-            conn for conn, success in zip(connections, results)
-            if success is False
-        ]
+        failed_connections = [conn for conn, success in zip(connections, results) if success is False]
         self._cleanup_connections(room_id, failed_connections)
 
-    async def broadcast_except(
-        self, message: dict, room_id: str, exclude_websocket: WebSocket
-    ) -> None:
+    async def broadcast_except(self, message: dict, room_id: str, exclude_websocket: WebSocket) -> None:
         """Broadcast a message to all connections except one concurrently.
 
         Useful for typing indicators where sender shouldn't see their own.
@@ -551,24 +523,17 @@ class ConnectionManager:
         if room_id not in self.active_connections:
             return
 
-        connections = [
-            conn for conn in self.active_connections[room_id]
-            if conn != exclude_websocket
-        ]
+        connections = [conn for conn in self.active_connections[room_id] if conn != exclude_websocket]
         if not connections:
             return
 
         # Send to all connections concurrently (except excluded)
         results = await asyncio.gather(
-            *[self._safe_send(conn, message) for conn in connections],
-            return_exceptions=True
+            *[self._safe_send(conn, message) for conn in connections], return_exceptions=True
         )
 
         # Remove failed connections
-        failed_connections = [
-            conn for conn, success in zip(connections, results)
-            if success is False
-        ]
+        failed_connections = [conn for conn, success in zip(connections, results) if success is False]
         self._cleanup_connections(room_id, failed_connections)
 
     async def _safe_send(self, connection: WebSocket, message: dict) -> bool:
@@ -588,9 +553,7 @@ class ConnectionManager:
             logger.debug(f"Failed to send to connection: {e}")
             return False
 
-    def _cleanup_connections(
-        self, room_id: str, failed_connections: List[WebSocket]
-    ) -> None:
+    def _cleanup_connections(self, room_id: str, failed_connections: List[WebSocket]) -> None:
         """Remove failed connections from a room.
 
         Args:
@@ -655,10 +618,7 @@ class ConnectionManager:
         self.room_settings.pop(room_id, None)
 
         # Clean up websocket-to-user mappings for this room
-        to_remove = [
-            ws for ws, (rid, _) in self.websocket_to_user.items()
-            if rid == room_id
-        ]
+        to_remove = [ws for ws, (rid, _) in self.websocket_to_user.items() if rid == room_id]
         for ws in to_remove:
             del self.websocket_to_user[ws]
 
@@ -826,15 +786,12 @@ class ConnectionManager:
         stored = self.room_sso_hosts.get(room_id)
         if not stored:
             return False
-        if (stored["email"] == sso_email.lower().strip()
-                and stored["provider"] == sso_provider):
+        if stored["email"] == sso_email.lower().strip() and stored["provider"] == sso_provider:
             self.room_hosts[room_id] = user_id
             self.room_leads[room_id] = user_id
             if room_id in self.room_users and user_id in self.room_users[room_id]:
                 self.room_users[room_id][user_id].role = UserRole.HOST
-            logger.info(
-                f"[Manager] SSO host role restored to user {user_id} in room {room_id}"
-            )
+            logger.info(f"[Manager] SSO host role restored to user {user_id} in room {room_id}")
             return True
         return False
 
@@ -881,8 +838,7 @@ class ConnectionManager:
 
         # Remove stale WebSocket mappings for the old user_id
         stale_websockets = [
-            ws for ws, (rid, uid) in list(self.websocket_to_user.items())
-            if rid == room_id and uid == existing_user_id
+            ws for ws, (rid, uid) in list(self.websocket_to_user.items()) if rid == room_id and uid == existing_user_id
         ]
         for ws in stale_websockets:
             del self.websocket_to_user[ws]
@@ -894,9 +850,11 @@ class ConnectionManager:
             self.room_users[room_id].pop(existing_user_id, None)
 
         logger.info(
-            "[Manager] SSO identity reclaimed in room %s: %s "
-            "(reusing user_id=%s, discarding temp=%s)",
-            room_id, sso_email, existing_user_id, temp_user_id,
+            "[Manager] SSO identity reclaimed in room %s: %s (reusing user_id=%s, discarding temp=%s)",
+            room_id,
+            sso_email,
+            existing_user_id,
+            temp_user_id,
         )
         return existing_user_id
 
@@ -904,8 +862,17 @@ class ConnectionManager:
     # Room Settings
     # =========================================================================
 
+    _DEFAULT_ROOM_SETTINGS: dict = {
+        "code_style": "",
+        "output_mode": "",
+        "strong_model_id": None,
+        "explorer_model_id": None,
+    }
+
     def get_room_settings(self, room_id: str) -> dict:
         """Get settings for a room.
+
+        Lookup order: in-memory cache → Redis → local file → defaults.
 
         Args:
             room_id: The room ID.
@@ -913,10 +880,52 @@ class ConnectionManager:
         Returns:
             Settings dict. Returns default settings if none stored.
         """
-        return self.room_settings.get(room_id, {"code_style": "", "output_mode": ""})
+        cached = self.room_settings.get(room_id)
+        if cached is not None:
+            return cached
+
+        # Try Redis (async result cached by _load_room_settings_from_redis)
+        # For sync callers we can only return the default — the async
+        # path (settings_router / agent_loop) should call
+        # ensure_room_settings_loaded() first if Redis data is needed.
+        return dict(self._DEFAULT_ROOM_SETTINGS)
+
+    async def ensure_room_settings_loaded(self, room_id: str) -> dict:
+        """Load room settings from Redis into memory if not already cached.
+
+        Call this from async endpoints before accessing ``get_room_settings``
+        to guarantee Redis data has been loaded.
+        """
+        if room_id in self.room_settings:
+            return self.room_settings[room_id]
+
+        # Try Redis
+        if self._redis_store:
+            try:
+                stored = await self._redis_store.get_settings(room_id)
+                if stored:
+                    merged = dict(self._DEFAULT_ROOM_SETTINGS)
+                    merged.update(stored)
+                    self.room_settings[room_id] = merged
+                    return merged
+            except Exception as exc:
+                logger.debug("Redis settings load failed for %s: %s", room_id, exc)
+
+        # Try local file (.conductor/room_settings.json)
+        loaded = self._load_settings_from_file(room_id)
+        if loaded:
+            self.room_settings[room_id] = loaded
+            return loaded
+
+        defaults = dict(self._DEFAULT_ROOM_SETTINGS)
+        self.room_settings[room_id] = defaults
+        return defaults
 
     def update_room_settings(self, room_id: str, settings: dict) -> dict:
         """Update settings for a room.
+
+        Writes to in-memory cache immediately. Redis and local file
+        persistence happen via ``persist_room_settings`` (async).
 
         Args:
             room_id: The room ID.
@@ -925,10 +934,70 @@ class ConnectionManager:
         Returns:
             Updated settings dict.
         """
-        current = self.room_settings.get(room_id, {"code_style": "", "output_mode": ""})
+        current = self.room_settings.get(room_id, dict(self._DEFAULT_ROOM_SETTINGS))
         current.update(settings)
         self.room_settings[room_id] = current
         return current
+
+    async def persist_room_settings(self, room_id: str) -> None:
+        """Write room settings to Redis and (for local workspaces) to disk."""
+        settings = self.room_settings.get(room_id)
+        if not settings:
+            return
+
+        # Redis persistence
+        if self._redis_store:
+            try:
+                await self._redis_store.save_settings(room_id, settings)
+            except Exception as exc:
+                logger.debug("Redis settings save failed for %s: %s", room_id, exc)
+
+        # Local file persistence for local workspaces
+        self._save_settings_to_file(room_id, settings)
+
+    def _save_settings_to_file(self, room_id: str, settings: dict) -> None:
+        """Persist settings to .conductor/room_settings.json for local workspaces."""
+        import json
+
+        path = self._settings_file_path(room_id)
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(settings, indent=2))
+        except OSError as exc:
+            logger.debug("Failed to write room settings file %s: %s", path, exc)
+
+    def _load_settings_from_file(self, room_id: str) -> Optional[dict]:
+        """Load settings from .conductor/room_settings.json if available."""
+        import json
+
+        path = self._settings_file_path(room_id)
+        if path is None or not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text())
+            merged = dict(self._DEFAULT_ROOM_SETTINGS)
+            merged.update(data)
+            return merged
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _settings_file_path(self, room_id: str):
+        """Return .conductor/room_settings.json path for local workspaces."""
+        from pathlib import Path
+
+        try:
+            from app.git_workspace.service import get_git_workspace_service
+
+            svc = get_git_workspace_service()
+            if svc and svc.is_local_workspace(room_id):
+                ws_path = svc.get_worktree_path(room_id)
+                if ws_path:
+                    return Path(ws_path) / ".conductor" / "room_settings.json"
+        except Exception:
+            pass
+        return None
 
     # =========================================================================
     # Message Deduplication
@@ -973,9 +1042,7 @@ class ConnectionManager:
     # Message Pagination
     # =========================================================================
 
-    def get_messages_since(
-        self, room_id: str, since_ts: float
-    ) -> List[ChatMessage]:
+    def get_messages_since(self, room_id: str, since_ts: float) -> List[ChatMessage]:
         """Get messages newer than the given timestamp (for reconnection).
 
         Args:
@@ -989,10 +1056,7 @@ class ConnectionManager:
         return [msg for msg in messages if msg.ts > since_ts]
 
     def get_paginated_history(
-        self,
-        room_id: str,
-        before_ts: Optional[float] = None,
-        limit: int = DEFAULT_PAGE_SIZE
+        self, room_id: str, before_ts: Optional[float] = None, limit: int = DEFAULT_PAGE_SIZE
     ) -> List[ChatMessage]:
         """Get paginated message history (for lazy loading).
 
@@ -1022,9 +1086,7 @@ class ConnectionManager:
     # Read Receipts
     # =========================================================================
 
-    def mark_message_read(
-        self, room_id: str, message_id: str, user_id: str
-    ) -> Set[str]:
+    def mark_message_read(self, room_id: str, message_id: str, user_id: str) -> Set[str]:
         """Mark a message as read by a user.
 
         Args:
@@ -1103,4 +1165,3 @@ def check_end_chat_blockers(room_id: str) -> List[str]:
 
 # Global singleton instance used by all WebSocket handlers
 manager = ConnectionManager()
-

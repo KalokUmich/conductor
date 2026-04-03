@@ -1,4 +1,5 @@
 """Tests for room settings endpoints and manager methods."""
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -22,7 +23,10 @@ class TestRoomSettingsManager:
         """get_room_settings should return defaults for unknown room."""
         mgr = ConnectionManager()
         settings = mgr.get_room_settings("unknown-room")
-        assert settings == {"code_style": "", "output_mode": ""}
+        assert settings["code_style"] == ""
+        assert settings["output_mode"] == ""
+        assert settings["strong_model_id"] is None
+        assert settings["explorer_model_id"] is None
 
     def test_update_room_settings(self):
         """update_room_settings should store and return settings."""
@@ -74,7 +78,8 @@ class TestRoomSettingsManager:
         mgr.update_room_settings("room-1", {"code_style": "PEP 8"})
         await mgr.clear_room("room-1")
         settings = mgr.get_room_settings("room-1")
-        assert settings == {"code_style": "", "output_mode": ""}
+        assert settings["code_style"] == ""
+        assert settings["strong_model_id"] is None
 
     def test_room_settings_isolated_per_room(self):
         """Each room should have independent settings."""
@@ -83,6 +88,36 @@ class TestRoomSettingsManager:
         mgr.update_room_settings("room-2", {"code_style": "Google"})
         assert mgr.get_room_settings("room-1")["code_style"] == "PEP 8"
         assert mgr.get_room_settings("room-2")["code_style"] == "Google"
+
+    def test_update_strong_model_id(self):
+        """update_room_settings should store strong_model_id."""
+        mgr = ConnectionManager()
+        result = mgr.update_room_settings("room-1", {"strong_model_id": "qwen3-max"})
+        assert result["strong_model_id"] == "qwen3-max"
+        assert mgr.get_room_settings("room-1")["strong_model_id"] == "qwen3-max"
+
+    def test_update_explorer_model_id(self):
+        """update_room_settings should store explorer_model_id."""
+        mgr = ConnectionManager()
+        result = mgr.update_room_settings("room-1", {"explorer_model_id": "qwen3.5-flash"})
+        assert result["explorer_model_id"] == "qwen3.5-flash"
+
+    def test_model_ids_independent_of_other_settings(self):
+        """Updating model IDs should not affect code_style/output_mode."""
+        mgr = ConnectionManager()
+        mgr.update_room_settings("room-1", {"code_style": "PEP 8"})
+        mgr.update_room_settings("room-1", {"strong_model_id": "qwen3-max"})
+        settings = mgr.get_room_settings("room-1")
+        assert settings["code_style"] == "PEP 8"
+        assert settings["strong_model_id"] == "qwen3-max"
+
+    def test_model_ids_per_room_isolation(self):
+        """Each room should have independent model selections."""
+        mgr = ConnectionManager()
+        mgr.update_room_settings("room-1", {"strong_model_id": "qwen3-max"})
+        mgr.update_room_settings("room-2", {"strong_model_id": "claude-sonnet-4-6-bedrock"})
+        assert mgr.get_room_settings("room-1")["strong_model_id"] == "qwen3-max"
+        assert mgr.get_room_settings("room-2")["strong_model_id"] == "claude-sonnet-4-6-bedrock"
 
 
 class TestRoomSettingsEndpoints:
@@ -95,6 +130,8 @@ class TestRoomSettingsEndpoints:
         data = response.json()
         assert data["code_style"] == ""
         assert data["output_mode"] == ""
+        assert data["strong_model_id"] is None
+        assert data["explorer_model_id"] is None
 
     def test_put_settings(self, client):
         """PUT /rooms/{room_id}/settings should update and return settings."""
@@ -190,3 +227,48 @@ class TestRoomSettingsEndpoints:
         data = get_resp.json()
         assert data["code_style"] == "Google"
         assert data["output_mode"] == "plan_then_diff"
+
+    def test_put_strong_model_id(self, client):
+        """PUT should update strong_model_id."""
+        response = client.put(
+            "/rooms/room-model/settings",
+            json={"strong_model_id": "qwen3-max"},
+        )
+        assert response.status_code == 200
+        assert response.json()["strong_model_id"] == "qwen3-max"
+
+    def test_put_explorer_model_id(self, client):
+        """PUT should update explorer_model_id."""
+        response = client.put(
+            "/rooms/room-model/settings",
+            json={"explorer_model_id": "qwen3.5-flash"},
+        )
+        assert response.status_code == 200
+        assert response.json()["explorer_model_id"] == "qwen3.5-flash"
+
+    def test_get_model_ids_after_put(self, client):
+        """GET should reflect previously PUT model IDs."""
+        client.put(
+            "/rooms/room-model-get/settings",
+            json={"strong_model_id": "qwen3-max", "explorer_model_id": "qwen3.5-flash"},
+        )
+        response = client.get("/rooms/room-model-get/settings")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["strong_model_id"] == "qwen3-max"
+        assert data["explorer_model_id"] == "qwen3.5-flash"
+
+    def test_put_model_id_partial(self, client):
+        """PUT with only model IDs should not overwrite code_style."""
+        client.put(
+            "/rooms/room-model-partial/settings",
+            json={"code_style": "PEP 8"},
+        )
+        client.put(
+            "/rooms/room-model-partial/settings",
+            json={"strong_model_id": "qwen3-max"},
+        )
+        response = client.get("/rooms/room-model-partial/settings")
+        data = response.json()
+        assert data["code_style"] == "PEP 8"
+        assert data["strong_model_id"] == "qwen3-max"

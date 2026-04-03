@@ -1,27 +1,22 @@
 """Tests for chat persistence service (write-through micro-batch)."""
+
 from __future__ import annotations
 
 import asyncio
-import json
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.db.models import Base, ChatRoom, ChatMessageRecord
-from app.chat.persistence import ChatPersistenceService, BATCH_SIZE, FLUSH_DELAY
 from app.chat.manager import (
+    _active_blockers,
     check_end_chat_blockers,
     register_blocker,
     unregister_blocker,
-    _active_blockers,
-    END_CHAT_BLOCKERS,
 )
-
+from app.chat.persistence import BATCH_SIZE, ChatPersistenceService
+from app.db.models import Base
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -149,7 +144,6 @@ class TestMicroBatch:
 
 
 class TestRoomLifecycle:
-
     @pytest.mark.asyncio
     async def test_ensure_room_creates_row(self, persistence):
         await persistence.ensure_room("room-new", owner_email="a@b.com")
@@ -192,7 +186,6 @@ class TestRoomLifecycle:
 
 
 class TestReadPath:
-
     @pytest.mark.asyncio
     async def test_load_messages_since(self, persistence):
         room = "room-since"
@@ -228,7 +221,6 @@ class TestReadPath:
 
 
 class TestEndChatBlockers:
-
     def setup_method(self):
         """Clean global state before each test."""
         _active_blockers.clear()

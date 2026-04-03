@@ -12,6 +12,7 @@ Design goals:
 
 Reference: CONDUCATOR_IMPLEMENTATION_SPEC.md — Tool Output Policy
 """
+
 from __future__ import annotations
 
 import json
@@ -22,10 +23,11 @@ from typing import Any, Optional
 @dataclass
 class OutputPolicy:
     """Truncation policy for a single tool."""
-    max_results: Optional[int] = None   # For list-type results
-    max_chars: int = 30_000             # Character limit for serialized output
-    truncate_unit: str = "chars"        # "chars", "results", "lines"
-    budget_adaptive: bool = True        # Shrink limits when budget is low
+
+    max_results: Optional[int] = None  # For list-type results
+    max_chars: int = 30_000  # Character limit for serialized output
+    truncate_unit: str = "chars"  # "chars", "results", "lines"
+    budget_adaptive: bool = True  # Shrink limits when budget is low
 
 
 # Per-tool policies
@@ -37,38 +39,30 @@ _TOOL_POLICIES: dict[str, OutputPolicy] = {
     "find_tests": OutputPolicy(max_results=20, max_chars=20_000, truncate_unit="results"),
     "get_callers": OutputPolicy(max_results=20, max_chars=20_000, truncate_unit="results"),
     "get_callees": OutputPolicy(max_results=30, max_chars=20_000, truncate_unit="results"),
-
     # File reading — generous char limit (users often need full context)
     "read_file": OutputPolicy(max_chars=50_000, truncate_unit="lines"),
-
     # Outline / structure tools — moderate limits
     "file_outline": OutputPolicy(max_results=100, max_chars=20_000, truncate_unit="results"),
     "test_outline": OutputPolicy(max_results=50, max_chars=20_000, truncate_unit="results"),
-
     # Directory listing & file matching — limit entries
     "list_files": OutputPolicy(max_results=100, max_chars=15_000, truncate_unit="results"),
     "glob": OutputPolicy(max_results=100, max_chars=15_000, truncate_unit="results"),
-
     # Dependency tools — moderate
     "get_dependencies": OutputPolicy(max_results=50, max_chars=15_000, truncate_unit="results"),
     "get_dependents": OutputPolicy(max_results=50, max_chars=15_000, truncate_unit="results"),
-
     # Git tools — generous (diffs can be large)
     "git_diff_files": OutputPolicy(max_results=100, max_chars=20_000, truncate_unit="results"),
     "git_diff": OutputPolicy(max_chars=40_000, truncate_unit="chars"),
     "git_log": OutputPolicy(max_results=30, max_chars=20_000, truncate_unit="results"),
     "git_blame": OutputPolicy(max_results=100, max_chars=30_000, truncate_unit="results"),
     "git_show": OutputPolicy(max_chars=40_000, truncate_unit="chars"),
-
     # AST / trace tools
     "ast_search": OutputPolicy(max_results=20, max_chars=30_000, truncate_unit="results"),
     "trace_variable": OutputPolicy(max_chars=20_000, truncate_unit="chars"),
-
     # Compressed / summary tools — moderate (they're already compact)
     "compressed_view": OutputPolicy(max_chars=30_000, truncate_unit="chars"),
     "module_summary": OutputPolicy(max_chars=20_000, truncate_unit="chars"),
     "expand_symbol": OutputPolicy(max_chars=50_000, truncate_unit="chars"),
-
     # Pattern detection — limit result count
     "detect_patterns": OutputPolicy(max_results=50, max_chars=30_000, truncate_unit="results"),
 }
@@ -102,11 +96,7 @@ def apply_policy(
     # Budget-adaptive: shrink limits when running low on tokens
     max_results = policy.max_results
     max_chars = policy.max_chars
-    if (
-        policy.budget_adaptive
-        and remaining_input_tokens is not None
-        and remaining_input_tokens < 100_000
-    ):
+    if policy.budget_adaptive and remaining_input_tokens is not None and remaining_input_tokens < 100_000:
         if max_results is not None:
             max_results = max(5, max_results // 2)
         max_chars = max(5_000, max_chars // 2)

@@ -19,6 +19,7 @@ Usage:
     if provider.health_check():
         summary = provider.summarize_structured(messages)
 """
+
 import copy
 import json
 import logging
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 # features that Pydantic v2 generates (anyOf for Optional, $defs, title, etc.)
 # ---------------------------------------------------------------------------
 
+
 def _sanitize_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     """Clean a Pydantic v2 JSON Schema for maximum Bedrock compatibility.
 
@@ -55,7 +57,7 @@ def _sanitize_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     schema.pop("definitions", None)
 
     props = schema.get("properties", {})
-    for key, prop in props.items():
+    for _, prop in props.items():
         _sanitize_property(prop)
 
     return schema
@@ -140,7 +142,9 @@ def _validate_params(
     dropped = set(params) - set(filtered)
     if dropped:
         logger.debug(
-            "Dropped invalid params for %s: %s", tool_name, dropped,
+            "Dropped invalid params for %s: %s",
+            tool_name,
+            dropped,
         )
     return filtered
 
@@ -181,7 +185,9 @@ def _repair_tool_calls(
                 xc_input = _validate_params(xc.input, xc.name, registry)
                 logger.warning(
                     "Repaired XML tool call from garbled name: '%s' → name='%s' input=%s",
-                    tc.name[:80], xc.name, list(xc_input.keys()),
+                    tc.name[:80],
+                    xc.name,
+                    list(xc_input.keys()),
                 )
                 repaired.append(ToolCall(id=xc.id or tc.id, name=xc.name, input=xc_input))
             continue
@@ -194,7 +200,9 @@ def _repair_tool_calls(
             final_input = _validate_params(merged, fixed_name, registry)
             logger.warning(
                 "Repaired KV tool call: '%s' → name='%s' input=%s",
-                tc.name[:80], fixed_name, list(final_input.keys()),
+                tc.name[:80],
+                fixed_name,
+                list(final_input.keys()),
             )
             repaired.append(ToolCall(id=tc.id, name=fixed_name, input=final_input))
             continue
@@ -218,7 +226,7 @@ def _parse_malformed_name(
     """
     for tool_name in known_tools:
         if raw_name.startswith(tool_name):
-            remainder = raw_name[len(tool_name):]
+            remainder = raw_name[len(tool_name) :]
             if not remainder:
                 return tool_name, {}
             params = _extract_kv_pairs(remainder)
@@ -230,7 +238,7 @@ def _parse_malformed_name(
 
 # Matches both quoted  key="value"  and unquoted  key=123
 _KV_QUOTED = re.compile(r'(\w+)\s*=\s*"([^"]*)"?')
-_KV_UNQUOTED = re.compile(r'(\w+)\s*=\s*(\d+)(?=[\s>,/]|$)')
+_KV_UNQUOTED = re.compile(r"(\w+)\s*=\s*(\d+)(?=[\s>,/]|$)")
 
 
 def _extract_kv_pairs(text: str) -> Dict[str, Any]:
@@ -262,21 +270,15 @@ def _extract_kv_pairs(text: str) -> Dict[str, Any]:
 
 # <invoke name="grep"><parameter name="pattern">value</parameter></invoke>
 _XML_INVOKE = re.compile(
-    r'<invoke\s+name\s*=\s*"([^"]+)"[^>]*>'
-    r'(.*?)'
-    r'</invoke>',
+    r'<invoke\s+name\s*=\s*"([^"]+)"[^>]*>' r"(.*?)" r"</invoke>",
     re.DOTALL,
 )
 _XML_PARAM = re.compile(
-    r'<parameter\s+name\s*=\s*"([^"]+)"[^>]*>'
-    r'(.*?)'
-    r'</parameter>',
+    r'<parameter\s+name\s*=\s*"([^"]+)"[^>]*>' r"(.*?)" r"</parameter>",
     re.DOTALL,
 )
 # Also handle attribute-style: <invoke name="grep" pattern="val" path="dir"/>
-_XML_ATTR_INVOKE = re.compile(
-    r'<invoke\s+name\s*=\s*"([^"]+)"([^>]*)/?>'
-)
+_XML_ATTR_INVOKE = re.compile(r'<invoke\s+name\s*=\s*"([^"]+)"([^>]*)/?>')
 _XML_ATTR_KV = re.compile(r'(\w+)\s*=\s*"([^"]*)"')
 
 
@@ -310,11 +312,13 @@ def _extract_xml_tool_calls(
                 params[pname] = int(pval)
             else:
                 params[pname] = pval
-        calls.append(ToolCall(
-            id=f"xml_{uuid.uuid4().hex[:8]}",
-            name=actual_name,
-            input=params,
-        ))
+        calls.append(
+            ToolCall(
+                id=f"xml_{uuid.uuid4().hex[:8]}",
+                name=actual_name,
+                input=params,
+            )
+        )
 
     # Pattern 2: <invoke name="grep" pattern="val" path="dir"/>
     if not calls:
@@ -334,11 +338,13 @@ def _extract_xml_tool_calls(
                 else:
                     params[k] = v
             if params:
-                calls.append(ToolCall(
-                    id=f"xml_{uuid.uuid4().hex[:8]}",
-                    name=actual_name,
-                    input=params,
-                ))
+                calls.append(
+                    ToolCall(
+                        id=f"xml_{uuid.uuid4().hex[:8]}",
+                        name=actual_name,
+                        input=params,
+                    )
+                )
 
     return calls
 
@@ -346,6 +352,7 @@ def _extract_xml_tool_calls(
 # ---------------------------------------------------------------------------
 # Text-based tool call extraction — for models that put tool calls in text
 # ---------------------------------------------------------------------------
+
 
 def _extract_tool_calls_from_text(
     text: str,
@@ -365,14 +372,14 @@ def _extract_tool_calls_from_text(
     calls: List[ToolCall] = []
 
     # Strategy 1: JSON objects with "name" and "arguments"/"parameters"/"input"
-    for m in re.finditer(r'\{', text):
+    for m in re.finditer(r"\{", text):
         start = m.start()
         depth = 0
         end = start
         for i in range(start, len(text)):
-            if text[i] == '{':
+            if text[i] == "{":
                 depth += 1
-            elif text[i] == '}':
+            elif text[i] == "}":
                 depth -= 1
                 if depth == 0:
                     end = i + 1
@@ -385,11 +392,13 @@ def _extract_tool_calls_from_text(
             name = obj.get("name", "")
             if name in known_tools:
                 params = obj.get("arguments") or obj.get("parameters") or obj.get("input") or {}
-                calls.append(ToolCall(
-                    id=f"text_{uuid.uuid4().hex[:8]}",
-                    name=name,
-                    input=params if isinstance(params, dict) else {},
-                ))
+                calls.append(
+                    ToolCall(
+                        id=f"text_{uuid.uuid4().hex[:8]}",
+                        name=name,
+                        input=params if isinstance(params, dict) else {},
+                    )
+                )
         except (json.JSONDecodeError, AttributeError, TypeError):
             continue
 
@@ -404,7 +413,7 @@ def _extract_tool_calls_from_text(
     # Strategy 3: function_name(key="value", key2="value2") pattern
     tool_names_pattern = "|".join(re.escape(t) for t in known_tools)
     fn_pattern = re.compile(
-        rf'(?:^|\s)({tool_names_pattern})\s*\(([^)]*)\)',
+        rf"(?:^|\s)({tool_names_pattern})\s*\(([^)]*)\)",
         re.MULTILINE,
     )
     for m in fn_pattern.finditer(text):
@@ -412,11 +421,13 @@ def _extract_tool_calls_from_text(
         args_str = m.group(2)
         params = _extract_kv_pairs(args_str)
         if params:
-            calls.append(ToolCall(
-                id=f"text_{uuid.uuid4().hex[:8]}",
-                name=name,
-                input=params,
-            ))
+            calls.append(
+                ToolCall(
+                    id=f"text_{uuid.uuid4().hex[:8]}",
+                    name=name,
+                    input=params,
+                )
+            )
 
     return calls
 
@@ -464,6 +475,10 @@ class ClaudeBedrockProvider(AIProvider):
         self.model_id = model_id or self.DEFAULT_MODEL_ID
         self._client: Optional[object] = None
 
+    @property
+    def model_name(self) -> str:
+        return self.model_id
+
     def _get_client(self) -> object:
         """Get or create the Bedrock runtime client.
 
@@ -496,11 +511,10 @@ class ClaudeBedrockProvider(AIProvider):
                     connect_timeout=10,
                 )
                 self._client = boto3.client("bedrock-runtime", **kwargs)
-            except ImportError:
+            except ImportError as exc:
                 raise ImportError(
-                    "boto3 package is required for ClaudeBedrockProvider. "
-                    "Install it with: pip install boto3"
-                )
+                    "boto3 package is required for ClaudeBedrockProvider. Install it with: pip install boto3"
+                ) from exc
         return self._client
 
     def health_check(self) -> bool:
@@ -516,17 +530,12 @@ class ClaudeBedrockProvider(AIProvider):
         try:
             client = self._get_client()
             # Use Converse API for health check - works with all model types
-            response = client.converse(
+            _response = client.converse(
                 modelId=self.model_id,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [{"text": "hi"}]
-                    }
-                ],
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
                 inferenceConfig={
                     "maxTokens": 1,
-                }
+                },
             )
             return True
         except Exception as e:
@@ -553,22 +562,14 @@ class ClaudeBedrockProvider(AIProvider):
         client = self._get_client()
         combined_messages = "\n".join(messages)
 
-        prompt = (
-            "Please provide a concise summary of the following messages:\n\n"
-            f"{combined_messages}"
-        )
+        prompt = f"Please provide a concise summary of the following messages:\n\n{combined_messages}"
 
         response = client.converse(
             modelId=self.model_id,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [{"text": prompt}]
-                }
-            ],
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig={
                 "maxTokens": 1024,
-            }
+            },
         )
 
         return response["output"]["message"]["content"][0]["text"]
@@ -598,15 +599,10 @@ class ClaudeBedrockProvider(AIProvider):
 
         response = client.converse(
             modelId=self.model_id,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [{"text": prompt}]
-                }
-            ],
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
             inferenceConfig={
                 "maxTokens": 2048,
-            }
+            },
         )
 
         response_text = response["output"]["message"]["content"][0]["text"].strip()
@@ -617,7 +613,7 @@ class ClaudeBedrockProvider(AIProvider):
             data = json.loads(response_text)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {response_text}")
-            raise ValueError(f"Invalid JSON response from AI: {e}")
+            raise ValueError(f"Invalid JSON response from AI: {e}") from e
 
         # Validate and extract fields with defaults
         return DecisionSummary(
@@ -664,10 +660,12 @@ class ClaudeBedrockProvider(AIProvider):
             }
         ]
         if assistant_prefix:
-            messages.append({
-                "role": "assistant",
-                "content": [{"text": assistant_prefix}],
-            })
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [{"text": assistant_prefix}],
+                }
+            )
 
         kwargs: dict = {
             "modelId": self.model_id,
@@ -733,6 +731,7 @@ class ClaudeBedrockProvider(AIProvider):
 
         # Estimate request size for diagnostics
         import time as _time
+
         n_messages = len(messages)
         msg_chars = sum(
             len(str(b))
@@ -741,7 +740,10 @@ class ClaudeBedrockProvider(AIProvider):
         )
         logger.info(
             "Bedrock converse START model=%s msgs=%d chars=%d tools=%d",
-            self.model_id, n_messages, msg_chars, len(tool_specs),
+            self.model_id,
+            n_messages,
+            msg_chars,
+            len(tool_specs),
         )
         t0 = _time.monotonic()
 
@@ -752,12 +754,14 @@ class ClaudeBedrockProvider(AIProvider):
             exc_name = type(exc).__name__
             logger.warning(
                 "Bedrock converse FAILED model=%s after %.0fms: [%s] %s",
-                self.model_id, elapsed, exc_name, exc,
+                self.model_id,
+                elapsed,
+                exc_name,
+                exc,
             )
             if "Throttling" in exc_name or "throttl" in str(exc).lower():
                 logger.warning(
-                    "Bedrock throttling detected — reduce concurrent agents "
-                    "or increase semaphore wait.",
+                    "Bedrock throttling detected — reduce concurrent agents or increase semaphore wait.",
                 )
             raise
 
@@ -765,7 +769,8 @@ class ClaudeBedrockProvider(AIProvider):
         raw_usage = response.get("usage", {})
         logger.info(
             "Bedrock converse DONE model=%s %.0fms in=%d out=%d stop=%s",
-            self.model_id, elapsed,
+            self.model_id,
+            elapsed,
             raw_usage.get("inputTokens", 0),
             raw_usage.get("outputTokens", 0),
             response.get("stopReason", "?"),
@@ -784,11 +789,13 @@ class ClaudeBedrockProvider(AIProvider):
                 text_parts.append(block["text"])
             elif "toolUse" in block:
                 tu = block["toolUse"]
-                tool_calls.append(ToolCall(
-                    id=tu["toolUseId"],
-                    name=tu["name"],
-                    input=tu.get("input", {}),
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tu["toolUseId"],
+                        name=tu["name"],
+                        input=tu.get("input", {}),
+                    )
+                )
 
         # Repair malformed tool calls (schema-aware, multi-strategy)
         tool_calls = _repair_tool_calls(tool_calls, tools)

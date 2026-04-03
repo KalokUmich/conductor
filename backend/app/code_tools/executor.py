@@ -11,12 +11,13 @@ to different backends:
   * **TracingToolExecutor** — wraps any executor and records every tool
     call with its params, result, and latency for offline comparison.
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List
 
 from .schemas import ToolResult
@@ -47,7 +48,10 @@ class LocalToolExecutor(ToolExecutor):
 
     async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
         return await asyncio.to_thread(
-            execute_tool, tool_name, self._workspace_path, params,
+            execute_tool,
+            tool_name,
+            self._workspace_path,
+            params,
         )
 
 
@@ -65,11 +69,21 @@ class RemoteToolExecutor(ToolExecutor):
 
     # Tools that execute on the backend even in remote/local mode.
     # These don't require workspace filesystem access.
-    _BACKEND_ONLY_TOOLS = frozenset([
-        "web_search", "web_navigate", "web_click", "web_fill",
-        "web_screenshot", "web_extract",
-        "jira_search", "jira_get_issue", "jira_create_issue", "jira_update_issue", "jira_list_projects",
-    ])
+    _BACKEND_ONLY_TOOLS = frozenset(
+        [
+            "web_search",
+            "web_navigate",
+            "web_click",
+            "web_fill",
+            "web_screenshot",
+            "web_extract",
+            "jira_search",
+            "jira_get_issue",
+            "jira_create_issue",
+            "jira_update_issue",
+            "jira_list_projects",
+        ]
+    )
 
     def __init__(self, room_id: str, workspace_path: str) -> None:
         self._room_id = room_id
@@ -83,9 +97,13 @@ class RemoteToolExecutor(ToolExecutor):
         # Browser tools run on the backend — no need to proxy to extension
         if tool_name in self._BACKEND_ONLY_TOOLS:
             return await asyncio.to_thread(
-                execute_tool, tool_name, self._workspace_path, params,
+                execute_tool,
+                tool_name,
+                self._workspace_path,
+                params,
             )
         from .proxy import tool_proxy
+
         return await tool_proxy.execute(
             room_id=self._room_id,
             tool_name=tool_name,
@@ -102,6 +120,7 @@ class RemoteToolExecutor(ToolExecutor):
 @dataclass
 class TracedCall:
     """One recorded tool invocation."""
+
     tool_name: str
     params: Dict[str, Any]
     success: bool
@@ -130,13 +149,15 @@ class TracingToolExecutor(ToolExecutor):
         t0 = time.monotonic()
         result = await self._inner.execute(tool_name, params)
         elapsed_ms = (time.monotonic() - t0) * 1000
-        self.calls.append(TracedCall(
-            tool_name=tool_name,
-            params=params,
-            success=result.success,
-            data=result.data,
-            error=result.error,
-            truncated=result.truncated if hasattr(result, "truncated") else False,
-            latency_ms=round(elapsed_ms, 1),
-        ))
+        self.calls.append(
+            TracedCall(
+                tool_name=tool_name,
+                params=params,
+                success=result.success,
+                data=result.data,
+                error=result.error,
+                truncated=result.truncated if hasattr(result, "truncated") else False,
+                latency_ms=round(elapsed_ms, 1),
+            )
+        )
         return result

@@ -11,13 +11,13 @@ Run:
 Skip TS side if node is not available:
     pytest tests/test_tool_parity.py -v -k "not ts"
 """
+
 import json
-import os
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -26,7 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.code_tools.tools import (
     compressed_view,
     detect_patterns,
-    execute_tool,
     get_dependencies,
     get_dependents,
     module_summary,
@@ -84,7 +83,8 @@ def workspace(tmp_path: Path) -> Path:
     # Python files
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
-    (tmp_path / "app" / "main.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "main.py").write_text(
+        textwrap.dedent("""\
         from app.service import MyService
 
         class App:
@@ -93,8 +93,10 @@ def workspace(tmp_path: Path) -> Path:
 
             def run(self):
                 return self.service.process()
-    """))
-    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "service.py").write_text(
+        textwrap.dedent("""\
         from app.utils import helper
 
         class MyService:
@@ -108,18 +110,22 @@ def workspace(tmp_path: Path) -> Path:
             result = helper("input")
             standalone_function()
             return result
-    """))
-    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "utils.py").write_text(
+        textwrap.dedent("""\
         def helper(data: str) -> str:
             return data.upper()
 
         def unused_helper():
             return 42
-    """))
+    """)
+    )
 
     # TypeScript files
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "index.ts").write_text(
+        textwrap.dedent("""\
         import { greet } from './utils';
 
         function main(): void {
@@ -131,17 +137,21 @@ def workspace(tmp_path: Path) -> Path:
                 main();
             }
         }
-    """))
-    (tmp_path / "src" / "utils.ts").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "src" / "utils.ts").write_text(
+        textwrap.dedent("""\
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
-    """))
+    """)
+    )
 
     # Python test files
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "__init__.py").write_text("")
-    (tmp_path / "tests" / "test_service.py").write_text(textwrap.dedent("""\
+    (tmp_path / "tests" / "test_service.py").write_text(
+        textwrap.dedent("""\
         from unittest.mock import patch, MagicMock
         from app.service import MyService, standalone_function
 
@@ -162,10 +172,12 @@ def workspace(tmp_path: Path) -> Path:
         def test_standalone():
             result = standalone_function()
             assert result is None
-    """))
+    """)
+    )
 
     # TS test file
-    (tmp_path / "src" / "utils.test.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "utils.test.ts").write_text(
+        textwrap.dedent("""\
         import { greet } from './utils';
 
         describe('greet', () => {
@@ -178,11 +190,13 @@ def workspace(tmp_path: Path) -> Path:
                 expect(result).toBe('Hello, !');
             });
         });
-    """))
+    """)
+    )
 
     # Java files
     (tmp_path / "src" / "main" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(
+        textwrap.dedent("""\
         package com.example;
 
         public class AuthService {
@@ -190,9 +204,11 @@ def workspace(tmp_path: Path) -> Path:
                 return user != null && pass != null;
             }
         }
-    """))
+    """)
+    )
     (tmp_path / "src" / "test" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(
+        textwrap.dedent("""\
         package com.example;
 
         import org.junit.jupiter.api.Test;
@@ -221,18 +237,22 @@ def workspace(tmp_path: Path) -> Path:
                 verify(svc).authenticate("a", "b");
             }
         }
-    """))
+    """)
+    )
 
     # Go files
     (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "calc.go").write_text(textwrap.dedent("""\
+    (tmp_path / "pkg" / "calc.go").write_text(
+        textwrap.dedent("""\
         package calc
 
         func Add(a, b int) int {
             return a + b
         }
-    """))
-    (tmp_path / "pkg" / "calc_test.go").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "pkg" / "calc_test.go").write_text(
+        textwrap.dedent("""\
         package calc
 
         import (
@@ -257,16 +277,20 @@ def workspace(tmp_path: Path) -> Path:
                 Add(1, 2)
             }
         }
-    """))
+    """)
+    )
 
     # Rust files
     (tmp_path / "rust_src").mkdir()
-    (tmp_path / "rust_src" / "lib.rs").write_text(textwrap.dedent("""\
+    (tmp_path / "rust_src" / "lib.rs").write_text(
+        textwrap.dedent("""\
         pub fn multiply(a: i32, b: i32) -> i32 {
             a * b
         }
-    """))
-    (tmp_path / "rust_src" / "lib_test.rs").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "rust_src" / "lib_test.rs").write_text(
+        textwrap.dedent("""\
         use super::*;
 
         #[test]
@@ -284,7 +308,8 @@ def workspace(tmp_path: Path) -> Path:
         async fn test_async_multiply() {
             assert!(multiply(2, 3) > 0);
         }
-    """))
+    """)
+    )
 
     # node_modules (should be excluded)
     (tmp_path / "node_modules").mkdir()
@@ -302,7 +327,8 @@ def ws(workspace: Path) -> str:
 @pytest.fixture()
 def dataflow_ws(tmp_path: Path) -> str:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "router.py").write_text(
+        textwrap.dedent("""\
         from app.service import process_loan
 
         def create_loan(request):
@@ -310,8 +336,10 @@ def dataflow_ws(tmp_path: Path) -> str:
             customer = request.json["customer"]
             result = process_loan(loan_id, customer)
             return {"status": "ok", "data": result}
-    """))
-    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "service.py").write_text(
+        textwrap.dedent("""\
         from app.repository import get_loan, save_audit
 
         def process_loan(loan_id, customer_name):
@@ -322,14 +350,17 @@ def dataflow_ws(tmp_path: Path) -> str:
 
         def helper():
             pass
-    """))
-    (tmp_path / "app" / "repository.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "repository.py").write_text(
+        textwrap.dedent("""\
         def get_loan(loan_identifier):
             return Loan.query.filter(Loan.id == loan_identifier).first()
 
         def save_audit(ref_id, action):
             db.execute("INSERT INTO audit (ref, action) VALUES (%s, %s)", (ref_id, action))
-    """))
+    """)
+    )
     return str(tmp_path)
 
 
@@ -337,7 +368,8 @@ def dataflow_ws(tmp_path: Path) -> str:
 @pytest.fixture()
 def effects_ws(tmp_path: Path) -> str:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "payment.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "payment.py").write_text(
+        textwrap.dedent("""\
         import requests
 
         class PaymentService:
@@ -355,15 +387,18 @@ def effects_ws(tmp_path: Path) -> str:
         @retry(max_retries=3)
         def with_retry():
             pass
-    """))
-    (tmp_path / "app" / "auth.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "auth.py").write_text(
+        textwrap.dedent("""\
         def generate_token(user_id):
             token = jwt.encode({"sub": user_id})
             return token
 
         def validate_token(token):
             return jwt.decode(token)
-    """))
+    """)
+    )
     return str(tmp_path)
 
 
@@ -530,12 +565,14 @@ class TestCompressedViewPython:
 
     def test_raises_detected(self, ws):
         # Create a file with raise statements
-        (Path(ws) / "app" / "errors.py").write_text(textwrap.dedent("""\
+        (Path(ws) / "app" / "errors.py").write_text(
+            textwrap.dedent("""\
             def validate(x):
                 if x < 0:
                     raise ValueError("negative")
                 return x
-        """))
+        """)
+        )
         result = compressed_view(ws, "app/errors.py")
         content = result.data["content"]
         assert "raises:" in content
@@ -586,9 +623,13 @@ class TestModuleSummaryPython:
 
 class TestTraceVariablePython:
     def test_forward_aliases(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
         assert result.success
         data = result.data
         assert data["variable"] == "loan_id"
@@ -598,27 +639,39 @@ class TestTraceVariablePython:
         assert "lid" in aliases
 
     def test_forward_alias_fields(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
         for alias in result.data["aliases"]:
             assert "name" in alias
             assert "line" in alias
             assert "expression" in alias
 
     def test_forward_flows_to(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
         flows = result.data["flows_to"]
         callee_names = [f["callee_function"] for f in flows]
         assert "get_loan" in callee_names
         assert "save_audit" in callee_names
 
     def test_forward_flows_to_fields(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
         for flow in result.data["flows_to"]:
             assert "callee_function" in flow
             assert "as_parameter" in flow
@@ -626,49 +679,68 @@ class TestTraceVariablePython:
             assert "call_line" in flow
 
     def test_forward_sinks_orm(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_identifier",
-                                file="app/repository.py", function_name="get_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_identifier",
+            file="app/repository.py",
+            function_name="get_loan",
+            direction="forward",
+        )
         assert result.success
         sinks = result.data["sinks"]
         assert len(sinks) >= 1
         assert any(s["kind"] == "orm_filter" for s in sinks)
 
     def test_forward_sinks_sql(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="ref_id",
-                                file="app/repository.py", function_name="save_audit",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="ref_id",
+            file="app/repository.py",
+            function_name="save_audit",
+            direction="forward",
+        )
         assert result.success
         sinks = result.data["sinks"]
         assert any(s["kind"] == "sql_param" for s in sinks)
 
     def test_sink_fields(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_identifier",
-                                file="app/repository.py", function_name="get_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_identifier",
+            file="app/repository.py",
+            function_name="get_loan",
+            direction="forward",
+        )
         for sink in result.data["sinks"]:
             assert "kind" in sink
             assert "expression" in sink
             assert "line" in sink
 
     def test_backward_sources(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/router.py", function_name="create_loan",
-                                direction="backward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/router.py",
+            function_name="create_loan",
+            direction="backward",
+        )
         assert result.success
         sources = result.data["sources"]
         assert len(sources) >= 1
 
     def test_auto_detect_function(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/router.py", direction="forward")
+        result = trace_variable(dataflow_ws, variable_name="loan_id", file="app/router.py", direction="forward")
         assert result.success
         assert result.data["function"] == "create_loan"
 
     def test_data_shape(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
         data = result.data
         assert "variable" in data
         assert "file" in data
@@ -681,13 +753,11 @@ class TestTraceVariablePython:
         assert "sources" in data
 
     def test_function_not_found(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="x",
-                                file="app/service.py", function_name="nonexistent")
+        result = trace_variable(dataflow_ws, variable_name="x", file="app/service.py", function_name="nonexistent")
         assert not result.success
 
     def test_file_not_found(self, dataflow_ws):
-        result = trace_variable(dataflow_ws, variable_name="x",
-                                file="nonexistent.py", function_name="foo")
+        result = trace_variable(dataflow_ws, variable_name="x", file="nonexistent.py", function_name="foo")
         assert not result.success
 
 
@@ -719,7 +789,7 @@ class TestDetectPatternsPython:
 
     def test_match_entry_fields(self, effects_ws):
         result = detect_patterns(effects_ws)
-        for cat, matches in result.data["matches"].items():
+        for _, matches in result.data["matches"].items():
             for match in matches:
                 assert "file" in match
                 assert "line" in match
@@ -750,8 +820,7 @@ class TestDetectPatternsPython:
 
 
 @pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found — run 'npm run compile' in extension/ first"
+    not RUNNER_SCRIPT.is_file(), reason="TS runner script not found — run 'npm run compile' in extension/ first"
 )
 class TestGetDependenciesTS:
     def test_same_structure(self, ws):
@@ -775,10 +844,7 @@ class TestGetDependenciesTS:
             assert "weight" in dep
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestGetDependentsTS:
     def test_same_structure(self, ws):
         py = get_dependents(ws, "app/service.py")
@@ -791,10 +857,7 @@ class TestGetDependentsTS:
         assert "app/main.py" in ts_files
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestTestOutlineTS:
     def test_python_outline_parity(self, ws):
         py = outline_tests(ws, path="tests/test_service.py")
@@ -828,10 +891,7 @@ class TestTestOutlineTS:
         assert "BenchmarkAdd" in ts_names
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestCompressedViewTS:
     def test_same_structure(self, ws):
         py = compressed_view(ws, "app/service.py")
@@ -850,10 +910,7 @@ class TestCompressedViewTS:
         assert "orchestrate" in ts["data"]["content"]
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestModuleSummaryTS:
     def test_same_structure(self, ws):
         py = module_summary(ws, "app")
@@ -870,18 +927,19 @@ class TestModuleSummaryTS:
         assert "MyService" in ts["data"]["content"]
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestTraceVariableTS:
     def test_forward_data_shape(self, dataflow_ws):
-        ts = run_ts_tool("trace_variable", dataflow_ws, {
-            "variable_name": "loan_id",
-            "file": "app/service.py",
-            "function_name": "process_loan",
-            "direction": "forward",
-        })
+        ts = run_ts_tool(
+            "trace_variable",
+            dataflow_ws,
+            {
+                "variable_name": "loan_id",
+                "file": "app/service.py",
+                "function_name": "process_loan",
+                "direction": "forward",
+            },
+        )
         assert ts["success"]
         data = ts["data"]
         assert data["variable"] == "loan_id"
@@ -891,55 +949,76 @@ class TestTraceVariableTS:
         assert "sinks" in data
 
     def test_forward_aliases_parity(self, dataflow_ws):
-        py = trace_variable(dataflow_ws, variable_name="loan_id",
-                            file="app/service.py", function_name="process_loan",
-                            direction="forward")
-        ts = run_ts_tool("trace_variable", dataflow_ws, {
-            "variable_name": "loan_id",
-            "file": "app/service.py",
-            "function_name": "process_loan",
-            "direction": "forward",
-        })
+        py = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
+        ts = run_ts_tool(
+            "trace_variable",
+            dataflow_ws,
+            {
+                "variable_name": "loan_id",
+                "file": "app/service.py",
+                "function_name": "process_loan",
+                "direction": "forward",
+            },
+        )
         py_aliases = {a["name"] for a in py.data["aliases"]}
         ts_aliases = {a["name"] for a in ts["data"]["aliases"]}
         assert "lid" in py_aliases
         assert "lid" in ts_aliases
 
     def test_forward_flows_to_parity(self, dataflow_ws):
-        py = trace_variable(dataflow_ws, variable_name="loan_id",
-                            file="app/service.py", function_name="process_loan",
-                            direction="forward")
-        ts = run_ts_tool("trace_variable", dataflow_ws, {
-            "variable_name": "loan_id",
-            "file": "app/service.py",
-            "function_name": "process_loan",
-            "direction": "forward",
-        })
+        py = trace_variable(
+            dataflow_ws,
+            variable_name="loan_id",
+            file="app/service.py",
+            function_name="process_loan",
+            direction="forward",
+        )
+        ts = run_ts_tool(
+            "trace_variable",
+            dataflow_ws,
+            {
+                "variable_name": "loan_id",
+                "file": "app/service.py",
+                "function_name": "process_loan",
+                "direction": "forward",
+            },
+        )
         py_callees = {f["callee_function"] for f in py.data["flows_to"]}
         ts_callees = {f["callee_function"] for f in ts["data"]["flows_to"]}
         assert "get_loan" in py_callees
         assert "get_loan" in ts_callees
 
     def test_forward_sinks_parity(self, dataflow_ws):
-        py = trace_variable(dataflow_ws, variable_name="loan_identifier",
-                            file="app/repository.py", function_name="get_loan",
-                            direction="forward")
-        ts = run_ts_tool("trace_variable", dataflow_ws, {
-            "variable_name": "loan_identifier",
-            "file": "app/repository.py",
-            "function_name": "get_loan",
-            "direction": "forward",
-        })
+        py = trace_variable(
+            dataflow_ws,
+            variable_name="loan_identifier",
+            file="app/repository.py",
+            function_name="get_loan",
+            direction="forward",
+        )
+        ts = run_ts_tool(
+            "trace_variable",
+            dataflow_ws,
+            {
+                "variable_name": "loan_identifier",
+                "file": "app/repository.py",
+                "function_name": "get_loan",
+                "direction": "forward",
+            },
+        )
         py_kinds = {s["kind"] for s in py.data["sinks"]}
         ts_kinds = {s["kind"] for s in ts["data"]["sinks"]}
         assert "orm_filter" in py_kinds
         assert "orm_filter" in ts_kinds
 
 
-@pytest.mark.skipif(
-    not RUNNER_SCRIPT.is_file(),
-    reason="TS runner script not found"
-)
+@pytest.mark.skipif(not RUNNER_SCRIPT.is_file(), reason="TS runner script not found")
 class TestDetectPatternsTS:
     def test_same_structure(self, effects_ws):
         ts = run_ts_tool("detect_patterns", effects_ws, {})

@@ -7,6 +7,7 @@ Endpoints:
   GET  /api/workflows/{name}/graph     — get React Flow-compatible graph JSON
   PUT  /api/workflows/{name}/models    — update model assignments
 """
+
 from __future__ import annotations
 
 import logging
@@ -92,7 +93,7 @@ class ModelAssignment(BaseModel):
 
 class GraphNode(BaseModel):
     id: str
-    type: str   # classifier, explorer, judge, group, start, end
+    type: str  # classifier, explorer, judge, group, start, end
     data: Dict[str, Any] = {}
     position: Optional[Dict[str, float]] = None
 
@@ -119,14 +120,16 @@ async def list_workflows():
     """List all available workflows."""
     workflows = _get_workflows()
     result = []
-    for name, wf in workflows.items():
-        result.append(WorkflowSummary(
-            name=wf.name,
-            description=wf.description,
-            route_mode=wf.route_mode,
-            route_count=len(wf.routes),
-            agent_count=len(wf.resolved_agents),
-        ))
+    for _, wf in workflows.items():
+        result.append(
+            WorkflowSummary(
+                name=wf.name,
+                description=wf.description,
+                route_mode=wf.route_mode,
+                route_count=len(wf.routes),
+                agent_count=len(wf.resolved_agents),
+            )
+        )
     return result
 
 
@@ -143,38 +146,44 @@ async def get_workflow(name: str):
                 agent = wf.resolved_agents.get(agent_path)
                 if agent:
                     agent_names.append(agent.name)
-        routes.append(RouteSummary(
-            name=rname,
-            pattern_count=len(route.file_patterns or route.text_patterns),
-            pipeline_stages=len(route.pipeline),
-            agents=agent_names,
-            is_delegate=route.delegate is not None,
-            delegate_to=route.delegate,
-        ))
+        routes.append(
+            RouteSummary(
+                name=rname,
+                pattern_count=len(route.file_patterns or route.text_patterns),
+                pipeline_stages=len(route.pipeline),
+                agents=agent_names,
+                is_delegate=route.delegate is not None,
+                delegate_to=route.delegate,
+            )
+        )
 
     agents = []
-    for path, agent in wf.resolved_agents.items():
-        agents.append(AgentSummary(
-            name=agent.name,
-            type=agent.type,
-            model_role=agent.model_role,
-            category=agent.category,
-            tool_count=len(agent.tools.extra),
-            budget_weight=agent.budget_weight,
-        ))
+    for _, agent in wf.resolved_agents.items():
+        agents.append(
+            AgentSummary(
+                name=agent.name,
+                type=agent.type,
+                model_role=agent.model_role,
+                category=agent.category,
+                tool_count=len(agent.tools.extra),
+                budget_weight=agent.budget_weight,
+            )
+        )
 
     post_agents = []
     for stage in wf.post_pipeline:
         for agent_path in stage.agents:
             agent = wf.resolved_agents.get(agent_path)
             if agent:
-                post_agents.append(AgentSummary(
-                    name=agent.name,
-                    type=agent.type,
-                    model_role=agent.model_role,
-                    tool_count=len(agent.tools.extra),
-                    budget_weight=agent.budget_weight,
-                ))
+                post_agents.append(
+                    AgentSummary(
+                        name=agent.name,
+                        type=agent.type,
+                        model_role=agent.model_role,
+                        tool_count=len(agent.tools.extra),
+                        budget_weight=agent.budget_weight,
+                    )
+                )
 
     mermaid = generate_mermaid(wf)
 
@@ -210,7 +219,7 @@ async def update_workflow_models(name: str, assignment: ModelAssignment):
     Stores the assignment in memory (will be persisted to settings YAML
     when full config persistence is implemented).
     """
-    wf = _get_workflow(name)
+    _wf = _get_workflow(name)  # Validates workflow exists (raises 404)
     # Store in-memory for now
     # TODO: persist to conductor.settings.yaml workflow_models section
     result = {}
@@ -237,21 +246,25 @@ def _build_graph(wf) -> WorkflowGraph:
     _pos = {"x": 0, "y": 0}
 
     # Start node
-    nodes.append(GraphNode(
-        id="start",
-        type="start",
-        data={"label": wf.description or wf.name},
-        position=_pos,
-    ))
+    nodes.append(
+        GraphNode(
+            id="start",
+            type="start",
+            data={"label": wf.description or wf.name},
+            position=_pos,
+        )
+    )
 
     # Classifier node
     classifier_type = wf.dispatch.classifier.type.replace("_", " ").title()
-    nodes.append(GraphNode(
-        id="classifier",
-        type="classifier",
-        data={"label": classifier_type, "route_count": len(wf.routes)},
-        position=_pos,
-    ))
+    nodes.append(
+        GraphNode(
+            id="classifier",
+            type="classifier",
+            data={"label": classifier_type, "route_count": len(wf.routes)},
+            position=_pos,
+        )
+    )
     edges.append(GraphEdge(id="e-start-classify", source="start", target="classifier"))
 
     # Route nodes — multi-stage pipelines emit inter-stage edges
@@ -260,16 +273,23 @@ def _build_graph(wf) -> WorkflowGraph:
     for rname, route in wf.routes.items():
         if route.delegate:
             node_id = f"route:{rname}"
-            nodes.append(GraphNode(
-                id=node_id, type="delegate",
-                data={"label": rname, "delegate_to": route.delegate},
-                position=_pos,
-            ))
+            nodes.append(
+                GraphNode(
+                    id=node_id,
+                    type="delegate",
+                    data={"label": rname, "delegate_to": route.delegate},
+                    position=_pos,
+                )
+            )
             patterns = route.text_patterns or route.file_patterns
-            edges.append(GraphEdge(
-                id=f"e-classify-{rname}", source="classifier", target=node_id,
-                label=_short_pattern_label(patterns),
-            ))
+            edges.append(
+                GraphEdge(
+                    id=f"e-classify-{rname}",
+                    source="classifier",
+                    target=node_id,
+                    label=_short_pattern_label(patterns),
+                )
+            )
             route_ids.append(node_id)
             continue
 
@@ -288,18 +308,21 @@ def _build_graph(wf) -> WorkflowGraph:
                     instructions = ""
                     if hasattr(agent, "instructions") and agent.instructions:
                         instructions = agent.instructions[:300]
-                    nodes.append(GraphNode(
-                        id=node_id, type=agent.type,
-                        data={
-                            "label": agent.name,
-                            "model_role": agent.model_role,
-                            "tool_count": len(agent.tools.extra),
-                            "tools": list(agent.tools.extra),
-                            "budget_weight": agent.budget_weight,
-                            "instructions": instructions,
-                        },
-                        position=_pos,
-                    ))
+                    nodes.append(
+                        GraphNode(
+                            id=node_id,
+                            type=agent.type,
+                            data={
+                                "label": agent.name,
+                                "model_role": agent.model_role,
+                                "tool_count": len(agent.tools.extra),
+                                "tools": list(agent.tools.extra),
+                                "budget_weight": agent.budget_weight,
+                                "instructions": instructions,
+                            },
+                            position=_pos,
+                        )
+                    )
                 cur_stage_ids.append(node_id)
 
                 # First stage: edge from classifier
@@ -308,19 +331,26 @@ def _build_graph(wf) -> WorkflowGraph:
                     label = _short_pattern_label(patterns)
                     if agent.trigger.always:
                         label = "always"
-                    edges.append(GraphEdge(
-                        id=f"e-classify-{rname}-{agent.name}",
-                        source="classifier", target=node_id, label=label,
-                    ))
+                    edges.append(
+                        GraphEdge(
+                            id=f"e-classify-{rname}-{agent.name}",
+                            source="classifier",
+                            target=node_id,
+                            label=label,
+                        )
+                    )
 
             # Inter-stage edges: each agent in prev stage → each agent in this stage
             if stage_idx > 0 and prev_stage_ids:
                 for src_id in prev_stage_ids:
                     for tgt_id in cur_stage_ids:
-                        edges.append(GraphEdge(
-                            id=f"e-{src_id}-{tgt_id}",
-                            source=src_id, target=tgt_id,
-                        ))
+                        edges.append(
+                            GraphEdge(
+                                id=f"e-{src_id}-{tgt_id}",
+                                source=src_id,
+                                target=tgt_id,
+                            )
+                        )
 
             prev_stage_ids = cur_stage_ids
             last_stage_ids = cur_stage_ids
@@ -331,14 +361,22 @@ def _build_graph(wf) -> WorkflowGraph:
     # Post-pipeline nodes
     if wf.post_pipeline:
         merge_id = "merge"
-        nodes.append(GraphNode(
-            id=merge_id, type="merge",
-            data={"label": "Merge + Filter"}, position=_pos,
-        ))
+        nodes.append(
+            GraphNode(
+                id=merge_id,
+                type="merge",
+                data={"label": "Merge + Filter"},
+                position=_pos,
+            )
+        )
         for rid in route_ids:
-            edges.append(GraphEdge(
-                id=f"e-{rid}-merge", source=rid, target=merge_id,
-            ))
+            edges.append(
+                GraphEdge(
+                    id=f"e-{rid}-merge",
+                    source=rid,
+                    target=merge_id,
+                )
+            )
 
         prev_id = merge_id
         for stage in wf.post_pipeline:
@@ -350,38 +388,61 @@ def _build_graph(wf) -> WorkflowGraph:
                 instructions = ""
                 if hasattr(agent, "instructions") and agent.instructions:
                     instructions = agent.instructions[:300]
-                nodes.append(GraphNode(
-                    id=node_id, type=agent.type,
-                    data={
-                        "label": agent.name,
-                        "model_role": agent.model_role,
-                        "tools": list(agent.tools.extra) if agent.tools else [],
-                        "instructions": instructions,
-                    },
-                    position=_pos,
-                ))
-                edges.append(GraphEdge(
-                    id=f"e-{prev_id}-{agent.name}", source=prev_id, target=node_id,
-                ))
+                nodes.append(
+                    GraphNode(
+                        id=node_id,
+                        type=agent.type,
+                        data={
+                            "label": agent.name,
+                            "model_role": agent.model_role,
+                            "tools": list(agent.tools.extra) if agent.tools else [],
+                            "instructions": instructions,
+                        },
+                        position=_pos,
+                    )
+                )
+                edges.append(
+                    GraphEdge(
+                        id=f"e-{prev_id}-{agent.name}",
+                        source=prev_id,
+                        target=node_id,
+                    )
+                )
                 prev_id = node_id
 
-        nodes.append(GraphNode(
-            id="end", type="end",
-            data={"label": "Result"}, position=_pos,
-        ))
-        edges.append(GraphEdge(
-            id=f"e-{prev_id}-end", source=prev_id, target="end",
-        ))
+        nodes.append(
+            GraphNode(
+                id="end",
+                type="end",
+                data={"label": "Result"},
+                position=_pos,
+            )
+        )
+        edges.append(
+            GraphEdge(
+                id=f"e-{prev_id}-end",
+                source=prev_id,
+                target="end",
+            )
+        )
     else:
         # first_match: all routes lead to answer
-        nodes.append(GraphNode(
-            id="end", type="end",
-            data={"label": "Answer"}, position=_pos,
-        ))
+        nodes.append(
+            GraphNode(
+                id="end",
+                type="end",
+                data={"label": "Answer"},
+                position=_pos,
+            )
+        )
         for rid in route_ids:
-            edges.append(GraphEdge(
-                id=f"e-{rid}-end", source=rid, target="end",
-            ))
+            edges.append(
+                GraphEdge(
+                    id=f"e-{rid}-end",
+                    source=rid,
+                    target="end",
+                )
+            )
 
     return WorkflowGraph(nodes=nodes, edges=edges)
 
@@ -397,3 +458,109 @@ def _short_pattern_label(patterns: List[str], max_items: int = 3) -> str:
     if len(patterns) > 1 or len(first.split("|")) > max_items:
         label += "/..."
     return label
+
+
+# ---------------------------------------------------------------------------
+# Brain swarms API — replaces legacy workflow listing for the UI
+# ---------------------------------------------------------------------------
+
+brain_router = APIRouter(prefix="/api/brain", tags=["brain"])
+
+
+class AgentInfo(BaseModel):
+    name: str
+    description: str = ""
+    model: str = "explorer"
+    tools: List[str] = []
+    category: Optional[str] = None
+
+
+class SpecializedBrainInfo(BaseModel):
+    name: str
+    description: str = ""
+    model: str = "strong"
+    type: str = "brain"  # "brain" for transfer_to_brain, "swarm" for dispatch_swarm
+    mode: str = ""  # "parallel" | "sequential" | "pipeline"
+    agents: List[AgentInfo] = []
+    arbitrator: Optional[AgentInfo] = None
+    trigger: str = ""  # how Brain activates this (e.g. "transfer_to_brain('pr_review')")
+
+
+class BrainSwarmsResponse(BaseModel):
+    brain_model: str = "strong"
+    core_tools: List[str] = []
+    specialized_brains: List[SpecializedBrainInfo] = []
+    swarms: List[SpecializedBrainInfo] = []
+
+
+@brain_router.get("/swarms", response_model=BrainSwarmsResponse)
+async def get_brain_swarms():
+    """Return all specialized brains and swarms with their agent compositions.
+
+    Used by the Agent Swarm UI tab to visualize the Brain's handoff targets.
+    """
+    from .loader import (
+        load_agent_registry,
+        load_brain_config,
+        load_pr_brain_config,
+        load_swarm_registry,
+    )
+
+    brain_cfg = load_brain_config()
+    agent_registry = load_agent_registry()
+
+    def _agent_info(name: str) -> AgentInfo:
+        ac = agent_registry.get(name)
+        if ac:
+            return AgentInfo(
+                name=ac.name,
+                description=ac.description,
+                model=ac.model,
+                tools=list(ac.tool_list),
+                category=ac.category,
+            )
+        return AgentInfo(name=name)
+
+    # Specialized brains (transfer_to_brain targets)
+    specialized = []
+    try:
+        pr_cfg = load_pr_brain_config()
+        pr_agents = [_agent_info(n) for n in pr_cfg.review_agents]
+        pr_arb = _agent_info(pr_cfg.arbitrator) if pr_cfg.arbitrator else None
+        specialized.append(
+            SpecializedBrainInfo(
+                name=pr_cfg.name,
+                description=pr_cfg.description,
+                model=pr_cfg.model,
+                type="brain",
+                mode="pipeline",
+                agents=pr_agents,
+                arbitrator=pr_arb,
+                trigger=f'transfer_to_brain("{pr_cfg.name}")',
+            )
+        )
+    except Exception as exc:
+        logger.warning("Failed to load PR Brain config: %s", exc)
+
+    # Swarm presets (dispatch_swarm targets)
+    swarms = []
+    swarm_registry = load_swarm_registry()
+    for _, sc in swarm_registry.items():
+        swarm_agents = [_agent_info(n) for n in sc.agents]
+        swarms.append(
+            SpecializedBrainInfo(
+                name=sc.name,
+                description=sc.description,
+                type="swarm",
+                mode=sc.mode,
+                agents=swarm_agents,
+                trigger=f'dispatch_swarm("{sc.name}")',
+            )
+        )
+
+    return BrainSwarmsResponse(
+        brain_model=brain_cfg.model,
+        core_tools=brain_cfg.core_tools,
+        specialized_brains=specialized,
+        swarms=swarms,
+    )

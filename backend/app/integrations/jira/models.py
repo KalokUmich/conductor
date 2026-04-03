@@ -1,13 +1,15 @@
 """Pydantic models for Jira integration."""
+
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from pydantic import BaseModel
 
 
 class JiraTokenPair(BaseModel):
     """OAuth token pair stored after successful authorization."""
+
     access_token: str
     refresh_token: str
     expires_in: int = 3600
@@ -18,17 +20,20 @@ class JiraTokenPair(BaseModel):
 
 class JiraCallbackRequest(BaseModel):
     """Request body for the OAuth callback."""
+
     code: str
     state: str = ""
 
 
 class RefreshTokenRequest(BaseModel):
     """Request body for client-side token refresh."""
+
     refresh_token: str
 
 
 class CreateIssueRequest(BaseModel):
     """Request to create a Jira issue."""
+
     project_key: str
     summary: str
     description: str = ""
@@ -40,6 +45,7 @@ class CreateIssueRequest(BaseModel):
 
 class JiraIssue(BaseModel):
     """Response after creating an issue."""
+
     id: str
     key: str
     self_url: str = ""
@@ -48,6 +54,7 @@ class JiraIssue(BaseModel):
 
 class JiraProject(BaseModel):
     """A Jira project."""
+
     id: str
     key: str
     name: str
@@ -56,6 +63,7 @@ class JiraProject(BaseModel):
 
 class JiraIssueType(BaseModel):
     """A Jira issue type."""
+
     id: str
     name: str
     subtask: bool = False
@@ -63,12 +71,14 @@ class JiraIssueType(BaseModel):
 
 class JiraFieldOption(BaseModel):
     """An option for a Jira field (priority, team, component, etc.)."""
+
     id: str
     name: str
 
 
 class JiraCreateMeta(BaseModel):
     """Metadata for creating an issue — required fields and their options."""
+
     priorities: List[JiraFieldOption] = []
     components: List[JiraFieldOption] = []
     teams: List[JiraFieldOption] = []

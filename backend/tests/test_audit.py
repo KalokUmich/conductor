@@ -82,29 +82,35 @@ class TestAuditLogService:
     @pytest.mark.asyncio
     async def test_get_logs_returns_all_logs(self, audit_service):
         for i in range(3):
-            await audit_service.log_apply(AuditLogCreate(
-                room_id=f"room-{i}",
-                changeset_hash=f"hash-{i}",
-                applied_by="user@example.com",
-                mode=ApplyMode.MANUAL,
-            ))
+            await audit_service.log_apply(
+                AuditLogCreate(
+                    room_id=f"room-{i}",
+                    changeset_hash=f"hash-{i}",
+                    applied_by="user@example.com",
+                    mode=ApplyMode.MANUAL,
+                )
+            )
         logs = await audit_service.get_logs()
         assert len(logs) == 3
 
     @pytest.mark.asyncio
     async def test_get_logs_filters_by_room_id(self, audit_service):
-        await audit_service.log_apply(AuditLogCreate(
-            room_id="room-a",
-            changeset_hash="hash-1",
-            applied_by="user@example.com",
-            mode=ApplyMode.MANUAL,
-        ))
-        await audit_service.log_apply(AuditLogCreate(
-            room_id="room-b",
-            changeset_hash="hash-2",
-            applied_by="user@example.com",
-            mode=ApplyMode.AUTO,
-        ))
+        await audit_service.log_apply(
+            AuditLogCreate(
+                room_id="room-a",
+                changeset_hash="hash-1",
+                applied_by="user@example.com",
+                mode=ApplyMode.MANUAL,
+            )
+        )
+        await audit_service.log_apply(
+            AuditLogCreate(
+                room_id="room-b",
+                changeset_hash="hash-2",
+                applied_by="user@example.com",
+                mode=ApplyMode.AUTO,
+            )
+        )
         logs_a = await audit_service.get_logs(room_id="room-a")
         logs_b = await audit_service.get_logs(room_id="room-b")
         assert len(logs_a) == 1
@@ -114,12 +120,14 @@ class TestAuditLogService:
 
     @pytest.mark.asyncio
     async def test_delete_room_logs(self, audit_service):
-        await audit_service.log_apply(AuditLogCreate(
-            room_id="room-del",
-            changeset_hash="hash-del",
-            applied_by="user@example.com",
-            mode=ApplyMode.MANUAL,
-        ))
+        await audit_service.log_apply(
+            AuditLogCreate(
+                room_id="room-del",
+                changeset_hash="hash-del",
+                applied_by="user@example.com",
+                mode=ApplyMode.MANUAL,
+            )
+        )
         await audit_service.delete_room_logs("room-del")
         logs = await audit_service.get_logs(room_id="room-del")
         assert len(logs) == 0

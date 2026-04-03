@@ -1,10 +1,10 @@
 """Tests for code intelligence tools."""
+
 from __future__ import annotations
 
 import os
 import textwrap
 from pathlib import Path
-from typing import Dict
 
 import pytest
 
@@ -15,8 +15,8 @@ from app.code_tools.tools import (
     find_references,
     find_symbol,
     find_tests,
-    get_callers,
     get_callees,
+    get_callers,
     get_dependencies,
     get_dependents,
     git_blame,
@@ -32,7 +32,6 @@ from app.code_tools.tools import (
     trace_variable,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -44,7 +43,8 @@ def workspace(tmp_path: Path) -> Path:
     # Python file
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
-    (tmp_path / "app" / "main.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "main.py").write_text(
+        textwrap.dedent("""\
         from app.service import MyService
 
         class App:
@@ -53,8 +53,10 @@ def workspace(tmp_path: Path) -> Path:
 
             def run(self):
                 return self.service.process()
-    """))
-    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "service.py").write_text(
+        textwrap.dedent("""\
         from app.utils import helper
 
         class MyService:
@@ -68,18 +70,22 @@ def workspace(tmp_path: Path) -> Path:
             result = helper("input")
             standalone_function()
             return result
-    """))
-    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "utils.py").write_text(
+        textwrap.dedent("""\
         def helper(data: str) -> str:
             return data.upper()
 
         def unused_helper():
             return 42
-    """))
+    """)
+    )
 
     # TypeScript file
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "index.ts").write_text(
+        textwrap.dedent("""\
         import { greet } from './utils';
 
         function main(): void {
@@ -91,17 +97,21 @@ def workspace(tmp_path: Path) -> Path:
                 main();
             }
         }
-    """))
-    (tmp_path / "src" / "utils.ts").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "src" / "utils.ts").write_text(
+        textwrap.dedent("""\
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
-    """))
+    """)
+    )
 
     # Python test files
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "__init__.py").write_text("")
-    (tmp_path / "tests" / "test_service.py").write_text(textwrap.dedent("""\
+    (tmp_path / "tests" / "test_service.py").write_text(
+        textwrap.dedent("""\
         from unittest.mock import patch, MagicMock
         from app.service import MyService, standalone_function
 
@@ -122,10 +132,12 @@ def workspace(tmp_path: Path) -> Path:
         def test_standalone():
             result = standalone_function()
             assert result is None
-    """))
+    """)
+    )
 
     # TypeScript test file
-    (tmp_path / "src" / "utils.test.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "utils.test.ts").write_text(
+        textwrap.dedent("""\
         import { greet } from './utils';
 
         describe('greet', () => {
@@ -138,11 +150,13 @@ def workspace(tmp_path: Path) -> Path:
                 expect(result).toBe('Hello, !');
             });
         });
-    """))
+    """)
+    )
 
     # Java source + test files
     (tmp_path / "src" / "main" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(
+        textwrap.dedent("""\
         package com.example;
 
         public class AuthService {
@@ -150,9 +164,11 @@ def workspace(tmp_path: Path) -> Path:
                 return user != null && pass != null;
             }
         }
-    """))
+    """)
+    )
     (tmp_path / "src" / "test" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(
+        textwrap.dedent("""\
         package com.example;
 
         import org.junit.jupiter.api.Test;
@@ -181,18 +197,22 @@ def workspace(tmp_path: Path) -> Path:
                 verify(svc).authenticate("a", "b");
             }
         }
-    """))
+    """)
+    )
 
     # Go source + test files
     (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "calc.go").write_text(textwrap.dedent("""\
+    (tmp_path / "pkg" / "calc.go").write_text(
+        textwrap.dedent("""\
         package calc
 
         func Add(a, b int) int {
             return a + b
         }
-    """))
-    (tmp_path / "pkg" / "calc_test.go").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "pkg" / "calc_test.go").write_text(
+        textwrap.dedent("""\
         package calc
 
         import (
@@ -217,16 +237,20 @@ def workspace(tmp_path: Path) -> Path:
                 Add(1, 2)
             }
         }
-    """))
+    """)
+    )
 
     # Rust source + test file
     (tmp_path / "rust_src").mkdir()
-    (tmp_path / "rust_src" / "lib.rs").write_text(textwrap.dedent("""\
+    (tmp_path / "rust_src" / "lib.rs").write_text(
+        textwrap.dedent("""\
         pub fn multiply(a: i32, b: i32) -> i32 {
             a * b
         }
-    """))
-    (tmp_path / "rust_src" / "lib_test.rs").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "rust_src" / "lib_test.rs").write_text(
+        textwrap.dedent("""\
         use super::*;
 
         #[test]
@@ -244,7 +268,8 @@ def workspace(tmp_path: Path) -> Path:
         async fn test_async_multiply() {
             assert!(multiply(2, 3) > 0);
         }
-    """))
+    """)
+    )
 
     # node_modules (should be excluded)
     (tmp_path / "node_modules").mkdir()
@@ -671,8 +696,8 @@ class TestExecuteTool:
         from app.code_tools.tools import _repair_tool_params
 
         garbled = {
-            'end_line": 234</parameter>\n<parameter name="path': 'app/service.py',
-            'start_line': 225,
+            'end_line": 234</parameter>\n<parameter name="path': "app/service.py",
+            "start_line": 225,
         }
         result = _repair_tool_params("read_file", garbled)
         assert result["path"] == "app/service.py"
@@ -697,7 +722,7 @@ class TestGitBlame:
     @pytest.fixture(autouse=True)
     def _init_git(self, workspace):
         os.system(
-            f'cd {workspace} && git init -q && git add -A '
+            f"cd {workspace} && git init -q && git add -A "
             f'&& git -c user.email="test@test.com" -c user.name="Test" commit -q -m "initial commit"'
         )
 
@@ -736,7 +761,7 @@ class TestGitShow:
     @pytest.fixture(autouse=True)
     def _init_git(self, workspace):
         os.system(
-            f'cd {workspace} && git init -q && git add -A '
+            f"cd {workspace} && git init -q && git add -A "
             f'&& git -c user.email="test@test.com" -c user.name="Dev" commit -q -m "feat: add services"'
         )
 
@@ -942,7 +967,8 @@ def dataflow_ws(tmp_path: Path) -> Path:
     (tmp_path / "app").mkdir()
 
     # -- Router layer (HTTP entry point) --
-    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "router.py").write_text(
+        textwrap.dedent("""\
         from app.service import process_loan
 
         def create_loan(request):
@@ -950,10 +976,12 @@ def dataflow_ws(tmp_path: Path) -> Path:
             customer = request.json["customer"]
             result = process_loan(loan_id, customer)
             return {"status": "ok", "data": result}
-    """))
+    """)
+    )
 
     # -- Service layer (business logic, aliases the variable) --
-    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "service.py").write_text(
+        textwrap.dedent("""\
         from app.repository import get_loan, save_audit
 
         def process_loan(loan_id, customer_name):
@@ -964,20 +992,24 @@ def dataflow_ws(tmp_path: Path) -> Path:
 
         def helper():
             pass
-    """))
+    """)
+    )
 
     # -- Repository layer (ORM / SQL sink) --
-    (tmp_path / "app" / "repository.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "repository.py").write_text(
+        textwrap.dedent("""\
         def get_loan(loan_identifier):
             return Loan.query.filter(Loan.id == loan_identifier).first()
 
         def save_audit(ref_id, action):
             db.execute("INSERT INTO audit (ref, action) VALUES (%s, %s)", (ref_id, action))
-    """))
+    """)
+    )
 
     # -- TypeScript variant --
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "handler.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "handler.ts").write_text(
+        textwrap.dedent("""\
         import { findLoan } from './loanRepo';
 
         export function handleRequest(req: Request): Response {
@@ -985,12 +1017,15 @@ def dataflow_ws(tmp_path: Path) -> Path:
             const result = findLoan(loanId);
             return { status: 200, data: result };
         }
-    """))
-    (tmp_path / "src" / "loanRepo.ts").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "src" / "loanRepo.ts").write_text(
+        textwrap.dedent("""\
         export function findLoan(id: string): Loan {
             return prisma.loan.findUnique({ where: { id } });
         }
-    """))
+    """)
+    )
 
     invalidate_graph_cache()
     return tmp_path
@@ -1004,9 +1039,9 @@ class TestTraceVariable:
     def test_forward_alias_detection(self, dataflow_ws):
         """Should detect that `lid = loan_id` is an alias."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loan_id", file="app/service.py", function_name="process_loan", direction="forward"
+        )
         assert result.success
         data = result.data
         assert data["variable"] == "loan_id"
@@ -1017,9 +1052,9 @@ class TestTraceVariable:
     def test_forward_flows_to_detected(self, dataflow_ws):
         """Should detect calls where loan_id (or alias) flows to another function."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loan_id", file="app/service.py", function_name="process_loan", direction="forward"
+        )
         assert result.success
         flows = result.data["flows_to"]
         callee_names = [f["callee_function"] for f in flows]
@@ -1029,12 +1064,11 @@ class TestTraceVariable:
     def test_forward_param_mapping(self, dataflow_ws):
         """Should map argument position to formal parameter name."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loan_id", file="app/service.py", function_name="process_loan", direction="forward"
+        )
         assert result.success
-        get_loan_flow = [f for f in result.data["flows_to"]
-                         if f["callee_function"] == "get_loan"]
+        get_loan_flow = [f for f in result.data["flows_to"] if f["callee_function"] == "get_loan"]
         assert len(get_loan_flow) >= 1
         # get_loan(lid) → def get_loan(loan_identifier) → param "loan_identifier"
         assert get_loan_flow[0]["as_parameter"] == "loan_identifier"
@@ -1042,9 +1076,9 @@ class TestTraceVariable:
     def test_forward_sink_orm_filter(self, dataflow_ws):
         """Should detect ORM .filter() as a sink in the repository layer."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_identifier",
-                                file="app/repository.py", function_name="get_loan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loan_identifier", file="app/repository.py", function_name="get_loan", direction="forward"
+        )
         assert result.success
         sinks = result.data["sinks"]
         assert len(sinks) >= 1
@@ -1053,9 +1087,9 @@ class TestTraceVariable:
     def test_forward_sink_sql_param(self, dataflow_ws):
         """Should detect SQL execute() as a sink."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="ref_id",
-                                file="app/repository.py", function_name="save_audit",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="ref_id", file="app/repository.py", function_name="save_audit", direction="forward"
+        )
         assert result.success
         sinks = result.data["sinks"]
         assert any(s["kind"] == "sql_param" for s in sinks)
@@ -1063,16 +1097,16 @@ class TestTraceVariable:
     def test_forward_return_sink(self, dataflow_ws):
         """Should detect return statement as a sink."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/service.py", function_name="process_loan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loan_id", file="app/service.py", function_name="process_loan", direction="forward"
+        )
         assert result.success
         # `return loan` — loan is not an alias of loan_id, but the function
         # returns the result of get_loan(lid). Check for return in sinks
         # from the repo layer instead.
-        result2 = trace_variable(ws, variable_name="loan_identifier",
-                                 file="app/repository.py", function_name="get_loan",
-                                 direction="forward")
+        result2 = trace_variable(
+            ws, variable_name="loan_identifier", file="app/repository.py", function_name="get_loan", direction="forward"
+        )
         assert result2.success
         sinks2 = result2.data["sinks"]
         # The return statement contains loan_identifier indirectly via the filter;
@@ -1084,9 +1118,13 @@ class TestTraceVariable:
     def test_backward_flows_from(self, dataflow_ws):
         """Should find callers that pass a value for the target parameter."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_identifier",
-                                file="app/repository.py", function_name="get_loan",
-                                direction="backward")
+        result = trace_variable(
+            ws,
+            variable_name="loan_identifier",
+            file="app/repository.py",
+            function_name="get_loan",
+            direction="backward",
+        )
         assert result.success
         flows = result.data["flows_from"]
         assert len(flows) >= 1
@@ -1099,9 +1137,9 @@ class TestTraceVariable:
     def test_backward_source_http(self, dataflow_ws):
         """Should detect HTTP request source pattern."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/router.py", function_name="create_loan",
-                                direction="backward")
+        result = trace_variable(
+            ws, variable_name="loan_id", file="app/router.py", function_name="create_loan", direction="backward"
+        )
         assert result.success
         sources = result.data["sources"]
         assert len(sources) >= 1
@@ -1112,8 +1150,7 @@ class TestTraceVariable:
     def test_auto_detect_function(self, dataflow_ws):
         """When function_name is omitted, should find the first function using the variable."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loan_id",
-                                file="app/router.py", direction="forward")
+        result = trace_variable(ws, variable_name="loan_id", file="app/router.py", direction="forward")
         assert result.success
         assert result.data["function"] == "create_loan"
 
@@ -1121,22 +1158,19 @@ class TestTraceVariable:
 
     def test_file_not_found(self, dataflow_ws):
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="x",
-                                file="missing.py", function_name="f")
+        result = trace_variable(ws, variable_name="x", file="missing.py", function_name="f")
         assert not result.success
         assert "not found" in result.error.lower()
 
     def test_function_not_found(self, dataflow_ws):
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="x",
-                                file="app/service.py", function_name="nonexistent")
+        result = trace_variable(ws, variable_name="x", file="app/service.py", function_name="nonexistent")
         assert not result.success
         assert "not found" in result.error.lower()
 
     def test_variable_not_in_any_function(self, dataflow_ws):
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="zzz_not_here",
-                                file="app/service.py")
+        result = trace_variable(ws, variable_name="zzz_not_here", file="app/service.py")
         assert not result.success
 
     # -- TypeScript --------------------------------------------------------
@@ -1144,9 +1178,9 @@ class TestTraceVariable:
     def test_typescript_forward(self, dataflow_ws):
         """Should work for TypeScript files."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="loanId",
-                                file="src/handler.ts", function_name="handleRequest",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="loanId", file="src/handler.ts", function_name="handleRequest", direction="forward"
+        )
         assert result.success
         flows = result.data["flows_to"]
         callee_names = [f["callee_function"] for f in flows]
@@ -1155,9 +1189,9 @@ class TestTraceVariable:
     def test_typescript_sink_orm(self, dataflow_ws):
         """Should detect Prisma findUnique as ORM sink."""
         ws = str(dataflow_ws)
-        result = trace_variable(ws, variable_name="id",
-                                file="src/loanRepo.ts", function_name="findLoan",
-                                direction="forward")
+        result = trace_variable(
+            ws, variable_name="id", file="src/loanRepo.ts", function_name="findLoan", direction="forward"
+        )
         assert result.success
         sinks = result.data["sinks"]
         assert any(s["kind"] in ("orm_get", "orm_filter") for s in sinks)
@@ -1167,12 +1201,16 @@ class TestTraceVariable:
     def test_dispatch_via_execute_tool(self, dataflow_ws):
         """trace_variable should be callable via execute_tool."""
         ws = str(dataflow_ws)
-        result = execute_tool("trace_variable", ws, {
-            "variable_name": "loan_id",
-            "file": "app/service.py",
-            "function_name": "process_loan",
-            "direction": "forward",
-        })
+        result = execute_tool(
+            "trace_variable",
+            ws,
+            {
+                "variable_name": "loan_id",
+                "file": "app/service.py",
+                "function_name": "process_loan",
+                "direction": "forward",
+            },
+        )
         assert result.success
         assert result.data["variable"] == "loan_id"
 
@@ -1284,8 +1322,12 @@ class TestGrepEnhanced:
 
     def test_combined_params(self, ws):
         result = grep(
-            ws, "service", path="app",
-            case_insensitive=True, output_mode="files_only", file_type="py",
+            ws,
+            "service",
+            path="app",
+            case_insensitive=True,
+            output_mode="files_only",
+            file_type="py",
         )
         assert result.success
         for m in result.data:
@@ -1293,11 +1335,15 @@ class TestGrepEnhanced:
             assert m["file_path"].endswith(".py")
 
     def test_execute_tool_dispatch(self, ws):
-        result = execute_tool("grep", ws, {
-            "pattern": "MyService",
-            "output_mode": "count",
-            "case_insensitive": True,
-        })
+        result = execute_tool(
+            "grep",
+            ws,
+            {
+                "pattern": "MyService",
+                "output_mode": "count",
+                "case_insensitive": True,
+            },
+        )
         assert result.success
         assert len(result.data) > 0
         assert "matches" in result.data[0]["content"]
@@ -1383,34 +1429,36 @@ class TestToolMetadata:
     def test_every_registry_tool_has_metadata(self):
         from app.code_tools.schemas import TOOL_METADATA
         from app.code_tools.tools import TOOL_REGISTRY
+
         for tool_name in TOOL_REGISTRY:
-            assert tool_name in TOOL_METADATA, (
-                f"Tool '{tool_name}' is in TOOL_REGISTRY but missing from TOOL_METADATA"
-            )
+            assert tool_name in TOOL_METADATA, f"Tool '{tool_name}' is in TOOL_REGISTRY but missing from TOOL_METADATA"
 
     def test_metadata_categories_valid(self):
         from app.code_tools.schemas import TOOL_METADATA
+
         valid = {"search", "navigate", "git", "analysis", "test", "browser", "integration", "edit"}
         for name, meta in TOOL_METADATA.items():
-            assert meta.category in valid, (
-                f"Tool '{name}' has invalid category '{meta.category}'"
-            )
+            assert meta.category in valid, f"Tool '{name}' has invalid category '{meta.category}'"
 
     def test_run_test_not_concurrent_safe(self):
         from app.code_tools.schemas import TOOL_METADATA
+
         assert not TOOL_METADATA["run_test"].is_concurrent_safe
 
     def test_run_test_not_read_only(self):
         from app.code_tools.schemas import TOOL_METADATA
+
         assert not TOOL_METADATA["run_test"].is_read_only
 
     def test_grep_is_concurrent_safe(self):
         from app.code_tools.schemas import TOOL_METADATA
+
         assert TOOL_METADATA["grep"].is_concurrent_safe
         assert TOOL_METADATA["grep"].is_read_only
 
     def test_summary_template_not_empty_for_key_tools(self):
         from app.code_tools.schemas import TOOL_METADATA
+
         key_tools = ["grep", "read_file", "find_symbol", "git_log", "glob"]
         for name in key_tools:
             meta = TOOL_METADATA[name]
@@ -1418,22 +1466,26 @@ class TestToolMetadata:
 
     def test_format_tool_summary_grep(self):
         from app.code_tools.schemas import format_tool_summary
+
         s = format_tool_summary("grep", {"pattern": "auth", "path": "src/"}, [1, 2, 3])
         assert "auth" in s
         assert "3" in s
 
     def test_format_tool_summary_read_file(self):
         from app.code_tools.schemas import format_tool_summary
+
         s = format_tool_summary("read_file", {"path": "main.py", "start_line": 1, "end_line": 50}, {})
         assert "main.py" in s
 
     def test_format_tool_summary_unknown_tool(self):
         from app.code_tools.schemas import format_tool_summary
+
         s = format_tool_summary("unknown_tool_xyz", {}, [])
         assert s == "unknown_tool_xyz()"
 
     def test_format_tool_summary_missing_params_no_crash(self):
         from app.code_tools.schemas import format_tool_summary
+
         # grep template expects {pattern} and {path}, but we provide neither
         s = format_tool_summary("grep", {}, [1, 2])
         assert isinstance(s, str)  # Should not crash

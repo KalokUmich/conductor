@@ -11,14 +11,15 @@ Total: 60 tests + RepoTokenCache + service integration tests
 
 from __future__ import annotations
 
-import pytest
-import pytest_asyncio
-from unittest.mock import AsyncMock, MagicMock, patch, call
-from pathlib import Path
-from fastapi.testclient import TestClient
-from fastapi import FastAPI
 import sys
 import types
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import pytest_asyncio
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Minimal stubs so optional imports don't break test collection
@@ -41,8 +42,8 @@ _stub("sqlite_vec")
 # Real imports
 # ---------------------------------------------------------------------------
 
-from app.git_workspace.service import GitWorkspaceService as GitWorkspaceManager  # noqa: E402
-from app.git_workspace.router import router, get_git_service  # noqa: E402
+from app.git_workspace.router import get_git_service, router
+from app.git_workspace.service import GitWorkspaceService as GitWorkspaceManager
 
 app = FastAPI()
 app.include_router(router)
@@ -55,14 +56,15 @@ client = TestClient(app, raise_server_exceptions=False)
 BASE = "/tmp/test_workspaces"
 
 
-from app.git_workspace.schemas import (  # noqa: E402
+from datetime import UTC, datetime
+
+from app.git_workspace.schemas import (
     WorkspaceCreateRequest,
-    WorkspaceInfo,
     WorkspaceDestroyResult,
+    WorkspaceInfo,
     WorktreeStatus,
 )
-from app.git_workspace.service import _WorktreeRecord  # noqa: E402
-from datetime import datetime, timezone  # noqa: E402
+from app.git_workspace.service import _WorktreeRecord
 
 
 def _make_dummy_info(room_id: str = "room-1") -> WorkspaceInfo:
@@ -72,7 +74,7 @@ def _make_dummy_info(room_id: str = "room-1") -> WorkspaceInfo:
         branch=f"session/{room_id}",
         worktree_path=f"/tmp/{room_id}",
         status=WorktreeStatus.READY,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
     )
 
 
@@ -236,9 +238,7 @@ class TestServiceGetWorktreePath:
 # ---------------------------------------------------------------------------
 
 
-from app.git_workspace.schemas import (  # noqa: E402 (already imported above)
-    ListRemoteBranchesResponse,
-    SetupAndIndexResult,
+from app.git_workspace.schemas import (
     WorkspaceCommitResult,
     WorkspacePushResult,
     WorkspaceSyncResult,
@@ -252,23 +252,15 @@ def mock_manager():
     mgr.create_workspace = AsyncMock(return_value=dummy)
     mgr.get_workspace = MagicMock(return_value=dummy)
     mgr.list_workspaces = MagicMock(return_value=[dummy])
-    mgr.destroy_workspace = AsyncMock(
-        return_value=WorkspaceDestroyResult(room_id="w1", success=True, message="ok")
-    )
-    mgr.sync_workspace = AsyncMock(
-        return_value=WorkspaceSyncResult(room_id="w1", success=True, message="synced")
-    )
+    mgr.destroy_workspace = AsyncMock(return_value=WorkspaceDestroyResult(room_id="w1", success=True, message="ok"))
+    mgr.sync_workspace = AsyncMock(return_value=WorkspaceSyncResult(room_id="w1", success=True, message="synced"))
     mgr.commit_workspace = AsyncMock(
         return_value=WorkspaceCommitResult(room_id="w1", success=True, sha="abc123", message="committed")
     )
-    mgr.push_workspace = AsyncMock(
-        return_value=WorkspacePushResult(room_id="w1", success=True, message="pushed")
-    )
+    mgr.push_workspace = AsyncMock(return_value=WorkspacePushResult(room_id="w1", success=True, message="pushed"))
     mgr.store_credentials = AsyncMock(return_value=None)
     mgr.revoke_credentials = AsyncMock(return_value=None)
-    mgr.list_remote_branches = AsyncMock(
-        return_value=(["develop", "main", "staging"], "main")
-    )
+    mgr.list_remote_branches = AsyncMock(return_value=(["develop", "main", "staging"], "main"))
     mgr.token_cache = None  # disabled by default in tests
     mgr.is_local_workspace = MagicMock(return_value=False)
     return mgr
@@ -453,9 +445,7 @@ class TestListRemoteBranchesEndpoint:
         assert resp.status_code == 422
 
     def test_list_branches_service_error(self, mock_manager):
-        mock_manager.list_remote_branches = AsyncMock(
-            side_effect=RuntimeError("git ls-remote failed")
-        )
+        mock_manager.list_remote_branches = AsyncMock(side_effect=RuntimeError("git ls-remote failed"))
         resp = client.post(
             "/api/git-workspace/branches/remote",
             json={"repo_url": "https://github.com/x/y.git"},
@@ -486,10 +476,7 @@ class TestServiceListRemoteBranches:
     @pytest.mark.asyncio
     async def test_list_remote_branches_no_symref(self):
         mgr = GitWorkspaceManager()
-        ls_remote_output = (
-            "abc123\trefs/heads/feature-a\n"
-            "def456\trefs/heads/main\n"
-        )
+        ls_remote_output = "abc123\trefs/heads/feature-a\ndef456\trefs/heads/main\n"
         with patch.object(mgr, "_run_git", new_callable=AsyncMock, return_value=ls_remote_output):
             branches, default = await mgr.list_remote_branches("https://github.com/x/y.git")
         assert branches == ["feature-a", "main"]
@@ -506,10 +493,11 @@ class TestServiceListRemoteBranches:
     @pytest.mark.asyncio
     async def test_list_remote_branches_with_credentials(self):
         from app.git_workspace.schemas import CredentialPayload
+
         mgr = GitWorkspaceManager()
         creds = CredentialPayload(token="ghp_test")
         with patch.object(mgr, "_run_git", new_callable=AsyncMock, return_value="abc\trefs/heads/main\n") as mock_git:
-            branches, default = await mgr.list_remote_branches("https://github.com/x/y.git", creds)
+            branches, _ = await mgr.list_remote_branches("https://github.com/x/y.git", creds)
         assert branches == ["main"]
         # Verify env was passed with credential vars
         call_kwargs = mock_git.call_args
@@ -524,9 +512,10 @@ class TestServiceListRemoteBranches:
 # ---------------------------------------------------------------------------
 
 
-from app.git_workspace.token_cache import RepoTokenCache, _normalize_url  # noqa: E402
-from app.git_workspace.schemas import CredentialPayload  # noqa: E402
-from datetime import datetime, timedelta, timezone  # noqa: E402
+from datetime import timedelta
+
+from app.git_workspace.schemas import CredentialPayload
+from app.git_workspace.token_cache import RepoTokenCache, _normalize_url
 
 
 class TestNormalizeUrl:
@@ -585,14 +574,14 @@ class TestRepoTokenCache:
 
     @pytest.mark.asyncio
     async def test_get_returns_none_for_expired(self, cache):
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         creds = CredentialPayload(token="expired", expires_at=past)
         await cache.put("https://github.com/x/y", creds)
         assert await cache.get("https://github.com/x/y") is None
 
     @pytest.mark.asyncio
     async def test_explicit_expires_at_honoured(self, cache):
-        far_future = datetime.now(timezone.utc) + timedelta(days=365)
+        far_future = datetime.now(UTC) + timedelta(days=365)
         creds = CredentialPayload(token="long_lived", expires_at=far_future)
         await cache.put("https://github.com/x/y", creds)
         result = await cache.get("https://github.com/x/y")
@@ -601,7 +590,7 @@ class TestRepoTokenCache:
 
     @pytest.mark.asyncio
     async def test_get_returns_expires_at(self, cache):
-        far_future = datetime.now(timezone.utc) + timedelta(hours=1)
+        far_future = datetime.now(UTC) + timedelta(hours=1)
         creds = CredentialPayload(token="tok", expires_at=far_future)
         await cache.put("https://github.com/x/y", creds)
         result = await cache.get("https://github.com/x/y")
@@ -611,7 +600,7 @@ class TestRepoTokenCache:
 
     @pytest.mark.asyncio
     async def test_evict_expired_removes_stale(self, cache):
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         creds = CredentialPayload(token="stale", expires_at=past)
         await cache.put("https://github.com/x/stale", creds)
         # Bypass get() eviction by inserting with raw SQL check
@@ -629,7 +618,7 @@ class TestRepoTokenCache:
 
     @pytest.mark.asyncio
     async def test_evict_expired_mixed(self, cache):
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         await cache.put("https://github.com/x/a", CredentialPayload(token="old", expires_at=past))
         await cache.put("https://github.com/x/b", CredentialPayload(token="new"))
         # Note: put() already calls evict_expired() before each insert,
@@ -762,7 +751,7 @@ class TestServiceTokenCacheIntegration:
         await mgr._credential_store.start()
 
         # Put an already-expired token in the cache
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         await mgr._token_cache.put(
             "https://github.com/x/y",
             CredentialPayload(token="ghp_expired", expires_at=past),
@@ -824,14 +813,16 @@ class TestTokenCacheEndpoint:
 
     def test_enabled_with_entries(self, mock_manager):
         mock_cache = MagicMock()
-        mock_cache.list_entries = AsyncMock(return_value=[
-            {
-                "repo_url": "https://github.com/x/y",
-                "username": "alice",
-                "cached_at": "2026-01-01T00:00:00+00:00",
-                "expires_at": "2026-01-01T08:00:00+00:00",
-            }
-        ])
+        mock_cache.list_entries = AsyncMock(
+            return_value=[
+                {
+                    "repo_url": "https://github.com/x/y",
+                    "username": "alice",
+                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "expires_at": "2026-01-01T08:00:00+00:00",
+                }
+            ]
+        )
         mock_manager.token_cache = mock_cache
         resp = client.get("/api/git-workspace/token-cache")
         assert resp.status_code == 200
@@ -842,14 +833,16 @@ class TestTokenCacheEndpoint:
 
     def test_tokens_not_in_response(self, mock_manager):
         mock_cache = MagicMock()
-        mock_cache.list_entries = AsyncMock(return_value=[
-            {
-                "repo_url": "https://github.com/x/y",
-                "username": "alice",
-                "cached_at": "2026-01-01T00:00:00+00:00",
-                "expires_at": "2026-01-01T08:00:00+00:00",
-            }
-        ])
+        mock_cache.list_entries = AsyncMock(
+            return_value=[
+                {
+                    "repo_url": "https://github.com/x/y",
+                    "username": "alice",
+                    "cached_at": "2026-01-01T00:00:00+00:00",
+                    "expires_at": "2026-01-01T08:00:00+00:00",
+                }
+            ]
+        )
         mock_manager.token_cache = mock_cache
         resp = client.get("/api/git-workspace/token-cache")
         # token field must NOT appear in the response

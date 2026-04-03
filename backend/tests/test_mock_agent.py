@@ -1,23 +1,24 @@
 """Tests for the MockAgent and generate-changes endpoint."""
+
 import json
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from jsonschema import Draft7Validator, ValidationError as JsonSchemaValidationError
+from jsonschema import Draft7Validator
+from jsonschema import ValidationError as JsonSchemaValidationError
 from pydantic import ValidationError
 
-from app.main import app
+from app.agent.mock_agent import MockAgent
 from app.agent.schemas import (
     ChangeSet,
     ChangeType,
     FileChange,
-    Range,
     GenerateChangesRequest,
     GenerateChangesResponse,
+    Range,
 )
-from app.agent.mock_agent import MockAgent
-
+from app.main import app
 
 client = TestClient(app)
 
@@ -52,10 +53,7 @@ class TestChangeSetSchemas:
     def test_file_change_replace_range_valid(self):
         """Test valid FileChange with replace_range type."""
         fc = FileChange(
-            file="src/main.py",
-            type=ChangeType.REPLACE_RANGE,
-            range=Range(start=1, end=3),
-            content="new code"
+            file="src/main.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=3), content="new code"
         )
         assert fc.file == "src/main.py"
         assert fc.type == ChangeType.REPLACE_RANGE
@@ -63,11 +61,7 @@ class TestChangeSetSchemas:
 
     def test_file_change_create_file_valid(self):
         """Test valid FileChange with create_file type."""
-        fc = FileChange(
-            file="new_file.py",
-            type=ChangeType.CREATE_FILE,
-            content="# New file content"
-        )
+        fc = FileChange(file="new_file.py", type=ChangeType.CREATE_FILE, content="# New file content")
         assert fc.file == "new_file.py"
         assert fc.type == ChangeType.CREATE_FILE
         assert fc.range is None
@@ -75,27 +69,19 @@ class TestChangeSetSchemas:
     def test_file_change_replace_range_requires_range(self):
         """Test that replace_range type requires range field."""
         with pytest.raises(ValidationError):
-            FileChange(
-                file="test.py",
-                type=ChangeType.REPLACE_RANGE,
-                content="new content"  # missing range
-            )
+            FileChange(file="test.py", type=ChangeType.REPLACE_RANGE, content="new content")  # missing range
 
     def test_file_change_replace_range_requires_content(self):
         """Test that replace_range type requires content field."""
         with pytest.raises(ValidationError):
-            FileChange(
-                file="test.py",
-                type=ChangeType.REPLACE_RANGE,
-                range=Range(start=1, end=5)  # missing content
-            )
+            FileChange(file="test.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=5))  # missing content
 
     def test_file_change_create_file_requires_content(self):
         """Test that create_file type requires content field."""
         with pytest.raises(ValidationError):
             FileChange(
                 file="test.py",
-                type=ChangeType.CREATE_FILE
+                type=ChangeType.CREATE_FILE,
                 # missing content
             )
 
@@ -103,14 +89,9 @@ class TestChangeSetSchemas:
         """Test valid ChangeSet creation."""
         cs = ChangeSet(
             changes=[
-                FileChange(
-                    file="test.py",
-                    type=ChangeType.REPLACE_RANGE,
-                    range=Range(start=1, end=2),
-                    content="x"
-                )
+                FileChange(file="test.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=2), content="x")
             ],
-            summary="Test change"
+            summary="Test change",
         )
         assert len(cs.changes) == 1
         assert cs.summary == "Test change"
@@ -120,18 +101,8 @@ class TestChangeSetSchemas:
         # Two files should be valid now
         cs = ChangeSet(
             changes=[
-                FileChange(
-                    file="file1.py",
-                    type=ChangeType.REPLACE_RANGE,
-                    range=Range(start=1, end=1),
-                    content="a"
-                ),
-                FileChange(
-                    file="file2.py",
-                    type=ChangeType.REPLACE_RANGE,
-                    range=Range(start=1, end=1),
-                    content="b"
-                )
+                FileChange(file="file1.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=1), content="a"),
+                FileChange(file="file2.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=1), content="b"),
             ]
         )
         assert len(cs.changes) == 2
@@ -140,12 +111,7 @@ class TestChangeSetSchemas:
         """Test ChangeSet enforces max 10 file constraint."""
         # Create 11 file changes
         changes = [
-            FileChange(
-                file=f"file{i}.py",
-                type=ChangeType.REPLACE_RANGE,
-                range=Range(start=1, end=1),
-                content="x"
-            )
+            FileChange(file=f"file{i}.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=1), content="x")
             for i in range(11)
         ]
         with pytest.raises(ValidationError):
@@ -153,10 +119,7 @@ class TestChangeSetSchemas:
 
     def test_generate_changes_request_valid(self):
         """Test valid GenerateChangesRequest creation."""
-        req = GenerateChangesRequest(
-            file_path="src/app.py",
-            instruction="Add a hello world function"
-        )
+        req = GenerateChangesRequest(file_path="src/app.py", instruction="Add a hello world function")
         assert req.file_path == "src/app.py"
         assert req.instruction == "Add a hello world function"
         assert req.file_content is None
@@ -167,15 +130,10 @@ class TestChangeSetSchemas:
             success=True,
             change_set=ChangeSet(
                 changes=[
-                    FileChange(
-                        file="test.py",
-                        type=ChangeType.REPLACE_RANGE,
-                        range=Range(start=1, end=1),
-                        content="x"
-                    )
+                    FileChange(file="test.py", type=ChangeType.REPLACE_RANGE, range=Range(start=1, end=1), content="x")
                 ]
             ),
-            message="OK"
+            message="OK",
         )
         assert resp.success is True
         assert len(resp.change_set.changes) == 1
@@ -187,10 +145,7 @@ class TestMockAgent:
     def test_generate_changes_returns_valid_changeset(self):
         """MockAgent should return a valid ChangeSet with 3 changes."""
         agent = MockAgent()
-        request = GenerateChangesRequest(
-            file_path="src/main.py",
-            instruction="Add logging"
-        )
+        request = GenerateChangesRequest(file_path="src/main.py", instruction="Add logging")
         response = agent.generate_changes(request)
 
         assert response.success is True
@@ -217,10 +172,7 @@ class TestMockAgent:
     def test_generate_changes_creates_helper_module(self):
         """MockAgent should create a helper.py with utility functions."""
         agent = MockAgent()
-        request = GenerateChangesRequest(
-            file_path="app.py",
-            instruction="Add helpers"
-        )
+        request = GenerateChangesRequest(file_path="app.py", instruction="Add helpers")
         response = agent.generate_changes(request)
 
         helper_change = response.change_set.changes[0]
@@ -231,10 +183,7 @@ class TestMockAgent:
     def test_generate_changes_creates_config_module(self):
         """MockAgent should create a config.py with settings."""
         agent = MockAgent()
-        request = GenerateChangesRequest(
-            file_path="app.py",
-            instruction="Add config"
-        )
+        request = GenerateChangesRequest(file_path="app.py", instruction="Add config")
         response = agent.generate_changes(request)
 
         config_change = response.change_set.changes[1]
@@ -246,11 +195,7 @@ class TestMockAgent:
         """MockAgent should add imports to the original file."""
         agent = MockAgent()
         original = "# Original file content\nprint('hello')"
-        request = GenerateChangesRequest(
-            file_path="test.py",
-            instruction="Modify content",
-            file_content=original
-        )
+        request = GenerateChangesRequest(file_path="test.py", instruction="Modify content", file_content=original)
         response = agent.generate_changes(request)
 
         # Third change modifies the original file
@@ -293,11 +238,7 @@ class TestGenerateChangesEndpoint:
     def test_endpoint_returns_valid_json(self):
         """Endpoint should return valid JSON matching the schema."""
         response = client.post(
-            "/generate-changes",
-            json={
-                "file_path": "src/app.py",
-                "instruction": "Add error handling"
-            }
+            "/generate-changes", json={"file_path": "src/app.py", "instruction": "Add error handling"}
         )
         assert response.status_code == 200
 
@@ -308,13 +249,7 @@ class TestGenerateChangesEndpoint:
 
     def test_endpoint_changeset_structure(self):
         """Endpoint should return properly structured ChangeSet."""
-        response = client.post(
-            "/generate-changes",
-            json={
-                "file_path": "main.py",
-                "instruction": "Refactor function"
-            }
-        )
+        response = client.post("/generate-changes", json={"file_path": "main.py", "instruction": "Refactor function"})
         data = response.json()
 
         # Validate ChangeSet structure
@@ -345,21 +280,12 @@ class TestGenerateChangesEndpoint:
     def test_endpoint_invalid_request(self):
         """Endpoint should return 422 for invalid requests."""
         # Missing required 'instruction' field
-        response = client.post(
-            "/generate-changes",
-            json={"file_path": "test.py"}
-        )
+        response = client.post("/generate-changes", json={"file_path": "test.py"})
         assert response.status_code == 422
 
     def test_endpoint_response_validates_as_pydantic_model(self):
         """Response should be parseable as GenerateChangesResponse."""
-        response = client.post(
-            "/generate-changes",
-            json={
-                "file_path": "test.py",
-                "instruction": "Add tests"
-            }
-        )
+        response = client.post("/generate-changes", json={"file_path": "test.py", "instruction": "Add tests"})
         data = response.json()
 
         # This should not raise ValidationError
@@ -369,17 +295,13 @@ class TestGenerateChangesEndpoint:
         assert len(parsed.change_set.changes) == 3
 
 
-
 class TestJsonSchemaValidation:
     """Test that MockAgent output validates against the JSON schema."""
 
     def test_mock_agent_output_validates_against_schema(self, changeset_schema):
         """MockAgent ChangeSet should validate against the JSON schema."""
         agent = MockAgent()
-        request = GenerateChangesRequest(
-            file_path="src/main.py",
-            instruction="Add logging"
-        )
+        request = GenerateChangesRequest(file_path="src/main.py", instruction="Add logging")
         response = agent.generate_changes(request)
 
         # Convert Pydantic model to dict for JSON schema validation
@@ -390,13 +312,7 @@ class TestJsonSchemaValidation:
 
     def test_endpoint_output_validates_against_schema(self, changeset_schema):
         """Endpoint ChangeSet should validate against the JSON schema."""
-        response = client.post(
-            "/generate-changes",
-            json={
-                "file_path": "test.py",
-                "instruction": "Add tests"
-            }
-        )
+        response = client.post("/generate-changes", json={"file_path": "test.py", "instruction": "Add tests"})
         data = response.json()
 
         # Extract the change_set and validate
@@ -406,13 +322,10 @@ class TestJsonSchemaValidation:
     def test_schema_rejects_invalid_type(self, changeset_schema):
         """Schema should reject invalid change types."""
         invalid_data = {
-            "changes": [{
-                "id": "test-uuid-12345",
-                "file": "test.py",
-                "type": "invalid_type",  # Invalid type
-                "content": "test"
-            }],
-            "summary": "Test"
+            "changes": [
+                {"id": "test-uuid-12345", "file": "test.py", "type": "invalid_type", "content": "test"}  # Invalid type
+            ],
+            "summary": "Test",
         }
 
         with pytest.raises(JsonSchemaValidationError):
@@ -421,13 +334,15 @@ class TestJsonSchemaValidation:
     def test_schema_requires_range_for_replace_range(self, changeset_schema):
         """Schema should require range field for replace_range type."""
         invalid_data = {
-            "changes": [{
-                "id": "test-uuid-12345",
-                "file": "test.py",
-                "type": "replace_range",
-                "content": "test"  # missing range
-            }],
-            "summary": "Test"
+            "changes": [
+                {
+                    "id": "test-uuid-12345",
+                    "file": "test.py",
+                    "type": "replace_range",
+                    "content": "test",  # missing range
+                }
+            ],
+            "summary": "Test",
         }
 
         with pytest.raises(JsonSchemaValidationError):
@@ -436,13 +351,10 @@ class TestJsonSchemaValidation:
     def test_schema_accepts_create_file_without_range(self, changeset_schema):
         """Schema should accept create_file without range field."""
         valid_data = {
-            "changes": [{
-                "id": "test-uuid-12345",
-                "file": "new_file.py",
-                "type": "create_file",
-                "content": "# New file content"
-            }],
-            "summary": "Create new file"
+            "changes": [
+                {"id": "test-uuid-12345", "file": "new_file.py", "type": "create_file", "content": "# New file content"}
+            ],
+            "summary": "Create new file",
         }
 
         # This should not raise ValidationError

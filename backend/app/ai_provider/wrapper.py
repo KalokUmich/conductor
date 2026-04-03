@@ -12,6 +12,7 @@ Usage:
     # For code prompt generation (no AI call, just template)
     result = call_code_prompt(decision_summary, context_snippet)
 """
+
 import logging
 from dataclasses import dataclass
 from typing import List, Optional
@@ -21,7 +22,7 @@ from fastapi import HTTPException
 from .base import ChatMessage, DecisionSummary
 from .pipeline import PipelineSummary, run_summary_pipeline
 from .prompt_builder import PromptBuilder, build_selective_prompt
-from .prompts import format_policy_constraints, get_code_prompt, get_selective_code_prompt
+from .prompts import format_policy_constraints
 from .resolver import get_resolver
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,7 @@ class ProviderCallResult:
         data: The result data (DecisionSummary or str).
         error: Error message if call failed.
     """
+
     success: bool
     provider_name: Optional[str]
     data: Optional[object] = None
@@ -48,6 +50,7 @@ class ProviderCallResult:
 
 class AIProviderError(Exception):
     """Base exception for AI provider errors."""
+
     def __init__(self, message: str, status_code: int = 500):
         self.message = message
         self.status_code = status_code
@@ -56,12 +59,14 @@ class AIProviderError(Exception):
 
 class ProviderNotAvailableError(AIProviderError):
     """Raised when no AI provider is available."""
+
     def __init__(self, message: str = "No active AI provider available"):
         super().__init__(message, status_code=503)
 
 
 class ProviderCallError(AIProviderError):
     """Raised when an AI provider call fails."""
+
     def __init__(self, message: str, provider_name: str):
         self.provider_name = provider_name
         super().__init__(f"Provider {provider_name} error: {message}", status_code=500)
@@ -69,12 +74,10 @@ class ProviderCallError(AIProviderError):
 
 class JSONParseError(AIProviderError):
     """Raised when AI response JSON parsing fails."""
+
     def __init__(self, message: str, provider_name: str):
         self.provider_name = provider_name
-        super().__init__(
-            f"Failed to parse AI response as JSON from {provider_name}: {message}",
-            status_code=500
-        )
+        super().__init__(f"Failed to parse AI response as JSON from {provider_name}: {message}", status_code=500)
 
 
 def _get_active_provider():
@@ -96,9 +99,7 @@ def _get_active_provider():
 
     if not resolver.summary_config.enabled:
         logger.info("AI provider call rejected: summary feature is disabled")
-        raise ProviderNotAvailableError(
-            "AI summarization is not enabled in configuration."
-        )
+        raise ProviderNotAvailableError("AI summarization is not enabled in configuration.")
 
     provider = resolver.get_active_provider()
     provider_name = resolver.active_provider_type
@@ -106,9 +107,10 @@ def _get_active_provider():
     if provider is None:
         # Log provider status for debugging
         status = resolver.get_status()
-        provider_info = ", ".join(
-            [f"{p.name}={'healthy' if p.healthy else 'unhealthy'}" for p in status.providers]
-        ) or "no providers configured"
+        provider_info = (
+            ", ".join([f"{p.name}={'healthy' if p.healthy else 'unhealthy'}" for p in status.providers])
+            or "no providers configured"
+        )
         logger.warning(f"AI provider call failed: no active provider. Status: {provider_info}")
         raise ProviderNotAvailableError(
             "No active AI provider available. Please check provider configuration and API keys."
@@ -149,13 +151,13 @@ def call_summary(messages: List[ChatMessage]) -> DecisionSummary:
         # ValueError is raised when JSON parsing fails in the provider
         error_msg = str(e)
         logger.error(f"JSON parsing error from provider {provider_name}: {error_msg}")
-        raise JSONParseError(error_msg, provider_name)
+        raise JSONParseError(error_msg, provider_name) from e
 
     except Exception as e:
         # Catch-all for other provider errors (API errors, network issues, etc.)
         error_msg = str(e)
         logger.error(f"Provider {provider_name} error during summarization: {error_msg}")
-        raise ProviderCallError(error_msg, provider_name)
+        raise ProviderCallError(error_msg, provider_name) from e
 
 
 def call_code_prompt(
@@ -326,7 +328,7 @@ def call_summary_http(messages: List[ChatMessage]) -> DecisionSummary:
     try:
         return call_summary(messages)
     except AIProviderError as e:
-        raise handle_provider_error(e)
+        raise handle_provider_error(e) from e
 
 
 def call_summary_pipeline(messages: List[ChatMessage]) -> PipelineSummary:
@@ -349,10 +351,7 @@ def call_summary_pipeline(messages: List[ChatMessage]) -> PipelineSummary:
     """
     provider, provider_name, _ = _get_active_provider()
 
-    logger.info(
-        f"Starting summary pipeline with provider: {provider_name}, "
-        f"messages: {len(messages)}"
-    )
+    logger.info(f"Starting summary pipeline with provider: {provider_name}, messages: {len(messages)}")
 
     try:
         summary = run_summary_pipeline(messages, provider)
@@ -366,13 +365,13 @@ def call_summary_pipeline(messages: List[ChatMessage]) -> PipelineSummary:
         # ValueError is raised when JSON parsing fails in the pipeline
         error_msg = str(e)
         logger.error(f"JSON parsing error in pipeline from {provider_name}: {error_msg}")
-        raise JSONParseError(error_msg, provider_name)
+        raise JSONParseError(error_msg, provider_name) from e
 
     except Exception as e:
         # Catch-all for other errors
         error_msg = str(e)
         logger.error(f"Provider {provider_name} error during pipeline: {error_msg}")
-        raise ProviderCallError(error_msg, provider_name)
+        raise ProviderCallError(error_msg, provider_name) from e
 
 
 def call_summary_pipeline_http(messages: List[ChatMessage]) -> PipelineSummary:
@@ -393,7 +392,7 @@ def call_summary_pipeline_http(messages: List[ChatMessage]) -> PipelineSummary:
     try:
         return call_summary_pipeline(messages)
     except AIProviderError as e:
-        raise handle_provider_error(e)
+        raise handle_provider_error(e) from e
 
 
 def pipeline_summary_to_decision_summary(pipeline_summary: PipelineSummary) -> DecisionSummary:
@@ -454,9 +453,7 @@ def filter_code_relevant_summaries(
         else:
             logger.debug(f"Excluding summary of type '{disc_type}' - not in code_relevant_types")
 
-    logger.info(
-        f"Filtered {len(summaries)} summaries to {len(filtered)} code-relevant summaries"
-    )
+    logger.info(f"Filtered {len(summaries)} summaries to {len(filtered)} code-relevant summaries")
     return filtered
 
 
@@ -491,8 +488,7 @@ def call_selective_code_prompt(
         Tuple of (code_prompt_str, filtered_types_used)
     """
     logger.info(
-        f"Generating selective code prompt with {len(summaries)} summaries, "
-        f"code_relevant_types={code_relevant_types}"
+        f"Generating selective code prompt with {len(summaries)} summaries, code_relevant_types={code_relevant_types}"
     )
 
     # Filter to only code-relevant summaries
@@ -500,16 +496,15 @@ def call_selective_code_prompt(
 
     if not filtered_summaries:
         logger.warning("No code-relevant summaries after filtering")
-        return (
-            "No code-relevant discussion summaries available for code generation.",
-            []
-        )
+        return ("No code-relevant discussion summaries available for code generation.", [])
 
     # Track which types were actually used
-    types_used = list(set(
-        s.discussion_type if hasattr(s, "discussion_type") else s.get("discussion_type", "")
-        for s in filtered_summaries
-    ))
+    types_used = list(
+        set(
+            s.discussion_type if hasattr(s, "discussion_type") else s.get("discussion_type", "")
+            for s in filtered_summaries
+        )
+    )
 
     output_mode = _get_output_mode()
 
@@ -524,10 +519,7 @@ def call_selective_code_prompt(
         output_mode=output_mode,
     )
 
-    logger.info(
-        f"Generated selective code prompt with {len(code_prompt)} characters, "
-        f"using types: {types_used}"
-    )
+    logger.info(f"Generated selective code prompt with {len(code_prompt)} characters, using types: {types_used}")
 
     return code_prompt, types_used
 
@@ -540,6 +532,7 @@ def _get_output_mode() -> str:
     """
     try:
         from app.config import get_config
+
         return get_config().prompt.output_mode
     except Exception:
         return "unified_diff"
@@ -605,8 +598,7 @@ def _load_style_guidelines(
                     logger.debug(f"Skipping unknown/missing language style: {lang_str}")
 
             logger.info(
-                f"Loaded style guidelines for detected languages: {loaded_languages} "
-                f"(requested: {detected_languages})"
+                f"Loaded style guidelines for detected languages: {loaded_languages} (requested: {detected_languages})"
             )
 
             if len(parts) > 1:

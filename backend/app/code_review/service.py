@@ -13,6 +13,7 @@ Implements the full review pipeline:
   10. Synthesis pass — strong model produces the final polished review
   11. Return structured ReviewResult
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -23,42 +24,53 @@ import time
 from typing import Dict, List, Optional
 
 from app.ai_provider.base import AIProvider
+from app.workflow.observability import observe
 
 from .agents import AGENT_SPECS, AgentSpec, run_review_agent
 from .dedup import dedup_findings
 from .diff_parser import parse_diff
-from .models import FindingCategory, PRContext, ReviewFinding, ReviewResult, RiskProfile, Severity
+from .models import PRContext, ReviewFinding, ReviewResult, RiskProfile, Severity
 from .ranking import score_and_rank
 from .risk_classifier import classify_risk
 from .shared import (
-    MIN_CONFIDENCE as _MIN_CONFIDENCE,
-    DIFF_HEADER_RE as _DIFF_HEADER_RE,
     build_impact_context as _build_impact_context,
+)
+from .shared import (
     build_summary as _build_summary,
+)
+from .shared import (
     compute_budget_multiplier as _compute_budget_multiplier,
+)
+from .shared import (
     extract_relevant_diff as _extract_relevant_diff,
+)
+from .shared import (
     is_multi_source as _is_multi_source,
+)
+from .shared import (
     merge_recommendation as _merge_recommendation,
+)
+from .shared import (
     post_filter as _post_filter,
+)
+from .shared import (
     prefetch_diffs as _prefetch_diffs,
+)
+from .shared import (
     should_reject_pr as _should_reject_pr,
 )
-from app.workflow.observability import observe
 
 # Workflow engine (optional — used when workflow_config is provided)
 try:
-    from app.workflow.loader import load_workflow
-    from app.workflow.classifier_engine import ClassifierEngine
-    from app.workflow.engine import WorkflowEngine
+    from app.workflow.classifier_engine import ClassifierEngine  # noqa: F401
+    from app.workflow.engine import WorkflowEngine  # noqa: F401
+    from app.workflow.loader import load_workflow  # noqa: F401
+
     _WORKFLOW_AVAILABLE = True
 except ImportError:
     _WORKFLOW_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +185,9 @@ async def _arbitrate_severities(
         # Build line-aware diff snippets for context
         if f.file and f.file in file_diffs:
             snippet = _extract_relevant_diff(
-                file_diffs[f.file], f.start_line, window=80,
+                file_diffs[f.file],
+                f.start_line,
+                window=80,
             )
             if snippet:
                 label = f.file if f.file not in seen_files else f"{f.file} (near line {f.start_line})"
@@ -228,7 +242,8 @@ async def _arbitrate_severities(
                     # Multi-source protection: cannot drop, downgrade to warning instead
                     logger.info(
                         "Arbitration: BLOCKED drop of multi-source '%s' (agents: %s) — keeping as warning",
-                        findings[idx].title, findings[idx].agent,
+                        findings[idx].title,
+                        findings[idx].agent,
                     )
                     old_sev = findings[idx].severity
                     if old_sev != Severity.WARNING:
@@ -239,7 +254,9 @@ async def _arbitrate_severities(
                         changes += 1
                 else:
                     logger.info(
-                        "Arbitration: DROPPED '%s' — %s", findings[idx].title, reason[:100],
+                        "Arbitration: DROPPED '%s' — %s",
+                        findings[idx].title,
+                        reason[:100],
                     )
                     dropped_indices.add(idx)
                 continue
@@ -252,7 +269,10 @@ async def _arbitrate_severities(
             if new_sev != old_sev:
                 logger.info(
                     "Severity arbitration: '%s' %s → %s (reason: %s)",
-                    findings[idx].title, old_sev.value, new_sev.value, reason,
+                    findings[idx].title,
+                    old_sev.value,
+                    new_sev.value,
+                    reason,
                 )
                 findings[idx].severity = new_sev
                 findings[idx].evidence.append(
@@ -265,7 +285,9 @@ async def _arbitrate_severities(
 
         logger.info(
             "Severity arbitration: %d adjustment(s), %d dropped out of %d findings",
-            changes, len(dropped_indices), len(findings),
+            changes,
+            len(dropped_indices),
+            len(findings),
         )
         return result
 
@@ -277,8 +299,6 @@ async def _arbitrate_severities(
 # ---------------------------------------------------------------------------
 # Dynamic budget calculation
 # ---------------------------------------------------------------------------
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +366,8 @@ class CodeReviewService:
         pr_context = parse_diff(workspace_path, diff_spec)
         logger.info(
             "PR parsed: %d files, %d lines changed",
-            pr_context.file_count, pr_context.total_changed_lines,
+            pr_context.file_count,
+            pr_context.total_changed_lines,
         )
 
         if pr_context.file_count == 0:
@@ -369,8 +390,7 @@ class CodeReviewService:
         # Step 2: Classify risk
         risk_profile = classify_risk(pr_context)
         logger.info(
-            "Risk profile: correctness=%s, concurrency=%s, security=%s, "
-            "reliability=%s, operational=%s",
+            "Risk profile: correctness=%s, concurrency=%s, security=%s, reliability=%s, operational=%s",
             risk_profile.correctness.value,
             risk_profile.concurrency.value,
             risk_profile.security.value,
@@ -385,7 +405,8 @@ class CodeReviewService:
         budget_multiplier = _compute_budget_multiplier(pr_context)
         logger.info(
             "Budget multiplier: %.1fx (PR has %d lines)",
-            budget_multiplier, pr_context.total_changed_lines,
+            budget_multiplier,
+            pr_context.total_changed_lines,
         )
 
         # Step 3b: Impact graph — pre-compute callers/dependents
@@ -434,8 +455,7 @@ class CodeReviewService:
         # keep TPM low and latency fast.
         logger.info(
             "Sub-agent model: %s",
-            getattr(self._sub_agent_provider, "model_id",
-                    getattr(self._sub_agent_provider, "model", "?")),
+            getattr(self._sub_agent_provider, "model_id", getattr(self._sub_agent_provider, "model", "?")),
         )
         agent_tasks = [
             run_review_agent(
@@ -476,7 +496,9 @@ class CodeReviewService:
         _MAX_FINDINGS = 10
         if len(ranked) > _MAX_FINDINGS:
             logger.info(
-                "Capping findings from %d to %d", len(ranked), _MAX_FINDINGS,
+                "Capping findings from %d to %d",
+                len(ranked),
+                _MAX_FINDINGS,
             )
             ranked = ranked[:_MAX_FINDINGS]
 
@@ -646,21 +668,22 @@ preliminary_recommendation: {merge_rec}
 </pr_context>
 
 <file_list>
-{chr(10).join(f'- {f.path} (+{f.additions}/-{f.deletions}, {f.category.value})' for f in pr_context.files[:30])}
+{chr(10).join(f"- {f.path} (+{f.additions}/-{f.deletions}, {f.category.value})" for f in pr_context.files[:30])}
 </file_list>
 
 <findings count="{len(findings)}">
-{chr(10).join(findings_text) if findings_text else 'No issues found by any agent.'}
+{chr(10).join(findings_text) if findings_text else "No issues found by any agent."}
 </findings>
 
 <diffs>
-{chr(10).join(diff_snippets) if diff_snippets else 'No diff snippets available.'}
+{chr(10).join(diff_snippets) if diff_snippets else "No diff snippets available."}
 </diffs>
 """
 
     logger.info(
         "Synthesis: calling strong model with %d findings, prompt ~%d chars",
-        len(findings), len(prompt),
+        len(findings),
+        len(prompt),
     )
 
     try:
@@ -679,5 +702,3 @@ preliminary_recommendation: {merge_rec}
     except Exception as exc:
         logger.warning("Synthesis failed, falling back to structured summary: %s", exc)
         return ""
-
-

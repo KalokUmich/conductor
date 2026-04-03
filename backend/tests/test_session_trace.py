@@ -1,11 +1,10 @@
 """Tests for the SessionTrace module and TraceWriter backends."""
+
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 from app.agent_loop.trace import (
     IterationTrace,
@@ -73,17 +72,25 @@ class TestSessionTrace:
     def test_finish_sets_end_time_and_totals(self):
         st = SessionTrace(session_id="test123")
         st.begin()
-        st.add_iteration(IterationTrace(
-            iteration=1, input_tokens=1000, output_tokens=200,
-            tool_calls=[ToolCallTrace(tool_name="grep")],
-        ))
-        st.add_iteration(IterationTrace(
-            iteration=2, input_tokens=2000, output_tokens=300,
-            tool_calls=[
-                ToolCallTrace(tool_name="read_file"),
-                ToolCallTrace(tool_name="find_symbol"),
-            ],
-        ))
+        st.add_iteration(
+            IterationTrace(
+                iteration=1,
+                input_tokens=1000,
+                output_tokens=200,
+                tool_calls=[ToolCallTrace(tool_name="grep")],
+            )
+        )
+        st.add_iteration(
+            IterationTrace(
+                iteration=2,
+                input_tokens=2000,
+                output_tokens=300,
+                tool_calls=[
+                    ToolCallTrace(tool_name="read_file"),
+                    ToolCallTrace(tool_name="find_symbol"),
+                ],
+            )
+        )
         st.finish(answer="The answer is 42.", budget_summary={"total_tokens": 3500})
         assert st.end_time > st.start_time
         assert st.total_input_tokens == 3000
@@ -178,10 +185,14 @@ class TestTraceWriterDatabase:
     def _make_trace(self, session_id="db_trace001"):
         st = SessionTrace(session_id=session_id, query="how does auth work?")
         st.begin()
-        st.add_iteration(IterationTrace(
-            iteration=1, input_tokens=5000, output_tokens=200,
-            tool_calls=[ToolCallTrace(tool_name="grep", latency_ms=15.0)],
-        ))
+        st.add_iteration(
+            IterationTrace(
+                iteration=1,
+                input_tokens=5000,
+                output_tokens=200,
+                tool_calls=[ToolCallTrace(tool_name="grep", latency_ms=15.0)],
+            )
+        )
         st.finish(answer="Auth uses JWT tokens.", budget_summary={"total": 5200})
         return st
 
@@ -193,16 +204,15 @@ class TestTraceWriterDatabase:
         assert await writer.save_async(trace) is True
 
         # Verify by querying with SQLAlchemy
-        from sqlalchemy import select, text
+        from sqlalchemy import select
         from sqlalchemy.ext.asyncio import async_sessionmaker
+
         from app.db.models import SessionTraceRecord
 
         session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
         async with session_factory() as session:
             result = await session.execute(
-                select(SessionTraceRecord).where(
-                    SessionTraceRecord.session_id == "db_trace001"
-                )
+                select(SessionTraceRecord).where(SessionTraceRecord.session_id == "db_trace001")
             )
             row = result.scalar_one_or_none()
             assert row is not None
@@ -217,15 +227,14 @@ class TestTraceWriterDatabase:
         for sid in ("sess1", "sess2", "sess3"):
             await writer.save_async(self._make_trace(sid))
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         from sqlalchemy.ext.asyncio import async_sessionmaker
+
         from app.db.models import SessionTraceRecord
 
         session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
         async with session_factory() as session:
-            result = await session.execute(
-                select(func.count()).select_from(SessionTraceRecord)
-            )
+            result = await session.execute(select(func.count()).select_from(SessionTraceRecord))
             assert result.scalar() == 3
 
     @pytest.mark.asyncio
@@ -234,16 +243,15 @@ class TestTraceWriterDatabase:
         await writer.save_async(self._make_trace("dup001"))
         await writer.save_async(self._make_trace("dup001"))
 
-        from sqlalchemy import select, func
+        from sqlalchemy import func, select
         from sqlalchemy.ext.asyncio import async_sessionmaker
+
         from app.db.models import SessionTraceRecord
 
         session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
         async with session_factory() as session:
             result = await session.execute(
-                select(func.count()).select_from(SessionTraceRecord).where(
-                    SessionTraceRecord.session_id == "dup001"
-                )
+                select(func.count()).select_from(SessionTraceRecord).where(SessionTraceRecord.session_id == "dup001")
             )
             assert result.scalar() == 1
 
@@ -265,14 +273,13 @@ class TestTraceWriterDatabase:
 
         from sqlalchemy import select
         from sqlalchemy.ext.asyncio import async_sessionmaker
+
         from app.db.models import SessionTraceRecord
 
         session_factory = async_sessionmaker(db_engine, expire_on_commit=False)
         async with session_factory() as session:
             result = await session.execute(
-                select(SessionTraceRecord).order_by(
-                    SessionTraceRecord.total_input_tokens.desc()
-                ).limit(1)
+                select(SessionTraceRecord).order_by(SessionTraceRecord.total_input_tokens.desc()).limit(1)
             )
             row = result.scalar_one()
             assert row.session_id == "q2"

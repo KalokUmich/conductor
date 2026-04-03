@@ -3,7 +3,7 @@
 import json
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict
 
 REPO_ROOT = Path(__file__).parent.parent.parent.resolve()
 EXTENSION_DIR = REPO_ROOT / "extension"
@@ -16,7 +16,9 @@ def run_ts_tool(tool: str, params: dict) -> Dict[str, Any]:
     """Run a tool through the TS runner and return parsed JSON."""
     result = subprocess.run(
         ["node", str(TS_RUNNER), tool, WS, json.dumps(params)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         cwd=str(EXTENSION_DIR),
     )
     if result.returncode != 0:
@@ -33,10 +35,7 @@ def assert_same_names(py_data, ts_data, label=""):
     """Assert both sides return the same set of symbol names."""
     py_names = {d["name"] for d in py_data}
     ts_names = {d["name"] for d in ts_data}
-    assert py_names == ts_names, (
-        f"{label}: names differ. "
-        f"py_only={py_names - ts_names}, ts_only={ts_names - py_names}"
-    )
+    assert py_names == ts_names, f"{label}: names differ. py_only={py_names - ts_names}, ts_only={ts_names - py_names}"
 
 
 def assert_names_subset(py_data, ts_data, label=""):
@@ -49,9 +48,7 @@ def assert_names_subset(py_data, ts_data, label=""):
     py_names = {d["name"] for d in py_data}
     ts_names = {d["name"] for d in ts_data}
     missing = py_names - ts_names
-    assert not missing, (
-        f"{label}: TS missing symbols that Python found: {missing}"
-    )
+    assert not missing, f"{label}: TS missing symbols that Python found: {missing}"
 
 
 def assert_same_fields(py_item: dict, ts_item: dict, required_fields: list, label=""):

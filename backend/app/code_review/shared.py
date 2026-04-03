@@ -4,6 +4,7 @@ Extracted from service.py and agents.py so that the legacy pipeline and the
 new Brain-based pipeline can reuse the same deterministic logic without
 duplication.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -188,7 +189,7 @@ def build_impact_context(
         empty string if no dependency data is available.
     """
     try:
-        from app.code_tools.tools import get_dependents, get_dependencies
+        from app.code_tools.tools import get_dependencies, get_dependents
     except ImportError:
         logger.warning("Impact graph unavailable: cannot import code_tools")
         return ""
@@ -208,18 +209,12 @@ def build_impact_context(
 
         if dependents_result.success and dependents_result.data:
             callers = dependents_result.data[:5]  # top 5 by weight
-            caller_strs = [
-                f"  ← {d['file_path']} (refs: {', '.join(d.get('symbols', [])[:3])})"
-                for d in callers
-            ]
+            caller_strs = [f"  ← {d['file_path']} (refs: {', '.join(d.get('symbols', [])[:3])})" for d in callers]
             dep_lines.extend(caller_strs)
 
         if dependencies_result.success and dependencies_result.data:
             deps = dependencies_result.data[:5]
-            dep_strs = [
-                f"  → {d['file_path']} (uses: {', '.join(d.get('symbols', [])[:3])})"
-                for d in deps
-            ]
+            dep_strs = [f"  → {d['file_path']} (uses: {', '.join(d.get('symbols', [])[:3])})" for d in deps]
             dep_lines.extend(dep_strs)
 
         if dep_lines:
@@ -230,10 +225,7 @@ def build_impact_context(
         return ""
 
     logger.info("Impact graph: computed dependencies for %d/%d files", files_processed, len(biz_files))
-    return (
-        "## Impact Graph — callers (←) and dependencies (→) of changed files\n\n"
-        + "\n\n".join(sections)
-    )
+    return "## Impact Graph — callers (←) and dependencies (→) of changed files\n\n" + "\n\n".join(sections)
 
 
 def extract_relevant_diff(full_diff: str, start_line: int, window: int = 80) -> str:
@@ -332,10 +324,7 @@ def should_reject_pr(
             f"across {pr_context.file_count} files, which is too large for an "
             f"effective review. Please split it into smaller PRs (ideally < 500 "
             f"lines each).\n\nChanged files:\n"
-            + "\n".join(
-                f"- `{f.path}` (+{f.additions}/-{f.deletions})"
-                for f in pr_context.files[:30]
-            )
+            + "\n".join(f"- `{f.path}` (+{f.additions}/-{f.deletions})" for f in pr_context.files[:30])
         )
     return None
 
@@ -483,13 +472,13 @@ def build_summary(
 
     lines = [
         f"## Code Review: {pr_context.diff_spec}",
-        f"",
+        "",
         f"**{pr_context.file_count} files** | "
         f"**+{pr_context.total_additions}/-{pr_context.total_deletions} lines** | "
         f"Risk: {risk_profile.max_risk().value}",
-        f"",
+        "",
         f"### Recommendation: {rec_emoji.get(merge_rec, merge_rec)}",
-        f"",
+        "",
     ]
 
     if critical + warnings + nits == 0:
@@ -540,14 +529,14 @@ def build_diffs_section(
             continue
 
         if len(diff_text) > MAX_FILE_DIFF_CHARS:
-            diff_text = diff_text[:MAX_FILE_DIFF_CHARS] + \
-                f"\n... (truncated, {len(file_diffs[f.path]):,} chars total — use read_file for full content)"
+            diff_text = (
+                diff_text[:MAX_FILE_DIFF_CHARS]
+                + f"\n... (truncated, {len(file_diffs[f.path]):,} chars total — use read_file for full content)"
+            )
 
         if total_chars + len(diff_text) > MAX_TOTAL_DIFF_CHARS:
             remaining = len(files) - len(sections)
-            sections.append(
-                f"\n... ({remaining} more file(s) omitted — use git_diff to view)"
-            )
+            sections.append(f"\n... ({remaining} more file(s) omitted — use git_diff to view)")
             break
 
         sections.append(f"### `{f.path}`\n```diff\n{diff_text}\n```")
@@ -673,7 +662,8 @@ def parse_findings(
     if findings:
         logger.info(
             "Parsed %d findings from %s agent via individual JSON objects",
-            len(findings), agent_name,
+            len(findings),
+            agent_name,
         )
 
     if not findings and warn_on_empty:
@@ -709,15 +699,14 @@ async def repair_output(
         loop = asyncio.get_event_loop()
         repaired = await loop.run_in_executor(
             None,
-            lambda: provider.call_model(
-                prompt=prompt, max_tokens=2048, assistant_prefix="["
-            ),
+            lambda: provider.call_model(prompt=prompt, max_tokens=2048, assistant_prefix="["),
         )
         findings = parse_findings(repaired, agent_name, category, warn_on_empty=False)
         if findings:
             logger.info(
                 "Repair loop recovered %d findings for %s agent",
-                len(findings), agent_name,
+                len(findings),
+                agent_name,
             )
         return findings
     except Exception as exc:
@@ -756,9 +745,7 @@ def evidence_gate(findings: List[ReviewFinding], tool_calls_made: int = 0) -> Li
         reasons: List[str] = []
 
         if len(f.evidence) < CRITICAL_MIN_EVIDENCE:
-            reasons.append(
-                f"only {len(f.evidence)} evidence items (need {CRITICAL_MIN_EVIDENCE})"
-            )
+            reasons.append(f"only {len(f.evidence)} evidence items (need {CRITICAL_MIN_EVIDENCE})")
         if CRITICAL_REQUIRE_FILE and not f.file:
             reasons.append("no file reference")
         if CRITICAL_REQUIRE_LINE and f.start_line == 0:
@@ -769,7 +756,8 @@ def evidence_gate(findings: List[ReviewFinding], tool_calls_made: int = 0) -> Li
         if reasons:
             logger.info(
                 "Evidence gate: downgrading '%s' from critical → warning (%s)",
-                f.title, "; ".join(reasons),
+                f.title,
+                "; ".join(reasons),
             )
             f.severity = Severity.WARNING
             f.evidence.append(f"[auto-downgraded: {'; '.join(reasons)}]")

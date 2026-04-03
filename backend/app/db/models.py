@@ -10,9 +10,10 @@ Tables:
   * chat_rooms — chat room lifecycle metadata
   * chat_messages — durable message archive
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -32,24 +33,25 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 class Base(DeclarativeBase):
     """Shared base for all ORM models."""
+
     pass
 
 
 class RepoToken(Base):
     """Cached PAT for a git repository URL."""
+
     __tablename__ = "repo_tokens"
 
     repo_url: Mapped[str] = mapped_column(String, primary_key=True)
     token: Mapped[str] = mapped_column(Text, nullable=False)
     username: Mapped[str | None] = mapped_column(String, nullable=True)
-    cached_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    cached_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SessionTraceRecord(Base):
     """Persisted session trace for offline analysis."""
+
     __tablename__ = "session_traces"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -64,13 +66,12 @@ class SessionTraceRecord(Base):
     final_answer_chars: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     trace_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class AuditLog(Base):
     """Audit trail for changeset apply operations."""
+
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -79,13 +80,12 @@ class AuditLog(Base):
     changeset_hash: Mapped[str] = mapped_column(String, nullable=False)
     applied_by: Mapped[str] = mapped_column(String, nullable=False)
     mode: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class FileMetadataRecord(Base):
     """Metadata for uploaded files."""
+
     __tablename__ = "file_metadata"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -97,13 +97,12 @@ class FileMetadataRecord(Base):
     file_type: Mapped[str] = mapped_column(String, nullable=False)
     mime_type: Mapped[str] = mapped_column(String, nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    uploaded_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class Todo(Base):
     """Room-scoped task/TODO item."""
+
     __tablename__ = "todos"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -117,15 +116,14 @@ class Todo(Base):
     line_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[str] = mapped_column(String, nullable=False, default="")
     assignee: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     source: Mapped[str] = mapped_column(String, nullable=False, default="manual")
     source_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class IntegrationToken(Base):
     """OAuth tokens for external integrations (Jira, Teams, Slack, etc.)."""
+
     __tablename__ = "integration_tokens"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -138,20 +136,17 @@ class IntegrationToken(Base):
     site_url: Mapped[str] = mapped_column(String, nullable=False, default="")
     scope: Mapped[str] = mapped_column(String, nullable=False, default="")
     metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint("user_email", "provider", name="uq_integration_user_provider"),
-    )
+    __table_args__ = (UniqueConstraint("user_email", "provider", name="uq_integration_user_provider"),)
 
 
 class ChatRoom(Base):
     """Chat room lifecycle and identity."""
+
     __tablename__ = "chat_rooms"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -164,22 +159,21 @@ class ChatRoom(Base):
     repo_url: Mapped[str | None] = mapped_column(String, nullable=True)
     branch: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
-    last_active_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    last_active_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ChatRoomParticipant(Base):
     """Tracks who participated in a room."""
+
     __tablename__ = "chat_room_participants"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     room_id: Mapped[str] = mapped_column(
-        String, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False,
+        String,
+        ForeignKey("chat_rooms.id", ondelete="CASCADE"),
+        nullable=False,
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -187,9 +181,7 @@ class ChatRoomParticipant(Base):
     identity_source: Mapped[str] = mapped_column(String, nullable=False, default="anonymous")
     email: Mapped[str | None] = mapped_column(String, nullable=True)
     provider: Mapped[str | None] = mapped_column(String, nullable=True)
-    joined_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     left_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -202,11 +194,14 @@ class ChatRoomParticipant(Base):
 
 class ChatMessageRecord(Base):
     """Durable chat message archive."""
+
     __tablename__ = "chat_messages"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     room_id: Mapped[str] = mapped_column(
-        String, ForeignKey("chat_rooms.id", ondelete="CASCADE"), nullable=False,
+        String,
+        ForeignKey("chat_rooms.id", ondelete="CASCADE"),
+        nullable=False,
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str] = mapped_column(String, nullable=False, default="")
@@ -218,10 +213,6 @@ class ChatMessageRecord(Base):
     ai_data: Mapped[str | None] = mapped_column(Text, nullable=True)
     extra_data: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
     ts: Mapped[float] = mapped_column(Float, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
-    __table_args__ = (
-        Index("ix_chat_msg_room_ts", "room_id", "ts"),
-    )
+    __table_args__ = (Index("ix_chat_msg_room_ts", "room_id", "ts"),)

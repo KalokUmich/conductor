@@ -11,12 +11,12 @@ Usage:
     wf = load_workflow("workflows/pr_review.yaml")
     print(generate_mermaid(wf))
 """
+
 from __future__ import annotations
 
 from typing import List, Optional, Set
 
 from .models import AgentConfig, RouteConfig, WorkflowConfig
-
 
 # ---------------------------------------------------------------------------
 # Style constants
@@ -79,9 +79,7 @@ def _trigger_label(agent: AgentConfig, route_name: str) -> str:
     return f'"{route_name}"'
 
 
-def _resolve_agent(
-    wf: WorkflowConfig, agent_path: str
-) -> Optional[AgentConfig]:
+def _resolve_agent(wf: WorkflowConfig, agent_path: str) -> Optional[AgentConfig]:
     """Look up an agent from the workflow's resolved_agents dict."""
     return wf.resolved_agents.get(agent_path)
 
@@ -113,9 +111,7 @@ def _generate_parallel_all_matching(wf: WorkflowConfig) -> str:
     for route_name, route in shown_routes:
         if route.delegate:
             node_id = _sanitize_id(route_name)
-            lines.append(
-                f'    CLASSIFY -->|"{route_name}"| {node_id}["{route_name}\\ndelegate"]'
-            )
+            lines.append(f'    CLASSIFY -->|"{route_name}"| {node_id}["{route_name}\\ndelegate"]')
             route_node_ids.append(node_id)
             continue
 
@@ -148,20 +144,14 @@ def _generate_parallel_all_matching(wf: WorkflowConfig) -> str:
                 label = "\\n".join(label_parts)
 
                 edge_label = _trigger_label(agent, route_name)
-                lines.append(
-                    f'    CLASSIFY -->|{edge_label}| {node_id}["{label}"]'
-                )
+                lines.append(f'    CLASSIFY -->|{edge_label}| {node_id}["{label}"]')
                 stage_node_ids.append(node_id)
-                style_lines.append(
-                    f"    style {node_id} {_STYLE_EXPLORER}"
-                )
+                style_lines.append(f"    style {node_id} {_STYLE_EXPLORER}")
 
         route_node_ids.extend(stage_node_ids)
 
     if has_overflow:
-        lines.append(
-            '    CLASSIFY -->|"..."| OTHER["...other routes"]'
-        )
+        lines.append('    CLASSIFY -->|"..."| OTHER["...other routes"]')
         route_node_ids.append("OTHER")
 
     # Merge point before post_pipeline
@@ -203,9 +193,7 @@ def _has_multi_stage_pipeline(route: RouteConfig) -> bool:
     """Check if a route has a multi-stage pipeline (needs a subgraph)."""
     if route.delegate:
         return False
-    return len(route.pipeline) > 1 or any(
-        len(s.agents) > 1 for s in route.pipeline
-    )
+    return len(route.pipeline) > 1 or any(len(s.agents) > 1 for s in route.pipeline)
 
 
 def _generate_first_match(wf: WorkflowConfig) -> str:
@@ -232,9 +220,7 @@ def _generate_first_match(wf: WorkflowConfig) -> str:
 
         if route.delegate:
             node_id = f"delegate_{route_id}"
-            lines.append(
-                f'    CLASSIFY -->|"{edge_label}"| {node_id}["{route_name}\\ndelegate"]'
-            )
+            lines.append(f'    CLASSIFY -->|"{edge_label}"| {node_id}["{route_name}\\ndelegate"]')
             terminal_ids.append(node_id)
             continue
 
@@ -242,9 +228,7 @@ def _generate_first_match(wf: WorkflowConfig) -> str:
             # Multi-stage pipeline: use a subgraph
             group_id = f"{route_id}_GROUP"
             group_label = route_name
-            lines.append(
-                f'    CLASSIFY -->|"{edge_label}"| {group_id}'
-            )
+            lines.append(f'    CLASSIFY -->|"{edge_label}"| {group_id}')
             lines.append(f'    subgraph {group_id}["{group_label}"]')
 
             # Render stages within the subgraph
@@ -265,21 +249,15 @@ def _generate_first_match(wf: WorkflowConfig) -> str:
                     current_stage_ids.append(node_id)
 
                     if agent.type == "explorer":
-                        style_lines.append(
-                            f"    style {node_id} {_STYLE_EXPLORER}"
-                        )
+                        style_lines.append(f"    style {node_id} {_STYLE_EXPLORER}")
                     else:
-                        style_lines.append(
-                            f"    style {node_id} {_STYLE_JUDGE}"
-                        )
+                        style_lines.append(f"    style {node_id} {_STYLE_JUDGE}")
 
                 # Connect previous stage to current stage
                 if prev_stage_ids:
                     for prev_id in prev_stage_ids:
                         for curr_id in current_stage_ids:
-                            lines.append(
-                                f"        {prev_id} --> {curr_id}"
-                            )
+                            lines.append(f"        {prev_id} --> {curr_id}")
 
                 prev_stage_ids = current_stage_ids
 
@@ -300,24 +278,16 @@ def _generate_first_match(wf: WorkflowConfig) -> str:
             seen_node_ids.add(node_id)
 
             label = _agent_label(agent)
-            lines.append(
-                f'    CLASSIFY -->|"{edge_label}"| {node_id}["{label}"]'
-            )
+            lines.append(f'    CLASSIFY -->|"{edge_label}"| {node_id}["{label}"]')
             terminal_ids.append(node_id)
 
             if agent.type == "explorer":
-                style_lines.append(
-                    f"    style {node_id} {_STYLE_EXPLORER}"
-                )
+                style_lines.append(f"    style {node_id} {_STYLE_EXPLORER}")
             else:
-                style_lines.append(
-                    f"    style {node_id} {_STYLE_JUDGE}"
-                )
+                style_lines.append(f"    style {node_id} {_STYLE_JUDGE}")
 
     if has_overflow:
-        lines.append(
-            '    CLASSIFY -->|"..."| OTHER["...other routes"]'
-        )
+        lines.append('    CLASSIFY -->|"..."| OTHER["...other routes"]')
         terminal_ids.append("OTHER")
 
     # All routes converge to the answer

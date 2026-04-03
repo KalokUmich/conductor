@@ -22,6 +22,7 @@ Future Enhancements:
     - Per-project policy overrides
     - ML-based risk assessment
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -50,11 +51,12 @@ FORBIDDEN_PATHS: Tuple[str, ...] = ("infra/", "db/", "security/")
 @dataclass
 class PolicyResult:
     """Result of a policy evaluation.
-    
+
     Attributes:
         allowed: Whether the auto-apply is allowed
         reasons: List of reasons why the policy failed (empty if allowed)
     """
+
     allowed: bool
     reasons: List[str] = field(default_factory=list)
 
@@ -83,7 +85,7 @@ class AutoApplyPolicy:
         forbidden_paths: tuple = FORBIDDEN_PATHS,
     ):
         """Initialize the policy with configurable limits.
-        
+
         Args:
             max_files: Maximum number of files allowed (default: 2)
             max_lines_changed: Maximum total lines changed (default: 50)
@@ -95,10 +97,10 @@ class AutoApplyPolicy:
 
     def evaluate(self, change_set: ChangeSet) -> PolicyResult:
         """Evaluate whether a ChangeSet passes the auto-apply policy.
-        
+
         Args:
             change_set: The ChangeSet to evaluate
-            
+
         Returns:
             PolicyResult with allowed=True if all rules pass,
             or allowed=False with reasons if any rule fails.
@@ -108,38 +110,29 @@ class AutoApplyPolicy:
         # Rule 1: Check max files
         num_files = len(change_set.changes)
         if num_files > self.max_files:
-            reasons.append(
-                f"Too many files: {num_files} > {self.max_files}"
-            )
+            reasons.append(f"Too many files: {num_files} > {self.max_files}")
 
         # Rule 2: Check max lines changed
         total_lines = self._count_lines_changed(change_set)
         if total_lines > self.max_lines_changed:
-            reasons.append(
-                f"Too many lines changed: {total_lines} > {self.max_lines_changed}"
-            )
+            reasons.append(f"Too many lines changed: {total_lines} > {self.max_lines_changed}")
 
         # Rule 3: Check forbidden paths
         forbidden_files = self._find_forbidden_files(change_set)
         if forbidden_files:
-            reasons.append(
-                f"Forbidden paths: {', '.join(forbidden_files)}"
-            )
+            reasons.append(f"Forbidden paths: {', '.join(forbidden_files)}")
 
-        return PolicyResult(
-            allowed=len(reasons) == 0,
-            reasons=reasons
-        )
+        return PolicyResult(allowed=len(reasons) == 0, reasons=reasons)
 
     def _count_lines_changed(self, change_set: ChangeSet) -> int:
         """Count the total number of lines changed in a ChangeSet.
-        
+
         For replace_range: counts lines in the range (end - start + 1)
         For create_file: counts lines in the content
-        
+
         Args:
             change_set: The ChangeSet to count lines for
-            
+
         Returns:
             Total number of lines changed
         """
@@ -150,15 +143,15 @@ class AutoApplyPolicy:
                 total += change.range.end - change.range.start + 1
             elif change.type == ChangeType.CREATE_FILE and change.content:
                 # Count lines in the new file content
-                total += change.content.count('\n') + 1
+                total += change.content.count("\n") + 1
         return total
 
     def _find_forbidden_files(self, change_set: ChangeSet) -> List[str]:
         """Find files that match forbidden path prefixes.
-        
+
         Args:
             change_set: The ChangeSet to check
-            
+
         Returns:
             List of file paths that match forbidden prefixes
         """
@@ -192,6 +185,7 @@ def evaluate_auto_apply(
     """
     if config is None:
         from app.config import get_config
+
         config = get_config()
 
     limits = config.change_limits
@@ -200,4 +194,3 @@ def evaluate_auto_apply(
         max_lines_changed=limits.auto_apply.max_lines,
     )
     return policy.evaluate(change_set)
-

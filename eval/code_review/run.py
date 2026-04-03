@@ -161,11 +161,27 @@ def create_provider(provider_name: str, model: str = None):
 
     elif provider_name == "bedrock":
         from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
+        # Try environment variables first, fall back to conductor secrets yaml
+        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
+        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        session_token = os.environ.get("AWS_SESSION_TOKEN")
+        region = os.environ.get("AWS_DEFAULT_REGION", "")
+        if not access_key or not secret_key:
+            try:
+                from app.config import load_config
+                cfg = load_config()
+                bdr = cfg.ai_providers.aws_bedrock
+                access_key = access_key or bdr.access_key_id
+                secret_key = secret_key or bdr.secret_access_key
+                session_token = session_token or bdr.session_token
+                region = region or bdr.region
+            except Exception:
+                pass
         return ClaudeBedrockProvider(
-            aws_access_key_id=os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            aws_secret_access_key=os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-            aws_session_token=os.environ.get("AWS_SESSION_TOKEN"),
-            region_name=os.environ.get("AWS_DEFAULT_REGION", "us-east-1"),
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            aws_session_token=session_token,
+            region_name=region or "us-east-1",
             model_id=model or "eu.anthropic.claude-sonnet-4-6",
         )
 

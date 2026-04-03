@@ -1,7 +1,5 @@
 """Tests for the workspace_files router (conductor:// FS backend)."""
-import os
-import tempfile
-from pathlib import Path
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -51,6 +49,7 @@ def client_no_workspace():
 
 # ---- stat ----
 
+
 class TestStat:
     def test_stat_file(self, client):
         resp = client.get(f"/workspace/{ROOM}/files/src/main.py/stat")
@@ -80,6 +79,7 @@ class TestStat:
 
 # ---- readFile ----
 
+
 class TestReadFile:
     def test_read_content(self, client):
         resp = client.get(f"/workspace/{ROOM}/files/src/main.py/content")
@@ -96,6 +96,7 @@ class TestReadFile:
 
 
 # ---- readDirectory ----
+
 
 class TestReadDirectory:
     def test_list_root(self, client):
@@ -126,6 +127,7 @@ class TestReadDirectory:
 
 # ---- writeFile ----
 
+
 class TestWriteFile:
     def test_write_new_file(self, client, tmp_worktree):
         resp = client.put(
@@ -153,6 +155,7 @@ class TestWriteFile:
 
 
 # ---- rename ----
+
 
 class TestRename:
     def test_rename_file(self, client, tmp_worktree):
@@ -182,6 +185,7 @@ class TestRename:
 
 # ---- createDirectory ----
 
+
 class TestCreateDirectory:
     def test_mkdir(self, client, tmp_worktree):
         resp = client.post(
@@ -200,6 +204,7 @@ class TestCreateDirectory:
 
 
 # ---- delete ----
+
 
 class TestDelete:
     def test_delete_file(self, client, tmp_worktree):
@@ -223,6 +228,7 @@ class TestDelete:
 
 # ---- path traversal ----
 
+
 class TestPathTraversal:
     def test_traversal_blocked(self, client):
         # Starlette normalizes ../ in the URL path, so the request either
@@ -233,6 +239,7 @@ class TestPathTraversal:
 
 
 # ---- blocked roots (.vscode, .git, etc.) ----
+
 
 class TestBlockedRoots:
     def test_stat_vscode_settings_blocked(self, client):
@@ -276,6 +283,7 @@ class TestBlockedRoots:
 
 
 # ---- search ----
+
 
 class TestSearch:
     def test_search_finds_match(self, client):

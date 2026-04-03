@@ -1,4 +1,5 @@
 """Tests for compressed_view, module_summary, and expand_symbol tools."""
+
 from __future__ import annotations
 
 import textwrap
@@ -20,7 +21,8 @@ def workspace(tmp_path: Path) -> Path:
     # Python module: app/
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
-    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
+    (tmp_path / "app" / "service.py").write_text(
+        textwrap.dedent("""\
         from app.utils import helper
         import requests
 
@@ -42,33 +44,41 @@ def workspace(tmp_path: Path) -> Path:
         class NotificationService:
             def send_email(self, to: str, subject: str):
                 publish("email.send", {"to": to, "subject": subject})
-    """))
-    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "utils.py").write_text(
+        textwrap.dedent("""\
         def helper(data: str) -> str:
             return data.upper()
 
         def unused_helper():
             return 42
-    """))
-    (tmp_path / "app" / "models.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "models.py").write_text(
+        textwrap.dedent("""\
         class PaymentModel:
             pass
 
         class UserSchema:
             pass
-    """))
-    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "app" / "router.py").write_text(
+        textwrap.dedent("""\
         class PaymentController:
             def create(self):
                 pass
 
             def get(self):
                 pass
-    """))
+    """)
+    )
 
     # TypeScript module: src/
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(textwrap.dedent("""\
+    (tmp_path / "src" / "index.ts").write_text(
+        textwrap.dedent("""\
         import { greet } from './utils';
 
         function main(): void {
@@ -80,12 +90,15 @@ def workspace(tmp_path: Path) -> Path:
                 main();
             }
         }
-    """))
-    (tmp_path / "src" / "utils.ts").write_text(textwrap.dedent("""\
+    """)
+    )
+    (tmp_path / "src" / "utils.ts").write_text(
+        textwrap.dedent("""\
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
-    """))
+    """)
+    )
 
     # Excluded directory
     (tmp_path / "node_modules").mkdir()

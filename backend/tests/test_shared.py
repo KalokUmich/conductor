@@ -1,32 +1,34 @@
 """Tests for shared code review utilities in app.code_review.shared."""
+
 from __future__ import annotations
 
 import pytest
-from app.code_review.shared import (
-    parse_findings,
-    raw_to_finding,
-    evidence_gate,
-    post_filter,
-    merge_recommendation,
-    build_diffs_section,
-    compute_budget_multiplier,
-    should_reject_pr,
-    AGENT_CATEGORIES,
-    MAX_FILE_DIFF_CHARS,
-)
+
 from app.code_review.models import (
+    ChangedFile,
+    FileCategory,
     FindingCategory,
     PRContext,
-    ChangedFile,
     ReviewFinding,
     Severity,
-    FileCategory,
 )
-
+from app.code_review.shared import (
+    AGENT_CATEGORIES,
+    MAX_FILE_DIFF_CHARS,
+    build_diffs_section,
+    compute_budget_multiplier,
+    evidence_gate,
+    merge_recommendation,
+    parse_findings,
+    post_filter,
+    raw_to_finding,
+    should_reject_pr,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_finding(
     title="Bug found",
@@ -76,6 +78,7 @@ def _make_pr_context(total_changed_lines=300, file_count=3) -> PRContext:
 # parse_findings
 # ---------------------------------------------------------------------------
 
+
 class TestParseFindings:
     def test_parse_findings_json_code_block(self):
         answer = """Here are the findings:
@@ -111,7 +114,9 @@ class TestParseFindings:
         assert findings == []
 
     def test_parse_findings_no_json(self):
-        findings = parse_findings("No issues found in this PR.", "correctness", FindingCategory.CORRECTNESS, warn_on_empty=False)
+        findings = parse_findings(
+            "No issues found in this PR.", "correctness", FindingCategory.CORRECTNESS, warn_on_empty=False
+        )
         assert findings == []
 
     def test_parse_findings_invalid_json(self):
@@ -143,6 +148,7 @@ class TestParseFindings:
 # ---------------------------------------------------------------------------
 # raw_to_finding
 # ---------------------------------------------------------------------------
+
 
 class TestRawToFinding:
     def test_raw_to_finding_valid(self):
@@ -208,6 +214,7 @@ class TestRawToFinding:
 # ---------------------------------------------------------------------------
 # evidence_gate
 # ---------------------------------------------------------------------------
+
 
 class TestEvidenceGate:
     def test_evidence_gate_keeps_well_evidenced_critical(self):
@@ -296,6 +303,7 @@ class TestEvidenceGate:
 # post_filter
 # ---------------------------------------------------------------------------
 
+
 class TestPostFilter:
     def test_post_filter_drops_low_confidence(self):
         findings = [
@@ -359,6 +367,7 @@ class TestPostFilter:
 # merge_recommendation
 # ---------------------------------------------------------------------------
 
+
 class TestMergeRecommendation:
     def test_merge_recommendation_approve(self):
         # No criticals, no warnings
@@ -397,6 +406,7 @@ class TestMergeRecommendation:
 # ---------------------------------------------------------------------------
 # build_diffs_section
 # ---------------------------------------------------------------------------
+
 
 class TestBuildDiffsSection:
     def test_build_diffs_section_empty(self):
@@ -443,6 +453,7 @@ class TestBuildDiffsSection:
 # compute_budget_multiplier
 # ---------------------------------------------------------------------------
 
+
 class TestComputeBudgetMultiplier:
     def test_budget_multiplier_small_pr(self):
         ctx = _make_pr_context(total_changed_lines=200)
@@ -485,6 +496,7 @@ class TestComputeBudgetMultiplier:
 # should_reject_pr
 # ---------------------------------------------------------------------------
 
+
 class TestShouldRejectPr:
     def test_should_reject_pr_within_limit(self):
         ctx = _make_pr_context(total_changed_lines=5999)
@@ -510,6 +522,7 @@ class TestShouldRejectPr:
 # ---------------------------------------------------------------------------
 # AGENT_CATEGORIES constant
 # ---------------------------------------------------------------------------
+
 
 class TestAgentCategories:
     def test_agent_categories_has_expected_keys(self):

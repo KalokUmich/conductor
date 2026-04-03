@@ -9,10 +9,12 @@ This module defines the data models for file sharing in Conductor:
 Files are stored in room-scoped directories (uploads/{room_id}/) with UUID-based
 filenames to prevent collisions. Metadata is tracked in PostgreSQL for querying.
 """
-import uuid
+
 import time
+import uuid
 from enum import Enum
 from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -25,6 +27,7 @@ class FileType(str, Enum):
     - AUDIO: MP3, WAV, OGG, M4A, FLAC
     - OTHER: All other file types
     """
+
     IMAGE = "image"
     PDF = "pdf"
     AUDIO = "audio"
@@ -41,6 +44,7 @@ class FileMetadata(BaseModel):
     The file_type field is automatically determined from the MIME type using
     the get_file_type() function.
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique file ID")
     room_id: str = Field(..., description="Room ID this file belongs to")
     user_id: str = Field(..., description="User ID who uploaded the file")
@@ -60,6 +64,7 @@ class FileUploadResponse(BaseModel):
     the essential file information needed by the client, including the
     download URL for retrieving the file.
     """
+
     id: str = Field(..., description="File ID")
     original_filename: str = Field(..., description="Original filename")
     file_type: FileType = Field(..., description="File type category")
@@ -77,6 +82,7 @@ class FileMessage(BaseModel):
 
     The caption field allows users to add context or description to the file.
     """
+
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Message ID")
     room_id: str = Field(..., description="Room ID")
     user_id: str = Field(..., description="User ID of sender")
@@ -99,7 +105,7 @@ MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024
 ALLOWED_MIME_TYPES = {
     FileType.IMAGE: [
         "image/jpeg",
-        "image/png", 
+        "image/png",
         "image/gif",
         "image/webp",
         "image/svg+xml",
@@ -144,6 +150,3 @@ def get_file_type(mime_type: str) -> FileType:
         if mime_type in mime_types:
             return file_type
     return FileType.OTHER
-
-
-

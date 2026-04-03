@@ -9,12 +9,11 @@ This is the #1 quality gap vs. Claude Code: every Claude Code answer cites
 precise ``file:line`` evidence.  Our agent sometimes gives vague answers
 after only 1-2 tool calls.
 """
+
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Optional
-
 
 # Patterns that indicate the answer cites specific code evidence.
 # Models differ in citation style:
@@ -43,11 +42,12 @@ _CODE_BLOCK_PATTERN = re.compile(r"```[\s\S]*?```")
 @dataclass
 class EvidenceCheck:
     """Result of an evidence quality check."""
+
     passed: bool
-    file_refs: int          # count of file:line references found
-    code_blocks: int        # count of code blocks
-    tool_calls_made: int    # total tools called so far
-    guidance: str = ""      # guidance note to inject (empty if passed)
+    file_refs: int  # count of file:line references found
+    code_blocks: int  # count of code blocks
+    tool_calls_made: int  # total tools called so far
+    guidance: str = ""  # guidance note to inject (empty if passed)
 
 
 def check_evidence(
@@ -100,10 +100,7 @@ def check_evidence(
         )
 
     if files_accessed == 0:
-        problems.append(
-            "You have not accessed any files yet. Read at least one "
-            "relevant source file before answering."
-        )
+        problems.append("You have not accessed any files yet. Read at least one relevant source file before answering.")
 
     if not problems:
         return EvidenceCheck(

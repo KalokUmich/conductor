@@ -7,6 +7,7 @@ Storage backends:
   * **local** — one JSON file per session in a configurable directory
   * **database** — rows in a ``session_traces`` table via async SQLAlchemy
 """
+
 from __future__ import annotations
 
 import json
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ToolCallTrace:
     """A single tool invocation within an iteration."""
+
     tool_name: str = ""
     params: Dict[str, Any] = field(default_factory=dict)
     success: bool = True
@@ -40,6 +42,7 @@ class ToolCallTrace:
 @dataclass
 class IterationTrace:
     """One LLM turn (request + response + tool executions)."""
+
     iteration: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -53,6 +56,7 @@ class IterationTrace:
 @dataclass
 class SessionTrace:
     """Complete trace of a single agent loop run."""
+
     session_id: str = ""
     query: str = ""
     workspace_path: str = ""
@@ -121,7 +125,7 @@ class TraceWriter:
         self._engine = engine  # async SQLAlchemy engine (shared)
 
     @classmethod
-    def from_settings(cls, settings, engine=None) -> "TraceWriter":
+    def from_settings(cls, settings, engine=None) -> TraceWriter:
         """Create from a ``TraceSettings`` config object."""
         return cls(
             enabled=settings.enabled,
@@ -173,9 +177,10 @@ class TraceWriter:
     # -- Async database backend -----------------------------------------------
 
     async def _save_to_db_async(self, trace: SessionTrace) -> bool:
-        from ..db.models import SessionTraceRecord
-        from sqlalchemy import select, delete
+        from sqlalchemy import delete, select
         from sqlalchemy.ext.asyncio import async_sessionmaker
+
+        from ..db.models import SessionTraceRecord
 
         session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
         d = trace.to_dict()
@@ -184,15 +189,11 @@ class TraceWriter:
         async with session_factory() as session:
             # Upsert: delete existing then insert (works with all backends)
             existing = await session.execute(
-                select(SessionTraceRecord).where(
-                    SessionTraceRecord.session_id == trace.session_id
-                )
+                select(SessionTraceRecord).where(SessionTraceRecord.session_id == trace.session_id)
             )
             if existing.scalar_one_or_none() is not None:
                 await session.execute(
-                    delete(SessionTraceRecord).where(
-                        SessionTraceRecord.session_id == trace.session_id
-                    )
+                    delete(SessionTraceRecord).where(SessionTraceRecord.session_id == trace.session_id)
                 )
 
             row = SessionTraceRecord(

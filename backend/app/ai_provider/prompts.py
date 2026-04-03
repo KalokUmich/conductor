@@ -9,17 +9,12 @@ All prompts follow Anthropic prompt engineering best practices:
 - Output schema blocks
 - Guardrails for edge cases
 """
-from typing import List, Literal, Optional
+
+from typing import Literal
 
 # Discussion types for classification
 DiscussionType = Literal[
-    "api_design",
-    "product_flow",
-    "code_change",
-    "architecture",
-    "innovation",
-    "debugging",
-    "general"
+    "api_design", "product_flow", "code_change", "architecture", "innovation", "debugging", "general"
 ]
 
 # =============================================================================
@@ -170,7 +165,6 @@ SPECIALIZED_INSTRUCTIONS = {
 
 For requires_code_change: Set to TRUE if new endpoints need to be created or existing ones modified.
 For impact_scope: Consider how many services/clients will be affected by API changes.""",
-
     "product_flow": """Pay special attention to:
 1. User journey and interaction patterns
 2. Feature requirements and acceptance criteria
@@ -180,7 +174,6 @@ For impact_scope: Consider how many services/clients will be affected by API cha
 
 For requires_code_change: Set to TRUE if UI/UX changes or new features are needed.
 For impact_scope: Consider frontend, backend, and any data model changes.""",
-
     "code_change": """Pay special attention to:
 1. Specific files, functions, or classes mentioned
 2. Implementation approach and patterns
@@ -190,7 +183,6 @@ For impact_scope: Consider frontend, backend, and any data model changes.""",
 
 For requires_code_change: Almost always TRUE for this discussion type.
 For impact_scope: Assess based on the number of files and modules touched.""",
-
     "architecture": """Pay special attention to:
 1. System components and their interactions
 2. Data flow and storage decisions
@@ -200,7 +192,6 @@ For impact_scope: Assess based on the number of files and modules touched.""",
 
 For requires_code_change: Set to TRUE if architectural changes require implementation.
 For impact_scope: Usually "system" or "cross-system" for architecture discussions.""",
-
     "innovation": """Pay special attention to:
 1. Novel approaches or technologies being explored
 2. Proof of concept requirements
@@ -210,7 +201,6 @@ For impact_scope: Usually "system" or "cross-system" for architecture discussion
 
 For requires_code_change: Set to TRUE if prototyping or experimentation code is needed.
 For impact_scope: Consider if this is isolated experimentation or broader integration.""",
-
     "debugging": """Pay special attention to:
 1. Error messages, stack traces, or symptoms described
 2. Steps to reproduce the issue
@@ -220,7 +210,6 @@ For impact_scope: Consider if this is isolated experimentation or broader integr
 
 For requires_code_change: Set to TRUE if a fix needs to be implemented.
 For impact_scope: Assess based on whether the bug is localized or systemic.""",
-
     "general": """Extract the most relevant information:
 1. Main topic and context
 2. Key decisions or conclusions
@@ -257,14 +246,9 @@ def get_targeted_summary_prompt(messages: list, discussion_type: DiscussionType)
         Complete summary prompt string with specialized instructions.
     """
     conversation = format_conversation(messages)
-    specialized_instructions = SPECIALIZED_INSTRUCTIONS.get(
-        discussion_type,
-        SPECIALIZED_INSTRUCTIONS["general"]
-    )
+    specialized_instructions = SPECIALIZED_INSTRUCTIONS.get(discussion_type, SPECIALIZED_INSTRUCTIONS["general"])
     return _SUMMARY_BASE.format(
-        conversation=conversation,
-        discussion_type=discussion_type,
-        specialized_instructions=specialized_instructions
+        conversation=conversation, discussion_type=discussion_type, specialized_instructions=specialized_instructions
     )
 
 

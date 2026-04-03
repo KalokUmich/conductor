@@ -13,9 +13,7 @@ def test_audit_path_relative_to_project_root_when_settings_in_config_dir(tmp_pat
 
     settings_file = config_dir / "conductor.settings.yaml"
     settings_file.write_text(
-        "logging:\n"
-        "  audit_enabled: true\n"
-        "  audit_path: backend/audit_logs.db\n",
+        "logging:\n  audit_enabled: true\n  audit_path: backend/audit_logs.db\n",
         encoding="utf-8",
     )
 
@@ -27,9 +25,7 @@ def test_audit_path_relative_to_settings_dir_for_nonstandard_layout(tmp_path):
     """Relative audit_path resolves from settings file directory otherwise."""
     settings_file = tmp_path / "conductor.settings.yaml"
     settings_file.write_text(
-        "logging:\n"
-        "  audit_enabled: true\n"
-        "  audit_path: local/audit_logs.db\n",
+        "logging:\n  audit_enabled: true\n  audit_path: local/audit_logs.db\n",
         encoding="utf-8",
     )
 
@@ -42,9 +38,7 @@ def test_audit_path_absolute_remains_unchanged(tmp_path):
     absolute_path = tmp_path / "absolute" / "audit_logs.db"
     settings_file = tmp_path / "conductor.settings.yaml"
     settings_file.write_text(
-        "logging:\n"
-        "  audit_enabled: true\n"
-        f"  audit_path: {absolute_path}\n",
+        f"logging:\n  audit_enabled: true\n  audit_path: {absolute_path}\n",
         encoding="utf-8",
     )
 

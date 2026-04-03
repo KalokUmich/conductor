@@ -11,11 +11,12 @@ Usage::
     models_by_vendor = catalog.list_models()
     effective_id = catalog.get_effective_model_id("anthropic.claude-haiku-4-5-20251001-v1:0")
 """
+
 from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import boto3

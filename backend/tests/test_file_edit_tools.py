@@ -1,9 +1,9 @@
 """Unit tests for file_edit and file_write tools."""
+
 from __future__ import annotations
 
 import os
 import time
-from pathlib import Path
 
 import pytest
 
@@ -27,6 +27,7 @@ def clean_state():
 # ---------------------------------------------------------------------------
 # file_edit
 # ---------------------------------------------------------------------------
+
 
 class TestFileEdit:
     def test_basic_replacement(self, tmp_path):
@@ -150,6 +151,7 @@ class TestFileEdit:
 # file_write
 # ---------------------------------------------------------------------------
 
+
 class TestFileWrite:
     def test_create_new_file(self, tmp_path):
         result = file_write(str(tmp_path), "new.py", "print('hello')\n")
@@ -193,6 +195,7 @@ class TestFileWrite:
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
+
 
 class TestFileEditAdvanced:
     """Additional edge-case tests for file_edit."""
@@ -314,21 +317,29 @@ class TestExecuteToolDispatch:
         assert r.success is True
 
         # Now edit
-        r = execute_tool("file_edit", str(tmp_path), {
-            "path": "hello.py",
-            "old_string": "hello",
-            "new_string": "world",
-        })
+        r = execute_tool(
+            "file_edit",
+            str(tmp_path),
+            {
+                "path": "hello.py",
+                "old_string": "hello",
+                "new_string": "world",
+            },
+        )
         assert r.success is True
         assert f.read_text() == "print('world')\n"
 
     def test_file_write_via_execute_tool(self, tmp_path):
         from app.code_tools.tools import execute_tool
 
-        r = execute_tool("file_write", str(tmp_path), {
-            "path": "new_file.py",
-            "content": "# new file",
-        })
+        r = execute_tool(
+            "file_write",
+            str(tmp_path),
+            {
+                "path": "new_file.py",
+                "content": "# new file",
+            },
+        )
         assert r.success is True
         assert "new file" in (tmp_path / "new_file.py").read_text()
 
@@ -342,11 +353,15 @@ class TestExecuteToolDispatch:
         execute_tool("read_file", str(tmp_path), {"path": "track.py"})
 
         # Now edit should work (state was tracked)
-        r = execute_tool("file_edit", str(tmp_path), {
-            "path": "track.py",
-            "old_string": "tracked",
-            "new_string": "modified",
-        })
+        r = execute_tool(
+            "file_edit",
+            str(tmp_path),
+            {
+                "path": "track.py",
+                "old_string": "tracked",
+                "new_string": "modified",
+            },
+        )
         assert r.success is True
 
 

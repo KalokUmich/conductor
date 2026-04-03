@@ -6,6 +6,7 @@ Usage:
 
 Exit codes: 0 on success, 1 on error (JSON still written to stdout).
 """
+
 import json
 import logging
 import sys
@@ -19,7 +20,13 @@ def main() -> None:
 
     if not args:
         print(  # CLI output: intentional print — stdout is parsed as JSON by the TS extension
-            json.dumps({"tool_name": "", "success": False, "error": "Usage: python -m app.code_tools <tool_name> <workspace> '[json_params]'"}),
+            json.dumps(
+                {
+                    "tool_name": "",
+                    "success": False,
+                    "error": "Usage: python -m app.code_tools <tool_name> <workspace> '[json_params]'",
+                }
+            ),
             flush=True,
         )
         sys.exit(1)

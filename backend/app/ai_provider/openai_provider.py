@@ -8,6 +8,7 @@ Usage:
     if provider.health_check():
         summary = provider.summarize_structured(messages)
 """
+
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -58,6 +59,10 @@ class OpenAIProvider(AIProvider):
         self.extra_body = extra_body or {}
         self._client: Optional[object] = None
 
+    @property
+    def model_name(self) -> str:
+        return self.model
+
     def _get_client(self) -> object:
         """Get or create the OpenAI client.
 
@@ -70,17 +75,17 @@ class OpenAIProvider(AIProvider):
         if self._client is None:
             try:
                 import openai
+
                 kwargs: Dict[str, Any] = {"api_key": self.api_key}
                 if self.organization:
                     kwargs["organization"] = self.organization
                 if self.base_url:
                     kwargs["base_url"] = self.base_url
                 self._client = openai.OpenAI(**kwargs)
-            except ImportError:
+            except ImportError as exc:
                 raise ImportError(
-                    "openai package is required for OpenAIProvider. "
-                    "Install it with: pip install openai"
-                )
+                    "openai package is required for OpenAIProvider. Install it with: pip install openai"
+                ) from exc
         return self._client
 
     def health_check(self) -> bool:
@@ -128,10 +133,7 @@ class OpenAIProvider(AIProvider):
             "messages": [
                 {
                     "role": "user",
-                    "content": (
-                        "Please provide a concise summary of the following messages:\n\n"
-                        f"{combined_messages}"
-                    ),
+                    "content": (f"Please provide a concise summary of the following messages:\n\n{combined_messages}"),
                 }
             ],
         }
@@ -186,7 +188,7 @@ class OpenAIProvider(AIProvider):
             data = json.loads(response_text)
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON response: {response_text}")
-            raise ValueError(f"Invalid JSON response from AI: {e}")
+            raise ValueError(f"Invalid JSON response from AI: {e}") from e
 
         # Validate and extract fields with defaults
         return DecisionSummary(
@@ -263,14 +265,16 @@ class OpenAIProvider(AIProvider):
         # Convert tool definitions to OpenAI format
         openai_tools = []
         for tool in tools:
-            openai_tools.append({
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("input_schema", {}),
-                },
-            })
+            openai_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("input_schema", {}),
+                    },
+                }
+            )
 
         oai_messages = []
         if system:
@@ -308,11 +312,13 @@ class OpenAIProvider(AIProvider):
                     args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     args = {}
-                tool_calls.append(ToolCall(
-                    id=tc.id,
-                    name=tc.function.name,
-                    input=args,
-                ))
+                tool_calls.append(
+                    ToolCall(
+                        id=tc.id,
+                        name=tc.function.name,
+                        input=args,
+                    )
+                )
 
         # Map OpenAI finish_reason to our stop_reason
         stop_map = {
@@ -374,14 +380,16 @@ def _converse_to_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             for b in content:
                 if "toolUse" in b:
                     tu = b["toolUse"]
-                    oai_tool_calls.append({
-                        "id": tu["toolUseId"],
-                        "type": "function",
-                        "function": {
-                            "name": tu["name"],
-                            "arguments": json.dumps(tu.get("input", {})),
-                        },
-                    })
+                    oai_tool_calls.append(
+                        {
+                            "id": tu["toolUseId"],
+                            "type": "function",
+                            "function": {
+                                "name": tu["name"],
+                                "arguments": json.dumps(tu.get("input", {})),
+                            },
+                        }
+                    )
             oai_msg: Dict[str, Any] = {
                 "role": "assistant",
                 "content": "\n".join(text_parts) if text_parts else None,
@@ -401,19 +409,22 @@ def _converse_to_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                         result_text = "\n".join(text_parts)
                     else:
                         result_text = str(result_content)
-                    converted.append({
-                        "role": "tool",
-                        "tool_call_id": tr["toolUseId"],
-                        "content": result_text,
-                    })
+                    converted.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tr["toolUseId"],
+                            "content": result_text,
+                        }
+                    )
 
         else:
             # Regular user/assistant message
             text_parts = [b["text"] for b in content if "text" in b]
-            converted.append({
-                "role": role,
-                "content": "\n".join(text_parts) if text_parts else "",
-            })
+            converted.append(
+                {
+                    "role": role,
+                    "content": "\n".join(text_parts) if text_parts else "",
+                }
+            )
 
     return converted
-

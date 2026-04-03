@@ -5,12 +5,13 @@ SECURITY NOTE: The WebSocket protocol now implements server-side credential assi
 2. First client in room becomes host, subsequent clients become guests
 3. All messages use backend-assigned userId and role
 """
+
 import pytest
 from fastapi.testclient import TestClient
-from app.main import app
-from app.chat.manager import manager
-from app.audit.service import AuditLogService
 
+from app.audit.service import AuditLogService
+from app.chat.manager import manager
+from app.main import app
 
 client = TestClient(app)
 
@@ -69,9 +70,7 @@ def test_websocket_chat_two_clients_same_room():
     """Test that two WebSocket clients in the same room can communicate."""
     room_id = "test-room-two-clients"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
         # SECURITY: First receive backend-assigned credentials
         creds1 = receive_credentials(ws1)
         creds2 = receive_credentials(ws2)
@@ -81,14 +80,11 @@ def test_websocket_chat_two_clients_same_room():
         assert creds2["role"] == "guest"
 
         # Both clients receive history on connect (empty for new room)
-        history1 = receive_history(ws1)
-        history2 = receive_history(ws2)
+        _history1 = receive_history(ws1)
+        _history2 = receive_history(ws2)
 
         # Client 1 sends a message (displayName only, userId/role from backend)
-        message1 = {
-            "displayName": "User 1",
-            "content": "Hello from user1"
-        }
+        message1 = {"displayName": "User 1", "content": "Hello from user1"}
         ws1.send_json(message1)
 
         # Both clients should receive the broadcast message
@@ -108,10 +104,7 @@ def test_websocket_chat_two_clients_same_room():
         assert data1 == data2
 
         # Client 2 sends a message
-        message2 = {
-            "displayName": "User 2",
-            "content": "Hello from user2"
-        }
+        message2 = {"displayName": "User 2", "content": "Hello from user2"}
         ws2.send_json(message2)
 
         # Both clients should receive the message
@@ -128,10 +121,11 @@ def test_websocket_chat_three_clients_same_room():
     """Test that three WebSocket clients in the same room receive all messages."""
     room_id = "test-room-three-clients"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws3:
-
+    with (
+        client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+        client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        client.websocket_connect(f"/ws/chat/{room_id}") as ws3,
+    ):
         # SECURITY: First receive backend-assigned credentials
         creds1 = receive_credentials(ws1)
         creds2 = receive_credentials(ws2)
@@ -237,9 +231,7 @@ def test_websocket_chat_different_rooms():
     room1 = "room-isolated-1"
     room2 = "room-isolated-2"
 
-    with client.websocket_connect(f"/ws/chat/{room1}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room2}") as ws2:
-
+    with client.websocket_connect(f"/ws/chat/{room1}") as ws1, client.websocket_connect(f"/ws/chat/{room2}") as ws2:
         # SECURITY: Receive credentials first
         creds1 = receive_credentials(ws1)
         creds2 = receive_credentials(ws2)
@@ -308,10 +300,7 @@ def test_websocket_chat_empty_content():
         receive_history(ws)
 
         # Send message with empty content
-        invalid_message = {
-            "displayName": "User",
-            "content": ""
-        }
+        invalid_message = {"displayName": "User", "content": ""}
         ws.send_json(invalid_message)
 
         # Should receive an error response
@@ -335,7 +324,7 @@ def test_websocket_chat_multiple_messages():
             {"displayName": "User", "content": "Message 3"},
         ]
 
-        for i, msg in enumerate(messages):
+        for _, msg in enumerate(messages):
             ws.send_json(msg)
             received = ws.receive_json()
             assert received["type"] == "message"
@@ -359,10 +348,7 @@ def test_websocket_chat_message_schema():
         creds = receive_credentials(ws)
         receive_history(ws)
 
-        ws.send_json({
-            "displayName": "Test User",
-            "content": "Test content"
-        })
+        ws.send_json({"displayName": "Test User", "content": "Test content"})
 
         received = ws.receive_json()
 
@@ -388,7 +374,7 @@ def test_identity_source_default_anonymous():
     room_id = "test-room-identity-default"
 
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
-        creds = receive_credentials(ws)
+        _creds = receive_credentials(ws)
         receive_history(ws)
 
         # Join without identitySource
@@ -404,7 +390,7 @@ def test_identity_source_sso():
     room_id = "test-room-identity-sso"
 
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
-        creds = receive_credentials(ws)
+        _creds = receive_credentials(ws)
         receive_history(ws)
 
         ws.send_json({"type": "join", "displayName": "alice.smith", "identitySource": "sso"})
@@ -420,7 +406,7 @@ def test_identity_source_named():
     room_id = "test-room-identity-named"
 
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
-        creds = receive_credentials(ws)
+        _creds = receive_credentials(ws)
         receive_history(ws)
 
         ws.send_json({"type": "join", "displayName": "Bob", "identitySource": "named"})
@@ -435,11 +421,9 @@ def test_identity_source_forced_anonymous_on_auto_name():
     """Test that identitySource is forced to 'anonymous' when backend auto-names the user."""
     room_id = "test-room-identity-autoname"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-
-        creds1 = receive_credentials(ws1)
-        creds2 = receive_credentials(ws2)
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        _creds1 = receive_credentials(ws1)
+        _creds2 = receive_credentials(ws2)
         receive_history(ws1)
         receive_history(ws2)
 
@@ -451,7 +435,7 @@ def test_identity_source_forced_anonymous_on_auto_name():
         # Guest joins with empty displayName but claims SSO — should be forced to anonymous
         ws2.send_json({"type": "join", "displayName": "", "identitySource": "sso"})
         joined1 = ws1.receive_json()  # user_joined broadcast
-        joined2 = ws2.receive_json()  # user_joined broadcast
+        _joined2 = ws2.receive_json()  # user_joined broadcast
 
         assert joined1["type"] == "user_joined"
         assert joined1["user"]["identitySource"] == "anonymous"
@@ -463,7 +447,7 @@ def test_identity_source_invalid_fallback():
     room_id = "test-room-identity-invalid"
 
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws:
-        creds = receive_credentials(ws)
+        _creds = receive_credentials(ws)
         receive_history(ws)
 
         ws.send_json({"type": "join", "displayName": "Charlie", "identitySource": "bogus_value"})
@@ -477,23 +461,21 @@ def test_identity_source_in_users_list_broadcast():
     """Test that identitySource appears in the users list broadcast for all clients."""
     room_id = "test-room-identity-broadcast"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-
-        creds1 = receive_credentials(ws1)
-        creds2 = receive_credentials(ws2)
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        _creds1 = receive_credentials(ws1)
+        _creds2 = receive_credentials(ws2)
         receive_history(ws1)
         receive_history(ws2)
 
         # Host joins with SSO
         ws1.send_json({"type": "join", "displayName": "alice.smith", "identitySource": "sso"})
-        joined_ws1 = ws1.receive_json()
-        joined_ws2 = ws2.receive_json()
+        _joined_ws1 = ws1.receive_json()
+        _joined_ws2 = ws2.receive_json()
 
         # Guest joins with named
         ws2.send_json({"type": "join", "displayName": "Bob", "identitySource": "named"})
         joined2_ws1 = ws1.receive_json()
-        joined2_ws2 = ws2.receive_json()
+        _joined2_ws2 = ws2.receive_json()
 
         # Check users list in the last broadcast has both users with their identity sources
         users = joined2_ws1["users"]
@@ -530,7 +512,7 @@ class TestLeadTransfer:
             assert "leadId" in creds
             assert creds["leadId"] == creds["userId"]
 
-            history = receive_history(ws1)
+            _history = receive_history(ws1)
 
             # Second client also sees the lead
             with client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
@@ -549,9 +531,11 @@ class TestLeadTransfer:
     def test_transfer_lead_by_host(self):
         """Host can transfer lead to a guest."""
         room_id = "test-lead-transfer-host"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-            creds1 = receive_credentials(ws1)
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        ):
+            _creds1 = receive_credentials(ws1)
             creds2 = receive_credentials(ws2)
             receive_history(ws1)
             receive_history(ws2)
@@ -579,10 +563,12 @@ class TestLeadTransfer:
     def test_transfer_lead_by_lead(self):
         """Current lead (non-host) can transfer lead to another user."""
         room_id = "test-lead-transfer-lead"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws3:
-            creds1 = receive_credentials(ws1)
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws3,
+        ):
+            _creds1 = receive_credentials(ws1)
             creds2 = receive_credentials(ws2)
             creds3 = receive_credentials(ws3)
             receive_history(ws1)
@@ -591,15 +577,23 @@ class TestLeadTransfer:
 
             # Register all users
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
             ws2.send_json({"type": "join", "displayName": "Guest1"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
             ws3.send_json({"type": "join", "displayName": "Guest2"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
 
             # Host transfers lead to Guest1
             ws1.send_json({"type": "transfer_lead", "targetUserId": creds2["userId"]})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()  # lead_changed
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()  # lead_changed
 
             # Guest1 (now lead) transfers lead to Guest2
             ws2.send_json({"type": "transfer_lead", "targetUserId": creds3["userId"]})
@@ -614,18 +608,22 @@ class TestLeadTransfer:
     def test_transfer_lead_unauthorized(self):
         """Regular guest cannot transfer lead."""
         room_id = "test-lead-transfer-unauth"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        ):
             creds1 = receive_credentials(ws1)
-            creds2 = receive_credentials(ws2)
+            _creds2 = receive_credentials(ws2)
             receive_history(ws1)
             receive_history(ws2)
 
             # Register both users
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
             ws2.send_json({"type": "join", "displayName": "Guest"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
 
             # Guest tries to transfer lead — should get error
             ws2.send_json({"type": "transfer_lead", "targetUserId": creds1["userId"]})
@@ -637,7 +635,7 @@ class TestLeadTransfer:
         """Transfer to non-existent user fails."""
         room_id = "test-lead-transfer-invalid"
         with client.websocket_connect(f"/ws/chat/{room_id}") as ws1:
-            creds1 = receive_credentials(ws1)
+            _creds1 = receive_credentials(ws1)
             receive_history(ws1)
 
             ws1.send_json({"type": "join", "displayName": "Host"})
@@ -655,21 +653,26 @@ class TestLeadTransfer:
         disconnect timing when running in the full test suite.
         """
         room_id = "test-lead-revert"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        ):
             creds1 = receive_credentials(ws1)
             creds2 = receive_credentials(ws2)
             receive_history(ws1)
             receive_history(ws2)
 
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
             ws2.send_json({"type": "join", "displayName": "Guest"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
 
             # Transfer lead to guest
             ws1.send_json({"type": "transfer_lead", "targetUserId": creds2["userId"]})
-            ws1.receive_json(); ws2.receive_json()  # lead_changed
+            ws1.receive_json()
+            ws2.receive_json()  # lead_changed
 
             # Verify lead is now guest
             assert manager.get_lead_id(room_id) == creds2["userId"]
@@ -708,11 +711,13 @@ class TestLeadTransfer:
     def test_lead_changed_broadcast(self):
         """All clients receive lead_changed message on transfer."""
         room_id = "test-lead-broadcast"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws3:
-            creds1 = receive_credentials(ws1)
-            creds2 = receive_credentials(ws2)
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws3,
+        ):
+            _creds1 = receive_credentials(ws1)
+            _creds2 = receive_credentials(ws2)
             creds3 = receive_credentials(ws3)
             receive_history(ws1)
             receive_history(ws2)
@@ -720,11 +725,17 @@ class TestLeadTransfer:
 
             # Register all
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
             ws2.send_json({"type": "join", "displayName": "G1"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
             ws3.send_json({"type": "join", "displayName": "G2"})
-            ws1.receive_json(); ws2.receive_json(); ws3.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
+            ws3.receive_json()
 
             # Transfer lead
             ws1.send_json({"type": "transfer_lead", "targetUserId": creds3["userId"]})
@@ -740,17 +751,21 @@ class TestLeadTransfer:
     def test_can_use_ai_permission(self):
         """can_use_ai returns True only for lead."""
         room_id = "test-can-use-ai"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        ):
             creds1 = receive_credentials(ws1)
             creds2 = receive_credentials(ws2)
             receive_history(ws1)
             receive_history(ws2)
 
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
             ws2.send_json({"type": "join", "displayName": "Guest"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
 
             # Host is initial lead — can use AI
             assert manager.can_use_ai(room_id, creds1["userId"]) is True
@@ -764,17 +779,21 @@ class TestLeadTransfer:
     def test_can_configure_permission(self):
         """can_configure returns True for host OR lead."""
         room_id = "test-can-configure"
-        with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-             client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        with (
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws1,
+            client.websocket_connect(f"/ws/chat/{room_id}") as ws2,
+        ):
             creds1 = receive_credentials(ws1)
             creds2 = receive_credentials(ws2)
             receive_history(ws1)
             receive_history(ws2)
 
             ws1.send_json({"type": "join", "displayName": "Host"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
             ws2.send_json({"type": "join", "displayName": "Guest"})
-            ws1.receive_json(); ws2.receive_json()
+            ws1.receive_json()
+            ws2.receive_json()
 
             # Initially host is lead — both host and lead can configure
             assert manager.can_configure(room_id, creds1["userId"]) is True
@@ -801,13 +820,15 @@ def test_sso_host_reconnect_restores_role():
         assert creds1["role"] == "host"
         receive_history(ws1)
 
-        ws1.send_json({
-            "type": "join",
-            "displayName": "alice@example.com",
-            "identitySource": "sso",
-            "ssoEmail": "alice@example.com",
-            "ssoProvider": "aws",
-        })
+        ws1.send_json(
+            {
+                "type": "join",
+                "displayName": "alice@example.com",
+                "identitySource": "sso",
+                "ssoEmail": "alice@example.com",
+                "ssoProvider": "aws",
+            }
+        )
         ws1.receive_json()  # user_joined
 
     # Verify SSO host identity was stored.
@@ -816,17 +837,19 @@ def test_sso_host_reconnect_restores_role():
 
     # Second connection: same SSO credentials → identity reclaimed + role restored.
     with client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-        creds2 = receive_credentials(ws2)
+        _creds2 = receive_credentials(ws2)
         # Backend assigns guest by default (room_hosts was cleared on disconnect).
         receive_history(ws2)
 
-        ws2.send_json({
-            "type": "join",
-            "displayName": "alice@example.com",
-            "identitySource": "sso",
-            "ssoEmail": "alice@example.com",
-            "ssoProvider": "aws",
-        })
+        ws2.send_json(
+            {
+                "type": "join",
+                "displayName": "alice@example.com",
+                "identitySource": "sso",
+                "ssoEmail": "alice@example.com",
+                "ssoProvider": "aws",
+            }
+        )
 
         # Identity reclamation: server sends corrected "connected" with
         # the original user_id (not the temp one from initial connect).
@@ -852,10 +875,9 @@ def test_non_sso_host_disconnect_clears_history():
     """When a non-SSO host disconnects, message history is cleared."""
     room_id = "test-non-sso-clear"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-        creds1 = receive_credentials(ws1)
-        creds2 = receive_credentials(ws2)
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        _creds1 = receive_credentials(ws1)
+        _creds2 = receive_credentials(ws2)
         receive_history(ws1)
         receive_history(ws2)
 
@@ -885,21 +907,22 @@ def test_sso_host_disconnect_preserves_history():
     """When an SSO-authenticated host disconnects, message history is NOT cleared."""
     room_id = "test-sso-preserve"
 
-    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, \
-         client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
-        creds1 = receive_credentials(ws1)
-        creds2 = receive_credentials(ws2)
+    with client.websocket_connect(f"/ws/chat/{room_id}") as ws1, client.websocket_connect(f"/ws/chat/{room_id}") as ws2:
+        _creds1 = receive_credentials(ws1)
+        _creds2 = receive_credentials(ws2)
         receive_history(ws1)
         receive_history(ws2)
 
         # Host joins with SSO.
-        ws1.send_json({
-            "type": "join",
-            "displayName": "alice@example.com",
-            "identitySource": "sso",
-            "ssoEmail": "alice@example.com",
-            "ssoProvider": "google",
-        })
+        ws1.send_json(
+            {
+                "type": "join",
+                "displayName": "alice@example.com",
+                "identitySource": "sso",
+                "ssoEmail": "alice@example.com",
+                "ssoProvider": "google",
+            }
+        )
         ws1.receive_json()
         ws2.receive_json()
 
@@ -914,4 +937,3 @@ def test_sso_host_disconnect_preserves_history():
 
     # After host disconnects, history must still be intact for the remaining guest.
     assert manager.get_message_count(room_id) == 1
-

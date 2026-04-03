@@ -1,10 +1,8 @@
 """Tests for Bedrock tool call repair and schema sanitization."""
-import json
+
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from app.ai_provider.base import ToolCall, ToolUseResponse, TokenUsage
+from app.ai_provider.base import ToolCall
 from app.ai_provider.claude_bedrock import (
     ClaudeBedrockProvider,
     _build_param_registry,
@@ -13,17 +11,32 @@ from app.ai_provider.claude_bedrock import (
     _extract_xml_tool_calls,
     _parse_malformed_name,
     _repair_tool_calls,
-    _sanitize_property,
     _sanitize_schema,
     _validate_params,
 )
 
 KNOWN_TOOLS = {
-    "grep", "read_file", "list_files", "find_symbol", "find_references",
-    "file_outline", "get_dependencies", "get_dependents", "git_log",
-    "git_diff", "ast_search", "get_callees", "get_callers",
-    "git_blame", "git_show", "find_tests", "test_outline", "trace_variable",
-    "compressed_view", "module_summary", "expand_symbol",
+    "grep",
+    "read_file",
+    "list_files",
+    "find_symbol",
+    "find_references",
+    "file_outline",
+    "get_dependencies",
+    "get_dependents",
+    "git_log",
+    "git_diff",
+    "ast_search",
+    "get_callees",
+    "get_callers",
+    "git_blame",
+    "git_show",
+    "find_tests",
+    "test_outline",
+    "trace_variable",
+    "compressed_view",
+    "module_summary",
+    "expand_symbol",
 }
 
 # Minimal tool definitions for schema-aware tests
@@ -96,8 +109,8 @@ TOOL_DEFS = [
 # _sanitize_schema
 # ---------------------------------------------------------------------------
 
-class TestSanitizeSchema:
 
+class TestSanitizeSchema:
     def test_removes_top_level_title(self):
         schema = {"title": "GrepParams", "type": "object", "properties": {}}
         result = _sanitize_schema(schema)
@@ -163,6 +176,7 @@ class TestSanitizeSchema:
             },
         }
         import copy
+
         before = copy.deepcopy(original)
         _sanitize_schema(original)
         assert original == before
@@ -264,8 +278,8 @@ class TestSanitizeSchema:
 # _build_param_registry
 # ---------------------------------------------------------------------------
 
-class TestBuildParamRegistry:
 
+class TestBuildParamRegistry:
     def test_builds_registry(self):
         registry = _build_param_registry(TOOL_DEFS)
         assert registry["grep"] == {"pattern", "path", "include_glob", "max_results"}
@@ -285,8 +299,8 @@ class TestBuildParamRegistry:
 # _validate_params
 # ---------------------------------------------------------------------------
 
-class TestValidateParams:
 
+class TestValidateParams:
     def test_keeps_valid_params(self):
         registry = _build_param_registry(TOOL_DEFS)
         params = {"pattern": "foo", "path": "src"}
@@ -316,8 +330,8 @@ class TestValidateParams:
 # _extract_kv_pairs
 # ---------------------------------------------------------------------------
 
-class TestExtractKvPairs:
 
+class TestExtractKvPairs:
     def test_basic_pairs(self):
         text = 'pattern="render" path="CDE"'
         assert _extract_kv_pairs(text) == {"pattern": "render", "path": "CDE"}
@@ -327,11 +341,11 @@ class TestExtractKvPairs:
         assert _extract_kv_pairs(text) == {"max_results": 50}
 
     def test_numeric_value_unquoted(self):
-        text = 'max_results=50>'
+        text = "max_results=50>"
         assert _extract_kv_pairs(text) == {"max_results": 50}
 
     def test_unquoted_at_end_of_string(self):
-        text = 'n=10'
+        text = "n=10"
         assert _extract_kv_pairs(text) == {"n": 10}
 
     def test_mixed_quoted_and_unquoted(self):
@@ -355,8 +369,8 @@ class TestExtractKvPairs:
 # _parse_malformed_name
 # ---------------------------------------------------------------------------
 
-class TestParseMalformedName:
 
+class TestParseMalformedName:
     def test_exact_match(self):
         name, params = _parse_malformed_name("grep", KNOWN_TOOLS)
         assert name == "grep"
@@ -392,14 +406,14 @@ class TestParseMalformedName:
 # _extract_xml_tool_calls
 # ---------------------------------------------------------------------------
 
-class TestExtractXmlToolCalls:
 
+class TestExtractXmlToolCalls:
     def test_invoke_with_parameter_elements(self):
         xml = (
             '<invoke name="grep">'
             '<parameter name="pattern">auth</parameter>'
             '<parameter name="path">src</parameter>'
-            '</invoke>'
+            "</invoke>"
         )
         calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
         assert len(calls) == 1
@@ -440,7 +454,7 @@ class TestExtractXmlToolCalls:
             'grep" pattern="[Ii][Dd][Vv]" path="backend/src" max_results=50>'
             '</invoke>\n<invoke name="module_summary">'
             '<parameter name="module_path">backend/src</parameter>'
-            '</invoke>'
+            "</invoke>"
         )
         calls = _extract_xml_tool_calls(garbled, KNOWN_TOOLS)
         assert len(calls) == 1
@@ -448,11 +462,7 @@ class TestExtractXmlToolCalls:
         assert calls[0].input["module_path"] == "backend/src"
 
     def test_numeric_parameter_value(self):
-        xml = (
-            '<invoke name="git_log">'
-            '<parameter name="n">20</parameter>'
-            '</invoke>'
-        )
+        xml = '<invoke name="git_log"><parameter name="n">20</parameter></invoke>'
         calls = _extract_xml_tool_calls(xml, KNOWN_TOOLS)
         assert len(calls) == 1
         assert calls[0].input["n"] == 20
@@ -462,8 +472,8 @@ class TestExtractXmlToolCalls:
 # _repair_tool_calls (schema-aware)
 # ---------------------------------------------------------------------------
 
-class TestRepairToolCalls:
 
+class TestRepairToolCalls:
     def test_clean_calls_unchanged(self):
         calls = [ToolCall(id="1", name="grep", input={"pattern": "foo"})]
         result = _repair_tool_calls(calls, TOOL_DEFS)
@@ -472,11 +482,13 @@ class TestRepairToolCalls:
         assert result[0].input == {"pattern": "foo"}
 
     def test_repairs_malformed_name(self):
-        calls = [ToolCall(
-            id="1",
-            name='grep" pattern="render|Render|RENDER" include_glob="*.py" path="CDE',
-            input={},
-        )]
+        calls = [
+            ToolCall(
+                id="1",
+                name='grep" pattern="render|Render|RENDER" include_glob="*.py" path="CDE',
+                input={},
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         assert len(result) == 1
         assert result[0].name == "grep"
@@ -485,11 +497,13 @@ class TestRepairToolCalls:
 
     def test_filters_garbage_from_tc_input(self):
         """The real production bug: tc.input has params from a different tool."""
-        calls = [ToolCall(
-            id="1",
-            name='grep" pattern="[Ii][Dd][Vv]" path="backend/src" max_results=50></invoke>\n<invok',
-            input={"name": "some_symbol", "module_path": "backend/src"},
-        )]
+        calls = [
+            ToolCall(
+                id="1",
+                name='grep" pattern="[Ii][Dd][Vv]" path="backend/src" max_results=50></invoke>\n<invok',
+                input={"name": "some_symbol", "module_path": "backend/src"},
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         assert len(result) == 1
         assert result[0].name == "grep"
@@ -500,11 +514,13 @@ class TestRepairToolCalls:
         assert "module_path" not in result[0].input
 
     def test_unquoted_numeric_preserved(self):
-        calls = [ToolCall(
-            id="1",
-            name='grep" pattern="test" max_results=20',
-            input={},
-        )]
+        calls = [
+            ToolCall(
+                id="1",
+                name='grep" pattern="test" max_results=20',
+                input={},
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         assert result[0].input["max_results"] == 20
 
@@ -517,11 +533,13 @@ class TestRepairToolCalls:
         assert result[0].name == "totally_broken_garbage"
 
     def test_preserves_id(self):
-        calls = [ToolCall(
-            id="tooluse_abc123",
-            name='find_symbol" name="authenticate"',
-            input={},
-        )]
+        calls = [
+            ToolCall(
+                id="tooluse_abc123",
+                name='find_symbol" name="authenticate"',
+                input={},
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         assert result[0].id == "tooluse_abc123"
         assert result[0].name == "find_symbol"
@@ -529,27 +547,31 @@ class TestRepairToolCalls:
 
     def test_xml_repair_from_garbled_name(self):
         """When garbled name contains complete XML invoke blocks."""
-        calls = [ToolCall(
-            id="1",
-            name=(
-                'grep" pattern="x"></invoke>'
-                '<invoke name="module_summary">'
-                '<parameter name="module_path">src</parameter>'
-                '</invoke>'
-            ),
-            input={},
-        )]
+        calls = [
+            ToolCall(
+                id="1",
+                name=(
+                    'grep" pattern="x"></invoke>'
+                    '<invoke name="module_summary">'
+                    '<parameter name="module_path">src</parameter>'
+                    "</invoke>"
+                ),
+                input={},
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         # Should extract the XML invoke for module_summary
         assert any(r.name == "module_summary" for r in result)
 
     def test_valid_tc_input_kept_when_schema_matches(self):
         """If tc.input has valid params for the repaired tool, keep them."""
-        calls = [ToolCall(
-            id="1",
-            name='grep" pattern="render"',
-            input={"max_results": 100},  # valid for grep
-        )]
+        calls = [
+            ToolCall(
+                id="1",
+                name='grep" pattern="render"',
+                input={"max_results": 100},  # valid for grep
+            )
+        ]
         result = _repair_tool_calls(calls, TOOL_DEFS)
         assert result[0].name == "grep"
         assert result[0].input["pattern"] == "render"
@@ -560,8 +582,8 @@ class TestRepairToolCalls:
 # _extract_tool_calls_from_text
 # ---------------------------------------------------------------------------
 
-class TestExtractToolCallsFromText:
 
+class TestExtractToolCallsFromText:
     def test_json_format(self):
         text = 'I will search for it: {"name": "grep", "arguments": {"pattern": "auth", "path": "src"}}'
         calls = _extract_tool_calls_from_text(text, KNOWN_TOOLS)
@@ -577,10 +599,7 @@ class TestExtractToolCallsFromText:
         assert calls[0].input["pattern"] == "auth"
 
     def test_xml_format_in_text(self):
-        text = (
-            'I will search:\n'
-            '<invoke name="grep"><parameter name="pattern">auth</parameter></invoke>'
-        )
+        text = 'I will search:\n<invoke name="grep"><parameter name="pattern">auth</parameter></invoke>'
         calls = _extract_tool_calls_from_text(text, KNOWN_TOOLS)
         assert len(calls) == 1
         assert calls[0].name == "grep"
@@ -640,6 +659,7 @@ class TestExtractToolCallsFromText:
 # ---------------------------------------------------------------------------
 # chat_with_tools integration — schema sanitized & repairs wired in
 # ---------------------------------------------------------------------------
+
 
 class TestChatWithToolsIntegration:
     """Test that chat_with_tools sanitizes schemas and repairs tool calls."""
@@ -773,11 +793,7 @@ class TestChatWithToolsIntegration:
         """When no toolUse blocks but text contains tool calls, extract them."""
         response = {
             "output": {
-                "message": {
-                    "content": [
-                        {"text": 'I will search: {"name": "grep", "arguments": {"pattern": "auth"}}'}
-                    ]
-                }
+                "message": {"content": [{"text": 'I will search: {"name": "grep", "arguments": {"pattern": "auth"}}'}]}
             },
             "stopReason": "end_turn",
         }
@@ -857,6 +873,7 @@ class TestChatWithToolsIntegration:
     def test_original_tool_schemas_not_mutated(self):
         """The caller's tool list should not be modified in place."""
         import copy
+
         tools_before = copy.deepcopy(self.SAMPLE_TOOLS)
         response = {
             "output": {"message": {"content": [{"text": "ok"}]}},

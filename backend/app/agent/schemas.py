@@ -29,12 +29,12 @@ Example ChangeSet:
         "summary": "Added helper module and import statement"
     }
 """
+
 import uuid
 from enum import Enum
 from typing import List, Optional
 
 from pydantic import BaseModel, Field, model_validator
-
 
 # =============================================================================
 # Enums and Basic Types
@@ -48,6 +48,7 @@ class ChangeType(str, Enum):
         REPLACE_RANGE: Replace a range of lines in an existing file.
         CREATE_FILE: Create a new file with the specified content.
     """
+
     REPLACE_RANGE = "replace_range"
     CREATE_FILE = "create_file"
 
@@ -62,6 +63,7 @@ class Range(BaseModel):
         start: Starting line number (1-based, inclusive).
         end: Ending line number (1-based, inclusive).
     """
+
     start: int = Field(..., ge=1, description="Starting line number (1-based)")
     end: int = Field(..., ge=1, description="Ending line number (1-based)")
 
@@ -88,29 +90,15 @@ class FileChange(BaseModel):
         content: New content to insert.
         original_content: Original content being replaced (for reference/undo).
     """
-    id: str = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        description="Unique identifier (UUID)"
-    )
-    file: str = Field(
-        ..., min_length=1,
-        description="Relative path to the file"
-    )
-    type: ChangeType = Field(..., description="Type of change operation")
-    range: Optional[Range] = Field(
-        default=None,
-        description="Line range to replace (required for replace_range)"
-    )
-    content: Optional[str] = Field(
-        default=None,
-        description="New content to insert"
-    )
-    original_content: Optional[str] = Field(
-        default=None,
-        description="Original content being replaced (for reference)"
-    )
 
-    @model_validator(mode='after')
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), description="Unique identifier (UUID)")
+    file: str = Field(..., min_length=1, description="Relative path to the file")
+    type: ChangeType = Field(..., description="Type of change operation")
+    range: Optional[Range] = Field(default=None, description="Line range to replace (required for replace_range)")
+    content: Optional[str] = Field(default=None, description="New content to insert")
+    original_content: Optional[str] = Field(default=None, description="Original content being replaced (for reference)")
+
+    @model_validator(mode="after")
     def validate_change_type_requirements(self) -> "FileChange":
         """Validate required fields based on change type.
 
@@ -139,16 +127,9 @@ class ChangeSet(BaseModel):
         changes: List of file changes (1-10 files).
         summary: Brief description of what the changes accomplish.
     """
-    changes: List[FileChange] = Field(
-        ...,
-        min_length=1,
-        max_length=10,
-        description="List of file changes (1-10 files)"
-    )
-    summary: str = Field(
-        default="",
-        description="Brief summary of the changes"
-    )
+
+    changes: List[FileChange] = Field(..., min_length=1, max_length=10, description="List of file changes (1-10 files)")
+    summary: str = Field(default="", description="Brief summary of the changes")
 
 
 # =============================================================================
@@ -164,18 +145,10 @@ class GenerateChangesRequest(BaseModel):
         instruction: Natural language description of desired changes.
         file_content: Current content of the file (for context).
     """
-    file_path: Optional[str] = Field(
-        default=None,
-        description="Path to modify (optional for new files only)"
-    )
-    instruction: str = Field(
-        ...,
-        description="Natural language instruction"
-    )
-    file_content: Optional[str] = Field(
-        default=None,
-        description="Current file content (for context)"
-    )
+
+    file_path: Optional[str] = Field(default=None, description="Path to modify (optional for new files only)")
+    instruction: str = Field(..., description="Natural language instruction")
+    file_content: Optional[str] = Field(default=None, description="Current file content (for context)")
 
 
 class GenerateChangesResponse(BaseModel):
@@ -186,16 +159,7 @@ class GenerateChangesResponse(BaseModel):
         change_set: The generated ChangeSet.
         message: Additional details about the generation.
     """
-    success: bool = Field(
-        default=True,
-        description="Whether generation succeeded"
-    )
-    change_set: ChangeSet = Field(
-        ...,
-        description="The generated ChangeSet"
-    )
-    message: str = Field(
-        default="",
-        description="Additional details or error message"
-    )
 
+    success: bool = Field(default=True, description="Whether generation succeeded")
+    change_set: ChangeSet = Field(..., description="The generated ChangeSet")
+    message: str = Field(default="", description="Additional details or error message")

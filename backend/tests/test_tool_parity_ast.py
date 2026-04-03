@@ -13,6 +13,7 @@ Run:
 Skip TS side when node / compiled extension is unavailable:
     pytest tests/test_tool_parity_ast.py -v -k "not ts"
 """
+
 import subprocess
 import sys
 from pathlib import Path
@@ -22,23 +23,31 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.code_tools.tools import (
-    file_outline as py_file_outline,
-    find_symbol as py_find_symbol,
-    find_references as py_find_references,
-    get_callees as py_get_callees,
-    get_callers as py_get_callers,
     expand_symbol as py_expand_symbol,
 )
+from app.code_tools.tools import (
+    file_outline as py_file_outline,
+)
+from app.code_tools.tools import (
+    find_references as py_find_references,
+)
+from app.code_tools.tools import (
+    find_symbol as py_find_symbol,
+)
+from app.code_tools.tools import (
+    get_callees as py_get_callees,
+)
+from app.code_tools.tools import (
+    get_callers as py_get_callers,
+)
 from tests.parity_helpers import (
-    run_ts_tool,
-    WS,
+    END_LINE_TOLERANCE,
     EXTENSION_DIR,
     TS_RUNNER,
-    normalize_path,
-    assert_same_names,
+    WS,
     assert_names_subset,
-    assert_same_fields,
-    END_LINE_TOLERANCE,
+    normalize_path,
+    run_ts_tool,
 )
 
 # ---------------------------------------------------------------------------
@@ -168,9 +177,7 @@ class TestFindSymbolParity:
         _skip_unless_ts()
         py = py_find_symbol(WS, name="OrderService", kind="class")
         ts = run_ts_tool("find_symbol", {"name": "OrderService", "kind": "class"})
-        assert len(py.data) == len(ts["data"]), (
-            f"kind=class count mismatch: py={len(py.data)} ts={len(ts['data'])}"
-        )
+        assert len(py.data) == len(ts["data"]), f"kind=class count mismatch: py={len(py.data)} ts={len(ts['data'])}"
         for d in py.data:
             assert d["kind"] == "class"
         for d in ts["data"]:
@@ -384,9 +391,7 @@ class TestExpandSymbolParity:
         _skip_unless_ts()
         ts = run_ts_tool("expand_symbol", {"symbol_name": "OrderService", "file_path": "app/service.py"})
         assert ts["success"]
-        assert not ts["data"]["file_path"].startswith("/"), (
-            f"Absolute path in result: {ts['data']['file_path']}"
-        )
+        assert not ts["data"]["file_path"].startswith("/"), f"Absolute path in result: {ts['data']['file_path']}"
 
     def test_start_end_line_agreement(self):
         """Start and end lines should agree within tolerance."""

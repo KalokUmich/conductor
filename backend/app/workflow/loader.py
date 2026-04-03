@@ -9,6 +9,7 @@ Config file search order:
   2. ../config/{path}
   3. ~/.conductor/{path}
 """
+
 from __future__ import annotations
 
 import logging
@@ -22,9 +23,7 @@ from .models import (
     AgentConfig,
     AgentLimits,
     BrainConfig,
-    DispatchConfig,
     QualityConfig,
-    RouteConfig,
     StageConfig,
     SwarmConfig,
     ToolsConfig,
@@ -74,10 +73,7 @@ def _resolve_path(relative_path: str) -> Path:
     config_dir = _find_config_dir()
     resolved = config_dir / relative_path
     if not resolved.exists():
-        raise FileNotFoundError(
-            f"Config file not found: {relative_path}\n"
-            f"Searched in: {config_dir}"
-        )
+        raise FileNotFoundError(f"Config file not found: {relative_path}\nSearched in: {config_dir}")
     return resolved
 
 
@@ -104,9 +100,7 @@ def load_agent(path: str) -> AgentConfig:
 
     match = _FRONTMATTER_RE.match(content)
     if not match:
-        raise ValueError(
-            f"Agent file missing YAML frontmatter (--- markers): {path}"
-        )
+        raise ValueError(f"Agent file missing YAML frontmatter (--- markers): {path}")
 
     frontmatter_text = match.group(1)
     body = match.group(2).strip()
@@ -227,9 +221,7 @@ def load_workflow(
                     agent = load_agent(agent_path)
                     # Expand core tools
                     if agent.tools.core:
-                        full_tools = list(core_tools) + [
-                            t for t in agent.tools.extra if t not in core_tools
-                        ]
+                        full_tools = list(core_tools) + [t for t in agent.tools.extra if t not in core_tools]
                         agent.tools.extra = full_tools
                         agent.tools.core = False  # mark as resolved
                     all_agents[agent_path] = agent
@@ -247,7 +239,9 @@ def load_workflow(
             except (FileNotFoundError, ValueError) as exc:
                 logger.warning(
                     "Failed to load delegate workflow %s for route %s: %s",
-                    route.delegate, route_name, exc,
+                    route.delegate,
+                    route_name,
+                    exc,
                 )
         else:
             _resolve_agents_in_stages(route.pipeline)
@@ -262,7 +256,10 @@ def load_workflow(
 
     logger.info(
         "Loaded workflow '%s': %d routes, %d agents, route_mode=%s",
-        workflow.name, len(workflow.routes), len(all_agents), workflow.route_mode,
+        workflow.name,
+        len(workflow.routes),
+        len(all_agents),
+        workflow.route_mode,
     )
     return workflow
 
@@ -273,8 +270,14 @@ def load_workflow(
 
 # Outputs that are always available (produced by code, not agents)
 _IMPLICIT_OUTPUTS = {
-    "query", "diffs", "risk_profile", "file_list", "impact_context",
-    "workspace_layout", "pr_context", "diff_snippets",
+    "query",
+    "diffs",
+    "risk_profile",
+    "file_list",
+    "impact_context",
+    "workspace_layout",
+    "pr_context",
+    "diff_snippets",
 }
 
 
@@ -293,9 +296,10 @@ def _validate_io(workflow: WorkflowConfig) -> None:
     if workflow.post_pipeline:
         # post_pipeline runs after all routes, so all route outputs are available
         _validate_pipeline_io(
-            workflow.post_pipeline, "post_pipeline", workflow,
-            extra_available={"findings", "perspective_answers", "raw_evidence",
-                             "perspective_answer", "answer"},
+            workflow.post_pipeline,
+            "post_pipeline",
+            workflow,
+            extra_available={"findings", "perspective_answers", "raw_evidence", "perspective_answer", "answer"},
         )
 
 
@@ -319,10 +323,12 @@ def _validate_pipeline_io(
             missing = set(agent.input) - available
             if missing:
                 logger.warning(
-                    "Agent '%s' in %s.%s declares inputs %s not available "
-                    "from previous stages. Available: %s",
-                    agent.name, context_name, stage.stage,
-                    missing, available,
+                    "Agent '%s' in %s.%s declares inputs %s not available from previous stages. Available: %s",
+                    agent.name,
+                    context_name,
+                    stage.stage,
+                    missing,
+                    available,
                 )
 
         # After this stage, add all agent outputs to available set
@@ -451,8 +457,7 @@ def load_swarm_registry() -> Dict[str, SwarmConfig]:
         try:
             swarm = load_swarm(rel_path)
             result[swarm.name] = swarm
-            logger.info("Loaded swarm '%s': %d agents, mode=%s",
-                        swarm.name, len(swarm.agents), swarm.mode)
+            logger.info("Loaded swarm '%s': %d agents, mode=%s", swarm.name, len(swarm.agents), swarm.mode)
         except Exception as exc:
             logger.error("Failed to load swarm %s: %s", rel_path, exc)
 

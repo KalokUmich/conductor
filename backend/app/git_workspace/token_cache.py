@@ -18,14 +18,15 @@ timestamp is used as-is.  If the field is ``None`` (e.g. a classic
 GitHub PAT with no expiry date), a configurable default TTL (default
 8 hours) is applied from the moment of caching.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import delete, select
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 from ..db.models import RepoToken
 from .schemas import CredentialPayload
@@ -62,12 +63,12 @@ class RepoTokenCache:
         Also evicts expired entries on every write (cheap housekeeping).
         """
         key = _normalize_url(repo_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if creds.expires_at is not None:
             expires: datetime = creds.expires_at
             if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
+                expires = expires.replace(tzinfo=UTC)
         else:
             expires = now + timedelta(seconds=self._default_ttl)
 
@@ -77,20 +78,21 @@ class RepoTokenCache:
         try:
             async with self._session_factory() as session:
                 # Upsert: delete existing then insert (works with all backends)
-                await session.execute(
-                    delete(RepoToken).where(RepoToken.repo_url == key)
+                await session.execute(delete(RepoToken).where(RepoToken.repo_url == key))
+                session.add(
+                    RepoToken(
+                        repo_url=key,
+                        token=creds.token,
+                        username=creds.username,
+                        cached_at=now,
+                        expires_at=expires,
+                    )
                 )
-                session.add(RepoToken(
-                    repo_url=key,
-                    token=creds.token,
-                    username=creds.username,
-                    cached_at=now,
-                    expires_at=expires,
-                ))
                 await session.commit()
                 logger.info(
                     "Cached token for repo %s (expires %s)",
-                    key, expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    key,
+                    expires.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 )
         except Exception as exc:
             logger.warning("Failed to cache token for %s: %s", key, exc)
@@ -98,13 +100,11 @@ class RepoTokenCache:
     async def get(self, repo_url: str) -> Optional[CredentialPayload]:
         """Return a non-expired cached credential, or *None*."""
         key = _normalize_url(repo_url)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         try:
             async with self._session_factory() as session:
-                result = await session.execute(
-                    select(RepoToken).where(RepoToken.repo_url == key)
-                )
+                result = await session.execute(select(RepoToken).where(RepoToken.repo_url == key))
                 row = result.scalar_one_or_none()
         except Exception as exc:
             logger.warning("Token cache read failed for %s: %s", key, exc)
@@ -115,7 +115,7 @@ class RepoTokenCache:
 
         expires_at = row.expires_at
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = expires_at.replace(tzinfo=UTC)
 
         if now >= expires_at:
             logger.info("Cached token for repo %s has expired; evicting", key)
@@ -131,12 +131,10 @@ class RepoTokenCache:
 
     async def evict_expired(self) -> int:
         """Delete all expired rows.  Returns the number of rows removed."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         try:
             async with self._session_factory() as session:
-                result = await session.execute(
-                    delete(RepoToken).where(RepoToken.expires_at <= now)
-                )
+                result = await session.execute(delete(RepoToken).where(RepoToken.expires_at <= now))
                 await session.commit()
                 count = result.rowcount
                 if count:
@@ -178,9 +176,7 @@ class RepoTokenCache:
     async def _evict_one(self, repo_url: str) -> None:
         try:
             async with self._session_factory() as session:
-                await session.execute(
-                    delete(RepoToken).where(RepoToken.repo_url == repo_url)
-                )
+                await session.execute(delete(RepoToken).where(RepoToken.repo_url == repo_url))
                 await session.commit()
         except Exception as exc:
             logger.warning("Could not evict token for %s: %s", repo_url, exc)

@@ -9,6 +9,7 @@ Multiple rooms can be handled concurrently; each room has at most one active
 WebSocket connection (the Host extension).  Participants that only read code
 do not need to connect to this endpoint.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,9 +50,7 @@ class DelegateBroker:
     async def handle_client(self, room_id: str, ws: WebSocket) -> None:
         """Drive the WebSocket connection for a room's Host client."""
         if room_id in self._connections:
-            logger.warning(
-                "Replacing existing delegate connection for room %s", room_id
-            )
+            logger.warning("Replacing existing delegate connection for room %s", room_id)
         self._connections[room_id] = ws
         logger.info("Delegate broker: room %s connected", room_id)
 
@@ -66,11 +65,9 @@ class DelegateBroker:
         finally:
             self._connections.pop(room_id, None)
             # Fail all pending requests for this room
-            for req_id, fut in list(self._pending.items()):
+            for _, fut in list(self._pending.items()):
                 if not fut.done():
-                    fut.set_exception(
-                        ConnectionError(f"Client disconnected for room {room_id}")
-                    )
+                    fut.set_exception(ConnectionError(f"Client disconnected for room {room_id}"))
 
     async def _handle_message(self, room_id: str, data: dict) -> None:
         """Route an incoming message from the client."""
@@ -80,15 +77,15 @@ class DelegateBroker:
         except Exception as exc:  # pylint: disable=broad-except
             logger.warning(
                 "Received unexpected message from room %s: %s (%s)",
-                room_id, data, exc,
+                room_id,
+                data,
+                exc,
             )
             return
 
         fut = self._pending.pop(resp.request_id, None)
         if fut is None:
-            logger.warning(
-                "No pending request %s for room %s", resp.request_id, room_id
-            )
+            logger.warning("No pending request %s for room %s", resp.request_id, room_id)
             return
         if not fut.done():
             fut.set_result(resp)
@@ -99,8 +96,8 @@ class DelegateBroker:
 
     async def request_credentials(
         self,
-        room_id:   str,
-        repo_url:  str,
+        room_id: str,
+        repo_url: str,
         operation: str,
     ) -> Tuple[str, Optional[str]]:
         """
@@ -112,9 +109,7 @@ class DelegateBroker:
         """
         ws = self._connections.get(room_id)
         if ws is None:
-            raise ConnectionError(
-                f"No delegate client connected for room {room_id!r}"
-            )
+            raise ConnectionError(f"No delegate client connected for room {room_id!r}")
 
         request_id = str(uuid.uuid4())
         req = DelegateAuthRequest(
@@ -129,15 +124,12 @@ class DelegateBroker:
 
         try:
             await ws.send_json(req.model_dump())
-            response: DelegateAuthResponse = await asyncio.wait_for(
-                fut, timeout=_AUTH_TIMEOUT_SECONDS
-            )
+            response: DelegateAuthResponse = await asyncio.wait_for(fut, timeout=_AUTH_TIMEOUT_SECONDS)
             return response.token, response.username
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             self._pending.pop(request_id, None)
             raise TimeoutError(
-                f"Client did not respond to auth request {request_id} within "
-                f"{_AUTH_TIMEOUT_SECONDS}s"
+                f"Client did not respond to auth request {request_id} within {_AUTH_TIMEOUT_SECONDS}s"
             ) from exc
         except Exception:
             self._pending.pop(request_id, None)

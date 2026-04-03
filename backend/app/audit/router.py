@@ -1,4 +1,5 @@
 """Audit logging API endpoints."""
+
 from typing import List, Optional
 
 from fastapi import APIRouter
@@ -52,7 +53,7 @@ async def log_apply(request: LogApplyRequest) -> LogApplyResponse:
         return LogApplyResponse(
             success=False,
             entry=None,
-            message=f"Failed to log apply: {str(e)}",
+            message=f"Failed to log apply: {e!s}",
         )
 
 

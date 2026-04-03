@@ -1,10 +1,10 @@
 """Tests for the per-tool output truncation policy."""
+
 from __future__ import annotations
 
 import json
 
 from app.code_tools.output_policy import (
-    OutputPolicy,
     apply_policy,
     get_policy,
 )

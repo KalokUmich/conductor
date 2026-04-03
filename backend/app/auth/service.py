@@ -6,6 +6,7 @@ Implements the same flow as ``aws sso login``:
 3. Poll for token completion
 4. Use the access token to discover identity via SSO + STS APIs
 """
+
 import logging
 import re
 
@@ -55,9 +56,7 @@ class SSOService:
             "interval": auth.get("interval", 5),
         }
 
-    def poll_for_token(
-        self, client_id: str, client_secret: str, device_code: str
-    ) -> str | None:
+    def poll_for_token(self, client_id: str, client_secret: str, device_code: str) -> str | None:
         """Poll for token completion.
 
         Returns:
@@ -168,10 +167,7 @@ class SSOService:
                 }
                 for a in accounts
             ],
-            "roles": [
-                {"role_name": r["roleName"], "account_id": account_id}
-                for r in roles
-            ],
+            "roles": [{"role_name": r["roleName"], "account_id": account_id} for r in roles],
         }
 
     @staticmethod

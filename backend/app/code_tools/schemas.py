@@ -1,11 +1,11 @@
 """Pydantic schemas for code intelligence tools."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
-
+from pydantic import BaseModel, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Tool parameter schemas
@@ -13,16 +13,22 @@ from pydantic import BaseModel, Field
 
 
 class GrepParams(BaseModel):
-    pattern: str = Field(..., description="Python regex pattern. Use | for alternation (NOT \\|). Example: 'Foo|Bar' matches Foo or Bar.")
+    pattern: str = Field(
+        ..., description="Python regex pattern. Use | for alternation (NOT \\|). Example: 'Foo|Bar' matches Foo or Bar."
+    )
     path: Optional[str] = Field(None, description="Relative path within workspace to search (file or directory).")
-    include_glob: Optional[str] = Field(None, description="Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files.")
+    include_glob: Optional[str] = Field(
+        None, description="Glob to filter files by extension, e.g. '*.java', '*.py'. Omit to search all files."
+    )
     max_results: int = Field(default=50, ge=1, le=200)
     output_mode: str = Field(
         default="content",
         description="Output format: 'content' (matching lines, default), 'files_only' (just file paths), 'count' (match count per file).",
     )
     context_lines: int = Field(
-        default=0, ge=0, le=10,
+        default=0,
+        ge=0,
+        le=10,
         description="Lines of context to show before and after each match (0 = match line only).",
     )
     case_insensitive: bool = Field(default=False, description="Case-insensitive matching.")
@@ -46,8 +52,12 @@ class ListFilesParams(BaseModel):
 
 
 class GlobParams(BaseModel):
-    pattern: str = Field(..., description="Glob pattern to match files (e.g. '**/*.py', 'src/**/*.ts', '**/test_*.py').")
-    path: Optional[str] = Field(None, description="Directory to search in (relative to workspace). Defaults to workspace root.")
+    pattern: str = Field(
+        ..., description="Glob pattern to match files (e.g. '**/*.py', 'src/**/*.ts', '**/test_*.py')."
+    )
+    path: Optional[str] = Field(
+        None, description="Directory to search in (relative to workspace). Defaults to workspace root."
+    )
 
 
 class FindSymbolParams(BaseModel):
@@ -85,7 +95,9 @@ class GitDiffParams(BaseModel):
     ref2: Optional[str] = Field(default="HEAD", description="Second git ref.")
     file: Optional[str] = Field(None, description="Limit diff to this file.")
     context_lines: int = Field(
-        default=10, ge=0, le=50,
+        default=10,
+        ge=0,
+        le=50,
         description="Number of surrounding context lines in the diff (default 10).",
     )
 
@@ -105,7 +117,9 @@ class GitDiffFilesParams(BaseModel):
 
 class AstSearchParams(BaseModel):
     pattern: str = Field(..., description="ast-grep pattern (e.g. 'def $F($$$ARGS)', 'if $COND: $$$BODY').")
-    language: Optional[str] = Field(None, description="Language hint: python, javascript, typescript, go, rust, java, c, cpp.")
+    language: Optional[str] = Field(
+        None, description="Language hint: python, javascript, typescript, go, rust, java, c, cpp."
+    )
     path: Optional[str] = Field(None, description="Relative path within workspace to search (file or directory).")
     max_results: int = Field(default=30, ge=1, le=100)
 
@@ -169,7 +183,9 @@ class ModuleSummaryParams(BaseModel):
 
 
 class ExpandSymbolParams(BaseModel):
-    symbol_name: str = Field(..., description="Name of the symbol to expand (e.g. 'PaymentService' or 'process_payment').")
+    symbol_name: str = Field(
+        ..., description="Name of the symbol to expand (e.g. 'PaymentService' or 'process_payment')."
+    )
     file_path: Optional[str] = Field(
         None,
         description="File containing the symbol. If omitted, searches the workspace.",
@@ -205,7 +221,9 @@ class RunTestParams(BaseModel):
         ),
     )
     timeout: int = Field(
-        default=30, ge=5, le=60,
+        default=30,
+        ge=5,
+        le=60,
         description="Max seconds to wait for the test run (default: 30).",
     )
 
@@ -241,7 +259,9 @@ class DbSchemaParams(BaseModel):
 
 
 class AskUserParams(BaseModel):
-    question: str = Field(..., description="The clarifying question to ask the user. Be specific about what information you need.")
+    question: str = Field(
+        ..., description="The clarifying question to ask the user. Be specific about what information you need."
+    )
     options: List[str] = Field(
         default_factory=list,
         description="2-4 concrete options for the user to choose from. Each option is a short label (e.g. 'Focus on authentication flow'). The user can also type a free-form answer instead of picking an option.",
@@ -267,7 +287,9 @@ class CreatePlanParams(BaseModel):
     mode: str = Field(..., description="Dispatch mode: 'simple', 'complex', 'swarm', or 'transfer'")
     reasoning: str = Field(..., description="Why this mode and agent(s) — what about the query led to this decision")
     agents: List[str] = Field(default_factory=list, description="Agent(s) to dispatch, in order")
-    query_decomposition: List[str] = Field(default_factory=list, description="For swarm/complex: how the query breaks into sub-questions")
+    query_decomposition: List[str] = Field(
+        default_factory=list, description="For swarm/complex: how the query breaks into sub-questions"
+    )
     risk: str = Field(default="", description="Key risks or ambiguities in this investigation")
     fallback: str = Field(default="", description="What to try if the primary approach finds insufficient evidence")
 
@@ -276,37 +298,47 @@ class DispatchAgentParams(BaseModel):
     query: str = Field(..., description="Focused question for the agent to investigate")
 
     # Mode 1: Template (pre-defined agent from registry)
-    template: Optional[str] = Field(default=None,
+    template: Optional[str] = Field(
+        default=None,
         description="Pre-defined agent template name (e.g. 'correctness', "
-        "'explore_implementation'). Use for PR review and business flow swarm agents.")
+        "'explore_implementation'). Use for PR review and business flow swarm agents.",
+    )
 
     # Mode 2: Dynamic composition (Brain assembles the agent)
-    tools: Optional[List[str]] = Field(default=None,
+    tools: Optional[List[str]] = Field(
+        default=None,
         description="Tools for this agent (e.g. ['grep', 'read_file', "
-        "'find_symbol']). Required when no template is specified.")
-    perspective: Optional[str] = Field(default=None,
-        description="1-3 sentences defining the agent's investigation focus "
-        "and what to look for.")
-    skill: Optional[str] = Field(default=None,
+        "'find_symbol']). Required when no template is specified.",
+    )
+    perspective: Optional[str] = Field(
+        default=None, description="1-3 sentences defining the agent's investigation focus and what to look for."
+    )
+    skill: Optional[str] = Field(
+        default=None,
         description="Investigation skill key from the skill catalog "
         "(e.g. 'entry_point', 'root_cause', 'architecture', 'impact', "
         "'data_lineage', 'recent_changes', 'code_explanation', "
-        "'config_analysis', 'issue_tracking').")
-    model: str = Field(default="explorer",
-        description="'explorer' (Haiku, default) or 'strong' (Sonnet, "
-        "for complex reasoning like root cause analysis).")
-    budget_tokens: Optional[int] = Field(default=None, ge=50000, le=500000,
-        description="Token budget override. Defaults based on skill type.")
-    max_iterations: Optional[int] = Field(default=None, ge=5, le=30,
-        description="Iteration limit override. Default: 20.")
+        "'config_analysis', 'issue_tracking').",
+    )
+    model: str = Field(
+        default="explorer",
+        description="'explorer' (Haiku, default) or 'strong' (Sonnet, for complex reasoning like root cause analysis).",
+    )
+    budget_tokens: Optional[int] = Field(
+        default=None, ge=50000, le=800000, description="Token budget override. Defaults based on skill type."
+    )
+    max_iterations: Optional[int] = Field(
+        default=None, ge=5, le=30, description="Iteration limit override. Default: 20."
+    )
 
     # Shared
-    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0,
-        description="Budget multiplier (1.0 = standard)")
+    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0, description="Budget multiplier (1.0 = standard)")
 
 
 class DispatchSwarmParams(BaseModel):
-    swarm_name: str = Field(..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms.")
+    swarm_name: str = Field(
+        ..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms."
+    )
     query: str = Field(..., description="Shared investigation query for all agents in the swarm")
 
 
@@ -333,42 +365,95 @@ class TransferToBrainParams(BaseModel):
 
 class FileEditParams(BaseModel):
     path: str = Field(..., description="Relative path to the file within the workspace.")
-    old_string: str = Field(..., description="Exact string to find in the file. Must match the file content precisely (including whitespace/indentation). Use read_file first to see the exact content.")
+    old_string: str = Field(
+        ...,
+        description="Exact string to find in the file. Must match the file content precisely (including whitespace/indentation). Use read_file first to see the exact content.",
+    )
     new_string: str = Field(..., description="Replacement string. Can be empty to delete the matched text.")
-    replace_all: bool = Field(default=False, description="If true, replace ALL occurrences. If false (default), the old_string must be unique in the file.")
+    replace_all: bool = Field(
+        default=False,
+        description="If true, replace ALL occurrences. If false (default), the old_string must be unique in the file.",
+    )
 
 
 class FileWriteParams(BaseModel):
     path: str = Field(..., description="Relative path for the file. Parent directories are created automatically.")
-    content: str = Field(..., description="Complete file content to write. For existing files, this overwrites the entire content — use file_edit for partial changes.")
+    content: str = Field(
+        ...,
+        description="Complete file content to write. For existing files, this overwrites the entire content — use file_edit for partial changes.",
+    )
 
 
 class JiraSearchParams(BaseModel):
-    query: str = Field(..., description="JQL query or natural language search text (e.g. 'project = DEV AND status = \"In Progress\"', 'auth refactor').")
+    query: str = Field(
+        ...,
+        description="JQL query or natural language search text (e.g. 'project = DEV AND status = \"In Progress\"', 'auth refactor').",
+    )
     max_results: int = Field(default=10, ge=1, le=50, description="Max issues to return.")
 
 
 class JiraGetIssueParams(BaseModel):
     issue_key: str = Field(..., description="Jira issue key (e.g. 'DEV-123', 'HELP-42').")
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_key(cls, data: Any) -> Any:
+        """Accept 'key' as alias for 'issue_key' (LLMs sometimes shorten param names)."""
+        if isinstance(data, dict) and "key" in data and "issue_key" not in data:
+            data["issue_key"] = data.pop("key")
+        return data
+
 
 class JiraCreateIssueParams(BaseModel):
-    project_key: str = Field(..., description="Jira project key (e.g. 'DEV', 'HELP'). Use jira_list_projects to discover available projects.")
+    project_key: str = Field(
+        ..., description="Jira project key (e.g. 'DEV', 'HELP'). Use jira_list_projects to discover available projects."
+    )
     summary: str = Field(..., description="Issue title / summary.")
-    description: str = Field(default="", description="Issue description with context. Include affected files, code snippets, and steps to reproduce where relevant.")
-    issue_type: str = Field(default="Software Task", description="Issue type: 'Software Task' (small work), 'Bug' (defect fix), 'Epic' (medium project, will contain sub-tasks), 'Project' (large initiative).")
-    priority: str = Field(default="", description="Priority: Highest, High, Medium, Low, Lowest. Empty = project default.")
-    components: List[str] = Field(default_factory=list, description="Component names (e.g. ['JBE', 'Render API']). Use jira_list_projects to see available components.")
+    description: str = Field(
+        default="",
+        description="Issue description with context. Include affected files, code snippets, and steps to reproduce where relevant.",
+    )
+    issue_type: str = Field(
+        default="Software Task",
+        description="Issue type: 'Software Task' (small work), 'Bug' (defect fix), 'Epic' (medium project, will contain sub-tasks), 'Project' (large initiative).",
+    )
+    priority: str = Field(
+        default="", description="Priority: Highest, High, Medium, Low, Lowest. Empty = project default."
+    )
+    components: List[str] = Field(
+        default_factory=list,
+        description="Component names (e.g. ['JBE', 'Render API']). Use jira_list_projects to see available components.",
+    )
     team: str = Field(default="", description="Team name (e.g. 'Platform', 'FinOps'). Empty = unassigned.")
-    parent_key: str = Field(default="", description="Parent issue key for sub-tasks under an Epic (e.g. 'DEV-100'). Required when creating child tickets of an Epic.")
+    parent_key: str = Field(
+        default="",
+        description="Parent issue key for sub-tasks under an Epic (e.g. 'DEV-100'). Required when creating child tickets of an Epic.",
+    )
 
 
 class JiraUpdateIssueParams(BaseModel):
     issue_key: str = Field(..., description="Jira issue key (e.g. 'DEV-123').")
-    transition_to: str = Field(default="", description="Target status name to transition to (e.g. 'To Do', 'In Progress'). Agent CANNOT set Done/Closed/Resolved — those require manual user action. Use empty string to skip.")
+    transition_to: str = Field(
+        default="",
+        description="Target status name to transition to (e.g. 'To Do', 'In Progress'). Agent CANNOT set Done/Closed/Resolved — those require manual user action. Use empty string to skip.",
+    )
     comment: str = Field(default="", description="Comment to add to the issue. Include code references and findings.")
-    priority: str = Field(default="", description="New priority: Highest, High, Medium, Low, Lowest. Empty = no change.")
+    description_append: str = Field(
+        default="",
+        description="Text to APPEND to the existing description. A Conductor separator is automatically inserted. Use for adding analysis findings, affected files, and change summaries back to the ticket. Never overwrites existing content.",
+    )
+    priority: str = Field(
+        default="", description="New priority: Highest, High, Medium, Low, Lowest. Empty = no change."
+    )
     labels_add: List[str] = Field(default_factory=list, description="Labels to add (e.g. ['needs-review', 'backend']).")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_key(cls, data: Any) -> Any:
+        """Accept 'key' as alias for 'issue_key' (LLMs sometimes shorten param names)."""
+        if isinstance(data, dict) and "key" in data and "issue_key" not in data:
+            data["issue_key"] = data.pop("key")
+        return data
 
 
 class JiraListProjectsParams(BaseModel):
@@ -600,6 +685,7 @@ class TestOutlineEntry(BaseModel):
 
 class ToolResult(BaseModel):
     """Unified tool result wrapper."""
+
     tool_name: str
     success: bool = True
     data: Any = None
@@ -610,6 +696,7 @@ class ToolResult(BaseModel):
 # ---------------------------------------------------------------------------
 # Tool definition schema (for LLM tool_use protocol)
 # ---------------------------------------------------------------------------
+
 
 def filter_tools(names: List[str]) -> List[Dict[str, Any]]:
     """Return TOOL_DEFINITIONS filtered to only the given tool names."""
@@ -1105,6 +1192,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "Usage:\n"
             "- Use JQL for structured queries: 'project = DEV AND status = \"In Progress\"'\n"
             "- Use free text for keyword search: 'auth refactor'\n"
+            "- Convenience shortcuts: 'my tickets', 'my sprint', 'blockers' — auto-expands to JQL.\n"
             "- Returns issue key, summary, status, priority, assignee, and browse URL.\n"
             "- Use to check for duplicate tickets before creating, or to find related work."
         ),
@@ -1136,11 +1224,13 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
     {
         "name": "jira_update_issue",
         "description": (
-            "Update a Jira issue: transition status, add comment, or change fields.\n\n"
+            "Update a Jira issue: transition status, add comment, append to description, or change fields.\n\n"
             "Usage:\n"
             "- Use transition_to to move a ticket between statuses (e.g. 'To Do' → 'In Progress').\n"
             "- SAFETY: Agent CANNOT transition to Done/Closed/Resolved — these require manual user action.\n"
             "- Add comments with code context to document investigation findings.\n"
+            "- Use description_append to add Conductor analysis (affected files, change summary) to the ticket description. "
+            "Original content is preserved — a separator and timestamp are inserted automatically.\n"
             "- When picking up a ticket to work on, transition it to 'To Do' or 'In Progress'."
         ),
         "input_schema": JiraUpdateIssueParams.model_json_schema(),
@@ -1261,78 +1351,119 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 # backend-only infrastructure.
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ToolMetadata:
     """Per-tool metadata for agent loop infrastructure."""
+
     is_read_only: bool = True
     is_concurrent_safe: bool = True
-    summary_template: str = ""        # Python format string for context compaction
-    category: str = "search"          # search | navigate | git | analysis | test | browser
+    summary_template: str = ""  # Python format string for context compaction
+    category: str = "search"  # search | navigate | git | analysis | test | browser
 
 
 TOOL_METADATA: Dict[str, ToolMetadata] = {
     # --- Search & Navigation ---
-    "grep":              ToolMetadata(category="search",   summary_template="grep '{pattern}' in {path}: {_count} matches"),
-    "read_file":         ToolMetadata(category="navigate", summary_template="read {path} lines {start_line}-{end_line}"),
-    "list_files":        ToolMetadata(category="navigate", summary_template="listed {directory}: {_count} entries"),
-    "glob":              ToolMetadata(category="navigate", summary_template="glob '{pattern}': {_count} files"),
-    "find_symbol":       ToolMetadata(category="search",   summary_template="find_symbol '{name}': {_count} definitions"),
-    "find_references":   ToolMetadata(category="search",   summary_template="find_references '{symbol_name}': {_count} usages"),
-    "file_outline":      ToolMetadata(category="navigate", summary_template="outline {path}: {_count} symbols"),
-    "compressed_view":   ToolMetadata(category="navigate", summary_template="compressed_view {file_path}"),
-    "module_summary":    ToolMetadata(category="navigate", summary_template="module_summary {module_path}"),
-    "expand_symbol":     ToolMetadata(category="navigate", summary_template="expand {symbol_name} in {file_path}"),
+    "grep": ToolMetadata(category="search", summary_template="grep '{pattern}' in {path}: {_count} matches"),
+    "read_file": ToolMetadata(category="navigate", summary_template="read {path} lines {start_line}-{end_line}"),
+    "list_files": ToolMetadata(category="navigate", summary_template="listed {directory}: {_count} entries"),
+    "glob": ToolMetadata(category="navigate", summary_template="glob '{pattern}': {_count} files"),
+    "find_symbol": ToolMetadata(category="search", summary_template="find_symbol '{name}': {_count} definitions"),
+    "find_references": ToolMetadata(
+        category="search", summary_template="find_references '{symbol_name}': {_count} usages"
+    ),
+    "file_outline": ToolMetadata(category="navigate", summary_template="outline {path}: {_count} symbols"),
+    "compressed_view": ToolMetadata(category="navigate", summary_template="compressed_view {file_path}"),
+    "module_summary": ToolMetadata(category="navigate", summary_template="module_summary {module_path}"),
+    "expand_symbol": ToolMetadata(category="navigate", summary_template="expand {symbol_name} in {file_path}"),
     # --- Dependency Analysis ---
-    "get_dependencies":  ToolMetadata(category="analysis", summary_template="dependencies of {file_path}: {_count} files"),
-    "get_dependents":    ToolMetadata(category="analysis", summary_template="dependents of {file_path}: {_count} files"),
+    "get_dependencies": ToolMetadata(
+        category="analysis", summary_template="dependencies of {file_path}: {_count} files"
+    ),
+    "get_dependents": ToolMetadata(category="analysis", summary_template="dependents of {file_path}: {_count} files"),
     # --- Call Graph ---
-    "get_callees":       ToolMetadata(category="analysis", summary_template="callees of {function_name}: {_count} calls"),
-    "get_callers":       ToolMetadata(category="analysis", summary_template="callers of {function_name}: {_count} callers"),
-    "trace_variable":    ToolMetadata(category="analysis", summary_template="trace {variable_name} {direction}: {_count} flows"),
+    "get_callees": ToolMetadata(category="analysis", summary_template="callees of {function_name}: {_count} calls"),
+    "get_callers": ToolMetadata(category="analysis", summary_template="callers of {function_name}: {_count} callers"),
+    "trace_variable": ToolMetadata(
+        category="analysis", summary_template="trace {variable_name} {direction}: {_count} flows"
+    ),
     # --- Git ---
-    "git_log":           ToolMetadata(category="git", summary_template="git_log: {_count} commits"),
-    "git_diff":          ToolMetadata(category="git", summary_template="git_diff {ref1}..{ref2} {file}"),
-    "git_diff_files":    ToolMetadata(category="git", summary_template="changed files {ref}: {_count} files"),
-    "git_blame":         ToolMetadata(category="git", summary_template="blame {file}: {_count} lines"),
-    "git_show":          ToolMetadata(category="git", summary_template="git_show {commit}"),
-    "git_hotspots":      ToolMetadata(category="git", summary_template="hotspots (last {days}d): {_count} files"),
+    "git_log": ToolMetadata(category="git", summary_template="git_log: {_count} commits"),
+    "git_diff": ToolMetadata(category="git", summary_template="git_diff {ref1}..{ref2} {file}"),
+    "git_diff_files": ToolMetadata(category="git", summary_template="changed files {ref}: {_count} files"),
+    "git_blame": ToolMetadata(category="git", summary_template="blame {file}: {_count} lines"),
+    "git_show": ToolMetadata(category="git", summary_template="git_show {commit}"),
+    "git_hotspots": ToolMetadata(category="git", summary_template="hotspots (last {days}d): {_count} files"),
     # --- Code Analysis ---
-    "ast_search":        ToolMetadata(category="analysis", summary_template="ast_search '{pattern}': {_count} matches"),
-    "detect_patterns":   ToolMetadata(category="analysis", summary_template="detect_patterns in {path}: {_count} patterns"),
-    "list_endpoints":    ToolMetadata(category="analysis", summary_template="endpoints: {_count} routes"),
+    "ast_search": ToolMetadata(category="analysis", summary_template="ast_search '{pattern}': {_count} matches"),
+    "detect_patterns": ToolMetadata(
+        category="analysis", summary_template="detect_patterns in {path}: {_count} patterns"
+    ),
+    "list_endpoints": ToolMetadata(category="analysis", summary_template="endpoints: {_count} routes"),
     "extract_docstrings": ToolMetadata(category="analysis", summary_template="docstrings in {path}: {_count} docs"),
-    "db_schema":         ToolMetadata(category="analysis", summary_template="db_schema: {_count} models"),
+    "db_schema": ToolMetadata(category="analysis", summary_template="db_schema: {_count} models"),
     # --- Testing ---
-    "find_tests":        ToolMetadata(category="test", summary_template="tests for '{name}': {_count} tests"),
-    "test_outline":      ToolMetadata(category="test", summary_template="test_outline {path}: {_count} tests"),
-    "run_test":          ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="test",
-                                      summary_template="ran {test_file}: {_status}"),
+    "find_tests": ToolMetadata(category="test", summary_template="tests for '{name}': {_count} tests"),
+    "test_outline": ToolMetadata(category="test", summary_template="test_outline {path}: {_count} tests"),
+    "run_test": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="test", summary_template="ran {test_file}: {_status}"
+    ),
     # --- File Editing ---
-    "file_edit":         ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="edit",
-                                      summary_template="file_edit {path}: {replacements} replacement(s)"),
-    "file_write":        ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="edit",
-                                      summary_template="file_write {path}: {action}"),
+    "file_edit": ToolMetadata(
+        is_read_only=False,
+        is_concurrent_safe=False,
+        category="edit",
+        summary_template="file_edit {path}: {replacements} replacement(s)",
+    ),
+    "file_write": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="edit", summary_template="file_write {path}: {action}"
+    ),
     # --- Jira Integration ---
-    "jira_search":       ToolMetadata(category="integration", summary_template="jira_search '{query}': {_count} issues"),
-    "jira_get_issue":    ToolMetadata(category="integration", summary_template="jira_get_issue {issue_key}"),
-    "jira_create_issue": ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="integration",
-                                      summary_template="jira_create_issue: created {_result}"),
-    "jira_list_projects": ToolMetadata(category="integration", summary_template="jira_list_projects: {_count} projects"),
-    "jira_update_issue": ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="integration",
-                                      summary_template="jira_update_issue {issue_key}: {_action}"),
+    "jira_search": ToolMetadata(category="integration", summary_template="jira_search '{query}': {_count} issues"),
+    "jira_get_issue": ToolMetadata(
+        category="integration",
+        summary_template="jira_get_issue {issue_key}: {summary} | status={status} priority={priority} | {_description_preview}",
+    ),
+    "jira_create_issue": ToolMetadata(
+        is_read_only=False,
+        is_concurrent_safe=False,
+        category="integration",
+        summary_template="jira_create_issue: created {_result}",
+    ),
+    "jira_list_projects": ToolMetadata(
+        category="integration", summary_template="jira_list_projects: {_count} projects"
+    ),
+    "jira_update_issue": ToolMetadata(
+        is_read_only=False,
+        is_concurrent_safe=False,
+        category="integration",
+        summary_template="jira_update_issue {issue_key}: {_action}",
+    ),
     # --- Browser ---
-    "web_search":        ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="web_search '{query}': {_count} results"),
-    "web_navigate":      ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="navigated to {url}"),
-    "web_click":         ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="clicked '{selector}'"),
-    "web_fill":          ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="filled '{selector}'"),
-    "web_screenshot":    ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="screenshot taken"),
-    "web_extract":       ToolMetadata(is_read_only=False, is_concurrent_safe=False, category="browser",
-                                      summary_template="extracted '{selector}': {_count} elements"),
+    "web_search": ToolMetadata(
+        is_read_only=False,
+        is_concurrent_safe=False,
+        category="browser",
+        summary_template="web_search '{query}': {_count} results",
+    ),
+    "web_navigate": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="browser", summary_template="navigated to {url}"
+    ),
+    "web_click": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="browser", summary_template="clicked '{selector}'"
+    ),
+    "web_fill": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="browser", summary_template="filled '{selector}'"
+    ),
+    "web_screenshot": ToolMetadata(
+        is_read_only=False, is_concurrent_safe=False, category="browser", summary_template="screenshot taken"
+    ),
+    "web_extract": ToolMetadata(
+        is_read_only=False,
+        is_concurrent_safe=False,
+        category="browser",
+        summary_template="extracted '{selector}': {_count} elements",
+    ),
 }
 
 
@@ -1355,10 +1486,23 @@ def format_tool_summary(tool_name: str, params: Dict[str, Any], result_data: Any
     _count = len(result_data) if isinstance(result_data, list) else 0
     # Compute _status for run_test
     _status = "unknown"
+    _description_preview = ""
     if isinstance(result_data, dict):
         _status = result_data.get("status", result_data.get("result", "done"))
+        # For jira_get_issue: preserve description preview in summary
+        desc = result_data.get("description", "")
+        if desc:
+            _description_preview = desc[:500].replace("\n", " ")
+        # Merge result_data fields into template vars so Jira summaries work
+        _count = _count or len(result_data.get("issues", []))
 
-    template_vars = {**params, "_count": _count, "_status": _status}
+    template_vars = {
+        **params,
+        **({k: v for k, v in result_data.items() if isinstance(v, str)} if isinstance(result_data, dict) else {}),
+        "_count": _count,
+        "_status": _status,
+        "_description_preview": _description_preview,
+    }
     # Fill missing keys with empty strings to avoid KeyError
     try:
         return meta.summary_template.format_map(
@@ -1371,7 +1515,8 @@ def format_tool_summary(tool_name: str, params: Dict[str, Any], result_data: Any
 def _extract_format_keys(template: str) -> List[str]:
     """Extract {key} names from a format string."""
     import re as _re
-    return _re.findall(r'\{(\w+)\}', template)
+
+    return _re.findall(r"\{(\w+)\}", template)
 
 
 # ---------------------------------------------------------------------------

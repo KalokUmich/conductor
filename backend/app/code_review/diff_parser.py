@@ -3,6 +3,7 @@
 Uses the existing git_diff_files tool to get the file list, then
 classifies each file by category and computes totals.
 """
+
 from __future__ import annotations
 
 import logging
@@ -124,7 +125,7 @@ def parse_diff(workspace_path: str, diff_spec: str) -> PRContext:
     total_add = 0
     total_del = 0
 
-    for entry in (result.data or []):
+    for entry in result.data or []:
         additions = entry.get("additions", 0)
         deletions = entry.get("deletions", 0)
         path = entry.get("path", "")

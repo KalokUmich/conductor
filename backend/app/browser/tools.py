@@ -3,6 +3,7 @@
 Each tool accepts a ``workspace`` parameter (used as the browser session key)
 plus tool-specific parameters, and returns a ``ToolResult``.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,10 +40,10 @@ def _extract_links(page, max_links: int = _MAX_LINKS) -> List[Dict[str, str]]:
     """Extract visible links from the page."""
     links = page.eval_on_selector_all(
         "a[href]",
-        """els => els.slice(0, %d).map(a => ({
+        f"""els => els.slice(0, {max_links}).map(a => ({{
             text: (a.innerText || '').trim().substring(0, 120),
             href: a.href
-        }))""" % max_links,
+        }}))""",
     )
     return links
 
@@ -106,19 +107,18 @@ def web_search(
         if not results:
             results = page.eval_on_selector_all(
                 "a[href] h3",
-                """els => els.slice(0, %d).map(h3 => {
+                f"""els => els.slice(0, {max_results}).map(h3 => {{
                     const a = h3.closest('a');
                     const parent = a ? a.closest('div') : null;
                     const snippet = parent
-                        ? (parent.querySelector('span') || {}).innerText || ''
+                        ? (parent.querySelector('span') || {{}}).innerText || ''
                         : '';
-                    return {
+                    return {{
                         title: h3.innerText.trim(),
                         url: a ? a.href : '',
                         snippet: snippet.trim().substring(0, 300)
-                    };
-                }).filter(r => r.url && !r.url.startsWith('https://www.google.com'))"""
-                % max_results,
+                    }};
+                }}).filter(r => r.url && !r.url.startsWith('https://www.google.com'))""",
             )
 
         truncated = len(results) >= max_results

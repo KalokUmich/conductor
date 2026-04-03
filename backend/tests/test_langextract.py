@@ -1,19 +1,19 @@
 """Tests for the langextract Bedrock provider, catalog, service, and router."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.langextract.catalog import BedrockCatalog, BedrockModelInfo
 from app.langextract.provider import (
+    _BEDROCK_MODEL_MAP,
     BedrockLanguageModel,
     ClaudeLanguageModel,
-    _BEDROCK_MODEL_MAP,
     _call_bedrock,
 )
-from app.langextract.catalog import BedrockCatalog, BedrockModelInfo
-from app.langextract.service import LangExtractService, ExtractionResult
-
+from app.langextract.service import ExtractionResult, LangExtractService
 
 # ---------------------------------------------------------------------------
 # BedrockLanguageModel (was ClaudeLanguageModel)
@@ -173,10 +173,12 @@ class TestBackwardsCompatAlias:
 
     def test_old_import_path_works(self):
         from app.langextract.claude_provider import ClaudeLanguageModel as Old
+
         assert Old is BedrockLanguageModel
 
     def test_old_import_bedrock_map(self):
         from app.langextract.claude_provider import _BEDROCK_MODEL_MAP as old_map
+
         assert old_map is _BEDROCK_MODEL_MAP
 
 
@@ -188,6 +190,7 @@ class TestBackwardsCompatAlias:
 class TestProviderRegistration:
     def test_provider_registered(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         providers = router.list_providers()
@@ -196,6 +199,7 @@ class TestProviderRegistration:
 
     def test_resolve_claude_model(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("claude-sonnet-4-20250514")
@@ -204,6 +208,7 @@ class TestProviderRegistration:
 
     def test_resolve_amazon_model(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("amazon.nova-pro-v1:0")
@@ -212,6 +217,7 @@ class TestProviderRegistration:
 
     def test_resolve_meta_model(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("meta.llama3-70b-instruct-v1:0")
@@ -220,6 +226,7 @@ class TestProviderRegistration:
 
     def test_resolve_mistral_model(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("mistral.mistral-large-2402-v1:0")
@@ -228,6 +235,7 @@ class TestProviderRegistration:
 
     def test_resolve_deepseek_model(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("deepseek.deepseek-r1-v1:0")
@@ -236,6 +244,7 @@ class TestProviderRegistration:
 
     def test_resolve_bedrock_prefix(self):
         from langextract.providers import router
+
         import app.langextract.provider  # noqa: F401
 
         cls = router.resolve("bedrock/amazon.nova-pro-v1:0")
@@ -468,9 +477,10 @@ class TestBedrockCatalog:
         catalog.refresh()
 
         # Profile model returns the profile ID
-        assert catalog.get_effective_model_id(
-            "anthropic.claude-haiku-4-5-20251001-v1:0"
-        ) == "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+        assert (
+            catalog.get_effective_model_id("anthropic.claude-haiku-4-5-20251001-v1:0")
+            == "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
+        )
 
     @patch("app.langextract.catalog.boto3")
     def test_get_effective_model_id_unknown(self, mock_boto3):
@@ -496,10 +506,10 @@ class TestBedrockCatalog:
         catalog = BedrockCatalog(region="eu-west-2")
         catalog.refresh()
 
-        sonnet = [m for m in catalog.get_all_models() if "sonnet" in m.model_id][0]
+        sonnet = next(m for m in catalog.get_all_models() if "sonnet" in m.model_id)
         assert sonnet.vision is True
 
-        llama = [m for m in catalog.get_all_models() if "llama" in m.model_id][0]
+        llama = next(m for m in catalog.get_all_models() if "llama" in m.model_id)
         assert llama.vision is False
 
     @patch("app.langextract.catalog.boto3")
@@ -538,7 +548,7 @@ class TestBedrockCatalog:
         catalog = BedrockCatalog(region="eu-west-2")
         catalog.refresh()
 
-        haiku = [m for m in catalog.get_all_models() if "haiku" in m.model_id][0]
+        haiku = next(m for m in catalog.get_all_models() if "haiku" in m.model_id)
         d = haiku.to_dict()
         assert "model_id" in d
         assert "vendor" in d
@@ -546,7 +556,7 @@ class TestBedrockCatalog:
         assert "vision" in d
         assert "inference_profile" in d  # has profile
 
-        nova = [m for m in catalog.get_all_models() if "nova-pro" in m.model_id][0]
+        nova = next(m for m in catalog.get_all_models() if "nova-pro" in m.model_id)
         d2 = nova.to_dict()
         assert "inference_profile" not in d2  # on-demand, no profile
 
@@ -633,19 +643,23 @@ class TestLangExtractService:
     @patch("langextract.extract")
     async def test_extract_from_text_with_examples(self, mock_extract):
         from langextract.data import AnnotatedDocument
+
         mock_doc = MagicMock(spec=AnnotatedDocument)
         mock_extract.return_value = [mock_doc]
 
         svc = LangExtractService(use_bedrock=True)
 
         from langextract.data import ExampleData, Extraction
-        examples = [ExampleData(
-            text="Bob mentioned June 1.",
-            extractions=[
-                Extraction(extraction_class="Person", extraction_text="Bob"),
-                Extraction(extraction_class="Date", extraction_text="June 1"),
-            ],
-        )]
+
+        examples = [
+            ExampleData(
+                text="Bob mentioned June 1.",
+                extractions=[
+                    Extraction(extraction_class="Person", extraction_text="Bob"),
+                    Extraction(extraction_class="Date", extraction_text="June 1"),
+                ],
+            )
+        ]
 
         result = await svc.extract_from_text(
             text="Alice said the deadline is March 15.",
@@ -659,10 +673,13 @@ class TestLangExtractService:
     async def test_extract_from_text_error(self):
         svc = LangExtractService(use_bedrock=False)
         from langextract.data import ExampleData, Extraction
-        examples = [ExampleData(
-            text="test input",
-            extractions=[Extraction(extraction_class="Entity", extraction_text="test")],
-        )]
+
+        examples = [
+            ExampleData(
+                text="test input",
+                extractions=[Extraction(extraction_class="Entity", extraction_text="test")],
+            )
+        ]
         with patch("app.langextract.provider._call_anthropic_direct", side_effect=RuntimeError("No key")):
             result = await svc.extract_from_text(
                 text="test",
@@ -709,6 +726,7 @@ class TestLangExtractRouter:
         }
 
         from app.main import app
+
         app.state.bedrock_catalog = catalog
         try:
             response = api_client.get("/api/langextract/models")
@@ -720,7 +738,7 @@ class TestLangExtractRouter:
             assert "Amazon" in vendor_names
             assert "Anthropic" in vendor_names
             # Check model structure
-            anthropic_vendor = [v for v in data["vendors"] if v["name"] == "Anthropic"][0]
+            anthropic_vendor = next(v for v in data["vendors"] if v["name"] == "Anthropic")
             assert len(anthropic_vendor["models"]) == 1
             assert anthropic_vendor["models"][0]["model_id"] == "anthropic.claude-sonnet-4-6"
             assert anthropic_vendor["models"][0]["vision"] is True

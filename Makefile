@@ -302,7 +302,9 @@ db-rollback-one:
 langfuse-up: data-up
 	@echo "Starting Langfuse on http://localhost:3001 ..."
 	docker compose -f $(LANGFUSE_COMPOSE) up -d
-	@echo "Langfuse is starting. Open http://localhost:3001 to create a project."
+	@echo "Langfuse is starting. User/org/project auto-provisioned on first run."
+	@echo "  Login: admin@conductor.dev / conductor"
+	@echo "  API keys: pk-lf-conductor-dev / sk-lf-conductor-dev"
 
 ## Stop Langfuse stack
 langfuse-down:
@@ -313,6 +315,33 @@ langfuse-down:
 ## View Langfuse logs
 langfuse-logs:
 	docker compose -f $(LANGFUSE_COMPOSE) logs -f langfuse
+
+# ===========================
+# Lint & Format
+# ===========================
+.PHONY: lint format lint-check
+
+## Lint backend Python code (auto-fix)
+lint:
+	@echo "Running ruff (lint + isort)..."
+	cd backend && $(PYTHON) -m ruff check --fix .
+	@echo "Lint complete."
+
+## Format backend Python code (auto-fix)
+format:
+	@echo "Running black..."
+	cd backend && $(PYTHON) -m black .
+	@echo "Running ruff format..."
+	cd backend && $(PYTHON) -m ruff format .
+	@echo "Format complete."
+
+## Lint + format check only (no changes, for CI)
+lint-check:
+	@echo "Checking ruff..."
+	cd backend && $(PYTHON) -m ruff check .
+	@echo "Checking black..."
+	cd backend && $(PYTHON) -m black --check .
+	@echo "All lint checks passed."
 
 # ===========================
 # Clean
@@ -390,6 +419,11 @@ help:
 	@echo "  make langfuse-up        Start Langfuse (Docker)"
 	@echo "  make langfuse-down      Stop Langfuse"
 	@echo "  make langfuse-logs      View Langfuse logs"
+	@echo ""
+	@echo "Lint & Format:"
+	@echo "  make lint               Lint backend Python (ruff, auto-fix)"
+	@echo "  make format             Format backend Python (black + ruff format)"
+	@echo "  make lint-check         Lint + format check only (CI mode, no changes)"
 	@echo ""
 	@echo "Other:"
 	@echo "  make clean              Remove all generated files"

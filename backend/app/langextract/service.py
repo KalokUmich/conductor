@@ -14,6 +14,7 @@ Usage::
         prompt="Extract all dates, people, and action items.",
     )
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ExtractionResult:
     """Result of a langextract extraction."""
+
     success: bool = True
     documents: list[Any] = field(default_factory=list)
     raw_text: str = ""

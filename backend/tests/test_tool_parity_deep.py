@@ -7,11 +7,12 @@ the actual returned values are compared — not just structure.
 Run:
     pytest tests/test_tool_parity_deep.py -v
 """
+
 import json
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Set
 
 import pytest
 
@@ -47,7 +48,9 @@ def ts(tool: str, params: dict) -> Dict[str, Any]:
     """Run a tool through the compiled TypeScript complexToolRunner."""
     result = subprocess.run(
         ["node", str(RUNNER_SCRIPT), tool, WS, json.dumps(params)],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
         cwd=str(EXTENSION_DIR),
     )
     if result.returncode != 0:
@@ -250,11 +253,13 @@ class TestCompressedView:
 
         assert py.success and t["success"]
         # Same total_lines
-        assert py.data["total_lines"] == t["data"]["total_lines"], \
+        assert py.data["total_lines"] == t["data"]["total_lines"], (
             f"Python={py.data['total_lines']}, TS={t['data']['total_lines']}"
+        )
         # Same symbol_count
-        assert py.data["symbol_count"] == t["data"]["symbol_count"], \
+        assert py.data["symbol_count"] == t["data"]["symbol_count"], (
             f"Python={py.data['symbol_count']}, TS={t['data']['symbol_count']}"
+        )
 
     def test_service_signatures(self):
         py = compressed_view(WS, "app/service.py")
@@ -316,11 +321,11 @@ class TestModuleSummary:
 
         assert py.success and t["success"]
         # Same file count
-        assert py.data["file_count"] == t["data"]["file_count"], \
+        assert py.data["file_count"] == t["data"]["file_count"], (
             f"Python={py.data['file_count']}, TS={t['data']['file_count']}"
+        )
         # Same total LOC
-        assert py.data["loc"] == t["data"]["loc"], \
-            f"Python={py.data['loc']}, TS={t['data']['loc']}"
+        assert py.data["loc"] == t["data"]["loc"], f"Python={py.data['loc']}, TS={t['data']['loc']}"
 
     def test_app_classes(self):
         py = module_summary(WS, "app")
@@ -362,8 +367,12 @@ class TestTraceVariable:
 
     def test_forward_sinks_orm(self):
         """find_user is a top-level function with an ORM .filter() sink."""
-        params = {"variable_name": "user_identifier", "file": "app/repository.py",
-                  "function_name": "find_user", "direction": "forward"}
+        params = {
+            "variable_name": "user_identifier",
+            "file": "app/repository.py",
+            "function_name": "find_user",
+            "direction": "forward",
+        }
         py = trace_variable(WS, **params)
         t = ts("trace_variable", params)
 
@@ -375,8 +384,12 @@ class TestTraceVariable:
 
     def test_forward_sinks_sql(self):
         """save_order is a top-level function with a SQL .execute() sink."""
-        params = {"variable_name": "ref_id", "file": "app/repository.py",
-                  "function_name": "save_order", "direction": "forward"}
+        params = {
+            "variable_name": "ref_id",
+            "file": "app/repository.py",
+            "function_name": "save_order",
+            "direction": "forward",
+        }
         py = trace_variable(WS, **params)
         t = ts("trace_variable", params)
 
@@ -388,8 +401,12 @@ class TestTraceVariable:
 
     def test_top_level_fields_match(self):
         """Both sides should return the same top-level fields."""
-        params = {"variable_name": "user_identifier", "file": "app/repository.py",
-                  "function_name": "find_user", "direction": "forward"}
+        params = {
+            "variable_name": "user_identifier",
+            "file": "app/repository.py",
+            "function_name": "find_user",
+            "direction": "forward",
+        }
         py = trace_variable(WS, **params)
         t = ts("trace_variable", params)
 
@@ -400,34 +417,55 @@ class TestTraceVariable:
 
     def test_data_shape(self):
         """Both sides should return all required keys in data."""
-        params = {"variable_name": "user_identifier", "file": "app/repository.py",
-                  "function_name": "find_user", "direction": "forward"}
+        params = {
+            "variable_name": "user_identifier",
+            "file": "app/repository.py",
+            "function_name": "find_user",
+            "direction": "forward",
+        }
         py = trace_variable(WS, **params)
         t = ts("trace_variable", params)
 
-        for key in ["variable", "file", "function", "direction",
-                     "aliases", "flows_to", "sinks", "flows_from", "sources"]:
+        for key in [
+            "variable",
+            "file",
+            "function",
+            "direction",
+            "aliases",
+            "flows_to",
+            "sinks",
+            "flows_from",
+            "sources",
+        ]:
             assert key in py.data, f"Python missing key: {key}"
             assert key in t["data"], f"TS missing key: {key}"
 
     def test_forward_flows_to_top_level(self):
         """process_payment calls requests.post — both should detect it."""
-        params = {"variable_name": "amount", "file": "app/service.py",
-                  "function_name": "process_payment", "direction": "forward"}
+        params = {
+            "variable_name": "amount",
+            "file": "app/service.py",
+            "function_name": "process_payment",
+            "direction": "forward",
+        }
         py = trace_variable(WS, **params)
         t = ts("trace_variable", params)
 
         assert py.success and t["success"]
-        py_callees = {f["callee_function"] for f in py.data["flows_to"]}
-        ts_callees = {f["callee_function"] for f in t["data"]["flows_to"]}
+        _py_callees = {f["callee_function"] for f in py.data["flows_to"]}
+        _ts_callees = {f["callee_function"] for f in t["data"]["flows_to"]}
         # Both should find the requests.post call with amount as argument
         assert len(py.data["flows_to"]) >= 1, f"Python flows: {py.data['flows_to']}"
         assert len(t["data"]["flows_to"]) >= 1, f"TS flows: {t['data']['flows_to']}"
 
     def test_sink_fields(self):
         """Each sink entry should have the required fields."""
-        params = {"variable_name": "user_identifier", "file": "app/repository.py",
-                  "function_name": "find_user", "direction": "forward"}
+        params = {
+            "variable_name": "user_identifier",
+            "file": "app/repository.py",
+            "function_name": "find_user",
+            "direction": "forward",
+        }
         t = ts("trace_variable", params)
 
         assert t["success"]
@@ -451,8 +489,9 @@ class TestDetectPatterns:
 
         assert py.success and t["success"]
         # Same number of files scanned
-        assert py.data["files_scanned"] == t["data"]["files_scanned"], \
+        assert py.data["files_scanned"] == t["data"]["files_scanned"], (
             f"Python={py.data['files_scanned']}, TS={t['data']['files_scanned']}"
+        )
 
     def test_retry_count(self):
         py = detect_patterns(WS, categories=["retry"])
@@ -499,8 +538,7 @@ class TestDetectPatterns:
         for cat in all_cats:
             py_files = {m["file"] for m in py.data["matches"].get(cat, [])}
             ts_files = {m["file"] for m in t["data"]["matches"].get(cat, [])}
-            assert py_files == ts_files, \
-                f"Category '{cat}' file mismatch: Python={py_files}, TS={ts_files}"
+            assert py_files == ts_files, f"Category '{cat}' file mismatch: Python={py_files}, TS={ts_files}"
 
     def test_match_lines_same(self):
         """For each match, both sides should report the same line numbers."""
@@ -511,5 +549,6 @@ class TestDetectPatterns:
         for cat in all_cats:
             py_locs = {(m["file"], m["line"]) for m in py.data["matches"].get(cat, [])}
             ts_locs = {(m["file"], m["line"]) for m in t["data"]["matches"].get(cat, [])}
-            assert py_locs == ts_locs, \
+            assert py_locs == ts_locs, (
                 f"Category '{cat}' line mismatch:\n  Python: {sorted(py_locs)}\n  TS:     {sorted(ts_locs)}"
+            )

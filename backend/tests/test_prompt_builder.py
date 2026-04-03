@@ -1,5 +1,4 @@
 """Tests for the PromptBuilder and related helper functions."""
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +10,6 @@ from app.ai_provider.prompt_builder import (
     infer_languages_from_components,
     is_documentation_only,
 )
-
 
 # =============================================================================
 # TestInferLanguagesFromComponents
@@ -26,11 +24,13 @@ class TestInferLanguagesFromComponents:
         assert result == [Language.PYTHON]
 
     def test_mixed_languages(self):
-        result = infer_languages_from_components([
-            "app/main.py",
-            "src/index.js",
-            "src/Service.java",
-        ])
+        result = infer_languages_from_components(
+            [
+                "app/main.py",
+                "src/index.js",
+                "src/Service.java",
+            ]
+        )
         assert Language.PYTHON in result
         assert Language.JAVASCRIPT in result
         assert Language.JAVA in result
@@ -85,14 +85,10 @@ class TestIsDocumentationOnly:
         assert is_documentation_only(["app/main.py", "src/index.ts"]) is False
 
     def test_empty_components_with_doc_solution(self):
-        assert is_documentation_only(
-            [], "Update the docstring for the function"
-        ) is True
+        assert is_documentation_only([], "Update the docstring for the function") is True
 
     def test_empty_components_with_code_solution(self):
-        assert is_documentation_only(
-            [], "Implement the new login endpoint"
-        ) is False
+        assert is_documentation_only([], "Implement the new login endpoint") is False
 
     def test_empty_components_empty_solution(self):
         assert is_documentation_only([], "") is False
@@ -113,10 +109,7 @@ class TestPromptBuilder:
     """Tests for the PromptBuilder class."""
 
     def test_basic_build_includes_required_sections(self):
-        prompt = (
-            PromptBuilder("Fix the login bug", "Patch auth module", ["auth.py"], "medium")
-            .build()
-        )
+        prompt = PromptBuilder("Fix the login bug", "Patch auth module", ["auth.py"], "medium").build()
         assert "<problem>" in prompt
         assert "Fix the login bug" in prompt
         assert "<solution>" in prompt
@@ -126,18 +119,12 @@ class TestPromptBuilder:
         assert "<instructions>" in prompt
 
     def test_basic_build_includes_tests_and_error_handling(self):
-        prompt = (
-            PromptBuilder("Bug", "Fix", ["app.py"], "low")
-            .build()
-        )
+        prompt = PromptBuilder("Bug", "Fix", ["app.py"], "low").build()
         assert "error handling" in prompt.lower()
         assert "tests if applicable" in prompt.lower()
 
     def test_doc_only_omits_tests_and_error_handling(self):
-        prompt = (
-            PromptBuilder("Fix docs", "Update readme", ["README.md"], "low")
-            .build()
-        )
+        prompt = PromptBuilder("Fix docs", "Update readme", ["README.md"], "low").build()
         # Extract the requirements section between "Requirements:" and "Output Format:"
         requirements_start = prompt.find("Requirements:")
         requirements_end = prompt.find("Output Format:")
@@ -146,30 +133,18 @@ class TestPromptBuilder:
         assert "tests if applicable" not in requirements_section
 
     def test_unified_diff_output_mode(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_output_mode("unified_diff")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_output_mode("unified_diff").build()
         assert "unified diff" in prompt.lower()
         assert "git apply" in prompt.lower()
 
     def test_direct_repo_edits_output_mode(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_output_mode("direct_repo_edits")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_output_mode("direct_repo_edits").build()
         assert "complete" in prompt.lower()
         assert "file contents" in prompt.lower()
         assert "test suite" in prompt.lower()
 
     def test_plan_then_diff_output_mode(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_output_mode("plan_then_diff")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_output_mode("plan_then_diff").build()
         assert "implementation plan" in prompt.lower()
         assert "unified diff" in prompt.lower()
 
@@ -186,10 +161,7 @@ class TestPromptBuilder:
         # but we verify the builder ran without error and produced a style section.
 
     def test_xml_structure_preserved(self):
-        prompt = (
-            PromptBuilder("Problem", "Solution", ["app.py"], "high")
-            .build()
-        )
+        prompt = PromptBuilder("Problem", "Solution", ["app.py"], "high").build()
         assert "<problem>" in prompt
         assert "</problem>" in prompt
         assert "<solution>" in prompt
@@ -200,35 +172,21 @@ class TestPromptBuilder:
         assert "</instructions>" in prompt
 
     def test_context_snippet_included(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_context_snippet("def foo(): pass")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_context_snippet("def foo(): pass").build()
         assert "<context>" in prompt
         assert "def foo(): pass" in prompt
 
     def test_policy_constraints_included(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_policy_constraints("- Max files: 10")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_policy_constraints("- Max files: 10").build()
         assert "<policy_constraints>" in prompt
         assert "Max files: 10" in prompt
 
     def test_no_components_shows_placeholder(self):
-        prompt = (
-            PromptBuilder("P", "S", [], "low")
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", [], "low").build()
         assert "No specific components identified" in prompt
 
     def test_empty_problem_and_solution_defaults(self):
-        prompt = (
-            PromptBuilder("", "", ["a.py"], "low")
-            .build()
-        )
+        prompt = PromptBuilder("", "", ["a.py"], "low").build()
         assert "No problem statement provided." in prompt
         assert "No solution proposed." in prompt
 
@@ -236,10 +194,12 @@ class TestPromptBuilder:
         """Multiple file-targeted snippets should render as <context_snippets>."""
         prompt = (
             PromptBuilder("P", "S", ["auth.py", "utils.py"], "low")
-            .with_context_snippets([
-                {"file_path": "auth.py", "snippet": "def login(user):\n    pass"},
-                {"file_path": "utils.py", "snippet": "def hash(val):\n    return md5(val)"},
-            ])
+            .with_context_snippets(
+                [
+                    {"file_path": "auth.py", "snippet": "def login(user):\n    pass"},
+                    {"file_path": "utils.py", "snippet": "def hash(val):\n    return md5(val)"},
+                ]
+            )
             .build()
         )
         assert "<context_snippets>" in prompt
@@ -253,20 +213,12 @@ class TestPromptBuilder:
 
     def test_context_snippets_omitted_when_empty(self):
         """No <context_snippets> section when snippets list is empty or None."""
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_context_snippets([])
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_context_snippets([]).build()
         assert "<context_snippets>" not in prompt
         assert "<context>" not in prompt
 
     def test_context_snippets_omitted_when_none(self):
-        prompt = (
-            PromptBuilder("P", "S", ["a.py"], "low")
-            .with_context_snippets(None)
-            .build()
-        )
+        prompt = PromptBuilder("P", "S", ["a.py"], "low").with_context_snippets(None).build()
         assert "<context_snippets>" not in prompt
 
     def test_context_snippets_override_single_snippet(self):
@@ -274,9 +226,11 @@ class TestPromptBuilder:
         prompt = (
             PromptBuilder("P", "S", ["a.py"], "low")
             .with_context_snippet("single snippet")
-            .with_context_snippets([
-                {"file_path": "a.py", "snippet": "multi snippet content"},
-            ])
+            .with_context_snippets(
+                [
+                    {"file_path": "a.py", "snippet": "multi snippet content"},
+                ]
+            )
             .build()
         )
         assert "<context_snippets>" in prompt
@@ -287,11 +241,13 @@ class TestPromptBuilder:
         """Empty snippet entries should be filtered out."""
         prompt = (
             PromptBuilder("P", "S", ["a.py"], "low")
-            .with_context_snippets([
-                {"file_path": "a.py", "snippet": "real content"},
-                {"file_path": "b.py", "snippet": ""},
-                {"file_path": "c.py", "snippet": "   "},
-            ])
+            .with_context_snippets(
+                [
+                    {"file_path": "a.py", "snippet": "real content"},
+                    {"file_path": "b.py", "snippet": ""},
+                    {"file_path": "c.py", "snippet": "   "},
+                ]
+            )
             .build()
         )
         assert "<context_snippets>" in prompt
@@ -362,52 +318,62 @@ class TestPromptBuilderEndpoint:
     @pytest.fixture
     def client(self):
         from app.main import app
+
         return TestClient(app)
 
     def test_code_prompt_endpoint_returns_200(self, client):
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Fix auth",
-                "problem_statement": "Login fails",
-                "proposed_solution": "Fix token validation",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py"],
-                "risk_level": "medium",
-                "next_steps": ["Fix it"],
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Fix auth",
+                    "problem_statement": "Login fails",
+                    "proposed_solution": "Fix token validation",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Fix it"],
+                },
+                "detected_languages": ["python"],
             },
-            "detected_languages": ["python"],
-        })
+        )
         assert response.status_code == 200
         data = response.json()
         assert "code_prompt" in data
         assert len(data["code_prompt"]) > 0
 
     def test_doc_only_prompt_is_shorter(self, client):
-        code_response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Fix auth",
-                "problem_statement": "Login fails",
-                "proposed_solution": "Fix token validation",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py", "auth/session.py"],
-                "risk_level": "medium",
-                "next_steps": ["Fix it"],
+        code_response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Fix auth",
+                    "problem_statement": "Login fails",
+                    "proposed_solution": "Fix token validation",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py", "auth/session.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Fix it"],
+                },
             },
-        })
-        doc_response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Update docs",
-                "problem_statement": "Docs are outdated",
-                "proposed_solution": "Update readme",
-                "requires_code_change": False,
-                "affected_components": ["README.md", "docs/guide.md"],
-                "risk_level": "low",
-                "next_steps": ["Update"],
+        )
+        doc_response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Update docs",
+                    "problem_statement": "Docs are outdated",
+                    "proposed_solution": "Update readme",
+                    "requires_code_change": False,
+                    "affected_components": ["README.md", "docs/guide.md"],
+                    "risk_level": "low",
+                    "next_steps": ["Update"],
+                },
             },
-        })
+        )
         assert code_response.status_code == 200
         assert doc_response.status_code == 200
         code_prompt = code_response.json()["code_prompt"]
@@ -427,15 +393,17 @@ class TestCallCodePromptFromItems:
     def test_single_item_prompt(self):
         from app.ai_provider.wrapper import call_code_prompt_from_items
 
-        items = [{
-            "id": "item-1",
-            "type": "code_change",
-            "title": "Add login endpoint",
-            "problem": "No auth endpoint",
-            "proposed_change": "Create POST /auth/login",
-            "targets": ["auth/login.py"],
-            "risk_level": "medium",
-        }]
+        items = [
+            {
+                "id": "item-1",
+                "type": "code_change",
+                "title": "Add login endpoint",
+                "problem": "No auth endpoint",
+                "proposed_change": "Create POST /auth/login",
+                "targets": ["auth/login.py"],
+                "risk_level": "medium",
+            }
+        ]
 
         prompt = call_code_prompt_from_items(items, topic="User Auth")
 
@@ -480,8 +448,20 @@ class TestCallCodePromptFromItems:
         from app.ai_provider.wrapper import call_code_prompt_from_items
 
         items = [
-            {"title": "A", "problem": "", "proposed_change": "", "targets": ["shared.py", "utils.py"], "risk_level": "low"},
-            {"title": "B", "problem": "", "proposed_change": "", "targets": ["shared.py", "other.py"], "risk_level": "low"},
+            {
+                "title": "A",
+                "problem": "",
+                "proposed_change": "",
+                "targets": ["shared.py", "utils.py"],
+                "risk_level": "low",
+            },
+            {
+                "title": "B",
+                "problem": "",
+                "proposed_change": "",
+                "targets": ["shared.py", "other.py"],
+                "risk_level": "low",
+            },
         ]
 
         prompt = call_code_prompt_from_items(items)
@@ -521,22 +501,28 @@ class TestItemsCodePromptEndpoint:
     @pytest.fixture
     def client(self):
         from app.main import app
+
         return TestClient(app)
 
     def test_items_endpoint_returns_200(self, client):
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Add login endpoint",
-                "problem": "No auth",
-                "proposed_change": "Create POST /auth/login",
-                "targets": ["auth/login.py"],
-                "risk_level": "medium",
-            }],
-            "topic": "User Auth",
-            "detected_languages": ["python"],
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Add login endpoint",
+                        "problem": "No auth",
+                        "proposed_change": "Create POST /auth/login",
+                        "targets": ["auth/login.py"],
+                        "risk_level": "medium",
+                    }
+                ],
+                "topic": "User Auth",
+                "detected_languages": ["python"],
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -545,38 +531,44 @@ class TestItemsCodePromptEndpoint:
         assert "Add login endpoint" in data["code_prompt"]
 
     def test_items_endpoint_rejects_empty_items(self, client):
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [],
-            "topic": "Test",
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [],
+                "topic": "Test",
+            },
+        )
 
         assert response.status_code == 400
         assert "At least one item" in response.json()["detail"]
 
     def test_items_endpoint_handles_multiple_items(self, client):
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [
-                {
-                    "id": "item-1",
-                    "type": "api_design",
-                    "title": "Create users endpoint",
-                    "problem": "No user CRUD",
-                    "proposed_change": "Add REST endpoints",
-                    "targets": ["api/users.py"],
-                    "risk_level": "medium",
-                },
-                {
-                    "id": "item-2",
-                    "type": "code_change",
-                    "title": "Add user model",
-                    "problem": "No user data model",
-                    "proposed_change": "Create User SQLAlchemy model",
-                    "targets": ["models/user.py"],
-                    "risk_level": "low",
-                },
-            ],
-            "topic": "User Management",
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "api_design",
+                        "title": "Create users endpoint",
+                        "problem": "No user CRUD",
+                        "proposed_change": "Add REST endpoints",
+                        "targets": ["api/users.py"],
+                        "risk_level": "medium",
+                    },
+                    {
+                        "id": "item-2",
+                        "type": "code_change",
+                        "title": "Add user model",
+                        "problem": "No user data model",
+                        "proposed_change": "Create User SQLAlchemy model",
+                        "targets": ["models/user.py"],
+                        "risk_level": "low",
+                    },
+                ],
+                "topic": "User Management",
+            },
+        )
 
         assert response.status_code == 200
         data = response.json()
@@ -587,24 +579,29 @@ class TestItemsCodePromptEndpoint:
 
     def test_items_endpoint_with_context_snippets(self, client):
         """Context snippets should appear in the generated prompt."""
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Update login function",
-                "problem": "Login lacks MFA",
-                "proposed_change": "Add MFA check",
-                "targets": ["auth/login.py"],
-                "risk_level": "medium",
-            }],
-            "topic": "Add MFA",
-            "context_snippets": [
-                {
-                    "file_path": "auth/login.py",
-                    "snippet": "def login(username, password):\n    user = find_user(username)\n    if verify(password, user.hash):\n        return create_session(user)",
-                },
-            ],
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Update login function",
+                        "problem": "Login lacks MFA",
+                        "proposed_change": "Add MFA check",
+                        "targets": ["auth/login.py"],
+                        "risk_level": "medium",
+                    }
+                ],
+                "topic": "Add MFA",
+                "context_snippets": [
+                    {
+                        "file_path": "auth/login.py",
+                        "snippet": "def login(username, password):\n    user = find_user(username)\n    if verify(password, user.hash):\n        return create_session(user)",
+                    },
+                ],
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -614,17 +611,22 @@ class TestItemsCodePromptEndpoint:
 
     def test_items_endpoint_without_context_snippets(self, client):
         """No context section when context_snippets is not provided."""
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Fix bug",
-                "problem": "Bug",
-                "proposed_change": "Fix",
-                "targets": ["app.py"],
-                "risk_level": "low",
-            }],
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Fix bug",
+                        "problem": "Bug",
+                        "proposed_change": "Fix",
+                        "targets": ["app.py"],
+                        "risk_level": "low",
+                    }
+                ],
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -679,8 +681,11 @@ class TestSelectiveItemsCodePromptEndpoint:
                 "proposed_solution": "Build CRUD + validation + caching",
                 "requires_code_change": True,
                 "affected_components": [
-                    "models/user.py", "api/users.py", "api/router.py",
-                    "services/cache.py", "config/redis.py",
+                    "models/user.py",
+                    "api/users.py",
+                    "api/router.py",
+                    "services/cache.py",
+                    "config/redis.py",
                 ],
                 "risk_level": "high",
                 "next_steps": ["Implement validation", "Add endpoints", "Setup cache"],
@@ -694,6 +699,7 @@ class TestSelectiveItemsCodePromptEndpoint:
     @pytest.fixture
     def client(self):
         from app.main import app
+
         return TestClient(app)
 
     def test_select_one_of_three_items(self, client):
@@ -863,6 +869,7 @@ class TestRoomOutputModeInCodePrompt:
     @pytest.fixture
     def client(self):
         from app.main import app
+
         return TestClient(app)
 
     def _set_room_output_mode(self, client, room_id, mode):
@@ -874,18 +881,23 @@ class TestRoomOutputModeInCodePrompt:
         room_id = "test-output-mode-items"
         self._set_room_output_mode(client, room_id, "direct_repo_edits")
 
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Fix bug",
-                "problem": "Bug exists",
-                "proposed_change": "Fix it",
-                "targets": ["app.py"],
-                "risk_level": "low",
-            }],
-            "room_id": room_id,
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Fix bug",
+                        "problem": "Bug exists",
+                        "proposed_change": "Fix it",
+                        "targets": ["app.py"],
+                        "risk_level": "low",
+                    }
+                ],
+                "room_id": room_id,
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -894,17 +906,22 @@ class TestRoomOutputModeInCodePrompt:
 
     def test_items_endpoint_falls_back_to_server_default(self, client):
         """Without room output_mode, should use server config default."""
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Fix bug",
-                "problem": "Bug exists",
-                "proposed_change": "Fix it",
-                "targets": ["app.py"],
-                "risk_level": "low",
-            }],
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Fix bug",
+                        "problem": "Bug exists",
+                        "proposed_change": "Fix it",
+                        "targets": ["app.py"],
+                        "risk_level": "low",
+                    }
+                ],
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -916,22 +933,27 @@ class TestRoomOutputModeInCodePrompt:
         room_id = "test-output-mode-selective"
         self._set_room_output_mode(client, room_id, "plan_then_diff")
 
-        response = client.post("/ai/code-prompt/selective", json={
-            "summary": {
-                "topic": "Test",
-                "code_relevant_items": [{
-                    "id": "item-1",
-                    "type": "code_change",
-                    "title": "Fix bug",
-                    "problem": "Bug",
-                    "proposed_change": "Fix",
-                    "targets": ["app.py"],
-                    "risk_level": "low",
-                }],
+        response = client.post(
+            "/ai/code-prompt/selective",
+            json={
+                "summary": {
+                    "topic": "Test",
+                    "code_relevant_items": [
+                        {
+                            "id": "item-1",
+                            "type": "code_change",
+                            "title": "Fix bug",
+                            "problem": "Bug",
+                            "proposed_change": "Fix",
+                            "targets": ["app.py"],
+                            "risk_level": "low",
+                        }
+                    ],
+                },
+                "selected_item_ids": ["item-1"],
+                "room_id": room_id,
             },
-            "selected_item_ids": ["item-1"],
-            "room_id": room_id,
-        })
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -942,19 +964,22 @@ class TestRoomOutputModeInCodePrompt:
         room_id = "test-output-mode-legacy"
         self._set_room_output_mode(client, room_id, "plan_then_diff")
 
-        response = client.post("/ai/code-prompt", json={
-            "decision_summary": {
-                "type": "decision_summary",
-                "topic": "Fix auth",
-                "problem_statement": "Login fails",
-                "proposed_solution": "Fix token",
-                "requires_code_change": True,
-                "affected_components": ["auth/login.py"],
-                "risk_level": "medium",
-                "next_steps": ["Fix"],
+        response = client.post(
+            "/ai/code-prompt",
+            json={
+                "decision_summary": {
+                    "type": "decision_summary",
+                    "topic": "Fix auth",
+                    "problem_statement": "Login fails",
+                    "proposed_solution": "Fix token",
+                    "requires_code_change": True,
+                    "affected_components": ["auth/login.py"],
+                    "risk_level": "medium",
+                    "next_steps": ["Fix"],
+                },
+                "room_id": room_id,
             },
-            "room_id": room_id,
-        })
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]
@@ -965,18 +990,23 @@ class TestRoomOutputModeInCodePrompt:
         room_id = "test-output-mode-empty"
         self._set_room_output_mode(client, room_id, "")
 
-        response = client.post("/ai/code-prompt/items", json={
-            "items": [{
-                "id": "item-1",
-                "type": "code_change",
-                "title": "Fix",
-                "problem": "Bug",
-                "proposed_change": "Fix",
-                "targets": ["app.py"],
-                "risk_level": "low",
-            }],
-            "room_id": room_id,
-        })
+        response = client.post(
+            "/ai/code-prompt/items",
+            json={
+                "items": [
+                    {
+                        "id": "item-1",
+                        "type": "code_change",
+                        "title": "Fix",
+                        "problem": "Bug",
+                        "proposed_change": "Fix",
+                        "targets": ["app.py"],
+                        "risk_level": "low",
+                    }
+                ],
+                "room_id": room_id,
+            },
+        )
 
         assert response.status_code == 200
         prompt = response.json()["code_prompt"]

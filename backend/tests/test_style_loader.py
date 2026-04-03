@@ -1,14 +1,14 @@
 """Tests for the code style loader."""
-import os
+
 import tempfile
-import pytest
 from pathlib import Path
+
+import pytest
 
 from app.agent.style_loader import (
     CodeStyleLoader,
     Language,
     StyleSource,
-    STYLES_DIR,
     _read_builtin_style,
     _read_universal_style,
 )
@@ -26,13 +26,16 @@ class TestStyleLoaderFileMissing:
             assert source == StyleSource.UNIVERSAL
             assert len(style) > 0
 
-    @pytest.mark.parametrize("language,expected_name,expected_keyword", [
-        (Language.PYTHON, "Python", "4 spaces"),
-        (Language.JAVA, "Java", "2 spaces"),
-        (Language.JAVASCRIPT, "JavaScript", "const"),
-        (Language.GO, "Go", "gofmt"),
-        (Language.JSON, "JSON", "camelCase"),
-    ])
+    @pytest.mark.parametrize(
+        "language,expected_name,expected_keyword",
+        [
+            (Language.PYTHON, "Python", "4 spaces"),
+            (Language.JAVA, "Java", "2 spaces"),
+            (Language.JAVASCRIPT, "JavaScript", "const"),
+            (Language.GO, "Go", "gofmt"),
+            (Language.JSON, "JSON", "camelCase"),
+        ],
+    )
     def test_missing_file_returns_builtin_for_language(self, language, expected_name, expected_keyword):
         """When file doesn't exist, should return builtin style for each language."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -57,7 +60,7 @@ class TestStyleLoaderEmptyFile:
             style_file.write_text("")
 
             loader = CodeStyleLoader(workspace_root=tmpdir)
-            style, source = loader.get_style()
+            _, source = loader.get_style()
 
             assert source == StyleSource.UNIVERSAL
 
@@ -70,7 +73,7 @@ class TestStyleLoaderEmptyFile:
             style_file.write_text("   \n\t\n   ")
 
             loader = CodeStyleLoader(workspace_root=tmpdir)
-            style, source = loader.get_style()
+            _, source = loader.get_style()
 
             assert source == StyleSource.UNIVERSAL
 
@@ -159,7 +162,7 @@ class TestUniversalStyle:
     def test_universal_style_is_concise(self):
         """Universal style should be concise (under 60 lines)."""
         style = _read_universal_style()
-        line_count = len(style.split('\n'))
+        line_count = len(style.split("\n"))
         assert line_count < 60, f"Universal style has {line_count} lines, expected < 60"
 
     def test_universal_style_is_language_agnostic(self):

@@ -8,18 +8,19 @@ Covers:
 * load_settings — YAML loading + merging via _find_config_file
 * Edge cases: missing files, empty values
 """
+
 from __future__ import annotations
 
 import sys
 import types
-import pytest
+from unittest.mock import MagicMock, patch
+
 import yaml
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # ---------------------------------------------------------------------------
 # Stubs
 # ---------------------------------------------------------------------------
+
 
 def _stub(name: str, **attrs) -> types.ModuleType:
     m = types.ModuleType(name)
@@ -27,6 +28,7 @@ def _stub(name: str, **attrs) -> types.ModuleType:
         setattr(m, k, v)
     sys.modules.setdefault(name, m)
     return m
+
 
 _stub("cocoindex")
 _stub("sentence_transformers", SentenceTransformer=MagicMock)
@@ -36,18 +38,15 @@ _stub("sqlite_vec")
 # Real imports
 # ---------------------------------------------------------------------------
 
-from app.config import (  # noqa: E402
+from app.config import (
     AppSettings,
     CodeSearchSettings,
-    GitWorkspaceSettings,
-    ServerSettings,
-    Secrets,
     DatabaseSecrets,
     JWTSecrets,
+    Secrets,
     _find_config_file,
     load_settings,
 )
-
 
 # ===================================================================
 # _find_config_file
@@ -204,11 +203,15 @@ class TestLoadSettings:
 
     def test_loads_from_yaml(self, tmp_path):
         settings_file = tmp_path / "conductor.settings.yaml"
-        settings_file.write_text(yaml.dump({
-            "code_search": {
-                "repo_map_top_n": 15,
-            }
-        }))
+        settings_file.write_text(
+            yaml.dump(
+                {
+                    "code_search": {
+                        "repo_map_top_n": 15,
+                    }
+                }
+            )
+        )
         secrets_file = tmp_path / "conductor.secrets.yaml"
         secrets_file.write_text(yaml.dump({"jwt": {"secret_key": "test-key"}}))
 

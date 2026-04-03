@@ -7,6 +7,7 @@ Endpoints:
     POST /ai/summarize - Summarize messages using the active AI provider
     POST /ai/code-prompt - Generate a code prompt from a decision summary (supports multi-type)
 """
+
 import logging
 from typing import List, Literal, Optional
 
@@ -31,6 +32,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 
 class ProviderStatusResponse(BaseModel):
     """Response model for individual provider status."""
+
     name: str
     enabled: bool
     configured: bool
@@ -39,6 +41,7 @@ class ProviderStatusResponse(BaseModel):
 
 class ModelStatusResponse(BaseModel):
     """Response model for individual model status."""
+
     id: str
     provider: str
     display_name: str
@@ -48,6 +51,7 @@ class ModelStatusResponse(BaseModel):
 
 class AIStatusResponse(BaseModel):
     """Response model for GET /ai/status endpoint."""
+
     summary_enabled: bool
     active_provider: Optional[str]
     active_model: Optional[str]
@@ -60,6 +64,7 @@ class AIStatusResponse(BaseModel):
 
 class MessageInput(BaseModel):
     """Input model for a single chat message."""
+
     role: Literal["host", "engineer"]
     text: str
     timestamp: float
@@ -67,11 +72,13 @@ class MessageInput(BaseModel):
 
 class SummarizeRequest(BaseModel):
     """Request model for POST /ai/summarize endpoint."""
+
     messages: List[MessageInput]
 
 
 class CodeRelevantItemResponse(BaseModel):
     """Response model for a single code-relevant implementation item."""
+
     id: str
     type: Literal["api_design", "code_change", "product_flow", "architecture", "debugging"]
     title: str
@@ -83,6 +90,7 @@ class CodeRelevantItemResponse(BaseModel):
 
 class DecisionSummaryResponse(BaseModel):
     """Response model for POST /ai/summarize endpoint - structured decision summary."""
+
     type: Literal["decision_summary"] = "decision_summary"
     topic: str
     problem_statement: str
@@ -96,13 +104,11 @@ class DecisionSummaryResponse(BaseModel):
     classification_confidence: Optional[float] = None
     # Code-relevant types for selective code prompt generation
     code_relevant_types: List[str] = Field(
-        default_factory=list,
-        description="Discussion types that are code-relevant for this summary"
+        default_factory=list, description="Discussion types that are code-relevant for this summary"
     )
     # Structured implementation items extracted from the summary
     code_relevant_items: List[CodeRelevantItemResponse] = Field(
-        default_factory=list,
-        description="Discrete implementation tasks extracted by AI"
+        default_factory=list, description="Discrete implementation tasks extracted by AI"
     )
 
 
@@ -111,6 +117,7 @@ class DecisionSummaryInput(BaseModel):
 
     Matches the structure of DecisionSummaryResponse from /ai/summarize.
     """
+
     type: Literal["decision_summary"] = "decision_summary"
     topic: str
     problem_statement: str
@@ -123,6 +130,7 @@ class DecisionSummaryInput(BaseModel):
 
 class CodePromptRequest(BaseModel):
     """Request model for POST /ai/code-prompt endpoint (legacy single summary)."""
+
     decision_summary: DecisionSummaryInput
     context_snippet: Optional[str] = None
     room_id: Optional[str] = None
@@ -131,6 +139,7 @@ class CodePromptRequest(BaseModel):
 
 class CodePromptResponse(BaseModel):
     """Response model for POST /ai/code-prompt endpoint."""
+
     code_prompt: str
 
 
@@ -145,6 +154,7 @@ class SummaryWithItemsInput(BaseModel):
     Matches the structure of DecisionSummaryResponse from /ai/summarize,
     carrying the code_relevant_items needed for server-side filtering.
     """
+
     topic: str = ""
     problem_statement: str = ""
     proposed_solution: str = ""
@@ -157,6 +167,7 @@ class SummaryWithItemsInput(BaseModel):
 
 class ContextSnippetInput(BaseModel):
     """A code snippet from a specific file, used for context injection."""
+
     file_path: str
     snippet: str
 
@@ -168,6 +179,7 @@ class SelectiveItemsCodePromptRequest(BaseModel):
     selected_item_ids. The server filters items by the selected IDs
     before generating a focused prompt.
     """
+
     summary: SummaryWithItemsInput
     selected_item_ids: List[str]
     context_snippet: Optional[str] = None
@@ -209,6 +221,7 @@ async def get_ai_status() -> AIStatusResponse:
 
     # Determine explorer status from app state
     from app.main import app
+
     explorer_provider = getattr(app.state, "explorer_provider", None)
     active_explorer_id = getattr(app.state, "active_explorer_model_id", None)
 
@@ -243,11 +256,13 @@ async def get_ai_status() -> AIStatusResponse:
 
 class SetModelRequest(BaseModel):
     """Request model for POST /ai/model endpoint."""
+
     model_id: str
 
 
 class SetModelResponse(BaseModel):
     """Response model for POST /ai/model endpoint."""
+
     success: bool
     active_model: Optional[str]
     message: str
@@ -283,6 +298,7 @@ async def set_active_model(request: SetModelRequest) -> SetModelResponse:
     if success:
         # Propagate to app.state so global fallback stays in sync
         from app.main import app
+
         provider = resolver.get_or_create_provider(request.model_id)
         if provider:
             app.state.agent_provider = provider
@@ -301,12 +317,14 @@ async def set_active_model(request: SetModelRequest) -> SetModelResponse:
 
 class SetExplorerRequest(BaseModel):
     """Request model for POST /ai/explorer endpoint."""
+
     enabled: bool
     model_id: Optional[str] = None
 
 
 class SetExplorerResponse(BaseModel):
     """Response model for POST /ai/explorer endpoint."""
+
     success: bool
     explorer_enabled: bool
     active_explorer: Optional[str] = None
@@ -402,10 +420,7 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
         HTTPException 500: If the provider fails to generate summary or JSON parsing fails.
     """
     # Convert request messages to ChatMessage objects for the provider
-    chat_messages = [
-        ChatMessage(role=msg.role, text=msg.text, timestamp=msg.timestamp)
-        for msg in request.messages
-    ]
+    chat_messages = [ChatMessage(role=msg.role, text=msg.text, timestamp=msg.timestamp) for msg in request.messages]
 
     try:
         # Use the two-stage pipeline for improved summarization
@@ -447,7 +462,7 @@ async def summarize_messages(request: SummarizeRequest) -> DecisionSummaryRespon
         )
 
     except AIProviderError as e:
-        raise handle_provider_error(e)
+        raise handle_provider_error(e) from e
 
 
 @router.post("/code-prompt", response_model=CodePromptResponse)
@@ -555,10 +570,7 @@ async def generate_selective_code_prompt(
 
     # Filter items by selected IDs
     selected_ids_set = set(request.selected_item_ids)
-    filtered_items = [
-        item for item in request.summary.code_relevant_items
-        if item.id in selected_ids_set
-    ]
+    filtered_items = [item for item in request.summary.code_relevant_items if item.id in selected_ids_set]
 
     if not filtered_items:
         raise HTTPException(
@@ -590,10 +602,7 @@ async def generate_selective_code_prompt(
 
     snippets_dicts = None
     if request.context_snippets:
-        snippets_dicts = [
-            {"file_path": s.file_path, "snippet": s.snippet}
-            for s in request.context_snippets
-        ]
+        snippets_dicts = [{"file_path": s.file_path, "snippet": s.snippet} for s in request.context_snippets]
 
     code_prompt_str = call_code_prompt_from_items(
         items=items_dicts,
@@ -610,6 +619,7 @@ async def generate_selective_code_prompt(
 
 class CodeRelevantItemInput(BaseModel):
     """Input model for a single code-relevant item in items code-prompt request."""
+
     id: str
     type: Literal["api_design", "code_change", "product_flow", "architecture", "debugging"]
     title: str
@@ -621,6 +631,7 @@ class CodeRelevantItemInput(BaseModel):
 
 class ItemsCodePromptRequest(BaseModel):
     """Request model for POST /ai/code-prompt/items endpoint."""
+
     items: List[CodeRelevantItemInput]
     topic: str = ""
     context_snippet: Optional[str] = None
@@ -670,10 +681,7 @@ async def generate_code_prompt_from_items(
 
     snippets_dicts = None
     if request.context_snippets:
-        snippets_dicts = [
-            {"file_path": s.file_path, "snippet": s.snippet}
-            for s in request.context_snippets
-        ]
+        snippets_dicts = [{"file_path": s.file_path, "snippet": s.snippet} for s in request.context_snippets]
 
     code_prompt_str = call_code_prompt_from_items(
         items=items_dicts,
@@ -690,6 +698,7 @@ async def generate_code_prompt_from_items(
 
 class StyleTemplateItem(BaseModel):
     """A single style template."""
+
     name: str
     filename: str
     content: str
@@ -697,6 +706,7 @@ class StyleTemplateItem(BaseModel):
 
 class StyleTemplatesResponse(BaseModel):
     """Response model for GET /ai/style-templates endpoint."""
+
     templates: List[StyleTemplateItem]
 
 
@@ -713,9 +723,7 @@ async def get_style_templates() -> StyleTemplatesResponse:
     from app.agent.style_loader import CodeStyleLoader
 
     templates = CodeStyleLoader.list_templates()
-    return StyleTemplatesResponse(
-        templates=[StyleTemplateItem(**t) for t in templates]
-    )
+    return StyleTemplatesResponse(templates=[StyleTemplateItem(**t) for t in templates])
 
 
 def _get_room_output_mode(room_id: Optional[str]) -> Optional[str]:

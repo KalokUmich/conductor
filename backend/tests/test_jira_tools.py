@@ -8,6 +8,7 @@ Tests cover all four Jira tools:
 
 All HTTP calls are mocked at the httpx level.
 """
+
 from __future__ import annotations
 
 import time
@@ -25,10 +26,10 @@ from app.integrations.jira.tools import (
     jira_update_issue,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_service():
     """Create a mock JiraOAuthService with valid tokens."""
@@ -69,6 +70,7 @@ def setup_jira_tools():
 # Registry
 # ---------------------------------------------------------------------------
 
+
 class TestRegistry:
     def test_all_tools_registered(self):
         assert "jira_search" in JIRA_TOOL_REGISTRY
@@ -81,51 +83,56 @@ class TestRegistry:
 # jira_search
 # ---------------------------------------------------------------------------
 
+
 class TestJiraSearch:
     @patch("app.integrations.jira.tools.httpx.post")
     def test_search_free_text(self, mock_post):
-        mock_post.return_value = _mock_response(json_data={
-            "total": 2,
-            "issues": [
-                {
-                    "key": "DEV-100",
-                    "fields": {
-                        "summary": "Fix auth bug",
-                        "status": {"name": "In Progress"},
-                        "priority": {"name": "High"},
-                        "issuetype": {"name": "Bug"},
-                        "assignee": {"displayName": "Alice"},
+        mock_post.return_value = _mock_response(
+            json_data={
+                "total": 2,
+                "issues": [
+                    {
+                        "key": "DEV-100",
+                        "fields": {
+                            "summary": "Fix auth bug",
+                            "status": {"name": "In Progress"},
+                            "priority": {"name": "High"},
+                            "issuetype": {"name": "Bug"},
+                            "assignee": {"displayName": "Alice"},
+                        },
                     },
-                },
-                {
-                    "key": "DEV-101",
-                    "fields": {
-                        "summary": "Add retry logic",
-                        "status": {"name": "To Do"},
-                        "priority": None,
-                        "issuetype": {"name": "Story"},
-                        "assignee": None,
+                    {
+                        "key": "DEV-101",
+                        "fields": {
+                            "summary": "Add retry logic",
+                            "status": {"name": "To Do"},
+                            "priority": None,
+                            "issuetype": {"name": "Story"},
+                            "assignee": None,
+                        },
                     },
-                },
-            ],
-        })
+                ],
+            }
+        )
 
         result = jira_search(workspace="/tmp", query="auth bug")
         assert result.success is True
         assert len(result.data["issues"]) == 2
-        assert result.data["issues"][0]["key"] == "DEV-100"
+        assert result.data["issues"][0]["issue_key"] == "DEV-100"
         assert result.data["issues"][1]["assignee"] == ""
 
         # Should use text search (not raw JQL) — now sent via POST body
         call_kwargs = mock_post.call_args.kwargs.get("json", {})
-        assert 'text ~' in call_kwargs["jql"]
+        assert "text ~" in call_kwargs["jql"]
 
     @patch("app.integrations.jira.tools.httpx.post")
     def test_search_jql_passthrough(self, mock_post):
-        mock_post.return_value = _mock_response(json_data={
-            "total": 0,
-            "issues": [],
-        })
+        mock_post.return_value = _mock_response(
+            json_data={
+                "total": 0,
+                "issues": [],
+            }
+        )
 
         result = jira_search(workspace="/tmp", query='project = DEV AND status = "In Progress"')
         assert result.success is True
@@ -153,50 +160,54 @@ class TestJiraSearch:
 # jira_get_issue
 # ---------------------------------------------------------------------------
 
+
 class TestJiraGetIssue:
     @patch("app.integrations.jira.tools.httpx.get")
     def test_get_issue_full(self, mock_get):
-        mock_get.return_value = _mock_response(json_data={
-            "key": "DEV-42",
-            "fields": {
-                "summary": "Implement retry logic",
-                "description": {
-                    "type": "doc", "version": 1,
-                    "content": [{"type": "paragraph", "content": [
-                        {"type": "text", "text": "Add retry to webhook"}
-                    ]}],
-                },
-                "status": {"name": "In Progress"},
-                "priority": {"name": "High"},
-                "issuetype": {"name": "Story"},
-                "assignee": {"displayName": "Bob"},
-                "components": [{"name": "JBE"}, {"name": "Render API"}],
-                "labels": ["backend"],
-                "created": "2026-03-01T10:00:00Z",
-                "updated": "2026-03-15T14:00:00Z",
-                "parent": {"key": "DEV-40"},
-                "subtasks": [
-                    {"key": "DEV-43", "fields": {"summary": "Sub 1", "status": {"name": "Done"}}},
-                ],
-                "comment": {
-                    "comments": [
-                        {
-                            "author": {"displayName": "Alice"},
-                            "created": "2026-03-02T10:00:00Z",
-                            "body": "Looks good",
-                        },
+        mock_get.return_value = _mock_response(
+            json_data={
+                "key": "DEV-42",
+                "fields": {
+                    "summary": "Implement retry logic",
+                    "description": {
+                        "type": "doc",
+                        "version": 1,
+                        "content": [
+                            {"type": "paragraph", "content": [{"type": "text", "text": "Add retry to webhook"}]}
+                        ],
+                    },
+                    "status": {"name": "In Progress"},
+                    "priority": {"name": "High"},
+                    "issuetype": {"name": "Story"},
+                    "assignee": {"displayName": "Bob"},
+                    "components": [{"name": "JBE"}, {"name": "Render API"}],
+                    "labels": ["backend"],
+                    "created": "2026-03-01T10:00:00Z",
+                    "updated": "2026-03-15T14:00:00Z",
+                    "parent": {"key": "DEV-40"},
+                    "subtasks": [
+                        {"key": "DEV-43", "fields": {"summary": "Sub 1", "status": {"name": "Done"}}},
                     ],
+                    "comment": {
+                        "comments": [
+                            {
+                                "author": {"displayName": "Alice"},
+                                "created": "2026-03-02T10:00:00Z",
+                                "body": "Looks good",
+                            },
+                        ],
+                    },
                 },
-            },
-        })
+            }
+        )
 
         result = jira_get_issue(workspace="/tmp", issue_key="DEV-42")
         assert result.success is True
-        assert result.data["key"] == "DEV-42"
+        assert result.data["issue_key"] == "DEV-42"
         assert result.data["description"] == "Add retry to webhook"
         assert result.data["components"] == ["JBE", "Render API"]
         assert len(result.data["subtasks"]) == 1
-        assert result.data["subtasks"][0]["key"] == "DEV-43"
+        assert result.data["subtasks"][0]["issue_key"] == "DEV-43"
         assert len(result.data["comments"]) == 1
         assert result.data["parent"] == "DEV-40"
         assert "test.atlassian.net/browse/DEV-42" in result.data["browse_url"]
@@ -214,13 +225,16 @@ class TestJiraGetIssue:
 # jira_create_issue
 # ---------------------------------------------------------------------------
 
+
 class TestJiraCreateIssue:
     @patch("app.integrations.jira.tools.httpx.post")
     def test_create_basic(self, mock_post):
-        mock_post.return_value = _mock_response(json_data={
-            "id": "12345",
-            "key": "DEV-200",
-        })
+        mock_post.return_value = _mock_response(
+            json_data={
+                "id": "12345",
+                "key": "DEV-200",
+            }
+        )
 
         result = jira_create_issue(
             workspace="/tmp",
@@ -230,7 +244,7 @@ class TestJiraCreateIssue:
             issue_type="Story",
         )
         assert result.success is True
-        assert result.data["key"] == "DEV-200"
+        assert result.data["issue_key"] == "DEV-200"
         assert "test.atlassian.net/browse/DEV-200" in result.data["browse_url"]
 
         # Verify payload
@@ -242,10 +256,12 @@ class TestJiraCreateIssue:
 
     @patch("app.integrations.jira.tools.httpx.post")
     def test_create_with_components_and_team(self, mock_post):
-        mock_post.return_value = _mock_response(json_data={
-            "id": "12346",
-            "key": "DEV-201",
-        })
+        mock_post.return_value = _mock_response(
+            json_data={
+                "id": "12346",
+                "key": "DEV-201",
+            }
+        )
 
         result = jira_create_issue(
             workspace="/tmp",
@@ -262,9 +278,7 @@ class TestJiraCreateIssue:
 
     @patch("app.integrations.jira.tools.httpx.post")
     def test_create_api_error(self, mock_post):
-        mock_post.return_value = _mock_response(
-            status_code=400, text='{"errors":{"summary":"required"}}'
-        )
+        mock_post.return_value = _mock_response(status_code=400, text='{"errors":{"summary":"required"}}')
 
         result = jira_create_issue(
             workspace="/tmp",
@@ -279,15 +293,18 @@ class TestJiraCreateIssue:
 # jira_list_projects
 # ---------------------------------------------------------------------------
 
+
 class TestJiraListProjects:
     @patch("app.integrations.jira.tools.httpx.get")
     def test_list_filtered(self, mock_get):
-        mock_get.return_value = _mock_response(json_data=[
-            {"key": "DEV", "name": "Development", "id": "10040"},
-            {"key": "FO", "name": "FinOps", "id": "10033"},
-            {"key": "OLD", "name": "Legacy", "id": "10000"},
-            {"key": "HELP", "name": "Helpdesk", "id": "10042"},
-        ])
+        mock_get.return_value = _mock_response(
+            json_data=[
+                {"key": "DEV", "name": "Development", "id": "10040"},
+                {"key": "FO", "name": "FinOps", "id": "10033"},
+                {"key": "OLD", "name": "Legacy", "id": "10000"},
+                {"key": "HELP", "name": "Helpdesk", "id": "10042"},
+            ]
+        )
 
         result = jira_list_projects(workspace="/tmp")
         assert result.success is True
@@ -299,10 +316,12 @@ class TestJiraListProjects:
     def test_list_no_filter(self, mock_get):
         init_jira_tools(_make_mock_service(), set())  # empty filter
 
-        mock_get.return_value = _mock_response(json_data=[
-            {"key": "DEV", "name": "Development", "id": "10040"},
-            {"key": "OLD", "name": "Legacy", "id": "10000"},
-        ])
+        mock_get.return_value = _mock_response(
+            json_data=[
+                {"key": "DEV", "name": "Development", "id": "10040"},
+                {"key": "OLD", "name": "Legacy", "id": "10000"},
+            ]
+        )
 
         result = jira_list_projects(workspace="/tmp")
         assert result.success is True
@@ -313,6 +332,7 @@ class TestJiraListProjects:
 # Token refresh
 # ---------------------------------------------------------------------------
 
+
 class TestTokenRefresh:
     @patch("app.integrations.jira.tools.httpx.post")
     def test_auto_refresh_on_expired_token(self, mock_post, setup_jira_tools):
@@ -320,15 +340,19 @@ class TestTokenRefresh:
         setup_jira_tools._token_expires_at = time.time() - 100
 
         # httpx.post is called twice: first for refresh, then for search/jql
-        refresh_resp = _mock_response(json_data={
-            "access_token": "new-token",
-            "refresh_token": "new-refresh",
-            "expires_in": 3600,
-        })
-        search_resp = _mock_response(json_data={
-            "total": 0,
-            "issues": [],
-        })
+        refresh_resp = _mock_response(
+            json_data={
+                "access_token": "new-token",
+                "refresh_token": "new-refresh",
+                "expires_in": 3600,
+            }
+        )
+        search_resp = _mock_response(
+            json_data={
+                "total": 0,
+                "issues": [],
+            }
+        )
         mock_post.side_effect = [refresh_resp, search_resp]
 
         result = jira_search(workspace="/tmp", query="test")
@@ -343,17 +367,20 @@ class TestTokenRefresh:
 # jira_update_issue
 # ---------------------------------------------------------------------------
 
+
 class TestJiraUpdateIssue:
     @patch("app.integrations.jira.tools.httpx.post")
     @patch("app.integrations.jira.tools.httpx.get")
     def test_transition_success(self, mock_get, mock_post):
         # GET transitions
-        mock_get.return_value = _mock_response(json_data={
-            "transitions": [
-                {"id": "21", "name": "Start Progress", "to": {"name": "In Progress"}},
-                {"id": "31", "name": "Done", "to": {"name": "Done"}},
-            ],
-        })
+        mock_get.return_value = _mock_response(
+            json_data={
+                "transitions": [
+                    {"id": "21", "name": "Start Progress", "to": {"name": "In Progress"}},
+                    {"id": "31", "name": "Done", "to": {"name": "Done"}},
+                ],
+            }
+        )
         # POST transition
         mock_post.return_value = _mock_response(json_data=None)
         mock_post.return_value.content = b""

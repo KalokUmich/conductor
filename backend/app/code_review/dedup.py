@@ -3,6 +3,7 @@
 Multiple agents often find the same root cause from different perspectives.
 This layer merges overlapping findings, keeping the strongest evidence.
 """
+
 from __future__ import annotations
 
 import logging
@@ -39,10 +40,7 @@ def _same_domain(a: ReviewFinding, b: ReviewFinding) -> bool:
     a_kw = _extract_keywords(f"{a.title} {a.risk}")
     b_kw = _extract_keywords(f"{b.title} {b.risk}")
 
-    for domain in _DOMAIN_TAGS:
-        if a_kw & domain and b_kw & domain:
-            return True
-    return False
+    return any(a_kw & domain and b_kw & domain for domain in _DOMAIN_TAGS)
 
 
 def _findings_overlap(a: ReviewFinding, b: ReviewFinding) -> bool:
@@ -62,9 +60,15 @@ def _findings_overlap(a: ReviewFinding, b: ReviewFinding) -> bool:
         return False
 
     # Line range overlap
-    if a.start_line and b.start_line and a.end_line and b.end_line:
-        if a.start_line <= b.end_line and b.start_line <= a.end_line:
-            return True
+    if (
+        a.start_line
+        and b.start_line
+        and a.end_line
+        and b.end_line
+        and a.start_line <= b.end_line
+        and b.start_line <= a.end_line
+    ):
+        return True
 
     # Title similarity (word overlap)
     a_words = set(a.title.lower().split())
@@ -152,6 +156,7 @@ def dedup_findings(findings: List[ReviewFinding]) -> List[ReviewFinding]:
 
     logger.info(
         "Dedup: %d findings → %d after merging",
-        len(findings), len(merged),
+        len(findings),
+        len(merged),
     )
     return merged

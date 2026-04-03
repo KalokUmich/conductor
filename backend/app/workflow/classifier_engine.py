@@ -11,6 +11,7 @@ When route configs include ``examples``, the engine can build an LLM
 classification prompt that follows the "examples over rule lists" design
 principle (see CLAUDE.md §Agent Design).
 """
+
 from __future__ import annotations
 
 import json
@@ -20,7 +21,6 @@ from typing import Any, Dict, List, Optional
 
 from .models import (
     ClassifierResult,
-    RouteConfig,
     ThresholdsConfig,
     WorkflowConfig,
 )
@@ -66,9 +66,7 @@ class ClassifierEngine:
         self._compiled: Dict[str, List[re.Pattern]] = {}
         for route_name, route in self._routes.items():
             patterns = route.file_patterns or route.text_patterns
-            self._compiled[route_name] = [
-                re.compile(p, re.IGNORECASE) for p in patterns
-            ]
+            self._compiled[route_name] = [re.compile(p, re.IGNORECASE) for p in patterns]
 
     def classify(self, signals: Dict[str, Any]) -> ClassifierResult:
         """Classify input signals and determine which routes to activate.
@@ -124,9 +122,8 @@ class ClassifierEngine:
 
             # Apply boost rules
             for rule in route.boost_rules:
-                if self._evaluate_boost_condition(rule.when, signals):
-                    if not _level_ge(level, rule.min_level):
-                        level = rule.min_level
+                if self._evaluate_boost_condition(rule.when, signals) and not _level_ge(level, rule.min_level):
+                    level = rule.min_level
 
             matched_routes[route_name] = level
             raw_scores[route_name] = {
@@ -179,10 +176,7 @@ class ClassifierEngine:
         # Simple expression evaluator (no eval() for safety)
         # Supports: "X op N" and "X op N or Y op M"
         parts = [p.strip() for p in condition.split(" or ")]
-        for part in parts:
-            if _eval_simple_comparison(part, ctx):
-                return True
-        return False
+        return any(_eval_simple_comparison(part, ctx) for part in parts)
 
     # -----------------------------------------------------------------
     # keyword_pattern: match query text against keyword patterns
@@ -261,7 +255,7 @@ class ClassifierEngine:
             examples = route.examples
             if not examples:
                 continue
-            example_lines = "\n".join(f"  - \"{ex}\"" for ex in examples)
+            example_lines = "\n".join(f'  - "{ex}"' for ex in examples)
             sections.append(f"**{route_name}**:\n{example_lines}")
 
         categories = "\n\n".join(sections)
@@ -301,7 +295,7 @@ class ClassifierEngine:
             )
             text = (response.text or "").strip()
             if "{" in text:
-                json_str = text[text.index("{"):text.rindex("}") + 1]
+                json_str = text[text.index("{") : text.rindex("}") + 1]
                 data = json.loads(json_str)
                 route = data.get("route", "")
                 if route in self._routes:
@@ -316,9 +310,7 @@ class ClassifierEngine:
 # Helper: simple comparison evaluator (no eval())
 # ---------------------------------------------------------------------------
 
-_COMPARISON_RE = re.compile(
-    r"^\s*(\w+)\s*(>=|<=|>|<|==|!=)\s*(\d+)\s*$"
-)
+_COMPARISON_RE = re.compile(r"^\s*(\w+)\s*(>=|<=|>|<|==|!=)\s*(\d+)\s*$")
 
 
 def _eval_simple_comparison(expr: str, ctx: Dict[str, int]) -> bool:
@@ -333,16 +325,12 @@ def _eval_simple_comparison(expr: str, ctx: Dict[str, int]) -> bool:
     threshold = int(m.group(3))
     value = ctx.get(var_name, 0)
 
-    if op == ">=":
-        return value >= threshold
-    elif op == "<=":
-        return value <= threshold
-    elif op == ">":
-        return value > threshold
-    elif op == "<":
-        return value < threshold
-    elif op == "==":
-        return value == threshold
-    elif op == "!=":
-        return value != threshold
-    return False
+    _OPS = {
+        ">=": lambda v, t: v >= t,
+        "<=": lambda v, t: v <= t,
+        ">": lambda v, t: v > t,
+        "<": lambda v, t: v < t,
+        "==": lambda v, t: v == t,
+        "!=": lambda v, t: v != t,
+    }
+    return _OPS.get(op, lambda v, t: False)(value, threshold)

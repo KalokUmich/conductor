@@ -5,6 +5,7 @@ Resolution order for Redis URL:
   2. YAML config ``redis.url``
   3. Default: ``redis://localhost:6379/0``
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,6 +42,7 @@ async def init_redis(url: Optional[str] = None, prefix: str = "conductor:") -> O
 
     try:
         import redis.asyncio as aioredis
+
         _redis = aioredis.from_url(
             resolved_url,
             decode_responses=True,

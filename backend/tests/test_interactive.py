@@ -6,11 +6,11 @@ import pytest
 
 from app.agent_loop.interactive import (
     PendingQuestion,
+    _pending,
     cleanup,
     get_pending,
     register_question,
     submit_answer,
-    _pending,
 )
 
 
@@ -79,8 +79,9 @@ async def test_event_wait_and_set():
         await asyncio.sleep(0.05)
         submit_answer("sess6", "module-level")
 
-    asyncio.create_task(submit_after_delay())
+    submit_task = asyncio.create_task(submit_after_delay())
     await asyncio.wait_for(pq.event.wait(), timeout=2.0)
+    await submit_task  # ensure task completes
 
     assert pq.answer == "module-level"
     assert pq.event.is_set()

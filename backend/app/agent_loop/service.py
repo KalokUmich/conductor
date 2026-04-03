@@ -14,6 +14,7 @@ Concurrency notes:
     suitable for SSE streaming.  ``run()`` is a thin wrapper that collects
     the stream into a single ``AgentResult``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,20 +23,24 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional, Tuple
 
 from app.ai_provider.base import AIProvider, ToolUseResponse
 from app.code_tools.executor import LocalToolExecutor, ToolExecutor
 from app.code_tools.output_policy import apply_policy
 from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools, format_tool_summary
 
+if TYPE_CHECKING:
+    from app.code_tools.schemas import ToolResult
+from app.workflow.observability import observe
+
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
 from .config import AgentLoopConfig
+
 # completeness check removed — Brain handles via need_brain_review
 from .evidence import check_evidence
 from .prompts import _read_key_docs, build_system_prompt, scan_workspace_layout, scan_workspace_risk
 from .trace import IterationTrace, SessionTrace, ToolCallTrace, TraceWriter
-from app.workflow.observability import observe
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +58,7 @@ _THROTTLE_BACKOFFS = [5, 15, 30]  # exponential-ish backoff: short first retry, 
 @dataclass
 class ContextChunk:
     """A piece of code context collected during the agent loop."""
+
     file_path: str
     content: str
     start_line: int = 0
@@ -73,6 +79,7 @@ class AgentEvent:
       * ``done``          — final answer produced
       * ``error``         — unrecoverable error
     """
+
     kind: str
     data: Dict[str, Any] = field(default_factory=dict)
 
@@ -80,10 +87,11 @@ class AgentEvent:
 @dataclass
 class ThinkingStep:
     """A single step in the agent's thinking/investigation process."""
-    kind: str          # "thinking", "tool_call", "tool_result"
+
+    kind: str  # "thinking", "tool_call", "tool_result"
     iteration: int = 0
-    text: str = ""     # thinking text or action description
-    tool: str = ""     # tool name (for tool_call / tool_result)
+    text: str = ""  # thinking text or action description
+    tool: str = ""  # tool name (for tool_call / tool_result)
     params: Dict[str, Any] = field(default_factory=dict)
     summary: str = ""  # tool result summary
     success: bool = True
@@ -92,6 +100,7 @@ class ThinkingStep:
 @dataclass
 class AgentResult:
     """Result of an agent loop run."""
+
     answer: str = ""
     context_chunks: List[ContextChunk] = field(default_factory=list)
     thinking_steps: List[ThinkingStep] = field(default_factory=list)
@@ -172,7 +181,7 @@ class AgentLoopService:
         self._temperature = None  # set per-agent via forced_tools dispatch
         self._quality_config = None  # set per-agent via brain dispatch
         self._forced_strategy = config.forced_strategy  # strategy key override (Layer 3 strategy)
-        self._forced_skill = config.forced_skill    # investigation skill override (Layer 3 skill)
+        self._forced_skill = config.forced_skill  # investigation skill override (Layer 3 skill)
 
     @observe(name="agent_loop")
     async def run(
@@ -254,7 +263,12 @@ class AgentLoopService:
         layout, project_docs, risk_context = await self._initialize_workspace(workspace_path)
 
         async for event in self._classify_and_build_prompt(
-            query, workspace_path, layout, project_docs, risk_context, code_context,
+            query,
+            workspace_path,
+            layout,
+            project_docs,
+            risk_context,
+            code_context,
         ):
             if event.kind == "classify":
                 # Unpack private state keys before forwarding the clean event to clients
@@ -273,9 +287,12 @@ class AgentLoopService:
         response: Optional[ToolUseResponse] = None
 
         # Token budget controller — tracks cumulative token usage
-        budget = BudgetController(self._budget_config or BudgetConfig(
-            max_iterations=self._max_iterations,
-        ))
+        budget = BudgetController(
+            self._budget_config
+            or BudgetConfig(
+                max_iterations=self._max_iterations,
+            )
+        )
 
         # Accumulate LLM text throughout the loop so we have a fallback
         # if the final answer is empty (e.g. max_tokens hit, model quirk).
@@ -299,7 +316,7 @@ class AgentLoopService:
         executor = self._tool_executor or LocalToolExecutor(workspace_path)
 
         # Cache for tool results to serve duplicates without re-execution
-        _tool_result_cache: Dict[str, "ToolResult"] = {}
+        _tool_result_cache: Dict[str, ToolResult] = {}
 
         # Closure executed in a thread for each tool call (with timing)
         async def _exec_tool(tc_arg):
@@ -309,7 +326,7 @@ class AgentLoopService:
             try:
                 cache_key = f"{tc_arg.name}|{_json.dumps(tc_arg.input, sort_keys=True)}"
             except (TypeError, ValueError):
-                cache_key = f"{tc_arg.name}|{str(tc_arg.input)}"
+                cache_key = f"{tc_arg.name}|{tc_arg.input!s}"
 
             dup_count = _tool_call_history.get(cache_key, 0)
             _tool_call_history[cache_key] = dup_count + 1
@@ -373,10 +390,13 @@ class AgentLoopService:
             _out_tok = response.usage.output_tokens if response.usage else 0
             _n_tc = len(response.tool_calls) if response.tool_calls else 0
             logger.info(
-                "[%s] iter=%d LLM call done in %.0fms "
-                "(in=%d out=%d tool_calls=%d stop=%s)",
-                _sid, iteration + 1, llm_elapsed_ms,
-                _in_tok, _out_tok, _n_tc,
+                "[%s] iter=%d LLM call done in %.0fms (in=%d out=%d tool_calls=%d stop=%s)",
+                _sid,
+                iteration + 1,
+                llm_elapsed_ms,
+                _in_tok,
+                _out_tok,
+                _n_tc,
                 response.stop_reason,
             )
 
@@ -389,6 +409,7 @@ class AgentLoopService:
             # Record generation to Langfuse (model name + token usage)
             if response.usage:
                 from app.workflow.observability import track_generation
+
                 track_generation(
                     name=f"llm_iter_{iteration + 1}",
                     model=self._provider.model_name,
@@ -414,15 +435,20 @@ class AgentLoopService:
 
             # Emit thinking text when the LLM also requests tool calls
             if response.text and response.tool_calls:
-                thinking_steps.append({
-                    "kind": "thinking",
-                    "iteration": iteration + 1,
-                    "text": response.text,
-                })
-                yield AgentEvent(kind="thinking", data={
-                    "text": response.text,
-                    "iteration": iteration + 1,
-                })
+                thinking_steps.append(
+                    {
+                        "kind": "thinking",
+                        "iteration": iteration + 1,
+                        "text": response.text,
+                    }
+                )
+                yield AgentEvent(
+                    kind="thinking",
+                    data={
+                        "text": response.text,
+                        "iteration": iteration + 1,
+                    },
+                )
 
             # Final answer — no tool calls requested
             if response.stop_reason == "end_turn" or not response.tool_calls:
@@ -460,17 +486,22 @@ class AgentLoopService:
 
             # Emit tool_call events before execution starts
             for tc in response.tool_calls:
-                thinking_steps.append({
-                    "kind": "tool_call",
-                    "iteration": iteration + 1,
-                    "tool": tc.name,
-                    "params": tc.input,
-                })
-                yield AgentEvent(kind="tool_call", data={
-                    "iteration": iteration + 1,
-                    "tool": tc.name,
-                    "params": tc.input,
-                })
+                thinking_steps.append(
+                    {
+                        "kind": "tool_call",
+                        "iteration": iteration + 1,
+                        "tool": tc.name,
+                        "params": tc.input,
+                    }
+                )
+                yield AgentEvent(
+                    kind="tool_call",
+                    data={
+                        "iteration": iteration + 1,
+                        "tool": tc.name,
+                        "params": tc.input,
+                    },
+                )
 
             # Process tool calls (regular + ask_user + signal_blocker)
             tool_outputs = []
@@ -584,7 +615,10 @@ class AgentLoopService:
         """
         # Branch 0: Brain mode — use Brain meta-tools + prompt
         if self._is_brain:
-            from app.code_tools.schemas import get_brain_tool_definitions  # lazy: schemas is expensive to import at module level
+            from app.code_tools.schemas import (
+                get_brain_tool_definitions,  # lazy: schemas is expensive to import at module level
+            )
+
             system = self._brain_system_prompt
             # Inject code_context so Brain sees the snippet when deciding dispatch
             if code_context:
@@ -598,27 +632,27 @@ class AgentLoopService:
                     f"```{lang}\n{code_context['code']}\n```\n"
                 )
             active_tools = get_brain_tool_definitions()
-            logger.info("Brain mode: %d meta-tools, prompt=%d chars",
-                        len(active_tools), len(system))
+            logger.info("Brain mode: %d meta-tools, prompt=%d chars", len(active_tools), len(system))
             # Brain is always interactive
             self._interactive = True
             messages = self._initial_messages(query)
-            yield AgentEvent(kind="classify", data={
-                "query_type": "brain",
-                "budget_level": "high",
-                "tools_active": len(active_tools),
-                "tools_total": len(active_tools),
-                "_system": system,
-                "_active_tools": active_tools,
-                "_messages": messages,
-                "_is_high_level": False,
-            })
+            yield AgentEvent(
+                kind="classify",
+                data={
+                    "query_type": "brain",
+                    "budget_level": "high",
+                    "tools_active": len(active_tools),
+                    "tools_total": len(active_tools),
+                    "_system": system,
+                    "_active_tools": active_tools,
+                    "_messages": messages,
+                    "_is_high_level": False,
+                },
+            )
             return
 
         # Determine query type label for logging / prompt selection
-        query_type = "brain_dispatched" if self._forced_tools else (
-            self._workflow_route_name or "general"
-        )
+        query_type = "brain_dispatched" if self._forced_tools else (self._workflow_route_name or "general")
         budget_level = "medium"
         if self._forced_tools:
             logger.info("Brain-dispatched agent: forced_tools=%d", len(self._forced_tools))
@@ -631,6 +665,7 @@ class AgentLoopService:
         if self._agent_identity:
             # 4-layer path: Brain-dispatched sub-agent with per-agent identity
             from .prompts import build_sub_agent_system_prompt  # lazy: avoids circular import (service ↔ prompts)
+
             system = build_sub_agent_system_prompt(
                 agent_name=self._agent_identity["name"],
                 agent_description=self._agent_identity["description"],
@@ -670,25 +705,33 @@ class AgentLoopService:
         # In interactive mode, append the ask_user tool so the LLM can
         # request clarification from the user mid-loop.
         if self._interactive:
-            from app.code_tools.schemas import get_ask_user_tool_def  # lazy: only needed when interactive mode is active
+            from app.code_tools.schemas import (
+                get_ask_user_tool_def,  # lazy: only needed when interactive mode is active
+            )
+
             active_tools = list(active_tools) + [get_ask_user_tool_def()]
 
         logger.info(
             "Agent prepared: type=%s, budget=%s, tools=%d",
-            query_type, budget_level, len(active_tools),
+            query_type,
+            budget_level,
+            len(active_tools),
         )
 
         messages = self._initial_messages(query)
-        yield AgentEvent(kind="classify", data={
-            "query_type": query_type,
-            "budget_level": budget_level,
-            "tools_active": len(active_tools),
-            "tools_total": len(TOOL_DEFINITIONS),
-            "_system": system,
-            "_active_tools": active_tools,
-            "_messages": messages,
-            "_is_high_level": is_high_level,
-        })
+        yield AgentEvent(
+            kind="classify",
+            data={
+                "query_type": query_type,
+                "budget_level": budget_level,
+                "tools_active": len(active_tools),
+                "tools_total": len(TOOL_DEFINITIONS),
+                "_system": system,
+                "_active_tools": active_tools,
+                "_messages": messages,
+                "_is_high_level": is_high_level,
+            },
+        )
 
     async def _call_llm_with_retry(
         self,
@@ -698,8 +741,8 @@ class AgentLoopService:
         iteration: int,
         accumulated_text: List[str],
         total_tool_calls: int,
-        budget: "BudgetController",
-        trace: "SessionTrace",
+        budget: BudgetController,
+        trace: SessionTrace,
         thinking_steps: List[Dict[str, Any]],
         start: float,
         _sid: str,
@@ -717,7 +760,10 @@ class AgentLoopService:
         n_msgs = len(messages)
         logger.info(
             "[%s] iter=%d/%d LLM call starting (msgs=%d)",
-            _sid, iteration + 1, self._max_iterations, n_msgs,
+            _sid,
+            iteration + 1,
+            self._max_iterations,
+            n_msgs,
         )
         response = None
         for attempt in range(_LLM_THROTTLE_RETRIES + 1):
@@ -726,14 +772,16 @@ class AgentLoopService:
                     sem_wait_start = time.monotonic()
                     logger.info(
                         "[%s] iter=%d waiting for LLM semaphore...",
-                        _sid, iteration + 1,
+                        _sid,
+                        iteration + 1,
                     )
                     async with self._llm_semaphore:
                         sem_wait_ms = (time.monotonic() - sem_wait_start) * 1000
                         logger.info(
-                            "[%s] iter=%d semaphore acquired (waited %.0fms), "
-                            "calling LLM...",
-                            _sid, iteration + 1, sem_wait_ms,
+                            "[%s] iter=%d semaphore acquired (waited %.0fms), calling LLM...",
+                            _sid,
+                            iteration + 1,
+                            sem_wait_ms,
                         )
                         response = await asyncio.wait_for(
                             asyncio.to_thread(
@@ -759,7 +807,7 @@ class AgentLoopService:
                         timeout=_LLM_TIMEOUT_SECONDS,
                     )
                 break  # success — exit retry loop
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 exc = TimeoutError(
                     f"LLM call timed out after {_LLM_TIMEOUT_SECONDS}s at iteration "
                     f"{iteration + 1} (context may be too large)"
@@ -768,15 +816,18 @@ class AgentLoopService:
                 answer = "\n\n".join(accumulated_text) if accumulated_text else ""
                 trace.finish(answer=answer, error=str(exc), budget_summary=budget.summary())
                 await self._save_trace(trace)
-                yield AgentEvent(kind="error", data={
-                    "error": str(exc),
-                    "answer": answer,
-                    "tool_calls_made": total_tool_calls,
-                    "iterations": iteration + 1,
-                    "duration_ms": (time.monotonic() - start) * 1000,
-                    "thinking_steps": thinking_steps,
-                    "budget_summary": budget.summary(),
-                })
+                yield AgentEvent(
+                    kind="error",
+                    data={
+                        "error": str(exc),
+                        "answer": answer,
+                        "tool_calls_made": total_tool_calls,
+                        "iterations": iteration + 1,
+                        "duration_ms": (time.monotonic() - start) * 1000,
+                        "thinking_steps": thinking_steps,
+                        "budget_summary": budget.summary(),
+                    },
+                )
                 return
             except Exception as exc:
                 exc_name = type(exc).__name__
@@ -789,17 +840,23 @@ class AgentLoopService:
                 if is_throttle and attempt < _LLM_THROTTLE_RETRIES:
                     backoff = _LLM_THROTTLE_BACKOFF[attempt]
                     logger.warning(
-                        "[%s] iter=%d THROTTLED (attempt %d/%d): %s. "
-                        "Backing off %ds before retry...",
-                        _sid, iteration + 1, attempt + 1,
-                        _LLM_THROTTLE_RETRIES + 1, exc, backoff,
+                        "[%s] iter=%d THROTTLED (attempt %d/%d): %s. Backing off %ds before retry...",
+                        _sid,
+                        iteration + 1,
+                        attempt + 1,
+                        _LLM_THROTTLE_RETRIES + 1,
+                        exc,
+                        backoff,
                     )
                     await asyncio.sleep(backoff)
                     continue  # retry
                 # Non-throttle error, or retries exhausted — fail
                 logger.error(
                     "[%s] iter=%d LLM call failed: [%s] %s",
-                    _sid, iteration + 1, exc_name, exc,
+                    _sid,
+                    iteration + 1,
+                    exc_name,
+                    exc,
                 )
                 trace.finish(
                     answer="\n\n".join(accumulated_text) if accumulated_text else "",
@@ -807,32 +864,38 @@ class AgentLoopService:
                     budget_summary=budget.summary(),
                 )
                 await self._save_trace(trace)
-                yield AgentEvent(kind="error", data={
-                    "error": str(exc),
-                    "answer": "\n\n".join(accumulated_text) if accumulated_text else "",
-                    "tool_calls_made": total_tool_calls,
-                    "iterations": iteration + 1,
-                    "duration_ms": (time.monotonic() - start) * 1000,
-                    "thinking_steps": thinking_steps,
-                    "budget_summary": budget.summary(),
-                })
+                yield AgentEvent(
+                    kind="error",
+                    data={
+                        "error": str(exc),
+                        "answer": "\n\n".join(accumulated_text) if accumulated_text else "",
+                        "tool_calls_made": total_tool_calls,
+                        "iterations": iteration + 1,
+                        "duration_ms": (time.monotonic() - start) * 1000,
+                        "thinking_steps": thinking_steps,
+                        "budget_summary": budget.summary(),
+                    },
+                )
                 return
 
         llm_elapsed_ms = (time.monotonic() - llm_start) * 1000
-        yield AgentEvent(kind="_llm_result", data={
-            "response": response,
-            "elapsed_ms": llm_elapsed_ms,
-        })
+        yield AgentEvent(
+            kind="_llm_result",
+            data={
+                "response": response,
+                "elapsed_ms": llm_elapsed_ms,
+            },
+        )
 
     async def _handle_final_answer(
         self,
-        response: "ToolUseResponse",
+        response: ToolUseResponse,
         iteration: int,
-        budget: "BudgetController",
-        trace: "SessionTrace",
+        budget: BudgetController,
+        trace: SessionTrace,
         thinking_steps: List[Dict[str, Any]],
-        iter_metrics: "IterationMetrics",
-        iter_trace: "IterationTrace",
+        iter_metrics: IterationMetrics,
+        iter_trace: IterationTrace,
         total_tool_calls: int,
         evidence_retries: int,
         messages: List[Dict[str, Any]],
@@ -851,9 +914,9 @@ class AgentLoopService:
         if not answer.strip() and accumulated_text:
             answer = accumulated_text[-1]
             logger.warning(
-                "Agent final answer was empty at iteration %d; "
-                "falling back to last thinking text (%d chars)",
-                iteration + 1, len(answer),
+                "Agent final answer was empty at iteration %d; falling back to last thinking text (%d chars)",
+                iteration + 1,
+                len(answer),
             )
 
         # Quality checks driven by agent template config.
@@ -864,15 +927,18 @@ class AgentLoopService:
             duration = (time.monotonic() - start) * 1000
             trace.finish(answer=answer, budget_summary=budget.summary())
             await self._save_trace(trace)
-            yield AgentEvent(kind="done", data={
-                "answer": answer,
-                "context_chunks": [],
-                "thinking_steps": thinking_steps,
-                "tool_calls_made": total_tool_calls,
-                "iterations": iteration + 1,
-                "duration_ms": duration,
-                "budget_summary": budget.summary(),
-            })
+            yield AgentEvent(
+                kind="done",
+                data={
+                    "answer": answer,
+                    "context_chunks": [],
+                    "thinking_steps": thinking_steps,
+                    "tool_calls_made": total_tool_calls,
+                    "iterations": iteration + 1,
+                    "duration_ms": duration,
+                    "budget_summary": budget.summary(),
+                },
+            )
             return
 
         # Evidence check — skip if template says evidence_check: false
@@ -884,6 +950,7 @@ class AgentLoopService:
         remaining = self._max_iterations - (iteration + 1)
         if skip_evidence:
             from .evidence import EvidenceCheck
+
             ev = EvidenceCheck(passed=True, file_refs=0, code_blocks=0, tool_calls_made=total_tool_calls, guidance="")
         else:
             ev = check_evidence(
@@ -900,9 +967,9 @@ class AgentLoopService:
             evidence_retries += 1
             if evidence_retries > self._max_evidence_retries:
                 logger.warning(
-                    "Evidence check failed %d times (max %d) — "
-                    "enriching answer with collected file refs",
-                    evidence_retries, self._max_evidence_retries,
+                    "Evidence check failed %d times (max %d) — enriching answer with collected file refs",
+                    evidence_retries,
+                    self._max_evidence_retries,
                 )
                 # Enrich the answer with files the agent already accessed
                 answer = _enrich_answer_with_refs(answer, budget.files_accessed)
@@ -910,26 +977,36 @@ class AgentLoopService:
                 logger.info(
                     "Evidence check failed at iteration %d "
                     "(refs=%d, tools=%d, files=%d, retry=%d/%d) — requesting retry",
-                    iteration + 1, ev.file_refs, ev.tool_calls_made,
+                    iteration + 1,
+                    ev.file_refs,
+                    ev.tool_calls_made,
                     len(budget.files_accessed),
-                    evidence_retries, self._max_evidence_retries,
+                    evidence_retries,
+                    self._max_evidence_retries,
                 )
                 # Push back: re-add the answer as assistant, then
                 # inject evidence guidance as a user message
-                messages.append({
-                    "role": "assistant",
-                    "content": [{"text": answer}],
-                })
-                messages.append({
-                    "role": "user",
-                    "content": [{"text": ev.guidance}],
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": [{"text": answer}],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [{"text": ev.guidance}],
+                    }
+                )
                 iter_trace.budget_signal = budget.get_signal().value
                 trace.add_iteration(iter_trace)
                 # Signal the caller to continue the loop
-                yield AgentEvent(kind="_evidence_retry", data={
-                    "evidence_retries": evidence_retries,
-                })
+                yield AgentEvent(
+                    kind="_evidence_retry",
+                    data={
+                        "evidence_retries": evidence_retries,
+                    },
+                )
                 return
 
         # Completeness check removed — Brain handles quality evaluation
@@ -939,20 +1016,23 @@ class AgentLoopService:
         trace.add_iteration(iter_trace)
         trace.finish(answer=answer, budget_summary=budget.summary())
         await self._save_trace(trace)
-        yield AgentEvent(kind="done", data={
-            "answer": answer,
-            "tool_calls_made": total_tool_calls,
-            "iterations": iteration + 1,
-            "duration_ms": (time.monotonic() - start) * 1000,
-            "thinking_steps": thinking_steps,
-            "budget_summary": budget.summary(),
-        })
+        yield AgentEvent(
+            kind="done",
+            data={
+                "answer": answer,
+                "tool_calls_made": total_tool_calls,
+                "iterations": iteration + 1,
+                "duration_ms": (time.monotonic() - start) * 1000,
+                "thinking_steps": thinking_steps,
+                "budget_summary": budget.summary(),
+            },
+        )
 
     async def _process_tool_calls(
         self,
-        response: "ToolUseResponse",
+        response: ToolUseResponse,
         iteration: int,
-        trace: "SessionTrace",
+        trace: SessionTrace,
         thinking_steps: List[Dict[str, Any]],
         _exec_tool,
         _tool_call_history: Dict[str, int],
@@ -978,14 +1058,16 @@ class AgentLoopService:
         # Execute regular tool calls concurrently
         tool_outputs: list = []
         if regular_calls:
-            tool_outputs = list(await asyncio.gather(
-                *[_exec_tool(tc) for tc in regular_calls]
-            ))
+            tool_outputs = list(await asyncio.gather(*[_exec_tool(tc) for tc in regular_calls]))
 
         # Check for brain transfer (one-way handoff to specialized brain)
         for tc, result, _lat in tool_outputs:
-            if (tc.name == "transfer_to_brain" and result.success
-                    and isinstance(result.data, dict) and result.data.get("transfer")):
+            if (
+                tc.name == "transfer_to_brain"
+                and result.success
+                and isinstance(result.data, dict)
+                and result.data.get("transfer")
+            ):
                 logger.info("Brain transfer to '%s' — exiting agent loop", result.data.get("brain"))
                 yield AgentEvent(kind="transfer", data=result.data)
                 return
@@ -1004,11 +1086,18 @@ class AgentLoopService:
         # Handle extra ask_user calls beyond the first (return guidance)
         for extra_tc in ask_user_calls[1:]:
             from app.code_tools.schemas import ToolResult
-            tool_outputs.append((extra_tc, ToolResult(
-                tool_name="ask_user",
-                success=False,
-                error="Only one question per turn. Continue with the answer you received.",
-            ), 0.0))
+
+            tool_outputs.append(
+                (
+                    extra_tc,
+                    ToolResult(
+                        tool_name="ask_user",
+                        success=False,
+                        error="Only one question per turn. Continue with the answer you received.",
+                    ),
+                    0.0,
+                )
+            )
 
         # Handle signal_blocker — sub-agent asks Brain for direction
         if signal_calls and self._forced_tools:
@@ -1026,7 +1115,7 @@ class AgentLoopService:
     async def _handle_ask_user(
         self,
         ask_user_calls: list,
-        trace: "SessionTrace",
+        trace: SessionTrace,
         iteration: int,
         thinking_steps: List[Dict[str, Any]],
         tool_outputs: list,
@@ -1039,6 +1128,8 @@ class AgentLoopService:
         from app.agent_loop.interactive import (  # lazy: interactive module only needed when ask_user is active
             ASK_USER_TIMEOUT,
             register_question,
+        )
+        from app.agent_loop.interactive import (
             cleanup as cleanup_question,
         )
         from app.code_tools.schemas import ToolResult
@@ -1050,13 +1141,16 @@ class AgentLoopService:
 
         pq = register_question(trace.session_id, question_text, question_ctx)
 
-        yield AgentEvent(kind="ask_user", data={
-            "session_id": trace.session_id,
-            "question": question_text,
-            "context": question_ctx,
-            "options": question_options,
-            "tool_use_id": tc.id,
-        })
+        yield AgentEvent(
+            kind="ask_user",
+            data={
+                "session_id": trace.session_id,
+                "question": question_text,
+                "context": question_ctx,
+                "options": question_options,
+                "tool_use_id": tc.id,
+            },
+        )
 
         # Wait for user answer with 15s keepalive heartbeats
         ask_start = time.monotonic()
@@ -1064,17 +1158,21 @@ class AgentLoopService:
             while not pq.event.is_set():
                 try:
                     await asyncio.wait_for(
-                        asyncio.shield(pq.event.wait()), timeout=15.0,
+                        asyncio.shield(pq.event.wait()),
+                        timeout=15.0,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     elapsed = time.monotonic() - ask_start
                     if elapsed >= ASK_USER_TIMEOUT:
                         pq.timed_out = True
                         break
-                    yield AgentEvent(kind="ask_user_waiting", data={
-                        "session_id": trace.session_id,
-                        "elapsed_seconds": int(elapsed),
-                    })
+                    yield AgentEvent(
+                        kind="ask_user_waiting",
+                        data={
+                            "session_id": trace.session_id,
+                            "elapsed_seconds": int(elapsed),
+                        },
+                    )
         except asyncio.CancelledError:
             cleanup_question(trace.session_id)
             raise
@@ -1089,24 +1187,32 @@ class AgentLoopService:
 
         cleanup_question(trace.session_id)
 
-        tool_outputs.append((tc, ToolResult(
-            tool_name="ask_user",
-            success=True,
-            data={"answer": answer_text, "timed_out": pq.timed_out},
-        ), 0.0))
+        tool_outputs.append(
+            (
+                tc,
+                ToolResult(
+                    tool_name="ask_user",
+                    success=True,
+                    data={"answer": answer_text, "timed_out": pq.timed_out},
+                ),
+                0.0,
+            )
+        )
 
         # Record the Q&A in thinking steps
-        thinking_steps.append({
-            "kind": "ask_user",
-            "iteration": iteration + 1,
-            "text": f"Q: {question_text}\nA: {answer_text}",
-            "tool": "ask_user",
-        })
+        thinking_steps.append(
+            {
+                "kind": "ask_user",
+                "iteration": iteration + 1,
+                "text": f"Q: {question_text}\nA: {answer_text}",
+                "tool": "ask_user",
+            }
+        )
 
     async def _handle_signal_blocker(
         self,
         signal_calls: list,
-        trace: "SessionTrace",
+        trace: SessionTrace,
         iteration: int,
         thinking_steps: List[Dict[str, Any]],
         tool_outputs: list,
@@ -1118,8 +1224,8 @@ class AgentLoopService:
         """
         from app.agent_loop.signal_blocker import (  # lazy: signal_blocker only needed when sub-agents use it
             SIGNAL_TIMEOUT,
-            register_signal,
             cleanup_signal,
+            register_signal,
         )
         from app.code_tools.schemas import ToolResult
 
@@ -1130,18 +1236,21 @@ class AgentLoopService:
 
         ps = register_signal(trace.session_id, reason, options, sig_ctx)
 
-        yield AgentEvent(kind="signal_blocker", data={
-            "session_id": trace.session_id,
-            "reason": reason,
-            "options": options,
-            "context": sig_ctx,
-            "tool_use_id": tc.id,
-        })
+        yield AgentEvent(
+            kind="signal_blocker",
+            data={
+                "session_id": trace.session_id,
+                "reason": reason,
+                "options": options,
+                "context": sig_ctx,
+                "tool_use_id": tc.id,
+            },
+        )
 
         # Wait for Brain's response (with timeout)
         try:
             await asyncio.wait_for(ps.event.wait(), timeout=SIGNAL_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             ps.timed_out = True
         except asyncio.CancelledError:
             cleanup_signal(trace.session_id)
@@ -1154,29 +1263,37 @@ class AgentLoopService:
 
         cleanup_signal(trace.session_id)
 
-        tool_outputs.append((tc, ToolResult(
-            tool_name="signal_blocker",
-            success=True,
-            data={"response": response_text, "timed_out": ps.timed_out},
-        ), 0.0))
+        tool_outputs.append(
+            (
+                tc,
+                ToolResult(
+                    tool_name="signal_blocker",
+                    success=True,
+                    data={"response": response_text, "timed_out": ps.timed_out},
+                ),
+                0.0,
+            )
+        )
 
-        thinking_steps.append({
-            "kind": "signal_blocker",
-            "iteration": iteration + 1,
-            "text": f"Signal: {reason}\nBrain: {response_text}",
-            "tool": "signal_blocker",
-        })
+        thinking_steps.append(
+            {
+                "kind": "signal_blocker",
+                "iteration": iteration + 1,
+                "text": f"Signal: {reason}\nBrain: {response_text}",
+                "tool": "signal_blocker",
+            }
+        )
 
     async def _build_next_message(
         self,
         tool_outputs: list,
-        response: "ToolUseResponse",
+        response: ToolUseResponse,
         iteration: int,
-        budget: "BudgetController",
-        trace: "SessionTrace",
+        budget: BudgetController,
+        trace: SessionTrace,
         thinking_steps: List[Dict[str, Any]],
-        iter_metrics: "IterationMetrics",
-        iter_trace: "IterationTrace",
+        iter_metrics: IterationMetrics,
+        iter_trace: IterationTrace,
         total_tool_calls_ref: List[int],
         files_read: Dict[str, int],
         greps_used: List[str],
@@ -1212,7 +1329,7 @@ class AgentLoopService:
             try:
                 ck = f"{tc_arg.name}|{_json.dumps(tc_arg.input, sort_keys=True)}"
             except (TypeError, ValueError):
-                ck = f"{tc_arg.name}|{str(tc_arg.input)}"
+                ck = f"{tc_arg.name}|{tc_arg.input!s}"
             cnt = _tool_call_history.get(ck, 0)
             if cnt > 1:
                 dup_tools.append((tc_arg.name, cnt))
@@ -1236,7 +1353,8 @@ class AgentLoopService:
 
         # Guard: warn if too many heavy tools in one turn
         diff_calls_this_turn = sum(
-            1 for tc_arg in response.tool_calls
+            1
+            for tc_arg in response.tool_calls
             if tc_arg.name in ("git_diff", "read_file") and not tc_arg.input.get("start_line")
         )
         if diff_calls_this_turn > 3:
@@ -1251,16 +1369,20 @@ class AgentLoopService:
             total_tool_calls += 1
             logger.info(
                 "Agent tool call #%d: %s(%s)",
-                total_tool_calls, tc.name, _truncate_json(tc.input),
+                total_tool_calls,
+                tc.name,
+                _truncate_json(tc.input),
             )
 
             # Emit tool_result summary
             result_summary = _summarize_result(tc.name, tool_result)
-            _tool_history_for_verifier.append({
-                "tool": tc.name,
-                "params": tc.input,
-                "summary": result_summary,
-            })
+            _tool_history_for_verifier.append(
+                {
+                    "tool": tc.name,
+                    "params": tc.input,
+                    "summary": result_summary,
+                }
+            )
             step_data = {
                 "kind": "tool_result",
                 "iteration": iteration + 1,
@@ -1271,8 +1393,15 @@ class AgentLoopService:
             # Enrich dispatch tool results with sub-agent metadata
             if tc.name in ("dispatch_agent", "dispatch_swarm") and isinstance(tool_result.data, dict):
                 step_data["agent_name"] = tc.input.get("agent_name", "") or tc.input.get("swarm_name", "")
-                for key in ("confidence", "files_accessed", "tools_summary",
-                            "iterations", "tool_calls_made", "duration_ms", "error"):
+                for key in (
+                    "confidence",
+                    "files_accessed",
+                    "tools_summary",
+                    "iterations",
+                    "tool_calls_made",
+                    "duration_ms",
+                    "error",
+                ):
                     if key in tool_result.data:
                         step_data[key] = tool_result.data[key]
             thinking_steps.append(step_data)
@@ -1293,10 +1422,7 @@ class AgentLoopService:
             # Track files read and detect redundant reads
             if tc.name == "read_file" and tool_result.success:
                 fpath = tc.input.get("path", "")
-                total_lines = (
-                    tool_result.data.get("total_lines", 0)
-                    if isinstance(tool_result.data, dict) else 0
-                )
+                total_lines = tool_result.data.get("total_lines", 0) if isinstance(tool_result.data, dict) else 0
                 has_range = tc.input.get("start_line") or tc.input.get("end_line")
                 if fpath in files_read and not has_range:
                     guidance_notes.append(
@@ -1325,10 +1451,7 @@ class AgentLoopService:
                 pattern = tc.input.get("pattern", "")
                 greps_used.append(pattern)
                 if tool_result.success:
-                    n_results = (
-                        len(tool_result.data)
-                        if isinstance(tool_result.data, list) else 0
-                    )
+                    n_results = len(tool_result.data) if isinstance(tool_result.data, list) else 0
                     if n_results >= 40:
                         guidance_notes.append(
                             f"⚠ grep('{pattern}') returned {n_results} results — "
@@ -1371,19 +1494,20 @@ class AgentLoopService:
 
             # Collect context chunks from relevant tools
             for chunk in _extract_context(tc, tool_result, query):
-                yield AgentEvent(kind="context_chunk", data={
-                    "file_path": chunk.file_path,
-                    "content": chunk.content,
-                    "start_line": chunk.start_line,
-                    "end_line": chunk.end_line,
-                    "relevance": chunk.relevance,
-                    "source_tool": chunk.source_tool,
-                })
+                yield AgentEvent(
+                    kind="context_chunk",
+                    data={
+                        "file_path": chunk.file_path,
+                        "content": chunk.content,
+                        "start_line": chunk.start_line,
+                        "end_line": chunk.end_line,
+                        "relevance": chunk.relevance,
+                        "source_tool": chunk.source_tool,
+                    },
+                )
 
             remaining_tokens = budget.config.max_input_tokens - budget.cumulative_input
-            tool_results_content.append(
-                self._tool_result_block(tc.id, tool_result, tc.name, remaining_tokens)
-            )
+            tool_results_content.append(self._tool_result_block(tc.id, tool_result, tc.name, remaining_tokens))
             iter_trace.tool_calls.append(tc_trace)
 
         # Commit iteration metrics to budget controller
@@ -1409,22 +1533,26 @@ class AgentLoopService:
             # Enrich with collected file refs so the answer is still useful
             answer = _enrich_answer_with_refs(answer, budget.files_accessed)
             logger.warning(
-                "Budget FORCE_CONCLUDE at iteration %d: %s "
-                "(input tokens: %s/%s)",
-                iteration + 1, conclude_reason,
-                budget.cumulative_input, budget.config.max_input_tokens,
+                "Budget FORCE_CONCLUDE at iteration %d: %s (input tokens: %s/%s)",
+                iteration + 1,
+                conclude_reason,
+                budget.cumulative_input,
+                budget.config.max_input_tokens,
             )
             trace.finish(answer=answer, error=conclude_reason, budget_summary=budget.summary())
             await self._save_trace(trace)
-            yield AgentEvent(kind="done", data={
-                "answer": answer,
-                "tool_calls_made": total_tool_calls,
-                "iterations": iteration + 1,
-                "duration_ms": (time.monotonic() - start) * 1000,
-                "error": conclude_reason,
-                "thinking_steps": thinking_steps,
-                "budget_summary": budget.summary(),
-            })
+            yield AgentEvent(
+                kind="done",
+                data={
+                    "answer": answer,
+                    "tool_calls_made": total_tool_calls,
+                    "iterations": iteration + 1,
+                    "duration_ms": (time.monotonic() - start) * 1000,
+                    "error": conclude_reason,
+                    "thinking_steps": thinking_steps,
+                    "budget_summary": budget.summary(),
+                },
+            )
             return
 
         if budget_signal == BudgetSignal.WARN_CONVERGE:
@@ -1482,23 +1610,23 @@ class AgentLoopService:
                     "with file paths and line numbers. Do NOT make any more exploratory tool calls."
                 )
             else:
-                budget_note += (
-                    " ⚠ Running low on iterations. "
-                    "Wrap up your investigation and provide your answer soon."
-                )
+                budget_note += " ⚠ Running low on iterations. Wrap up your investigation and provide your answer soon."
         if guidance_notes:
             budget_note += "\n" + "\n".join(guidance_notes)
 
         yield AgentEvent(kind="_update_total_calls", data={"total_tool_calls": total_tool_calls})
-        yield AgentEvent(kind="_append_message", data={
-            "message": self._tool_results_message_with_note(tool_results_content, budget_note),
-        })
+        yield AgentEvent(
+            kind="_append_message",
+            data={
+                "message": self._tool_results_message_with_note(tool_results_content, budget_note),
+            },
+        )
 
     async def _handle_budget_exhaustion(
         self,
         messages: List[Dict[str, Any]],
-        budget: "BudgetController",
-        trace: "SessionTrace",
+        budget: BudgetController,
+        trace: SessionTrace,
         thinking_steps: List[Dict[str, Any]],
         total_tool_calls: int,
         accumulated_text: List[str],
@@ -1519,21 +1647,26 @@ class AgentLoopService:
         """
         logger.info(
             "[%s] Iterations exhausted (%d). Making final judge call.",
-            _sid, self._max_iterations,
+            _sid,
+            self._max_iterations,
         )
 
-        messages.append({
-            "role": "user",
-            "content": [{
-                "text": (
-                    "You have used all tool-calling iterations. "
-                    "Provide your final answer now based on everything "
-                    "you have learned so far. Synthesize your findings into a "
-                    "clear, complete explanation. Do not request additional "
-                    "tool calls — give your best answer with what you have."
-                ),
-            }],
-        })
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "text": (
+                            "You have used all tool-calling iterations. "
+                            "Provide your final answer now based on everything "
+                            "you have learned so far. Synthesize your findings into a "
+                            "clear, complete explanation. Do not request additional "
+                            "tool calls — give your best answer with what you have."
+                        ),
+                    }
+                ],
+            }
+        )
 
         try:
             final_response = await asyncio.wait_for(
@@ -1550,7 +1683,8 @@ class AgentLoopService:
                 budget.record_usage(final_response.usage.input_tokens, final_response.usage.output_tokens)
             logger.info(
                 "[%s] Final judge call produced %d chars",
-                _sid, len(answer),
+                _sid,
+                len(answer),
             )
         except Exception as exc:
             logger.warning("[%s] Final judge call failed: %s", _sid, exc)
@@ -1566,14 +1700,17 @@ class AgentLoopService:
 
         trace.finish(answer=answer, error=None, budget_summary=budget.summary())
         await self._save_trace(trace)
-        yield AgentEvent(kind="done", data={
-            "answer": answer,
-            "tool_calls_made": total_tool_calls,
-            "iterations": self._max_iterations,
-            "duration_ms": (time.monotonic() - start) * 1000,
-            "thinking_steps": thinking_steps,
-            "budget_summary": budget.summary(),
-        })
+        yield AgentEvent(
+            kind="done",
+            data={
+                "answer": answer,
+                "tool_calls_made": total_tool_calls,
+                "iterations": self._max_iterations,
+                "duration_ms": (time.monotonic() - start) * 1000,
+                "thinking_steps": thinking_steps,
+                "budget_summary": budget.summary(),
+            },
+        )
 
     async def _save_trace(self, trace: SessionTrace) -> None:
         """Persist the session trace if a writer is configured."""
@@ -1601,13 +1738,15 @@ class AgentLoopService:
         if response.text:
             content.append({"text": response.text})
         for tc in response.tool_calls:
-            content.append({
-                "toolUse": {
-                    "toolUseId": tc.id,
-                    "name": tc.name,
-                    "input": tc.input,
+            content.append(
+                {
+                    "toolUse": {
+                        "toolUseId": tc.id,
+                        "name": tc.name,
+                        "input": tc.input,
+                    }
                 }
-            })
+            )
         return {"role": "assistant", "content": content}
 
     @staticmethod
@@ -1636,7 +1775,8 @@ class AgentLoopService:
 
     @staticmethod
     def _tool_results_message_with_note(
-        results: List[Dict], note: str,
+        results: List[Dict],
+        note: str,
     ) -> Dict[str, Any]:
         """Build tool results message with an appended system guidance note."""
         content: List[Dict[str, Any]] = [{"toolResult": r} for r in results]
@@ -1766,8 +1906,11 @@ def _summarize_result(tool_name: str, result) -> str:
 
         # find_symbol: show symbol locations
         if tool_name == "find_symbol":
-            locs = [f"{m.get('file_path', '?').rsplit('/', 1)[-1]}:{m.get('start_line', '?')}"
-                    for m in data[:4] if isinstance(m, dict)]
+            locs = [
+                f"{m.get('file_path', '?').rsplit('/', 1)[-1]}:{m.get('start_line', '?')}"
+                for m in data[:4]
+                if isinstance(m, dict)
+            ]
             suffix = f" +{n - 4} more" if n > 4 else ""
             return ", ".join(locs) + suffix
 
@@ -1897,14 +2040,16 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
     name = tc.name
 
     if name == "read_file":
-        chunks.append(ContextChunk(
-            file_path=result.data.get("path", ""),
-            content=result.data.get("content", ""),
-            start_line=tc.input.get("start_line", 0),
-            end_line=tc.input.get("end_line", 0),
-            relevance=query,
-            source_tool="read_file",
-        ))
+        chunks.append(
+            ContextChunk(
+                file_path=result.data.get("path", ""),
+                content=result.data.get("content", ""),
+                start_line=tc.input.get("start_line", 0),
+                end_line=tc.input.get("end_line", 0),
+                relevance=query,
+                source_tool="read_file",
+            )
+        )
 
     elif name in ("grep", "find_references"):
         # Group matches by file — one chunk per file
@@ -1913,18 +2058,17 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
             for m in result.data:
                 by_file.setdefault(m.get("file_path", ""), []).append(m)
             for fp, matches in by_file.items():
-                lines = [
-                    f"{m.get('line_number', 0):>4} | {m.get('content', '')}"
-                    for m in matches
-                ]
-                chunks.append(ContextChunk(
-                    file_path=fp,
-                    content="\n".join(lines),
-                    start_line=matches[0].get("line_number", 0),
-                    end_line=matches[-1].get("line_number", 0),
-                    relevance=query,
-                    source_tool=name,
-                ))
+                lines = [f"{m.get('line_number', 0):>4} | {m.get('content', '')}" for m in matches]
+                chunks.append(
+                    ContextChunk(
+                        file_path=fp,
+                        content="\n".join(lines),
+                        start_line=matches[0].get("line_number", 0),
+                        end_line=matches[-1].get("line_number", 0),
+                        relevance=query,
+                        source_tool=name,
+                    )
+                )
 
     elif name == "find_symbol":
         if isinstance(result.data, list):
@@ -1933,49 +2077,54 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
                 desc = f"{sym.get('kind', '')} {sym.get('name', '')}"
                 if sig:
                     desc += f": {sig}"
-                chunks.append(ContextChunk(
-                    file_path=sym.get("file_path", ""),
-                    content=desc,
-                    start_line=sym.get("start_line", 0),
-                    end_line=sym.get("end_line", 0),
-                    relevance=query,
-                    source_tool="find_symbol",
-                ))
+                chunks.append(
+                    ContextChunk(
+                        file_path=sym.get("file_path", ""),
+                        content=desc,
+                        start_line=sym.get("start_line", 0),
+                        end_line=sym.get("end_line", 0),
+                        relevance=query,
+                        source_tool="find_symbol",
+                    )
+                )
 
     elif name == "file_outline":
         if isinstance(result.data, list) and result.data:
             fp = result.data[0].get("file_path", "")
-            lines = [
-                f"  {d.get('kind', '')} {d.get('name', '')} L{d.get('start_line', 0)}"
-                for d in result.data
-            ]
-            chunks.append(ContextChunk(
-                file_path=fp,
-                content="\n".join(lines),
-                relevance=query,
-                source_tool="file_outline",
-            ))
+            lines = [f"  {d.get('kind', '')} {d.get('name', '')} L{d.get('start_line', 0)}" for d in result.data]
+            chunks.append(
+                ContextChunk(
+                    file_path=fp,
+                    content="\n".join(lines),
+                    relevance=query,
+                    source_tool="file_outline",
+                )
+            )
 
     elif name == "ast_search":
         if isinstance(result.data, list):
             for m in result.data:
-                chunks.append(ContextChunk(
-                    file_path=m.get("file_path", ""),
-                    content=m.get("text", ""),
-                    start_line=m.get("start_line", 0),
-                    end_line=m.get("end_line", 0),
-                    relevance=query,
-                    source_tool="ast_search",
-                ))
+                chunks.append(
+                    ContextChunk(
+                        file_path=m.get("file_path", ""),
+                        content=m.get("text", ""),
+                        start_line=m.get("start_line", 0),
+                        end_line=m.get("end_line", 0),
+                        relevance=query,
+                        source_tool="ast_search",
+                    )
+                )
 
     elif name == "git_diff":
         if isinstance(result.data, dict) and result.data.get("diff"):
-            chunks.append(ContextChunk(
-                file_path="(diff)",
-                content=result.data["diff"][:10_000],
-                relevance=query,
-                source_tool="git_diff",
-            ))
+            chunks.append(
+                ContextChunk(
+                    file_path="(diff)",
+                    content=result.data["diff"][:10_000],
+                    relevance=query,
+                    source_tool="git_diff",
+                )
+            )
 
     elif name == "git_blame":
         if isinstance(result.data, list) and result.data:
@@ -1984,14 +2133,16 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
                 f"({e.get('author', '?')}, {e.get('date', '?')}) {e.get('content', '')}"
                 for e in result.data[:50]
             ]
-            chunks.append(ContextChunk(
-                file_path=tc.input.get("file", ""),
-                content="\n".join(lines),
-                start_line=tc.input.get("start_line", 0),
-                end_line=tc.input.get("end_line", 0),
-                relevance=query,
-                source_tool="git_blame",
-            ))
+            chunks.append(
+                ContextChunk(
+                    file_path=tc.input.get("file", ""),
+                    content="\n".join(lines),
+                    start_line=tc.input.get("start_line", 0),
+                    end_line=tc.input.get("end_line", 0),
+                    relevance=query,
+                    source_tool="git_blame",
+                )
+            )
 
     elif name == "git_show":
         if isinstance(result.data, dict):
@@ -2004,12 +2155,14 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
             diff = result.data.get("diff", "")
             if diff:
                 info += f"\nDiff:\n{diff[:10_000]}"
-            chunks.append(ContextChunk(
-                file_path=f"(commit {result.data.get('commit_hash', '?')})",
-                content=info,
-                relevance=query,
-                source_tool="git_show",
-            ))
+            chunks.append(
+                ContextChunk(
+                    file_path=f"(commit {result.data.get('commit_hash', '?')})",
+                    content=info,
+                    relevance=query,
+                    source_tool="git_show",
+                )
+            )
 
     elif name == "find_tests":
         if isinstance(result.data, list):
@@ -2018,16 +2171,17 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
                 by_file.setdefault(m.get("test_file", ""), []).append(m)
             for fp, matches in by_file.items():
                 lines = [
-                    f"  {m.get('test_function', '?')} L{m.get('line_number', '?')}: "
-                    f"{m.get('context', '')}"
+                    f"  {m.get('test_function', '?')} L{m.get('line_number', '?')}: {m.get('context', '')}"
                     for m in matches
                 ]
-                chunks.append(ContextChunk(
-                    file_path=fp,
-                    content="\n".join(lines),
-                    relevance=query,
-                    source_tool="find_tests",
-                ))
+                chunks.append(
+                    ContextChunk(
+                        file_path=fp,
+                        content="\n".join(lines),
+                        relevance=query,
+                        source_tool="find_tests",
+                    )
+                )
 
     elif name == "test_outline":
         if isinstance(result.data, list) and result.data:
@@ -2042,38 +2196,40 @@ def _extract_context(tc, result, query: str) -> List[ContextChunk]:
                 if asserts:
                     desc += f" asserts=[{', '.join(a[:40] for a in asserts[:3])}]"
                 lines.append(desc)
-            chunks.append(ContextChunk(
-                file_path=fp,
-                content="\n".join(lines),
-                relevance=query,
-                source_tool="test_outline",
-            ))
+            chunks.append(
+                ContextChunk(
+                    file_path=fp,
+                    content="\n".join(lines),
+                    relevance=query,
+                    source_tool="test_outline",
+                )
+            )
 
-    elif name == "trace_variable":
-        if isinstance(result.data, dict):
-            d = result.data
-            parts = [f"Variable: {d.get('variable', '?')} in {d.get('function', '?')} ({d.get('direction', '?')})"]
-            for a in d.get("aliases", []):
-                parts.append(f"  alias: {a.get('name', '?')} L{a.get('line', '?')}")
-            for f in d.get("flows_to", []):
-                parts.append(
-                    f"  → {f.get('callee_function', '?')}(as {f.get('as_parameter', '?')}) "
-                    f"L{f.get('call_line', '?')} [{f.get('confidence', '?')}]"
-                )
-            for s in d.get("sinks", []):
-                parts.append(f"  ⊳ {s.get('kind', '?')}: {s.get('expression', '')[:80]} L{s.get('line', '?')}")
-            for f in d.get("flows_from", []):
-                parts.append(
-                    f"  ← {f.get('caller_function', '?')}({f.get('arg_expression', '?')}) "
-                    f"L{f.get('call_line', '?')}"
-                )
-            for s in d.get("sources", []):
-                parts.append(f"  ⊲ {s.get('kind', '?')}: {s.get('expression', '')[:80]} L{s.get('line', '?')}")
-            chunks.append(ContextChunk(
+    elif name == "trace_variable" and isinstance(result.data, dict):
+        d = result.data
+        parts = [f"Variable: {d.get('variable', '?')} in {d.get('function', '?')} ({d.get('direction', '?')})"]
+        for a in d.get("aliases", []):
+            parts.append(f"  alias: {a.get('name', '?')} L{a.get('line', '?')}")
+        for f in d.get("flows_to", []):
+            parts.append(
+                f"  → {f.get('callee_function', '?')}(as {f.get('as_parameter', '?')}) "
+                f"L{f.get('call_line', '?')} [{f.get('confidence', '?')}]"
+            )
+        for s in d.get("sinks", []):
+            parts.append(f"  ⊳ {s.get('kind', '?')}: {s.get('expression', '')[:80]} L{s.get('line', '?')}")
+        for f in d.get("flows_from", []):
+            parts.append(
+                f"  ← {f.get('caller_function', '?')}({f.get('arg_expression', '?')}) L{f.get('call_line', '?')}"
+            )
+        for s in d.get("sources", []):
+            parts.append(f"  ⊲ {s.get('kind', '?')}: {s.get('expression', '')[:80]} L{s.get('line', '?')}")
+        chunks.append(
+            ContextChunk(
                 file_path=d.get("file", ""),
                 content="\n".join(parts),
                 relevance=query,
                 source_tool="trace_variable",
-            ))
+            )
+        )
 
     return chunks

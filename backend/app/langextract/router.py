@@ -3,6 +3,7 @@
 Provides:
 - ``GET /api/langextract/models`` — list available Bedrock models grouped by vendor
 """
+
 from __future__ import annotations
 
 import logging
@@ -41,10 +42,12 @@ async def list_models(request: Request) -> dict[str, Any]:
 
     vendors_list = []
     for vendor_name, models in sorted(catalog.list_models().items()):
-        vendors_list.append({
-            "name": vendor_name,
-            "models": [m.to_dict() for m in models],
-        })
+        vendors_list.append(
+            {
+                "name": vendor_name,
+                "models": [m.to_dict() for m in models],
+            }
+        )
 
     return {
         "region": catalog.region,

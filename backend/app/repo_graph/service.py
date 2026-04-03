@@ -9,14 +9,13 @@ Aider-style approach:
 The repo map is fed to the AI alongside vector search results so it
 understands the overall repository structure.
 """
+
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .graph import DependencyGraph, build_dependency_graph, build_dependency_graph_from_json, rank_files
-from .parser import FileSymbols, SymbolDef
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +105,7 @@ class RepoMapService:
 
         lines = [f"## Repository Map (top {len(ranked)} files by importance)\n"]
 
-        for fpath, score in ranked:
+        for fpath, _ in ranked:
             node = graph.nodes.get(fpath)
             if node is None:
                 continue
@@ -119,7 +118,7 @@ class RepoMapService:
                 continue
 
             for i, defn in enumerate(defs):
-                is_last = (i == len(defs) - 1)
+                is_last = i == len(defs) - 1
                 prefix = "└──" if is_last else "├──"
                 kind_str = defn.kind
                 if defn.signature:
