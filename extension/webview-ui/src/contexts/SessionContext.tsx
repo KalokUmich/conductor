@@ -210,6 +210,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       } else if (cmd === "ssoLoginResult") {
         if (data.identity) {
           const identity = data.identity as SSOIdentity;
+          // Attach userUuid from backend user profile
+          if (data.userUuid) {
+            (identity as Record<string, unknown>).userUuid = data.userUuid;
+          }
           dispatch({
             type: "SSO_DONE",
             identity,

@@ -162,6 +162,7 @@ export function useWebSocket() {
             identitySource: sso ? "sso" : undefined,
             ssoEmail: sso?.email || undefined,
             ssoProvider: sso?.provider || undefined,
+            userUuid: (sso as Record<string, unknown> | null)?.userUuid || undefined,
           }));
         }
 

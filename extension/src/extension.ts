@@ -3007,8 +3007,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     this._handleSSOCancel();
 
                     if (pollData.status === 'complete' && pollData.identity) {
-                        // Store identity in ~/.conductor/credentials/sso.json
-                        saveSSO(pollData.identity, provider);
+                        // Store identity + userUuid in ~/.conductor/credentials/sso.json
+                        const userUuid = (pollData as Record<string, unknown>).userUuid as string | undefined;
+                        saveSSO(pollData.identity, provider, userUuid);
                         // Also keep in globalState for backward compat during migration
                         this._context.globalState.update(
                             'conductor.ssoIdentity',
@@ -3018,8 +3019,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             command: 'ssoLoginResult',
                             identity: pollData.identity,
                             provider,
+                            userUuid,
                         });
-                        console.log(`[Conductor] ${provider} SSO login complete:`, pollData.identity);
+                        console.log(`[Conductor] ${provider} SSO login complete:`, pollData.identity, 'userUuid:', userUuid);
                     } else {
                         this._view?.webview.postMessage({
                             command: 'ssoLoginResult',

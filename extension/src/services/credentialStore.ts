@@ -25,6 +25,7 @@ export interface SSOIdentity {
     name?: string;
     provider: string;
     arn?: string;
+    userUuid?: string;     // Stable backend-assigned UUID
     storedAt: number;      // Unix timestamp (ms)
     expiresAt: number;     // Unix timestamp (ms)
 }
@@ -32,12 +33,13 @@ export interface SSOIdentity {
 const SSO_FILE = 'sso.json';
 const SSO_EXPIRY_MS = 48 * 60 * 60 * 1000; // 48 hours
 
-export function saveSSO(identity: Record<string, unknown>, provider: string): void {
+export function saveSSO(identity: Record<string, unknown>, provider: string, userUuid?: string): void {
     const data: SSOIdentity = {
         email: (identity.email as string) || (identity.arn as string) || '',
         name: (identity.name as string) || undefined,
         provider,
         arn: (identity.arn as string) || undefined,
+        userUuid,
         storedAt: Date.now(),
         expiresAt: Date.now() + SSO_EXPIRY_MS,
     };
