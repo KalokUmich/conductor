@@ -764,22 +764,81 @@
         .toast-success { background: rgba(34,197,94,0.85); color: #fff; border: 1px solid rgba(34,197,94,0.3); }
         .toast-info { background: rgba(59,130,246,0.85); color: #fff; border: 1px solid rgba(59,130,246,0.3); }
 
-        /* === Drag and drop for AI Working Space === */
-        .backlog-card { cursor: grab; }
-        .backlog-card:active { cursor: grabbing; }
-        .backlog-card.dragging { opacity: 0.4; }
-        .ai-workspace-dropzone.drag-over {
-            border-color: rgba(52,211,153,0.6) !important;
-            background: rgba(52,211,153,0.05) !important;
+        /* === Task Board — Consolidated Design System === */
+        /* Color palette: violet (primary), emerald (done/active), amber (blocked), gray (neutral) */
+
+        /* Cards */
+        .backlog-card {
+            cursor: grab; border-left: 3px solid transparent;
+            transition: border-color 0.15s, opacity 0.15s, transform 0.15s;
         }
-        .backlog-card .source-badge-code { background: rgba(139,92,246,0.2); color: rgb(167,139,250); border: 1px solid rgba(139,92,246,0.3); }
-        .backlog-card .source-badge-ticket { background: rgba(59,130,246,0.2); color: rgb(96,165,250); border: 1px solid rgba(59,130,246,0.3); }
-        .workspace-card .investigate-btn { transition: all 0.15s; }
-        .workspace-card .investigate-btn:hover { transform: translateY(-1px); }
-        .workspace-card .implement-btn-disabled { opacity: 0.35; cursor: not-allowed; }
-        /* Accordion sections */
-        .backlog-section-btn { cursor: pointer; }
-        .backlog-section-btn:hover { opacity: 0.8; }
+        .backlog-card:active { cursor: grabbing; }
+        .backlog-card.dragging { opacity: 0.3; transform: scale(0.97); }
+        .backlog-card:hover { border-left-color: rgba(139,92,246,0.5); }
+        .backlog-card.card-linked { border-left-color: rgba(139,92,246,0.35); }
+        .backlog-card.card-linked:hover { border-left-color: rgba(139,92,246,0.7); }
+        .backlog-card.card-done { border-left-color: rgba(52,211,153,0.4); opacity: 0.55; }
+        .backlog-card.card-blocked { border-left-color: rgba(245,158,11,0.4); opacity: 0.4; cursor: not-allowed; }
+
+        /* Badges */
+        .badge { display: inline-flex; align-items: center; font-size: 0.6rem; font-weight: 500;
+            padding: 1px 6px; border-radius: 4px; white-space: nowrap; letter-spacing: 0.01em; }
+        .badge-todo { background: rgba(139,92,246,0.15); color: rgb(167,139,250); }
+        .badge-done { background: rgba(52,211,153,0.15); color: rgb(110,231,183); }
+        .badge-jira { background: rgba(99,102,241,0.15); color: rgb(165,180,252); }
+        .badge-blocked { background: rgba(245,158,11,0.15); color: rgb(251,191,36); }
+        .badge-status { padding: 1px 5px; border-radius: 3px; font-size: 0.55rem; }
+
+        /* Drop zone */
+        .ai-workspace-dropzone.drag-over {
+            border-color: rgba(139,92,246,0.6) !important;
+            background: rgba(139,92,246,0.04) !important;
+        }
+
+        /* Workspace action buttons */
+        .ws-action-btn {
+            display: inline-flex; align-items: center; gap: 3px;
+            font-size: 0.6rem; font-weight: 500; padding: 3px 10px;
+            border-radius: 6px; border: 1px solid; transition: all 0.15s;
+        }
+        .ws-action-btn:hover:not(:disabled) { transform: translateY(-1px); }
+        .ws-action-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
+        .ws-action-btn.btn-investigate {
+            background: rgba(139,92,246,0.12); color: rgb(167,139,250);
+            border-color: rgba(139,92,246,0.25);
+        }
+        .ws-action-btn.btn-investigate:hover:not(:disabled) {
+            background: rgba(139,92,246,0.2); border-color: rgba(139,92,246,0.4);
+        }
+        .ws-action-btn.btn-implement {
+            background: transparent; color: rgb(156,163,175);
+            border-color: rgba(75,85,99,0.3);
+        }
+
+        /* Section collapse */
+        .section-body { overflow: hidden; transition: max-height 0.25s ease, opacity 0.2s ease; }
+        .section-body.collapsed { max-height: 0 !important; opacity: 0; }
+
+        /* Progress bar */
+        .progress-bar { height: 2px; border-radius: 1px; background: rgba(75,85,99,0.3); overflow: hidden; }
+        .progress-bar-fill { height: 100%; border-radius: 1px; background: rgb(139,92,246);
+            transition: width 0.3s ease; }
+
+        /* Card entrance animation */
+        @keyframes cardIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        .card-enter { animation: cardIn 0.2s ease forwards; }
+
+        /* Section headers */
+        .section-header {
+            display: flex; align-items: center; gap: 6px; padding: 4px 0;
+            font-size: 0.65rem; font-weight: 500; color: rgb(156,163,175);
+            cursor: pointer; user-select: none; transition: color 0.15s;
+        }
+        .section-header:hover { color: rgb(209,213,219); }
+        .section-header .section-count {
+            font-size: 0.55rem; padding: 0 5px; border-radius: 8px;
+            background: rgba(75,85,99,0.3); color: rgb(156,163,175);
+        }
         .comp-chip { display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 4px;
             background: rgba(139,92,246,0.2); color: rgb(167,139,250); border: 1px solid rgba(139,92,246,0.3);
             font-size: 0.65rem; white-space: nowrap; }
@@ -1506,38 +1565,41 @@
 
                     <!-- Section: Linked (TODO + Jira) -->
                     <div id="backlog-linked-section" class="hidden">
-                        <button id="btn-toggle-linked" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-emerald-400 font-medium mb-1">
-                            <svg id="linked-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform rotate-90" viewBox="0 0 20 20" fill="currentColor">
+                        <div id="btn-toggle-linked" class="section-header">
+                            <span>Linked</span>
+                            <span id="linked-count" class="section-count">0</span>
+                            <div id="linked-progress" class="progress-bar flex-1 hidden"><div class="progress-bar-fill" style="width:0%"></div></div>
+                            <svg id="linked-chevron" xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 transition-transform rotate-90 opacity-40" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                             </svg>
-                            Linked
-                            <span id="linked-count" class="text-[0.55rem] bg-emerald-600/30 text-emerald-300 px-1.5 rounded-full">0</span>
-                        </button>
-                        <div id="backlog-linked-list" class="flex flex-col gap-1"></div>
+                        </div>
+                        <div id="backlog-linked-list" class="section-body flex flex-col gap-1"></div>
                     </div>
 
                     <!-- Section: Code TODOs -->
                     <div id="backlog-code-section" class="hidden">
-                        <button id="btn-toggle-code-todos" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-violet-400 font-medium mb-1">
-                            <svg id="code-todos-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                        <div id="btn-toggle-code-todos" class="section-header">
+                            <span>Code TODOs</span>
+                            <span id="code-todos-count" class="section-count">0</span>
+                            <div class="flex-1"></div>
+                            <svg id="code-todos-chevron" xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 transition-transform opacity-40" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                             </svg>
-                            Code TODOs
-                            <span id="code-todos-count" class="text-[0.55rem] bg-violet-600/30 text-violet-300 px-1.5 rounded-full">0</span>
-                        </button>
-                        <div id="backlog-code-list" class="hidden flex flex-col gap-1"></div>
+                        </div>
+                        <div id="backlog-code-list" class="section-body collapsed flex flex-col gap-1"></div>
                     </div>
 
                     <!-- Section: Jira Tickets -->
                     <div id="backlog-jira-section" class="hidden">
-                        <button id="btn-toggle-jira-tickets" class="flex items-center gap-1.5 w-full text-left text-[0.7rem] text-blue-400 font-medium mb-1">
-                            <svg id="jira-tickets-chevron" xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 transition-transform" viewBox="0 0 20 20" fill="currentColor">
+                        <div id="btn-toggle-jira-tickets" class="section-header">
+                            <span>Jira Tickets</span>
+                            <span id="jira-tickets-count" class="section-count">0</span>
+                            <div class="flex-1"></div>
+                            <svg id="jira-tickets-chevron" xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5 transition-transform opacity-40" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"/>
                             </svg>
-                            Jira Tickets
-                            <span id="jira-tickets-count" class="text-[0.55rem] bg-blue-600/30 text-blue-300 px-1.5 rounded-full">0</span>
-                        </button>
-                        <div id="backlog-jira-list" class="hidden flex flex-col gap-1"></div>
+                        </div>
+                        <div id="backlog-jira-list" class="section-body collapsed flex flex-col gap-1"></div>
                     </div>
 
                     <!-- AI Working Space -->
@@ -7840,25 +7902,32 @@
 
         // Task Board toggle removed — always visible
 
-        // Toggle accordion sections
-        document.getElementById('btn-toggle-linked')?.addEventListener('click', () => {
-            const list = document.getElementById('backlog-linked-list');
-            const chevron = document.getElementById('linked-chevron');
-            list.classList.toggle('hidden');
-            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
-        });
-        document.getElementById('btn-toggle-code-todos')?.addEventListener('click', () => {
-            const list = document.getElementById('backlog-code-list');
-            const chevron = document.getElementById('code-todos-chevron');
-            list.classList.toggle('hidden');
-            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
-        });
-        document.getElementById('btn-toggle-jira-tickets')?.addEventListener('click', () => {
-            const list = document.getElementById('backlog-jira-list');
-            const chevron = document.getElementById('jira-tickets-chevron');
-            list.classList.toggle('hidden');
-            chevron.style.transform = list.classList.contains('hidden') ? '' : 'rotate(90deg)';
-        });
+        // Toggle accordion sections with smooth animation
+        function _toggleSection(listId, chevronId) {
+            const list = document.getElementById(listId);
+            const chevron = document.getElementById(chevronId);
+            if (!list) return;
+            const isCollapsed = list.classList.contains('collapsed');
+            if (isCollapsed) {
+                // Expand: set max-height to scrollHeight, then remove collapsed
+                list.classList.remove('collapsed');
+                list.style.maxHeight = list.scrollHeight + 'px';
+                chevron.style.transform = 'rotate(90deg)';
+                // After transition, remove inline max-height so content can grow
+                setTimeout(() => { list.style.maxHeight = ''; }, 260);
+            } else {
+                // Collapse: set max-height to current height first, then collapse
+                list.style.maxHeight = list.scrollHeight + 'px';
+                requestAnimationFrame(() => {
+                    list.classList.add('collapsed');
+                    list.style.maxHeight = '0';
+                    chevron.style.transform = '';
+                });
+            }
+        }
+        document.getElementById('btn-toggle-linked')?.addEventListener('click', () => _toggleSection('backlog-linked-list', 'linked-chevron'));
+        document.getElementById('btn-toggle-code-todos')?.addEventListener('click', () => _toggleSection('backlog-code-list', 'code-todos-chevron'));
+        document.getElementById('btn-toggle-jira-tickets')?.addEventListener('click', () => _toggleSection('backlog-jira-list', 'jira-tickets-chevron'));
 
         btnScanWorkspaceTodos.addEventListener('click', () => {
             btnScanWorkspaceTodos.textContent = '...';
@@ -7968,9 +8037,15 @@
             }
         }
 
+        let _lastDepGraphHash = -1;
+
         function renderBacklog() {
-            // Rebuild dependency graph on every render (deps may change after re-scan)
-            buildDependencyGraph();
+            // Rebuild dependency graph only when workspaceTodos changes
+            const depHash = workspaceTodos.length + ':' + JSON.stringify(workspaceTodos).length;
+            if (depHash !== _lastDepGraphHash) {
+                buildDependencyGraph();
+                _lastDepGraphHash = depHash;
+            }
 
             // Clear all section lists
             backlogLinkedList.innerHTML = '';
@@ -8054,8 +8129,18 @@
             if (linkedItems.length > 0) {
                 backlogLinkedSection.classList.remove('hidden');
                 linkedCountEl.textContent = linkedItems.length;
-                linkedItems.forEach(item => {
-                    backlogLinkedList.appendChild(_buildLinkedCard(item));
+                // Progress bar: count done items per ticket
+                const doneCount = linkedItems.filter(i => i.isDone || i.ticketStatus?.isDone).length;
+                const progressEl = document.getElementById('linked-progress');
+                if (progressEl && linkedItems.length > 1) {
+                    progressEl.classList.remove('hidden');
+                    progressEl.querySelector('.progress-bar-fill').style.width = Math.round(doneCount / linkedItems.length * 100) + '%';
+                }
+                linkedItems.forEach((item, i) => {
+                    const card = _buildLinkedCard(item);
+                    card.classList.add('card-enter');
+                    card.style.animationDelay = (i * 30) + 'ms';
+                    backlogLinkedList.appendChild(card);
                 });
             } else {
                 backlogLinkedSection.classList.add('hidden');
@@ -8065,8 +8150,11 @@
             if (codeItems.length > 0) {
                 backlogCodeSection.classList.remove('hidden');
                 codeTodosCountEl.textContent = codeItems.length;
-                codeItems.forEach(item => {
-                    backlogCodeList.appendChild(_buildCodeTodoCard(item));
+                codeItems.forEach((item, i) => {
+                    const card = _buildCodeTodoCard(item);
+                    card.classList.add('card-enter');
+                    card.style.animationDelay = (i * 30) + 'ms';
+                    backlogCodeList.appendChild(card);
                 });
             } else {
                 backlogCodeSection.classList.add('hidden');
@@ -8099,9 +8187,12 @@
 
                 // Render tickets without Epic
                 if (noEpicItems.length > 0) {
-                    for (const item of noEpicItems) {
-                        backlogJiraList.appendChild(_buildJiraTicketCard(item));
-                    }
+                    noEpicItems.forEach((item, i) => {
+                        const card = _buildJiraTicketCard(item);
+                        card.classList.add('card-enter');
+                        card.style.animationDelay = (i * 30) + 'ms';
+                        backlogJiraList.appendChild(card);
+                    });
                 }
             } else {
                 backlogJiraSection.classList.add('hidden');
@@ -8111,63 +8202,91 @@
             renderAIWorkspace();
         }
 
+        function _statusBadgeClass(status) {
+            const s = (status || '').toLowerCase();
+            if (['done', 'closed', 'resolved'].includes(s)) return 'badge-done';
+            if (['in progress', 'in review', 'in development'].includes(s)) return 'badge-todo';
+            return '';
+        }
+
         /** Build a draggable linked (TODO+Jira) card */
         function _buildLinkedCard(item) {
             const el = document.createElement('div');
-            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-emerald-500/30 transition-colors group';
-            el.draggable = true;
+            const isDone = item.isDone || item.ticketStatus?.isDone;
+            const deps = _dependencyGraph[item.id];
+            const isBlocked = !!deps;
+            const cardType = isDone ? 'card-done' : isBlocked ? 'card-blocked' : 'card-linked';
+            el.className = `backlog-card ${cardType} bg-gray-800/40 border border-gray-700/20 rounded-lg p-2.5 flex flex-col gap-1 group`;
+            el.draggable = !isDone && !isBlocked;
             el.dataset.itemId = item.id;
 
             const ts = item.ticketStatus;
-            const ticketBadge = ts ? `<a href="${escapeHtml(ts.browseUrl)}" class="inline-flex items-center gap-1 text-[0.6rem] font-mono px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400 border border-blue-600/30" title="${escapeHtml(ts.summary)}" onclick="event.stopPropagation();">${escapeHtml(item.ticketKey)} · ${escapeHtml(ts.status)}</a>` : '';
-            const locationInfo = item.relativePath ? `<span class="text-[0.6rem] text-blue-400/70 font-mono truncate">${escapeHtml(item.relativePath)}</span><span class="text-[0.6rem] text-gray-600 flex-shrink-0">:${item.lineNumber}</span>` : '';
+            const statusClass = ts ? _statusBadgeClass(ts.status) : '';
+            const ticketBadge = ts ? `<a href="${escapeHtml(ts.browseUrl)}" class="badge badge-status ${statusClass}" title="${escapeHtml(ts.summary)}" onclick="event.stopPropagation();">${escapeHtml(item.ticketKey)} · ${escapeHtml(ts.status)}</a>` : '';
+            const locationInfo = item.relativePath ? `<span class="text-[0.55rem] text-gray-500 font-mono truncate">${escapeHtml(item.relativePath)}:${item.lineNumber}</span>` : '';
+            const badgeClass = isDone ? 'badge badge-done' : 'badge badge-todo';
 
-            el.innerHTML = `
-                <div class="flex items-start justify-between gap-2">
-                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                        <span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>
-                        <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
-                    </div>
-                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
-                </div>
-                <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                    ${locationInfo}
-                    ${ticketBadge}
-                    ${item.priority ? `<span class="text-[0.55rem] text-gray-500 uppercase">${escapeHtml(item.priority)}</span>` : ''}
-                </div>`;
-
-            // Drag start
-            el.addEventListener('dragstart', (e) => {
-                el.classList.add('dragging');
-                e.dataTransfer.setData('text/plain', JSON.stringify(item));
-                e.dataTransfer.effectAllowed = 'move';
-            });
-            el.addEventListener('dragend', () => el.classList.remove('dragging'));
-
-            // Gray out blocked items
-            const deps = _dependencyGraph[item.id];
-            if (deps) {
-                el.classList.add('opacity-40');
-                el.draggable = false;
-                el.style.cursor = 'not-allowed';
-                // Build tooltip
+            let blockedBadge = '';
+            if (isBlocked) {
                 const parts = [];
                 for (const a of (deps.unresolvedAfter || [])) parts.push('#' + a.changeNumber + ' (' + a.ticketKey + ')');
                 for (const b of (deps.unresolvedBlocked || [])) parts.push(b.ticketKey);
                 el.title = 'Blocked by: ' + parts.join(', ');
-                // Add lock badge
-                const metaRow = el.querySelector('.flex.items-center.gap-1\\.5.mt-0\\.5');
-                if (metaRow) {
-                    const lockBadge = document.createElement('span');
-                    lockBadge.className = 'text-[0.55rem] text-orange-400/70 flex items-center gap-0.5';
-                    lockBadge.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg> Blocked';
-                    metaRow.appendChild(lockBadge);
+                blockedBadge = '<span class="badge badge-blocked">Blocked</span>';
+            }
+
+            el.innerHTML = `
+                <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-center gap-1.5 flex-1 min-w-0">
+                        <span class="${badgeClass}">${isDone ? 'Done' : 'TODO'}</span>
+                        <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
+                    </div>
+                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-600 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
+                </div>
+                <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                    ${locationInfo}
+                    ${ticketBadge}
+                    ${blockedBadge}
+                    ${item.priority ? `<span class="text-[0.55rem] text-gray-500 uppercase">${escapeHtml(item.priority)}</span>` : ''}
+                </div>
+                ${isDone && ts ? `<div class="done-cleanup flex items-center gap-2 mt-1.5 bg-emerald-900/20 border border-emerald-700/20 rounded-md px-2 py-1.5">
+                    <span class="text-[0.55rem] text-emerald-400/80 flex-1">Jira complete — remove TODO?</span>
+                    <button class="done-confirm-btn text-[0.55rem] font-medium text-emerald-400 hover:text-emerald-300 px-2 py-0.5 rounded transition-colors">Yes</button>
+                    <button class="done-dismiss-btn text-[0.55rem] text-gray-600 hover:text-gray-400 transition-colors">No</button>
+                </div>` : ''}`;
+
+            // Drag start (only if draggable)
+            if (el.draggable) {
+                el.addEventListener('dragstart', (e) => {
+                    el.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', JSON.stringify(item));
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                el.addEventListener('dragend', () => el.classList.remove('dragging'));
+            }
+
+            // Done-cleanup listeners
+            if (isDone && ts) {
+                const confirmBtn = el.querySelector('.done-confirm-btn');
+                const dismissBtn = el.querySelector('.done-dismiss-btn');
+                if (confirmBtn) {
+                    confirmBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        vscode.postMessage({ command: 'confirmTodoDone', payload: { filePath: item.filePath, lineNumber: item.lineNumber, ticketKey: item.ticketKey } });
+                    });
+                }
+                if (dismissBtn) {
+                    dismissBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const cleanup = el.querySelector('.done-cleanup');
+                        if (cleanup) cleanup.remove();
+                    });
                 }
             }
 
             // Click → navigate to file
             el.addEventListener('click', (e) => {
-                if (e.target.closest('.workspace-todo-edit-btn, a')) return;
+                if (e.target.closest('.workspace-todo-edit-btn, a, .done-cleanup')) return;
                 if (item.relativePath) vscode.postMessage({ command: 'navigateToCode', relativePath: item.relativePath, startLine: item.lineNumber, endLine: item.lineNumber });
             });
 
@@ -8183,18 +8302,18 @@
         /** Build a code TODO card (clickable, not draggable) */
         function _buildCodeTodoCard(item) {
             const el = document.createElement('div');
-            el.className = 'backlog-card bg-gray-800/50 border border-gray-700/30 rounded-lg p-2.5 flex flex-col gap-1 hover:border-violet-500/30 transition-colors group cursor-pointer';
+            el.className = 'backlog-card bg-gray-800/40 border border-gray-700/20 rounded-lg p-2.5 flex flex-col gap-1 group cursor-pointer';
             el.dataset.itemId = item.id;
 
-            const locationInfo = item.relativePath ? `<span class="text-[0.6rem] text-blue-400/70 font-mono truncate">${escapeHtml(item.relativePath)}</span><span class="text-[0.6rem] text-gray-600 flex-shrink-0">:${item.lineNumber}</span>` : '';
+            const locationInfo = item.relativePath ? `<span class="text-[0.55rem] text-gray-500 font-mono truncate">${escapeHtml(item.relativePath)}:${item.lineNumber}</span>` : '';
 
             el.innerHTML = `
                 <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                        <span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>
+                        <span class="badge badge-todo">TODO</span>
                         <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
                     </div>
-                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-500 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
+                    <button class="workspace-todo-edit-btn flex-shrink-0 opacity-0 group-hover:opacity-100 p-0.5 text-gray-600 hover:text-violet-400 transition-opacity" title="Edit"><svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor"><path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/></svg></button>
                 </div>
                 <div class="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     ${locationInfo}
@@ -8243,12 +8362,21 @@
             });
 
             // Render my tickets (green accent)
+            let jiraCardIdx = 0;
             for (const item of myTickets) {
-                list.appendChild(_buildJiraTicketCard(item, false));
+                const card = _buildJiraTicketCard(item, false);
+                card.classList.add('card-enter');
+                card.style.animationDelay = (jiraCardIdx * 30) + 'ms';
+                jiraCardIdx++;
+                list.appendChild(card);
             }
             // Render unassigned tickets (orange accent)
             for (const item of unassignedTickets) {
-                list.appendChild(_buildJiraTicketCard(item, true));
+                const card = _buildJiraTicketCard(item, true);
+                card.classList.add('card-enter');
+                card.style.animationDelay = (jiraCardIdx * 30) + 'ms';
+                jiraCardIdx++;
+                list.appendChild(card);
             }
 
             container.appendChild(header);
@@ -8365,35 +8493,49 @@
 
             aiWorkspaceItems.forEach((item, idx) => {
                 const card = document.createElement('div');
-                card.className = 'workspace-card bg-gray-800/60 border border-emerald-700/30 rounded-lg p-2.5 flex flex-col gap-1.5';
+                const itemDone = item.isDone;
+                const borderClass = itemDone ? 'border-emerald-700/20' : 'border-emerald-700/30';
+                card.className = `workspace-card bg-gray-800/60 border ${borderClass} rounded-lg p-2.5 flex flex-col gap-1.5${itemDone ? ' opacity-60' : ''}`;
                 const isCode = item.source === 'code';
+
+                const sourceBadge = itemDone
+                    ? '<span class="badge badge-done">Completed</span>'
+                    : (isCode ? '<span class="badge badge-todo">TODO</span>'
+                              : '<span class="badge badge-todo">Jira</span>');
+
+                // Disable Investigate if item has unresolved dependencies or is done
+                const wsDeps = _dependencyGraph[item.id];
+                const invDisabled = itemDone || !!wsDeps;
+                const invClass = invDisabled ? 'ws-action-btn btn-investigate investigate-btn text-gray-600 cursor-not-allowed border-gray-700/30' : 'ws-action-btn btn-investigate investigate-btn';
+                let invTitle = '';
+                if (wsDeps) {
+                    const parts = [];
+                    for (const a of (wsDeps.unresolvedAfter || [])) parts.push('#' + a.changeNumber);
+                    for (const b of (wsDeps.unresolvedBlocked || [])) parts.push(b.ticketKey);
+                    invTitle = 'Blocked by: ' + parts.join(', ');
+                }
 
                 card.innerHTML = `
                     <div class="flex items-start justify-between gap-2">
                         <div class="flex items-center gap-1.5 flex-1 min-w-0">
-                            ${isCode ? '<span class="source-badge-code text-[0.55rem] px-1 py-0.5 rounded font-medium">TODO</span>'
-                                     : '<span class="source-badge-ticket text-[0.55rem] px-1 py-0.5 rounded font-medium">Jira</span>'}
+                            ${sourceBadge}
                             <span class="text-xs text-gray-200 font-medium leading-snug truncate">${escapeHtml(item.title)}</span>
                         </div>
-                        <button class="ws-remove-btn text-gray-600 hover:text-red-400 p-0.5 transition-colors" title="Remove from workspace">
+                        <button class="ws-remove-btn text-gray-600 hover:text-red-400 p-0.5 transition-colors" title="Remove from workspace"${itemDone ? ' disabled' : ''}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                             </svg>
                         </button>
                     </div>
                     ${item.ticketKey ? `<span class="text-[0.6rem] text-blue-400/70 font-mono">${escapeHtml(item.ticketKey)}</span>` : ''}
-                    <div class="flex items-center gap-2 mt-1" id="ws-actions-${idx}">
-                        <button class="investigate-btn flex items-center gap-1 text-[0.6rem] font-medium
-                            bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 hover:text-emerald-300
-                            border border-emerald-600/30 hover:border-emerald-500/50
-                            px-2.5 py-1 rounded-md transition-all">
+                    <div class="flex items-center gap-2 mt-1 ws-actions">
+                        <button class="${invClass}"${invDisabled ? ' disabled' : ''}${invTitle ? ` title="${invTitle}"` : ''}>
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd"/>
                             </svg>
                             Investigate
                         </button>
-                        <button class="implement-btn-disabled flex items-center gap-1 text-[0.6rem] font-medium
-                            text-gray-600 border border-gray-700/30 px-2.5 py-1 rounded-md"
+                        <button class="ws-action-btn btn-implement"
                             disabled title="Coming soon — AI implementation">
                             <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
                                 <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
@@ -8401,70 +8543,71 @@
                             Implement
                         </button>
                     </div>
-                    <div class="ws-status-${idx} hidden text-[0.6rem] text-emerald-400/70 mt-0.5"></div>`;
+                    <div class="ws-status hidden text-[0.6rem] text-emerald-400/70 mt-0.5"></div>`;
 
-                // Remove from workspace
-                card.querySelector('.ws-remove-btn').addEventListener('click', () => {
-                    aiWorkspaceItems.splice(idx, 1);
-                    renderAIWorkspace();
-                    renderBacklog();
-                });
-
-                // Disable Investigate if item has unresolved dependencies
-                const wsDeps = _dependencyGraph[item.id];
-                if (wsDeps) {
-                    const invBtn = card.querySelector('.investigate-btn');
-                    if (invBtn) {
-                        invBtn.disabled = true;
-                        invBtn.classList.remove('bg-emerald-600/20', 'hover:bg-emerald-600/30', 'text-emerald-400', 'hover:text-emerald-300', 'border-emerald-600/30', 'hover:border-emerald-500/50');
-                        invBtn.classList.add('text-gray-600', 'cursor-not-allowed', 'border-gray-700/30');
-                        const parts = [];
-                        for (const a of (wsDeps.unresolvedAfter || [])) parts.push('#' + a.changeNumber);
-                        for (const b of (wsDeps.unresolvedBlocked || [])) parts.push(b.ticketKey);
-                        invBtn.title = 'Blocked by: ' + parts.join(', ');
-                    }
-                }
-
-                // Investigate button
-                card.querySelector('.investigate-btn').addEventListener('click', () => {
-                    if (!session.roomId) {
-                        showToast('Start a chat session first', 'error');
-                        return;
-                    }
-
-                    const statusEl = card.querySelector(`.ws-status-${idx}`);
-                    statusEl.classList.remove('hidden');
-                    statusEl.textContent = 'Investigating...';
-                    const btn = card.querySelector('.investigate-btn');
-                    btn.disabled = true;
-                    btn.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Investigating...`;
-
-                    // Switch to chat tab for visibility
-                    const chatTab = document.getElementById('tab-chat');
-                    if (chatTab) chatTab.click();
-
-                    // Build investigation query
-                    const ticketCtx = item.ticketKey ? `Jira ticket ${item.ticketKey}: "${item.title}".` : '';
-                    const codeCtx = item.relativePath ? `Code location: ${item.relativePath}:${item.lineNumber}.` : '';
-                    const isJiraOnly = item.source === 'ticket' && !item.relativePath;
-                    const repoCheck = isJiraOnly
-                        ? `CRITICAL: Before using any code tools, use ask_user: "Does this ticket relate to the code in your current workspace?" ` +
-                          `with options ["Yes, investigate here", "No, different repo"]. ` +
-                          `If no, ask which repo and say "Please open that workspace and investigate again." `
-                        : '';
-                    const query = `[jira] Investigate this task: "${item.title}". ${ticketCtx} ${codeCtx} ${repoCheck}Read the relevant code, analyze what needs to be done, and provide a detailed plan. If this is a Jira ticket, update the description with your findings. If this is a code TODO, update the TODO_DESC with key findings.`;
-
-                    vscode.postMessage({
-                        command: 'askAI',
-                        roomId: session.roomId,
-                        query,
-                        planMode: true,
-                    });
-                });
+                // Entrance animation with staggered delay
+                card.classList.add('card-enter');
+                card.style.animationDelay = (idx * 30) + 'ms';
 
                 aiWorkspaceList.appendChild(card);
             });
         }
+
+        // Event delegation — single listener for all workspace card actions (registered once)
+        aiWorkspaceList.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.ws-remove-btn');
+            const invBtn = e.target.closest('.investigate-btn');
+            if (!removeBtn && !invBtn) return;
+            const card = e.target.closest('.workspace-card');
+            if (!card) return;
+            const idx = [...aiWorkspaceList.children].indexOf(card);
+            if (idx < 0 || idx >= aiWorkspaceItems.length) return;
+            const item = aiWorkspaceItems[idx];
+
+            if (removeBtn) {
+                aiWorkspaceItems.splice(idx, 1);
+                renderAIWorkspace();
+                renderBacklog();
+                return;
+            }
+
+            if (invBtn && !invBtn.disabled) {
+                if (!session.roomId) {
+                    showToast('Start a chat session first', 'error');
+                    return;
+                }
+
+                const statusEl = card.querySelector('.ws-status');
+                if (statusEl) {
+                    statusEl.classList.remove('hidden');
+                    statusEl.textContent = 'Investigating...';
+                }
+                invBtn.disabled = true;
+                invBtn.innerHTML = `<svg class="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Investigating...`;
+
+                // Switch to chat tab for visibility
+                const chatTab = document.getElementById('tab-chat');
+                if (chatTab) chatTab.click();
+
+                // Build investigation query
+                const ticketCtx = item.ticketKey ? `Jira ticket ${item.ticketKey}: "${item.title}".` : '';
+                const codeCtx = item.relativePath ? `Code location: ${item.relativePath}:${item.lineNumber}.` : '';
+                const isJiraOnly = item.source === 'ticket' && !item.relativePath;
+                const repoCheck = isJiraOnly
+                    ? `CRITICAL: Before using any code tools, use ask_user: "Does this ticket relate to the code in your current workspace?" ` +
+                      `with options ["Yes, investigate here", "No, different repo"]. ` +
+                      `If no, ask which repo and say "Please open that workspace and investigate again." `
+                    : '';
+                const query = `[jira] Investigate this task: "${item.title}". ${ticketCtx} ${codeCtx} ${repoCheck}Read the relevant code, analyze what needs to be done, and provide a detailed plan. If this is a Jira ticket, update the description with your findings. If this is a code TODO, update the TODO_DESC with key findings.`;
+
+                vscode.postMessage({
+                    command: 'askAI',
+                    roomId: session.roomId,
+                    query,
+                    planMode: true,
+                });
+            }
+        });
 
         function openWorkspaceTodoEdit(todo) {
             _editingWorkspaceTodo = todo;
