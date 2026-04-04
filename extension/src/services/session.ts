@@ -329,6 +329,18 @@ export class SessionService {
     }
 
     /**
+     * Set roomId to a specific value (for session rejoin).
+     */
+    public setRoomId(roomId: string): void {
+        if (!this._context) {
+            throw new Error('SessionService not initialized.');
+        }
+        this._roomId = roomId;
+        this._context.globalState.update(SessionService.ROOM_ID_KEY, roomId);
+        console.log(`[SessionService] Room ID set to: ${roomId}`);
+    }
+
+    /**
      * Reset the session (create new roomId).
      * Used when host ends the chat session.
      */

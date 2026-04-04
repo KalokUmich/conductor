@@ -1010,7 +1010,14 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             localSessionManager.deleteSession(endedRoomId);
                         }
                         if (chatLocalStore && endedRoomId) {
-                            chatLocalStore.clearRoom(endedRoomId).catch(() => {});
+                            await chatLocalStore.clearRoom(endedRoomId).catch(() => {});
+                        }
+                        // Push updated session list immediately so login page is correct
+                        if (localSessionManager) {
+                            this._view?.webview.postMessage({
+                                command: 'localSessionsList',
+                                sessions: localSessionManager.getAllSessions(),
+                            });
                         }
                     }
                     // Reset session state and generate new roomId
@@ -1119,7 +1126,6 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         const currentWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
                         if (targetSession?.workspacePath && currentWorkspace && targetSession.workspacePath !== currentWorkspace) {
-                            // Workspace mismatch — ask user to switch
                             const choice = await vscode.window.showWarningMessage(
                                 `This session belongs to "${targetSession.workspaceName}". Switch workspace?`,
                                 { modal: true },
@@ -1127,21 +1133,28 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                                 'Cancel'
                             );
                             if (choice === 'Switch Workspace') {
-                                // Open the target workspace — VS Code will reload
                                 await vscode.commands.executeCommand(
                                     'vscode.openFolder',
                                     vscode.Uri.file(targetSession.workspacePath),
-                                    false // don't open in new window
+                                    false
                                 );
                             }
-                            return; // Don't rejoin here — VS Code will reload and user starts fresh
+                            return;
                         }
 
                         getSessionService().removeQuitRoom(message.roomId);
-                        // Trigger a join using the room ID as an invite URL
-                        this._handleJoinSession(
-                            getSessionService().getBackendUrl() + '/chat?roomId=' + message.roomId
-                        );
+
+                        // Local sessions: rejoin as HOST (set roomId, start hosting, register workspace)
+                        if (targetSession?.mode === 'local') {
+                            getSessionService().setRoomId(message.roomId);
+                            await this._handleStartSession();
+                            await this._handleSetupLocalWorkspace();
+                        } else {
+                            // Online sessions: rejoin as guest via invite URL
+                            this._handleJoinSession(
+                                getSessionService().getBackendUrl() + '/chat?roomId=' + message.roomId
+                            );
+                        }
                     }
                     return;
                 case 'uploadFile':
@@ -1659,7 +1672,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      * Handle "Quit Chat" command from WebView.
      * Preserves room data and saves room for later rejoin.
      */
-    private _handleQuitChat(): void {
+    private async _handleQuitChat(): Promise<void> {
         try {
             const sessionService = getSessionService();
             const roomId = sessionService.getRoomId();
@@ -1668,15 +1681,12 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // Save room for later rejoin
             sessionService.saveQuitRoom(roomId, backendUrl);
 
-            // Update local session manager with latest message count
+            // Update local session manager with latest message count (await before FSM transition)
             if (localSessionManager) {
-                if (chatLocalStore) {
-                    chatLocalStore.loadMessages(roomId).then(cache => {
-                        localSessionManager!.touch(roomId, cache?.messageCount);
-                    }).catch(() => {
-                        localSessionManager!.touch(roomId);
-                    });
-                } else {
+                try {
+                    const cache = chatLocalStore ? await chatLocalStore.loadMessages(roomId) : null;
+                    localSessionManager.touch(roomId, cache?.messageCount ?? 0);
+                } catch {
                     localSessionManager.touch(roomId);
                 }
             }
@@ -1684,6 +1694,14 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // FSM transition (does NOT reset session — roomId preserved)
             this._controller.quitSession();
             console.log(`[Conductor] Quit chat — room ${roomId} saved for rejoin`);
+
+            // Push updated session list so login page shows correct data
+            if (localSessionManager) {
+                this._view?.webview.postMessage({
+                    command: 'localSessionsList',
+                    sessions: localSessionManager.getAllSessions(),
+                });
+            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.warn('[Conductor] quitChat failed:', msg);
