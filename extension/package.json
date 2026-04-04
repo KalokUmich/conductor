@@ -95,9 +95,12 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile",
+    "compile": "npm run compile:ts && npm run compile:webview && npm run compile:css",
+    "compile:ts": "npx tsc -p ./",
+    "compile:webview": "node webview-ui/esbuild.mjs --production",
+    "compile:css": "tailwindcss -i ./media/input.css -o ./media/tailwind.css --minify",
+    "watch:webview": "node webview-ui/esbuild.mjs --watch",
+    "pretest": "npm run compile:ts",
     "test": "node --test out/tests/*.test.js",
     "lint": "eslint src --ext ts",
     "build:css": "tailwindcss -i ./media/input.css -o ./media/tailwind.css --minify"
@@ -106,17 +109,23 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.x",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.15.0",
-    "@typescript-eslint/parser": "^6.15.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
     "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.28.0",
     "eslint": "^8.56.0",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.23",
     "better-sqlite3": "^11.7.0",
     "js-tiktoken": "^1.0.12",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.3.3",
     "web-tree-sitter": "0.26.7"
   }

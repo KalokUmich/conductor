@@ -472,18 +472,20 @@ async def websocket_chat_endpoint(
             history = manager.get_messages_since(room_id, since)
             logger.info(f"[WS] Reconnect recovery: sending {len(history)} messages since {since}")
 
-        # Ensure room exists in Postgres (upsert)
-        _persistence = getattr(manager, "_persistence", None)
-        if _persistence:
-            sso_info = manager.room_sso_hosts.get(room_id, {})
-            try:
-                await _persistence.ensure_room(
-                    room_id,
-                    owner_email=sso_info.get("email"),
-                    owner_provider=sso_info.get("provider"),
-                )
-            except Exception as exc:
-                logger.warning(f"[WS] ensure_room failed for {room_id}: {exc}")
+        # Ensure room exists in Postgres (upsert) — skip for local mode
+        # Local mode stores everything client-side; no Postgres dependency needed.
+        if not manager._is_local_room(room_id):
+            _persistence = getattr(manager, "_persistence", None)
+            if _persistence:
+                sso_info = manager.room_sso_hosts.get(room_id, {})
+                try:
+                    await _persistence.ensure_room(
+                        room_id,
+                        owner_email=sso_info.get("email"),
+                        owner_provider=sso_info.get("provider"),
+                    )
+                except Exception as exc:
+                    logger.warning(f"[WS] ensure_room failed for {room_id}: {exc}")
 
         # Send message history and user list to the newly connected client
         # For code_snippet messages, copy metadata → codeSnippet so the

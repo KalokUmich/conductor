@@ -23,6 +23,8 @@ services:
       REDIS_URL: "redis://conductor-redis:6379/0"
       BACKEND_HOST: "0.0.0.0"
       BACKEND_PORT: "8000"
+      # Force Langfuse SDK to use native API, not OTEL (Langfuse server v2 lacks OTEL endpoint)
+      LANGFUSE_TRACING_BACKEND: "langfuse"
     ports:
       - "8000:8000"
     volumes:

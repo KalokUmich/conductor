@@ -162,18 +162,28 @@ test-parity: ensure-backend-deps
 # ===========================
 # Build / Compile
 # ===========================
-.PHONY: compile compile-ts compile-css package update-contracts update-prompt-library
+.PHONY: compile compile-all compile-ts compile-webview compile-css package update-contracts update-prompt-library
 
-## Compile extension (TypeScript + Tailwind CSS)
-compile: compile-ts compile-css
+## Compile extension (TypeScript + React WebView + Tailwind CSS)
+compile: compile-all
 	@echo "Extension compiled!"
 
-## Compile TypeScript
-compile-ts:
-	@echo "Compiling TypeScript..."
+## Compile all (TS + WebView + CSS via npm run compile)
+compile-all:
+	@echo "Compiling extension (TS + React WebView + CSS)..."
 	cd extension && npm run compile
 
-## Compile Tailwind CSS
+## Compile TypeScript only
+compile-ts:
+	@echo "Compiling TypeScript..."
+	cd extension && npm run compile:ts
+
+## Compile React WebView only
+compile-webview:
+	@echo "Building React WebView..."
+	cd extension && npm run compile:webview
+
+## Compile Tailwind CSS only
 compile-css:
 	@echo "Building Tailwind CSS..."
 	cd extension && npm run build:css
