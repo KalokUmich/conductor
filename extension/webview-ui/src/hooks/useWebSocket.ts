@@ -269,7 +269,12 @@ export function useWebSocket() {
         return;
       }
 
-      // ── 10. Regular chat message (all types) ──
+      // ── 10. Skip internal protocol messages that shouldn't render ──
+      if (type === "role_restored" || type === "lead_changed_ack" || type === "settings_updated") {
+        return;
+      }
+
+      // ── 11. Regular chat message (all types) ──
       const msg = parseMessageData(data);
       addMessageRef.current(msg);
 

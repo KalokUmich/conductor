@@ -1514,6 +1514,16 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         console.warn('[Conductor][StartSession] Workspace registration error:', regErr);
                     }
 
+                    // Track this local session
+                    if (localSessionManager) {
+                        const ssoIdentity = this._getValidSSOIdentity();
+                        localSessionManager.upsertSession(
+                            roomId,
+                            wsRoot,
+                            (ssoIdentity?.email as string) || '',
+                        );
+                    }
+
                     // Start watching for file changes (hot incremental updates).
                     this._startFileWatcher(wsRoot);
                 }).catch(err => {

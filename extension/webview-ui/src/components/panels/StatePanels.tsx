@@ -228,9 +228,9 @@ function ReadyToHostPanel() {
   }, [send, state.ssoIdentity?.email]);
 
   const handleStartLocal = useCallback(() => {
-    send({ command: "setupLocalWorkspace" });
+    // Only send startSession — it handles resetSession + workspace registration + upsertSession internally
     startSession();
-  }, [send, startSession]);
+  }, [startSession]);
 
   const handleDeleteSession = useCallback((roomId: string) => {
     send({ command: "deleteLocalSession", roomId } as never);
