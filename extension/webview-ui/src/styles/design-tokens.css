@@ -1,15 +1,22 @@
 /* ============================================================
-   Conductor Design System — Design Tokens (美学 Edition)
+   Conductor Design System — Design Tokens (美学 2.0)
 
-   Identity: "Warm Intelligence"
+   Identity: "Comfortable Intelligence"
+   Principle: Regardless of mode, eyes are relaxed, mind is
+   active but unstressed, breathing is natural, flow is maintained.
+
    Three Pillars: Material Quality · Kinetic Harmony · Flow State Protection
+   Four Modes: Dark · Light · High Contrast Dark · High Contrast Light
 
-   Sources: Apple HIG · Claude.ai · ChatGPT · Linear · iMessage
+   Sources: Apple HIG · Claude.ai · Material Design 3 · Linear · Notion
+   ============================================================ */
+
+/* ============================================================
+   THEME-INVARIANT TOKENS (shared across all modes)
    ============================================================ */
 
 :root {
-  /* ── Brand Palette ──────────────────────────────────────── */
-  /* Warm amber/terracotta — brand identity, AI accent */
+  /* ── Brand Palette (raw, not used directly by components) ── */
   --c-brand-50:  #fef7ed;
   --c-brand-100: #fdecd3;
   --c-brand-200: #fad5a6;
@@ -21,7 +28,7 @@
   --c-brand-800: #933810;
   --c-brand-900: #773010;
 
-  /* Accent: violet — sole interactive tint (Apple: ONE accent) */
+  /* Accent: violet (raw palette) */
   --c-accent-50:  #f5f3ff;
   --c-accent-100: #ede9fe;
   --c-accent-200: #ddd6fe;
@@ -32,118 +39,6 @@
   --c-accent-700: #6d28d9;
   --c-accent-800: #5b21b6;
   --c-accent-900: #4c1d95;
-
-  /* ── Unified Tint System (violet as sole interactive color) ── */
-  --c-tint:            #8b5cf6;
-  --c-tint-prominent:  #a78bfa;
-  --c-tint-bg:         rgba(139, 92, 246, 0.12);
-  --c-tint-hover:      rgba(139, 92, 246, 0.06);
-  --c-tint-subtle:     rgba(139, 92, 246, 0.04);
-
-  /* ── Semantic Colors — Apple-aligned labels ─────────────── */
-  --c-label:             rgba(255, 255, 255, 0.92);
-  --c-secondary-label:   rgba(255, 255, 255, 0.60);
-  --c-tertiary-label:    rgba(255, 255, 255, 0.40);
-  --c-quaternary-label:  rgba(255, 255, 255, 0.24);
-
-  /* Fills (buttons, controls) */
-  --c-fill:             rgba(120, 120, 128, 0.36);
-  --c-secondary-fill:   rgba(120, 120, 128, 0.32);
-  --c-tertiary-fill:    rgba(120, 120, 128, 0.24);
-  --c-quaternary-fill:  rgba(120, 120, 128, 0.18);
-
-  /* Separators */
-  --c-separator:         rgba(255, 255, 255, 0.08);
-  --c-opaque-separator:  #2c2c2e;
-
-  /* ── Backgrounds — warmer base (Claude.ai-inspired) ────── */
-  --c-bg-primary:    #141210;
-  --c-bg-secondary:  #1c1a18;
-  --c-bg-tertiary:   #252320;
-  --c-bg-elevated:   #2c2a27;
-  --c-bg-hover:      #333130;
-  --c-bg-active:     #3a3836;
-
-  /* Surfaces */
-  --c-surface-chat:     #181614;
-  --c-surface-card:     rgba(255, 255, 255, 0.03);
-  --c-surface-card-hover: rgba(255, 255, 255, 0.06);
-
-  /* ── Elevation System (dark mode: higher = lighter) ────���─ */
-  --elevation-0: #0e0c0a;
-  --elevation-1: #1c1a18;
-  --elevation-2: #2c2a27;
-  --elevation-3: #3a3836;
-  --elevation-4: #484644;
-
-  /* ── Text — neutral-cool for clean readability ─────────── */
-  --c-text-primary:   #f5f5f7;
-  --c-text-secondary: #98989d;
-  --c-text-tertiary:  #6e6e73;
-  --c-text-muted:     #545456;   /* WCAG AA 4.5:1 on dark bg */
-  --c-text-inverse:   #1c1917;
-
-  /* ── Borders — 0.5px Retina-ready ──────────────────────── */
-  --c-border-subtle:  rgba(255, 255, 255, 0.06);
-  --c-border-default: rgba(255, 255, 255, 0.10);
-  --c-border-strong:  rgba(255, 255, 255, 0.16);
-
-  /* ── Status Colors — Apple dark mode (desaturated) ─────── */
-  --c-success:     #30d158;
-  --c-success-bg:  rgba(48, 209, 88, 0.12);
-  --c-warning:     #ffd60a;
-  --c-warning-bg:  rgba(255, 214, 10, 0.12);
-  --c-error:       #ff453a;
-  --c-error-bg:    rgba(255, 69, 58, 0.12);
-  --c-info:        #64d2ff;
-  --c-info-bg:     rgba(100, 210, 255, 0.12);
-
-  /* ── AI Colors — brand-aligned, not separate blue ──────── */
-  --c-ai-thinking:  var(--c-brand-500);
-  --c-ai-brain:     rgba(238, 122, 19, 0.10);
-  --c-ai-agent:     var(--c-brand-300);
-  --c-ai-tool-ok:   var(--c-success);
-  --c-ai-tool-fail: var(--c-error);
-
-  /* ── AI Response Content — warm hierarchy palette ──────── */
-  /* Inspired by: Material Design 3 surface tint, Catppuccin Mocha,
-     Charmbracelet Glamour, Apple dark-mode semantic colors.
-     Warm analogous scheme + two cool departures (sage, lavender). */
-  --c-ai-h1:          #e8be82;  /* warm gold — section anchor */
-  --c-ai-h2:          #d4a080;  /* dusty copper — subsection */
-  --c-ai-h3:          #a8b8a0;  /* muted sage — cool departure, lowest heading */
-  --c-ai-bold:        #f0e6d8;  /* warm ivory — subtle emphasis */
-  --c-ai-italic:      #b8a8c8;  /* soft lavender — cool departure, asides */
-  --c-ai-blockquote:  #c8b8a0;  /* warm parchment — quoted content */
-  --c-ai-table-head:  #dcc0a0;  /* desert sand — column headers */
-  --c-ai-inline-code: #d4b898;  /* chai — code references */
-  --c-ai-code-label:  #a09888;  /* warm stone — decorative labels */
-  --c-ai-hr:          rgba(232, 190, 130, 0.20);  /* warm gold gradient */
-  --c-ai-warm-tint:   rgba(200, 150, 100, 0.06);  /* reusable warm bg */
-
-  /* User message bubble */
-  --c-bubble-user-bg:     var(--c-tint);
-  --c-bubble-user-shadow: rgba(139, 92, 246, 0.18);
-
-  /* Other message bubble (glass) */
-  --c-bubble-other-bg:     rgba(255, 255, 255, 0.05);
-
-  /* AI message bubble (warm parchment) */
-  --c-bubble-ai-bg:     rgba(238, 122, 19, 0.06);
-  --c-bubble-ai-border: rgba(238, 122, 19, 0.12);
-
-  /* ── Materials — glass layers with backdrop-filter ─────── */
-  --material-ultra-thin: rgba(30, 28, 26, 0.44);
-  --material-thin:       rgba(30, 28, 26, 0.55);
-  --material-regular:    rgba(30, 28, 26, 0.72);
-  --material-thick:      rgba(30, 28, 26, 0.85);
-  --material-chrome:     rgba(36, 34, 32, 0.92);
-
-  --blur-ultra-thin: 40px;
-  --blur-thin:       30px;
-  --blur-regular:    20px;
-  --blur-thick:      16px;
-  --blur-chrome:     12px;
 
   /* ── Typography — Apple HIG-aligned scale ──────────────── */
   --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
@@ -207,14 +102,6 @@
   --radius-2xl:  1.25rem;   /* 20px */
   --radius-full: 9999px;
 
-  /* ── Shadows — Apple three-layer recipe ─────────────────── */
-  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3);
-  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-lg:  0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-xl:  0 16px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
-  --shadow-glow-brand:  0 0 20px rgba(238, 122, 19, 0.15);
-  --shadow-glow-accent: 0 0 20px rgba(139, 92, 246, 0.15);
-
   /* ── Motion — Spring Physics ────────────────────────────── */
   --spring-snappy:  cubic-bezier(0.2, 0.8, 0.2, 1);
   --spring-gentle:  cubic-bezier(0.34, 1.3, 0.64, 1);
@@ -246,6 +133,397 @@
 }
 
 /* ============================================================
+   DARK MODE — default theme
+   Also serves as :root fallback for non-VS Code contexts
+   ============================================================ */
+
+:root,
+body.vscode-dark,
+body.vscode-high-contrast {
+  /* ── Unified Tint System (violet as sole interactive color) ── */
+  --c-tint:            #8b5cf6;
+  --c-tint-prominent:  #a78bfa;
+  --c-tint-bg:         rgba(139, 92, 246, 0.12);
+  --c-tint-hover:      rgba(139, 92, 246, 0.06);
+  --c-tint-subtle:     rgba(139, 92, 246, 0.04);
+
+  /* ── Semantic Colors — Apple-aligned labels ─────────────── */
+  --c-label:             rgba(255, 255, 255, 0.92);
+  --c-secondary-label:   rgba(255, 255, 255, 0.60);
+  --c-tertiary-label:    rgba(255, 255, 255, 0.40);
+  --c-quaternary-label:  rgba(255, 255, 255, 0.24);
+
+  /* Fills (buttons, controls) */
+  --c-fill:             rgba(120, 120, 128, 0.36);
+  --c-secondary-fill:   rgba(120, 120, 128, 0.32);
+  --c-tertiary-fill:    rgba(120, 120, 128, 0.24);
+  --c-quaternary-fill:  rgba(120, 120, 128, 0.18);
+
+  /* Separators */
+  --c-separator:         rgba(255, 255, 255, 0.08);
+  --c-opaque-separator:  #2c2c2e;
+
+  /* ── Backgrounds — warmer base (Claude.ai-inspired) ────── */
+  --c-bg-primary:    #141210;
+  --c-bg-secondary:  #1c1a18;
+  --c-bg-tertiary:   #252320;
+  --c-bg-elevated:   #2c2a27;
+  --c-bg-hover:      #333130;
+  --c-bg-active:     #3a3836;
+
+  /* Surfaces */
+  --c-surface-chat:     #181614;
+  --c-surface-card:     rgba(255, 255, 255, 0.03);
+  --c-surface-card-hover: rgba(255, 255, 255, 0.06);
+
+  /* ── Elevation System (dark mode: higher = lighter) ─────── */
+  --elevation-0: #0e0c0a;
+  --elevation-1: #1c1a18;
+  --elevation-2: #2c2a27;
+  --elevation-3: #3a3836;
+  --elevation-4: #484644;
+
+  /* ── Text — neutral-cool for clean readability ─────────── */
+  --c-text-primary:   #f5f5f7;
+  --c-text-secondary: #98989d;
+  --c-text-tertiary:  #6e6e73;
+  --c-text-muted:     #545456;   /* WCAG AA 4.5:1 on dark bg */
+  --c-text-inverse:   #1c1917;
+
+  /* ── Borders — 0.5px Retina-ready ──────────────────────── */
+  --c-border-subtle:  rgba(255, 255, 255, 0.06);
+  --c-border-default: rgba(255, 255, 255, 0.10);
+  --c-border-strong:  rgba(255, 255, 255, 0.16);
+
+  /* ── Status Colors — Apple dark mode (desaturated) ─────── */
+  --c-success:     #30d158;
+  --c-success-bg:  rgba(48, 209, 88, 0.12);
+  --c-warning:     #ffd60a;
+  --c-warning-bg:  rgba(255, 214, 10, 0.12);
+  --c-error:       #ff453a;
+  --c-error-bg:    rgba(255, 69, 58, 0.12);
+  --c-info:        #64d2ff;
+  --c-info-bg:     rgba(100, 210, 255, 0.12);
+
+  /* ── AI Colors — brand-aligned, not separate blue ──────── */
+  --c-ai-thinking:  var(--c-brand-500);
+  --c-ai-brain:     rgba(238, 122, 19, 0.10);
+  --c-ai-agent:     var(--c-brand-300);
+  --c-ai-tool-ok:   var(--c-success);
+  --c-ai-tool-fail: var(--c-error);
+
+  /* ── AI Response Content — warm hierarchy palette ──────── */
+  --c-ai-h1:          #e8be82;  /* warm gold — section anchor */
+  --c-ai-h2:          #d4a080;  /* dusty copper — subsection */
+  --c-ai-h3:          #a8b8a0;  /* muted sage — cool departure, lowest heading */
+  --c-ai-bold:        #f0e6d8;  /* warm ivory — subtle emphasis */
+  --c-ai-italic:      #b8a8c8;  /* soft lavender — cool departure, asides */
+  --c-ai-blockquote:  #c8b8a0;  /* warm parchment — quoted content */
+  --c-ai-table-head:  #dcc0a0;  /* desert sand — column headers */
+  --c-ai-inline-code: #d4b898;  /* chai — code references */
+  --c-ai-code-label:  #a09888;  /* warm stone — decorative labels */
+  --c-ai-hr:          rgba(232, 190, 130, 0.20);  /* warm gold gradient */
+  --c-ai-warm-tint:   rgba(200, 150, 100, 0.06);  /* reusable warm bg */
+
+  /* User message bubble */
+  --c-bubble-user-bg:     var(--c-tint);
+  --c-bubble-user-shadow: rgba(139, 92, 246, 0.18);
+
+  /* Other message bubble (glass) */
+  --c-bubble-other-bg:     rgba(255, 255, 255, 0.05);
+
+  /* AI message bubble (warm parchment) */
+  --c-bubble-ai-bg:     rgba(238, 122, 19, 0.06);
+  --c-bubble-ai-border: rgba(238, 122, 19, 0.12);
+
+  /* ── Materials — glass layers with backdrop-filter ─────── */
+  --material-ultra-thin: rgba(30, 28, 26, 0.44);
+  --material-thin:       rgba(30, 28, 26, 0.55);
+  --material-regular:    rgba(30, 28, 26, 0.72);
+  --material-thick:      rgba(30, 28, 26, 0.85);
+  --material-chrome:     rgba(36, 34, 32, 0.92);
+
+  --blur-ultra-thin: 40px;
+  --blur-thin:       30px;
+  --blur-regular:    20px;
+  --blur-thick:      16px;
+  --blur-chrome:     12px;
+
+  /* ── Shadows — Apple three-layer recipe ─────────────────── */
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg:  0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-xl:  0 16px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-glow-brand:  0 0 20px rgba(238, 122, 19, 0.15);
+  --shadow-glow-accent: 0 0 20px rgba(139, 92, 246, 0.15);
+
+  /* ── Code block ─────────────────────────────────────────── */
+  --c-code-block-bg: #1e1e1e;
+
+  /* ── Shimmer highlight ──────────────────────────────────── */
+  --c-shimmer-highlight: rgba(255, 255, 255, 0.04);
+
+  /* ── Scrollbar ──────────────────────────────────────────── */
+  --c-scrollbar-thumb:       rgba(255, 255, 255, 0.2);
+  --c-scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+
+  /* ── Form controls ──────────────────────────────────────── */
+  --c-select-bg:    #111827;
+  --c-select-color: #e5e7eb;
+  --color-scheme:   dark;
+}
+
+/* ============================================================
+   LIGHT MODE — Apple-cool palette
+   ============================================================ */
+
+body.vscode-light,
+body.vscode-high-contrast-light {
+  /* ── Tint System ────────────────────────────────────────── */
+  --c-tint:            #7c3aed;
+  --c-tint-prominent:  #6d28d9;
+  --c-tint-bg:         rgba(124, 58, 237, 0.10);
+  --c-tint-hover:      rgba(124, 58, 237, 0.05);
+  --c-tint-subtle:     rgba(124, 58, 237, 0.03);
+
+  /* ── Semantic Labels — Apple HIG light ──────────────────── */
+  --c-label:             rgba(60, 60, 67, 1.0);
+  --c-secondary-label:   rgba(60, 60, 67, 0.60);
+  --c-tertiary-label:    rgba(60, 60, 67, 0.30);
+  --c-quaternary-label:  rgba(60, 60, 67, 0.18);
+
+  /* Fills */
+  --c-fill:             rgba(120, 120, 128, 0.20);
+  --c-secondary-fill:   rgba(120, 120, 128, 0.16);
+  --c-tertiary-fill:    rgba(120, 120, 128, 0.12);
+  --c-quaternary-fill:  rgba(120, 120, 128, 0.08);
+
+  /* Separators */
+  --c-separator:         rgba(60, 60, 67, 0.12);
+  --c-opaque-separator:  #C6C6C8;
+
+  /* ── Backgrounds — Apple cool off-white ─────────────────── */
+  --c-bg-primary:    #F2F2F7;
+  --c-bg-secondary:  #E5E5EA;
+  --c-bg-tertiary:   #D1D1D6;
+  --c-bg-elevated:   #FFFFFF;
+  --c-bg-hover:      #DDDDE2;
+  --c-bg-active:     #D1D1D6;
+
+  /* Surfaces */
+  --c-surface-chat:     #F8F8FD;
+  --c-surface-card:     rgba(0, 0, 0, 0.02);
+  --c-surface-card-hover: rgba(0, 0, 0, 0.04);
+
+  /* ── Elevation System (light mode: higher = white) ──────── */
+  --elevation-0: #F2F2F7;
+  --elevation-1: #E5E5EA;
+  --elevation-2: #FFFFFF;
+  --elevation-3: #FFFFFF;
+  --elevation-4: #FFFFFF;
+
+  /* ── Text — readable hierarchy on light background ──────── */
+  --c-text-primary:   #1D1D1F;   /* ~16:1 on #F2F2F7 */
+  --c-text-secondary: #6E6E73;   /* ~4.6:1 on #F2F2F7 — AA body text */
+  --c-text-tertiary:  #86868B;   /* ~3.4:1 on #F2F2F7 — placeholders, hints */
+  --c-text-muted:     #AEAEB2;   /* ~1.6:1 on #F2F2F7 — decorative only */
+  --c-text-inverse:   #F5F5F7;
+
+  /* ── Borders — visible on light backgrounds ─────────────── */
+  --c-border-subtle:  rgba(60, 60, 67, 0.12);
+  --c-border-default: rgba(60, 60, 67, 0.22);
+  --c-border-strong:  rgba(60, 60, 67, 0.36);
+
+  /* ── Status Colors — Apple light mode ──────────────────── */
+  --c-success:     #34C759;
+  --c-success-bg:  rgba(52, 199, 89, 0.12);
+  --c-warning:     #FF9500;
+  --c-warning-bg:  rgba(255, 149, 0, 0.12);
+  --c-error:       #FF3B30;
+  --c-error-bg:    rgba(255, 59, 48, 0.10);
+  --c-info:        #007AFF;
+  --c-info-bg:     rgba(0, 122, 255, 0.10);
+
+  /* ── AI Colors ──────────────────────────────────────────── */
+  --c-ai-thinking:  var(--c-brand-600);
+  --c-ai-brain:     rgba(223, 96, 10, 0.08);
+  --c-ai-agent:     var(--c-brand-700);
+  --c-ai-tool-ok:   var(--c-success);
+  --c-ai-tool-fail: var(--c-error);
+
+  /* ── AI Response — warm hierarchy on cool bg ────────────── */
+  --c-ai-h1:          #7A5C10;  /* deep amber */
+  --c-ai-h2:          #6B4D30;  /* burnt sienna */
+  --c-ai-h3:          #4A6040;  /* forest sage */
+  --c-ai-bold:        #33302B;  /* dark umber */
+  --c-ai-italic:      #5E4E70;  /* deep purple */
+  --c-ai-blockquote:  #5E5040;  /* dark parchment */
+  --c-ai-table-head:  #5E4A25;  /* dark sand */
+  --c-ai-inline-code: #6B5535;  /* dark tea */
+  --c-ai-code-label:  #7A7068;  /* warm stone */
+  --c-ai-hr:          rgba(122, 92, 16, 0.18);
+  --c-ai-warm-tint:   rgba(122, 92, 16, 0.04);
+
+  /* Bubbles */
+  --c-bubble-user-bg:     var(--c-tint);
+  --c-bubble-user-shadow: rgba(124, 58, 237, 0.12);
+  --c-bubble-other-bg:    rgba(0, 0, 0, 0.03);
+  --c-bubble-ai-bg:       rgba(238, 122, 19, 0.05);
+  --c-bubble-ai-border:   rgba(238, 122, 19, 0.10);
+
+  /* ── Materials — cool glass ─────────────────────────────── */
+  --material-ultra-thin: rgba(242, 242, 247, 0.55);
+  --material-thin:       rgba(242, 242, 247, 0.65);
+  --material-regular:    rgba(242, 242, 247, 0.78);
+  --material-thick:      rgba(242, 242, 247, 0.88);
+  --material-chrome:     rgba(242, 242, 247, 0.94);
+
+  --blur-ultra-thin: 40px;
+  --blur-thin:       30px;
+  --blur-regular:    20px;
+  --blur-thick:      16px;
+  --blur-chrome:     12px;
+
+  /* ── Shadows — much softer for light mode ──────────────── */
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.06), 0 0 1px rgba(0, 0, 0, 0.04);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-lg:  0 8px 28px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0, 0, 0, 0.04);
+  --shadow-xl:  0 16px 48px rgba(0, 0, 0, 0.12), 0 4px 16px rgba(0, 0, 0, 0.06);
+  --shadow-glow-brand:  0 0 20px rgba(223, 96, 10, 0.10);
+  --shadow-glow-accent: 0 0 20px rgba(124, 58, 237, 0.10);
+
+  /* ── Code block ─────────────────────────────────────────── */
+  --c-code-block-bg: #E8E8ED;
+
+  /* ── Shimmer highlight ──────────────────────────────────── */
+  --c-shimmer-highlight: rgba(0, 0, 0, 0.03);
+
+  /* ── Scrollbar ──────────────────────────────────────────── */
+  --c-scrollbar-thumb:       rgba(0, 0, 0, 0.18);
+  --c-scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+
+  /* ── Form controls ──────────────────────────────────────── */
+  --c-select-bg:    #FFFFFF;
+  --c-select-color: #1D1D1F;
+  --color-scheme:   light;
+}
+
+/* ============================================================
+   HIGH CONTRAST DARK — overrides on dark base
+   Glass removed, borders strengthened, AAA contrast
+   ============================================================ */
+
+body.vscode-high-contrast {
+  --c-text-primary:   #FFFFFF;
+  --c-text-secondary: #D4D4D4;
+  --c-text-muted:     #A0A0A0;
+
+  --c-border-subtle:  rgba(255, 255, 255, 0.25);
+  --c-border-default: rgba(255, 255, 255, 0.40);
+  --c-border-strong:  rgba(255, 255, 255, 0.60);
+
+  --c-separator:        rgba(255, 255, 255, 0.25);
+  --c-opaque-separator: #545456;
+
+  /* Glass → solid opaque */
+  --material-ultra-thin: rgba(30, 28, 26, 0.96);
+  --material-thin:       rgba(30, 28, 26, 0.97);
+  --material-regular:    rgba(30, 28, 26, 0.98);
+  --material-thick:      rgba(30, 28, 26, 0.99);
+  --material-chrome:     #1c1a18;
+
+  /* Shadows → none (borders replace them) */
+  --shadow-sm:  none;
+  --shadow-md:  none;
+  --shadow-lg:  none;
+  --shadow-xl:  none;
+  --shadow-glow-brand:  none;
+  --shadow-glow-accent: none;
+
+  /* AI headings brightened ~15% for AAA */
+  --c-ai-h1:          #f0cc96;
+  --c-ai-h2:          #e0b494;
+  --c-ai-h3:          #bccab4;
+  --c-ai-bold:        #FFFFFF;
+  --c-ai-italic:      #d0c0e0;
+  --c-ai-inline-code: #e0caa8;
+
+  /* Focus ring: VS Code HC orange */
+  --c-tint: #F38518;
+}
+
+/* ============================================================
+   HIGH CONTRAST LIGHT — overrides on light base
+   Glass removed, borders strengthened, AAA contrast
+   ============================================================ */
+
+body.vscode-high-contrast-light {
+  --c-bg-primary:    #FFFFFF;
+  --c-bg-secondary:  #F0F0F0;
+  --c-bg-elevated:   #FFFFFF;
+  --c-surface-chat:  #FFFFFF;
+
+  --c-text-primary:   #000000;
+  --c-text-secondary: #3C3C43;
+  --c-text-muted:     #6E6E73;
+
+  --c-border-subtle:  rgba(0, 0, 0, 0.20);
+  --c-border-default: rgba(0, 0, 0, 0.30);
+  --c-border-strong:  rgba(0, 0, 0, 0.50);
+
+  --c-separator:        rgba(0, 0, 0, 0.25);
+  --c-opaque-separator: #8E8E93;
+
+  /* Glass → solid opaque */
+  --material-ultra-thin: rgba(255, 255, 255, 0.97);
+  --material-thin:       rgba(255, 255, 255, 0.98);
+  --material-regular:    #FFFFFF;
+  --material-thick:      #FFFFFF;
+  --material-chrome:     #FFFFFF;
+
+  /* Shadows → none */
+  --shadow-sm:  none;
+  --shadow-md:  none;
+  --shadow-lg:  none;
+  --shadow-xl:  none;
+  --shadow-glow-brand:  none;
+  --shadow-glow-accent: none;
+
+  /* AI headings darkened for 7:1+ AAA on white */
+  --c-ai-h1:          #5A4408;
+  --c-ai-h2:          #4A3520;
+  --c-ai-h3:          #354830;
+  --c-ai-bold:        #000000;
+  --c-ai-italic:      #3E3050;
+  --c-ai-inline-code: #4A3A20;
+
+  --c-code-block-bg:  #F0F0F0;
+
+  /* Focus ring: VS Code HC blue */
+  --c-tint: #0F4A85;
+}
+
+/* ============================================================
+   Windows Forced Colors — system color overrides
+   ============================================================ */
+
+@media (forced-colors: active) {
+  .tab-bar,
+  .chat-header,
+  .modal-overlay,
+  .toast,
+  .code-block {
+    border: 1px solid ButtonBorder;
+  }
+  .message-bubble {
+    border: 1px solid CanvasText;
+  }
+  :focus-visible {
+    outline: 2px solid Highlight;
+  }
+}
+
+/* ============================================================
    Base Styles
    ============================================================ */
 
@@ -262,20 +540,38 @@ body {
   letter-spacing: var(--tracking-body);
   color: var(--c-text-primary);
   background-color: var(--c-bg-primary);
-  background-image:
-    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(200, 120, 60, 0.08) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 40% at 80% 10%, rgba(139, 92, 246, 0.06) 0%, transparent 55%),
-    radial-gradient(ellipse 40% 50% at 50% 100%, rgba(160, 100, 50, 0.04) 0%, transparent 60%);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 
-/* Dark select fix for VS Code WebView */
+/* Dark mode background gradients */
+body.vscode-dark {
+  background-image:
+    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(200, 120, 60, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 80% 10%, rgba(139, 92, 246, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 50% at 50% 100%, rgba(160, 100, 50, 0.04) 0%, transparent 60%);
+}
+
+/* Light mode background gradients — cool violet, barely perceptible */
+body.vscode-light {
+  background-image:
+    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(139, 92, 246, 0.03) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 80% 10%, rgba(88, 86, 214, 0.02) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 50% at 50% 100%, rgba(139, 92, 246, 0.02) 0%, transparent 60%);
+}
+
+/* High contrast: no background gradients */
+body.vscode-high-contrast,
+body.vscode-high-contrast-light {
+  background-image: none;
+}
+
+/* Form controls — adapt to theme */
 select, select option {
-  color-scheme: dark;
-  background-color: #111827;
-  color: #e5e7eb;
+  color-scheme: var(--color-scheme);
+  background-color: var(--c-select-bg);
+  color: var(--c-select-color);
 }
 
 /* ============================================================
@@ -292,14 +588,14 @@ select, select option {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--c-scrollbar-thumb);
   border-radius: var(--radius-full);
   border: 2px solid transparent;
   background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--c-scrollbar-thumb-hover);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -429,7 +725,7 @@ select, select option {
 .animate-shimmer {
   background: linear-gradient(110deg,
     var(--c-bg-tertiary) 0%,
-    rgba(255, 255, 255, 0.04) 40%,
+    var(--c-shimmer-highlight) 40%,
     var(--c-bg-tertiary) 60%
   );
   background-size: 250% 100%;
@@ -460,7 +756,7 @@ select, select option {
   overflow: hidden;
   margin: var(--space-2) 0;
   border: 0.5px solid var(--c-border-subtle);
-  background: #1e1e1e;
+  background: var(--c-code-block-bg);
 }
 
 .code-block-header {
@@ -584,7 +880,7 @@ button:active {
 .skeleton {
   background: linear-gradient(110deg,
     var(--c-bg-tertiary) 0%,
-    rgba(255, 255, 255, 0.04) 40%,
+    var(--c-shimmer-highlight) 40%,
     var(--c-bg-tertiary) 60%
   );
   background-size: 250% 100%;

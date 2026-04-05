@@ -118,12 +118,15 @@ Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `
 
 ## What's Next
 
-See [ROADMAP.md](ROADMAP.md). Near-term priorities:
+See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-04):
+
+**Immediate (Sprint 14–16):**
+- **Phase 7.8: Azure DevOps Auto Review** — PR pipeline calls backend, posts inline review comments with code quotes + arbitration-filtered findings
+- **Phase 12: Team Knowledge Base** — Postgres + pgvector, auto-ingest from summaries, context injection into Brain/Summary/Review
+- **Phase 7.5: Teams Bot Integration** — `@Conductor summarize` in Teams channels, lightweight + deep (with KB) modes
+- **Phase 13: AI Summary → Action Pipeline** — `/plan` command bridges summary → Jira tickets + TODOs, one-click workflow
+
+**Ongoing:**
+- **Phase 9: Claude Code Pattern Adoption + Competitive Analysis** — agent loop recovery, streaming tools, prompt caching + monthly Cline/CodeRabbit/Cursor study (`reference/competitive/`)
 - **Phase 7.7.10-7.7.12: Jira Advanced** — webhook auto-investigate, MCP server, auto branch + PR creation
-- **Phase 9: Claude Code Pattern Adoption** — systematic learning and integration from reference codebase
-- **Phase 10: Companion & Developer Experience** — interactive mascot in VS Code WebView (CSS/SVG animations, deterministic gacha, agent integration)
-- Microsoft Teams integration (Phase 7.5)
-- Slack integration (Phase 7.6)
-- Model B delegate authentication (no PAT required — Phase 5.1)
-- Cross-session query patterns (learn from session traces — Phase 5.5)
-- Persistent codebase memory (background file-summary indexer — Phase 5.5.2)
+- **Phase 11: Engineering Infrastructure** — CI/CD, type checking, observability expansion

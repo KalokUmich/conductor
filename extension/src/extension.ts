@@ -2179,7 +2179,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // If not found, try to find by filename using workspace search
             if (!fileUri) {
                 const filename = relativePath.split('/').pop() || relativePath.split('\\').pop() || relativePath;
-                const files = await vscode.workspace.findFiles(`**/${filename}`, '**/node_modules/**', 5);
+                let files = await vscode.workspace.findFiles(`**/${filename}`, '**/node_modules/**', 5);
+                // If no extension (e.g. PascalCase class name), search with common extensions
+                if (files.length === 0 && !filename.includes('.')) {
+                    files = await vscode.workspace.findFiles(`**/${filename}.*`, '**/node_modules/**', 5);
+                }
                 if (files.length > 0) {
                     // If multiple matches, prefer one that contains the relative path
                     fileUri = files.find(f => f.fsPath.includes(relativePath.replace(/\\/g, '/'))) || files[0];
@@ -6368,7 +6372,8 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         // --- React WebView (media/webview.js) ---
         const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'tailwind.css'));
         const webviewCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.css'));
-        const hljsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'github-dark.min.css'));
+        const hljsDarkCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'github-dark.min.css'));
+        const hljsLightCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'github-light.min.css'));
         const hljsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'highlight.min.js'));
         const webviewJsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.js'));
 
@@ -6380,12 +6385,27 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
   ${cspMeta}
   <link rel="stylesheet" href="${cssUri}" />
   <link rel="stylesheet" href="${webviewCssUri}" />
-  <link rel="stylesheet" href="${hljsCssUri}" />
+  <link rel="stylesheet" id="hljs-dark" href="${hljsDarkCssUri}" />
+  <link rel="stylesheet" id="hljs-light" href="${hljsLightCssUri}" disabled />
   <title>Conductor</title>
 </head>
 <body>
   <div id="root"></div>
   <script src="${hljsJsUri}"></script>
+  <script>
+    (function() {
+      var darkCSS = document.getElementById('hljs-dark');
+      var lightCSS = document.getElementById('hljs-light');
+      function syncTheme() {
+        var isLight = document.body.classList.contains('vscode-light')
+                   || document.body.classList.contains('vscode-high-contrast-light');
+        darkCSS.disabled = isLight;
+        lightCSS.disabled = !isLight;
+      }
+      syncTheme();
+      new MutationObserver(syncTheme).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    })();
+  </script>
   ${initialStateScripts}
   <script src="${webviewJsUri}"></script>
 </body>

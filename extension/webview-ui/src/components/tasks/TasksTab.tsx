@@ -1001,7 +1001,7 @@ function CollapsibleEpicGroup({
   const { send } = useVSCode();
 
   const epicName = epicMeta?.summary || tickets[0]?.epicName || epicKey || "No Epic";
-  const epicColor = tickets[0]?.epicColor || (epicKey ? "var(--c-brand-400)" : "var(--c-text-muted)");
+  const epicColor = tickets[0]?.epicColor || (epicKey ? "var(--c-brand-400)" : "var(--c-text-tertiary)");
 
   return (
     <div className="epic-group">

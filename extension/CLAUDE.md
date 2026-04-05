@@ -88,22 +88,33 @@ The WebView is a React 18 SPA built with esbuild (`npm run compile:webview`). Ke
 - **Connection status**: `ConnectionStatus.tsx` — thin strip (connected/reconnecting/disconnected)
 - **Command system**: `slashCommands.ts` — `/` actions, `@` agent scopes, `#` context injection
 
-## 美学 Design Principles
+## 美学 2.0 Design Principles
 
-Identity: **"Warm Intelligence"** — three pillars guiding all UI/UX decisions:
+Identity: **"Comfortable Intelligence"** — regardless of mode, eyes are relaxed, mind is active but unstressed, breathing is natural, flow is maintained.
+
+### Four Modes
+The WebView auto-adapts to VS Code's active theme via body classes:
+- `.vscode-dark` — warm dark base (Claude.ai-inspired `#141210`)
+- `.vscode-light` — Apple-cool off-white (`#F2F2F7`)
+- `.vscode-high-contrast` — dark + stronger borders, no glass, AAA contrast
+- `.vscode-high-contrast-light` — light + stronger borders, no glass, AAA contrast
+
+Token architecture: theme-invariant tokens (typography, spacing, motion) in `:root`, theme-variant tokens (colors, materials, shadows) scoped to body class selectors. Highlight.js theme auto-switches via MutationObserver on body class.
 
 ### Pillar 1: Material Quality (视觉质感)
 - Glass materials with `backdrop-filter: blur()` on header, modals, slash menu, FABs
 - 5 material layers: `--material-ultra-thin` through `--material-chrome`
+- Dark: warm glass `rgba(30,28,26,alpha)`. Light: cool glass `rgba(242,242,247,alpha)`
+- High contrast: glass replaced with solid opaque backgrounds
 - 0.5px Retina-ready borders (not 1px)
-- Apple three-layer shadow recipe (inline + diffuse + ground)
-- Elevation system: higher z-index = lighter surface in dark mode
+- Shadows: Apple three-layer recipe (dark), much softer (light), none (high contrast)
 
 ### Pillar 2: Kinetic Harmony (动态和谐)
 - Spring physics for all motion: `--spring-snappy`, `--spring-gentle`, `--spring-bouncy`
 - Duration: enter (350-500ms) > exit (200ms) — new content needs registration time
 - Message animation: `translateY` only (no scale — avoids "popping")
 - All animations interruptible, respect `prefers-reduced-motion`
+- Animations preserved in high contrast (only glass/blur removed)
 
 ### Pillar 3: Flow State Protection (心流保护)
 - Notifications follow severity hierarchy (status bar → inline → toast → modal)
@@ -116,21 +127,21 @@ Identity: **"Warm Intelligence"** — three pillars guiding all UI/UX decisions:
 - **AI → Human**: Zero cognitive burden (formatted responses, scannable tool logs)
 - **AI ↔ AI**: Max signal per token (labeled text > JSON for inter-agent communication)
 
-### AI Response Color Hierarchy (暖色层次)
-Warm analogous scheme + two cool departures. Sources: Material Design 3, Catppuccin Mocha, Charmbracelet Glamour.
-- **h1**: `#e8be82` warm gold — section anchors visible from scroll distance
-- **h2**: `#d4a080` dusty copper — subsection, self-tinted underline
-- **h3**: `#a8b8a0` muted sage — cool departure for lowest heading
-- **bold**: `#f0e6d8` warm ivory — subtle emphasis over neutral body text
-- **italic**: `#b8a8c8` soft lavender — cool departure, bridges to violet accent
-- **inline code**: `#d4b898` chai — warm pill with tinted border
-- **table headers**: `#dcc0a0` desert sand — column anchors
-- **blockquote**: `#c8b8a0` warm parchment — copper border at 45% opacity
-- **HR divider**: warm gold gradient fading at edges
-- **body text**: `#f5f5f7` unchanged — neutral canvas lets warm accents pop
+### AI Response Color Hierarchy (暖色層次)
+Warm hierarchy in both modes — warm-on-dark (natural) and warm-on-cool (deliberate departure marking AI content as distinct).
+
+**Dark mode** (warm analogous):
+- h1: `#e8be82` warm gold | h2: `#d4a080` dusty copper | h3: `#a8b8a0` muted sage
+- bold: `#f0e6d8` warm ivory | italic: `#b8a8c8` soft lavender
+- inline-code: `#d4b898` chai | table: `#dcc0a0` desert sand
+
+**Light mode** (deep warm on cool):
+- h1: `#7A5C10` deep amber | h2: `#6B4D30` burnt sienna | h3: `#4A6040` forest sage
+- bold: `#33302B` dark umber | italic: `#5E4E70` deep purple
+- inline-code: `#6B5535` dark tea | table: `#5E4A25` dark sand
 
 ### Key Design Decisions
-- **One accent color**: Violet (`--c-tint: #8b5cf6`) for all interactive elements
+- **One accent color**: Violet (dark `#8b5cf6`, light `#7c3aed`) for all interactive elements
 - **iMessage bubble DNA**: Flat own (violet), glass other (no border), warm AI (parchment)
 - **Robot avatar**: Cute robot face for AI messages (antenna pulse + eye blink animation)
 - **Apple sheet modals**: Blurred overlay, scale+translate enter, fast exit

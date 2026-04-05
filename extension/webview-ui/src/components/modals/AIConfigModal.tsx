@@ -109,7 +109,7 @@ export function AIConfigModal({ open, onClose }: Props) {
         {loading && (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "24px", gap: "8px" }}>
             <div className="animate-spin" style={{ width: "16px", height: "16px", border: "2px solid var(--c-accent-400)", borderTopColor: "transparent", borderRadius: "50%" }} />
-            <span style={{ color: "var(--c-text-muted)", fontSize: "var(--text-sm)" }}>Loading...</span>
+            <span style={{ color: "var(--c-text-tertiary)", fontSize: "var(--text-sm)" }}>Loading...</span>
           </div>
         )}
 
@@ -276,7 +276,7 @@ function AgentSwarmTab({
     return (
       <div className="ai-config-section" style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "40px 0", gap: "12px" }}>
         <div className="animate-spin" style={{ width: "20px", height: "20px", border: "2px solid var(--c-accent-400)", borderTopColor: "transparent", borderRadius: "50%" }} />
-        <span style={{ color: "var(--c-text-muted)", fontSize: "var(--text-sm)" }}>Loading agent swarm...</span>
+        <span style={{ color: "var(--c-text-tertiary)", fontSize: "var(--text-sm)" }}>Loading agent swarm...</span>
       </div>
     );
   }
@@ -305,10 +305,10 @@ function AgentSwarmTab({
 
       {/* Swarm detail */}
       {currentSwarm && (
-        <div className="config-card" style={{ background: "linear-gradient(135deg, rgba(91,33,182,0.08), rgba(30,30,30,0.4))", borderColor: "rgba(91,33,182,0.15)" }}>
+        <div className="config-card" style={{ background: "linear-gradient(135deg, var(--c-tint-bg), var(--c-surface-card))", borderColor: "var(--c-tint-bg)" }}>
           <p style={{ fontSize: "var(--text-sm)", color: "var(--c-text-secondary)", lineHeight: "var(--leading-relaxed)" }}>{currentSwarm.description}</p>
-          <p style={{ fontSize: "var(--text-xs)", color: "var(--c-text-muted)", marginTop: "8px" }}>
-            <span style={{ color: currentSwarm.type === "brain" ? "#34d399" : "#fbbf24" }}>
+          <p style={{ fontSize: "var(--text-xs)", color: "var(--c-text-tertiary)", marginTop: "8px" }}>
+            <span style={{ color: currentSwarm.type === "brain" ? "var(--c-success)" : "var(--c-warning)" }}>
               {currentSwarm.type === "brain" ? "Specialized Brain" : "Swarm"}
             </span>
             {" · "}{currentSwarm.mode || "pipeline"}{" · "}{currentSwarm.agents.length} agents{currentSwarm.arbitrator ? " + arbitrator" : ""}
@@ -321,12 +321,12 @@ function AgentSwarmTab({
           {currentSwarm.agents.length > 0 && (
             <div style={{ marginTop: "12px", display: "flex", flexDirection: "column", gap: "4px" }}>
               {currentSwarm.agents.map((a) => (
-                <div key={a.name} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", borderRadius: "var(--radius-sm)", background: "rgba(255,255,255,0.02)" }}>
+                <div key={a.name} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "6px 8px", borderRadius: "var(--radius-sm)", background: "var(--c-surface-card)" }}>
                   <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--c-accent-400)", flexShrink: 0 }} />
                   <span style={{ fontSize: "var(--text-xs)", fontWeight: 600, color: "var(--c-ai-agent)" }}>{a.name}</span>
-                  {a.role && <span style={{ fontSize: "0.6rem", color: "var(--c-text-muted)" }}>— {a.role}</span>}
+                  {a.role && <span style={{ fontSize: "0.6rem", color: "var(--c-text-tertiary)" }}>— {a.role}</span>}
                   {a.tools && a.tools.length > 0 && (
-                    <span style={{ fontSize: "0.55rem", color: "var(--c-text-muted)", marginLeft: "auto" }}>{a.tools.length} tools</span>
+                    <span style={{ fontSize: "0.55rem", color: "var(--c-text-tertiary)", marginLeft: "auto" }}>{a.tools.length} tools</span>
                   )}
                 </div>
               ))}
@@ -338,7 +338,7 @@ function AgentSwarmTab({
       {/* Divider */}
       <div style={{ position: "relative", margin: "16px 0" }}>
         <div style={{ borderTop: "1px solid var(--c-border-subtle)" }} />
-        <div style={{ position: "absolute", top: "-8px", left: "50%", transform: "translateX(-50%)", padding: "0 12px", background: "var(--c-bg-secondary)", fontSize: "0.6rem", color: "var(--c-text-muted)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
+        <div style={{ position: "absolute", top: "-8px", left: "50%", transform: "translateX(-50%)", padding: "0 12px", background: "var(--c-bg-secondary)", fontSize: "0.6rem", color: "var(--c-text-tertiary)", textTransform: "uppercase", letterSpacing: "0.1em" }}>
           Global Model Settings
         </div>
       </div>
@@ -352,7 +352,7 @@ function AgentSwarmTab({
             <span className="config-hint">Orchestrator + AI Summary (strong model)</span>
           </div>
         </div>
-        <div style={{ marginTop: "8px", fontSize: "0.6rem", color: "var(--c-text-muted)", fontStyle: "italic" }}>
+        <div style={{ marginTop: "8px", fontSize: "0.6rem", color: "var(--c-text-tertiary)", fontStyle: "italic" }}>
           Uses the active model: <strong style={{ color: "var(--c-text-tertiary)" }}>{abbreviateModelId(selectedModel) || "(none selected)"}</strong>
         </div>
       </div>

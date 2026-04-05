@@ -451,9 +451,17 @@ export function renderMarkdown(text: string): string {
   html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
 
   // File path auto-linking: src/path/file.ts:42 → clickable reference
+  // Also matches PascalCase class names without extension: ExternalCommonServiceImpl:340
   html = html.replace(
-    /(?<!["\w/])([a-zA-Z0-9_][a-zA-Z0-9_/.-]+\.[a-zA-Z]{1,5}):(\d+)/g,
-    '<button class="file-ref" data-path="$1" data-line="$2">$1:$2</button>'
+    /(?<!["\w/])([a-zA-Z0-9_][a-zA-Z0-9_/.-]+\.[a-zA-Z]{1,5}):(\d+)(?:-\d+)?/g,
+    '<button class="file-ref" data-path="$1" data-line="$2">$&</button>'
+  );
+  html = html.replace(
+    /(?<!["\w/.])([A-Z][a-zA-Z0-9_]{3,}(?:\.[A-Z][a-zA-Z0-9_]*)*):(\d+)(?:-\d+)?/g,
+    (match, path, line) => {
+      if (html.includes(`data-path="${path}"`)) return match; // already linked
+      return `<button class="file-ref" data-path="${path}" data-line="${line}">${match}</button>`;
+    }
   );
 
   // Newlines → <br />

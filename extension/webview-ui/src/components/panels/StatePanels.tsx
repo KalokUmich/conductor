@@ -264,8 +264,8 @@ function ReadyToHostPanel() {
       <AuroraBackground />
       <div className="state-content" style={{ position: "relative", zIndex: 10 }}>
         {/* Connected badge */}
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 14px", borderRadius: "var(--radius-full)", border: "1px solid rgba(52,211,153,0.2)", background: "rgba(52,211,153,0.06)", fontSize: "var(--text-xs)", fontWeight: 500, color: "#34d399" }}>
-          <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#34d399", boxShadow: "0 0 6px rgba(52,211,153,0.6)" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", padding: "6px 14px", borderRadius: "var(--radius-full)", border: "1px solid var(--c-success-bg)", background: "var(--c-success-bg)", fontSize: "var(--text-xs)", fontWeight: 500, color: "var(--c-success)" }}>
+          <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "var(--c-success)", boxShadow: "var(--shadow-glow-brand)" }} />
           Backend connected
         </div>
 

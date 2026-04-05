@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-04-03
+Last updated: 2026-04-05
 
 ## Current State
 
@@ -593,18 +593,32 @@ backend/app/integrations/
   - [x] Search results displayed with status, priority, assignee
   - [x] Form validates required fields
 
-### 7.5 Microsoft Teams Integration
-- Bot Framework webhook: `POST /api/integrations/teams/bot/messages`
-- Graph API for reading channels/messages (app-level client credentials auth)
-- Bot commands: `@Conductor review PR#123`, `@Conductor ask "..."`
-- Results posted as Adaptive Cards
-- Files to create: `integrations/teams/service.py`, `models.py`, `router.py`
-- Files to modify: `config.py` (add `TeamsSettings`/`TeamsSecrets`), `main.py`, settings YAML
-- Acceptance criteria:
-  - [ ] Bot validates HMAC signatures on incoming Activities
-  - [ ] `@Conductor review` and `@Conductor ask` commands work
-  - [ ] Channel messages can be read via Graph API
-  - [ ] Review results posted as Adaptive Cards
+### 7.5 Microsoft Teams Bot Integration (PLANNED — HIGH PRIORITY)
+
+Teams bot that summarizes channel discussions on demand. Primary use case: user mentions `@Conductor` in a Teams channel → bot reads recent messages → sends to backend for AI summarization → posts structured result as Adaptive Card.
+
+**Two modes:**
+- **Lightweight (default)**: Summarize channel messages using existing 3-stage pipeline (classify → summarize → extract items). No knowledge base context.
+- **Deep mode (`@Conductor summarize --with-context`)**: Include relevant entries from Knowledge Base (Phase 12) for business-aware summarization.
+
+#### 7.5.1 Bot Framework Setup
+- [ ] Bot Framework webhook: `POST /api/integrations/teams/bot/messages`
+- [ ] Bot validates HMAC signatures on incoming Activities
+- [ ] Graph API for reading channel messages (delegated or app-level auth)
+- [ ] Files to create: `integrations/teams/service.py`, `models.py`, `router.py`, `formatter.py`
+- [ ] Files to modify: `config.py` (add `TeamsSettings`/`TeamsSecrets`), `main.py`, settings YAML
+
+#### 7.5.2 Summary Bot Commands
+- [ ] `@Conductor summarize` — read recent N messages → call `/ai/summarize` → post Adaptive Card
+- [ ] `@Conductor summarize --with-context` — same + KB retrieval injected into summary prompt (depends on Phase 12)
+- [ ] Message batching: handle long discussions (pagination + token-aware chunking before sending to backend)
+- [ ] Summary results as Adaptive Cards: topic, decisions, action items, risk level, code-relevant items
+- [ ] Thread support: summarize a specific thread vs entire channel recent history
+
+#### 7.5.3 Additional Bot Commands
+- [ ] `@Conductor review PR#123` — trigger PR review, post results as Adaptive Card
+- [ ] `@Conductor ask "..."` — general code Q&A via Brain
+- [ ] `@Conductor status` — show active rooms, recent summaries, pending tickets
 
 ### 7.6 Slack Integration
 - Slash command endpoint: `POST /api/integrations/slack/commands` with HMAC-SHA256 signature validation
@@ -794,14 +808,68 @@ After investigate → apply completes, automatically create a git branch and pul
 - Phase 9 tool enhancements — ✅ COMPLETE
 - Token local persistence — ✅ COMPLETE
 
+### 7.8 Azure DevOps Auto Review (PLANNED — HIGH PRIORITY)
+
+Expose PR Review pipeline as an Azure DevOps-callable service. When a PR is created, Azure DevOps pipeline calls Conductor backend; review is posted as PR thread comments with inline code quotes positioned at file:line.
+
+**Architecture:**
+```
+Azure DevOps PR trigger → Pipeline YAML step (HTTP POST)
+  → Conductor backend POST /api/integrations/azure-devops/review
+  → PRBrainOrchestrator (5 agents + arbitration)
+  → Format findings as PR thread comments (file:line positioned)
+  → POST comments back via Azure DevOps REST API
+  → Set PR vote (approve / wait / reject)
+```
+
+#### 7.8.1 Azure DevOps Integration Module
+- [ ] `integrations/azure_devops/__init__.py`
+- [ ] `integrations/azure_devops/client.py` — Azure DevOps REST API client (PAT or OAuth, Git PR Threads API)
+- [ ] `integrations/azure_devops/webhook.py` — PR webhook receiver with HMAC validation (Service Hooks)
+- [ ] `integrations/azure_devops/formatter.py` — convert `FindingResponse` → PR thread comment with quoted code
+- [ ] `integrations/azure_devops/router.py` — webhook + status + manual trigger endpoints
+- [ ] `config.py` — `AzureDevOpsSettings` + `AzureDevOpsSecrets` (org URL, PAT, project)
+
+#### 7.8.2 PR Comment Formatting
+- [ ] Each finding → separate PR thread positioned at file path + line range
+- [ ] Code block quotes from the diff context (before/after)
+- [ ] Severity badge (🔴 critical / 🟠 high / 🟡 medium / 🔵 low) + confidence score
+- [ ] Suggested fix as fenced code block with language tag
+- [ ] Only show findings that passed arbitration (prosecution survived defense — key differentiator)
+- [ ] Summary comment on PR: overall assessment, merge recommendation, files reviewed, agent stats
+- [ ] Markdown formatting compatible with Azure DevOps rendering
+
+#### 7.8.3 Pipeline Integration
+- [ ] `POST /api/integrations/azure-devops/review` — accepts `{ org, project, repo, pr_id }` or `{ repo_url, source_branch, target_branch }`
+- [ ] Azure DevOps pipeline YAML step template (copy-paste ready for teams)
+- [ ] Vote mapping: `merge_recommendation` → Azure DevOps vote (`approve`=10, `approve_with_suggestions`=5, `wait`=0, `reject`=-10)
+- [ ] Async mode: return 202 Accepted + `GET /status/{review_id}` poll endpoint for long reviews
+- [ ] Webhook mode: Azure DevOps Service Hook → auto-trigger on PR created/updated events
+- [ ] Rate limiting: max concurrent reviews per org (configurable)
+
+#### 7.8.4 GitLab Adapter (PLANNED — after Azure DevOps)
+- [ ] Same architecture, different API adapter (`integrations/gitlab/`)
+- [ ] GitLab Merge Request webhook + Discussions API for inline comments
+- [ ] Reuses `formatter.py` logic + `PRBrainOrchestrator` pipeline
+- [ ] GitLab CI `.gitlab-ci.yml` step template
+
 ### Dependency Graph
 ```
 7.0 (DB Foundation) ──> 7.1 (Jira OAuth) ──┬──> 7.2 (Jira API) ──┬──> 7.4 (Ticket UI)
                                             │                      │
                                             ├──> 7.3 (Auth UI) ────┤
                                             │                      └──> 7.7 (Intelligent Jira Agent)
-                                            ├──> 7.5 (Teams) [parallel]
-                                            └──> 7.6 (Slack) [parallel]
+                                            ├──> 7.5 (Teams Bot) [parallel]
+                                            ├──> 7.6 (Slack) [parallel]
+                                            └──> 7.8 (Azure DevOps Auto Review) [parallel]
+
+12.0 (Knowledge Base) ──> 7.5.2 (Teams --with-context)
+                      ──> 13.3 (Extension Summary + KB)
+                      ──> 13.4 (PR Review + KB business rules)
+
+AI Summary pipeline ──> 12.2 (Auto-ingest to KB)
+                    ──> 13.1 (Summary → Jira)
+                    ──> 13.2 (Summary → TODO)
 ```
 
 ### Config Additions
@@ -1105,6 +1173,7 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 9.7 (MCP) ──────────────────────────────────────> standalone
 9.8 (Tool Metadata) ────> benefits from 9.2 ────> enhances streaming
 9.9 (Brain Planning) ───> standalone ───────────> enhances auditability
+9.10 (Competitive) ─────> ongoing ──────────���───> informs 7.8, 9.1-9.7
 ```
 
 ### 9.9 Brain Explicit Planning & Dynamic Agent Composition (COMPLETE)
@@ -1135,6 +1204,52 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 - [ ] Notes survive `_clear_old_tool_results()` context clearing (pinned message)
 - [ ] Notes injected into system prompt or as a persistent user message
 - [ ] Evidence quality improves for long investigations (8+ iterations)
+
+### 9.10 Competitive Analysis — Ongoing (PLANNED)
+
+Continuous study of competing products alongside the Claude Code reference analysis (9.1–9.9). Goal: identify patterns worth adopting, validate Conductor's differentiation, and track market direction.
+
+**Targets:**
+
+#### Cline (Open-Source VS Code AI Extension)
+- **Source**: https://github.com/cline/cline (MIT, 200+ contributors)
+- **Study focus**:
+  - [ ] MCP server ecosystem — how Cline's MCP integration drives adoption (contrast with our 7.7.12 MCP plan)
+  - [ ] Inline diff preview UX — accept/reject flow for AI-generated code changes
+  - [ ] Context window management — how Cline handles long conversations without Brain-style orchestration
+  - [ ] Community plugin model — what enables 200+ contributors vs single-team development
+- **What Conductor does better**: Brain multi-agent orchestration, arbitration-based PR review, team collaboration
+- **What to learn**: MCP ecosystem strategy, inline edit UX patterns, community-driven extensibility
+
+#### CodeRabbit (AI PR Review SaaS)
+- **Source**: Closed source, but public docs + PR comment output observable on GitHub/GitLab
+- **Study focus**:
+  - [ ] PR comment format — structure, tone, code quoting style (benchmark for our 7.8.2 formatter)
+  - [ ] False positive rate — sample public PRs to measure noise level (compare with our arbitration filter)
+  - [ ] GitHub/GitLab integration depth — webhook patterns, status checks, review dismissal
+  - [ ] Incremental review — how CodeRabbit handles push-after-review (re-review only changed files)
+  - [ ] Learnings config (`.coderabbit.yaml`) — how users customize review behavior
+- **What Conductor does better**: Adversarial arbitration (prosecution + defense), multi-agent parallel review
+- **What to learn**: Comment formatting best practices, incremental review strategy, user-facing config patterns
+
+#### Cursor (AI Code Editor)
+- **Source**: Closed source, observe via usage + public docs
+- **Study focus**:
+  - [ ] Cmd+K inline edit — interaction model, diff preview, multi-file Composer flow
+  - [ ] Tab completion integration — how it coexists with agentic chat
+  - [ ] Context management — `@file`, `@folder`, `@codebase` context injection patterns
+  - [ ] Agent mode — how Cursor's agent executes multi-step tasks vs our Brain orchestrator
+  - [ ] Pricing/packaging — how they monetize (per-seat, per-request, model tiers)
+- **What Conductor does better**: Team collaboration, PR review pipeline, Jira integration, business context accumulation
+- **What to learn**: Inline edit UX (if we ever add it), context injection UI patterns, agent mode task execution
+
+**Process (recurring, not one-time):**
+1. **Monthly review**: spend 2-4 hours observing each competitor's latest releases/changelogs
+2. **Document findings**: update `reference/competitive/` with structured notes per product
+3. **Extract actionable items**: if a pattern is worth adopting, create a task under the relevant Phase
+4. **Track differentiation**: maintain a comparison matrix showing where Conductor leads vs follows
+
+**Storage**: `reference/competitive/{cline,coderabbit,cursor}/` — one directory per product with dated analysis notes.
 
 ### Reference Study Process
 For each sub-phase:
@@ -1273,6 +1388,76 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 11.8 (Error Handling) ─────────> measured by 11.5
 ```
 
+## Phase 12: Team Knowledge Base (PLANNED)
+
+Persistent, searchable store of team decisions, business rules, and architectural context. Automatically populated from AI Summaries, manually curated by leads. Provides business context to Brain, Summary, PR Review, and Teams Bot.
+
+**Why this matters**: Every AI feature (summary, review, code Q&A) operates without institutional memory today. The Knowledge Base closes this gap — past decisions inform future AI outputs.
+
+### 12.1 Knowledge Store
+- [ ] Postgres table: `knowledge_entries` (id, team_id, category, content, embedding, source, source_id, created_at, updated_at)
+- [ ] Categories: `decision`, `business_rule`, `architecture`, `term`, `process`
+- [ ] `pgvector` extension for embedding storage + cosine similarity search
+- [ ] Embedding generation via configured AI provider (Bedrock Titan, OpenAI text-embedding-3-small, etc.)
+- [ ] `POST /api/knowledge/entries` — manual entry creation
+- [ ] `GET /api/knowledge/search?q=...&top_k=5` — semantic search endpoint
+- [ ] `GET /api/knowledge/entries?category=...&team_id=...` — filtered listing
+- [ ] `PUT /api/knowledge/entries/{id}` — update entry
+- [ ] `DELETE /api/knowledge/entries/{id}` — soft delete
+- [ ] Liquibase changeset for `knowledge_entries` table + pgvector index
+
+### 12.2 Auto-Ingest from Summaries
+- [ ] After each AI Summary, extract `proposed_solution` + `affected_components` + `next_steps` as candidate entries
+- [ ] Auto-create knowledge entries (category=`decision`, source=`summary:{message_id}`)
+- [ ] Dedup: check embedding similarity > 0.9 before inserting (update existing entry instead)
+- [ ] Host/lead approval gate: show extracted entries in confirmation modal, user confirms before saving
+- [ ] Incremental: each summary adds to KB, building institutional memory over time
+- [ ] Source tracking: every KB entry links back to the summary/discussion that created it
+
+### 12.3 Context Injection
+- [ ] Brain system prompt: inject top-5 relevant KB entries as Layer 3 context
+- [ ] Summary pipeline: inject relevant KB entries when `--with-context` flag is set (Extension + Teams deep mode)
+- [ ] PR Review: inject relevant KB entries for business logic validation (e.g., "this module must never call external APIs directly")
+- [ ] Token budget: KB context capped at 2K tokens (summarize entries if exceeded)
+- [ ] Relevance scoring: combine embedding similarity + recency + category match
+
+### 12.4 Knowledge Base UI (Extension)
+- [ ] Knowledge tab in Extension WebView — browse, search, edit entries
+- [ ] Inline KB references in chat: `#kb:term` context injection prefix
+- [ ] KB entry count badge in chat header
+
+## Phase 13: AI Summary → Action Pipeline (PLANNED)
+
+Bridge the gap between AI Summaries and actionable outcomes. Applies to both Extension online mode (with full KB context) and Teams bot (lightweight or deep mode).
+
+**Core flow**: Discuss → Summarize → Review → Create tickets → Save decisions to KB
+
+### 13.1 Summary → Jira Ticket Creation
+- [ ] `/plan` slash command: takes last summary's `code_relevant_items[]` → maps to Jira ticket fields
+- [ ] Field mapping: `item.title` → summary, `item.problem` + `item.proposed_change` → description (ADF), `item.risk_level` → priority, `item.targets` → components
+- [ ] Batch preview: show all proposed tickets in a confirmation modal, host can edit/remove before creating
+- [ ] One-click create: submit all approved tickets to `jira_create_issue` in sequence
+- [ ] Link tickets: if items have dependencies, set Jira "blocks"/"is blocked by" links
+- [ ] Post-create: update summary message in chat with created ticket links
+- [ ] Teams bot: `@Conductor plan` after summary → same flow, Adaptive Card with ticket previews
+
+### 13.2 Summary → TODO Generation
+- [ ] Auto-generate TODO markers from `code_relevant_items[]` with `{jira:KEY#N}` format
+- [ ] Insert TODOs into affected files at relevant locations (using `file_edit` tool)
+- [ ] Dependency markers from item ordering: `{after:N}` based on item relationships
+- [ ] Preview before insertion: show proposed TODO locations, user approves
+
+### 13.3 Extension Summary with Knowledge Context
+- [ ] Extension online mode: `/summary` automatically retrieves KB context (Phase 12.3)
+- [ ] Summary prompt includes relevant business rules and past decisions from KB
+- [ ] Post-summary flow: Summary → Review → Create Jira → Save to KB (full loop)
+- [ ] One-click workflow button: "Summarize → Plan → Create Tickets" sequential pipeline
+
+### 13.4 PR Review with Business Context
+- [ ] PR Review pipeline injects relevant KB entries (business rules, architecture decisions)
+- [ ] Enables review findings like: "This change violates the team decision from 2026-03-15 that module X should not call external APIs directly" — with KB source link
+- [ ] Opt-in via `conductor.settings.yaml`: `knowledge_base.inject_in_review: true`
+
 ## Milestone Summary
 
 | Milestone | Status | Completed |
@@ -1284,20 +1469,25 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 | Phase 4.2: Workspace Code Search | ✅ Complete | Sprint 4 |
 | Phase 4.5: Graph-Based Symbol Index (RepoMap) | ✅ Complete | Sprint 5 |
 | Phase 4.6: Agentic Code Intelligence | ✅ Complete | Sprint 6 |
-| Phase 5: Model B + Advanced | 🟡 Planned | Sprint 7 |
+| Phase 5: Model B + Advanced | 🟡 Planned | — |
 | Phase 5.5: Code Understanding Enhancements | 🟢 In Progress | Sprint 7–9 |
 | Phase 5.6: Config-Driven Workflow Engine (A-D) | ✅ Complete | Sprint 9 |
-| Phase 6: Production Hardening | 🟡 Planned | Sprint 9 |
+| Phase 6: Production Hardening | 🟡 Planned | — |
 | Phase 7.0–7.2: DB Foundation + Jira Backend | ✅ Complete | Sprint 10 |
 | Phase 7.3–7.4: Jira Extension UI | ✅ Complete | Sprint 11 |
-| Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
+| Phase 7.5: Teams Bot Integration | 🟡 Planned | Sprint 15 |
+| Phase 7.6: Slack Integration | 🟡 Planned | — |
+| Phase 7.7: Intelligent Jira Agent | 🟢 In Progress | Sprint 11–13 |
+| **Phase 7.8: Azure DevOps Auto Review** | **🔴 Next Up** | **Sprint 14** |
 | Phase 8: Infrastructure & UI Hardening | ✅ Complete | Sprint 12 |
 | Phase 8.5: React WebView Migration | ✅ Complete | Sprint 13 |
 | Phase 8.6: 美学 UI/UX Overhaul (A-G) | ✅ Complete | Sprint 13 |
-| Phase 8.6H: Interaction Expansion 交互性拓展 | 🟡 Planned | Sprint 14 |
-| Phase 9: Claude Code Pattern Adoption | 🟢 In Progress | Sprint 13+ |
-| Phase 10: Companion & Developer Experience | 🟡 Planned | Sprint 14+ |
-| Phase 11: Engineering Infrastructure | 🟡 Planned | Sprint 13+ |
+| Phase 8.6H: Interaction Expansion 交互性拓展 | 🟡 Planned | — |
+| Phase 9: Claude Code Pattern Adoption + Competitive Analysis | 🟢 In Progress | Sprint 13+ (ongoing) |
+| Phase 10: Companion & Developer Experience | 🟡 Planned | — |
+| Phase 11: Engineering Infrastructure | 🟡 Planned | — |
+| **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
+| **Phase 13: AI Summary → Action Pipeline** | **🔴 Next Up** | **Sprint 15–16** |
 
 ## Architecture Decision Log
 
