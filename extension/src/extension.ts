@@ -55,13 +55,19 @@ import {
 } from './services/jiraAuthService';
 import { JiraTokenStore } from './services/jiraTokenStore';
 import { JiraTicketProvider, type ITicketProvider, type TicketStatus } from './services/ticketProvider';
-import { ChatLocalStore } from './services/chatLocalStore';
+import { ChatLocalStore, toRecordMessage, toParticipant } from './services/chatLocalStore';
+import { LocalSessionManager } from './services/localSessionManager';
+import { getConductorRoot, getUploadsDir } from './services/conductorPaths';
+import { saveSSO, loadSSO, clearSSO } from './services/credentialStore';
 
 /** Output channel for logging invite links to the user. */
 let outputChannel: vscode.OutputChannel;
 
 /** Chat local message cache (initialized in activate). */
 let chatLocalStore: ChatLocalStore | null = null;
+
+/** Local session manager (tracks local-mode session history). */
+let localSessionManager: LocalSessionManager | null = null;
 
 /** Active workspace root (set during session start). */
 let conductorWsRoot: string | null = null;
@@ -143,9 +149,14 @@ export function activate(context: vscode.ExtensionContext): void {
     getSessionService().initialize(context);
     console.log(`[AI Collab] Session initialized with roomId: ${getSessionService().getRoomId()}`);
 
-    // Initialize chat local message cache
-    chatLocalStore = new ChatLocalStore(context.globalStorageUri.fsPath);
-    console.log(`[AI Collab] Chat local store initialized at: ${context.globalStorageUri.fsPath}`);
+    // Initialize chat local message cache — now under ~/.conductor/
+    const conductorRoot = getConductorRoot();
+    chatLocalStore = new ChatLocalStore(conductorRoot);
+    console.log(`[AI Collab] Chat local store initialized at: ${conductorRoot}/chat_history`);
+
+    // Initialize local session manager — ~/.conductor/sessions.json
+    localSessionManager = new LocalSessionManager();
+    console.log(`[AI Collab] Local session manager initialized at: ${conductorRoot}/sessions.json`);
 
     // Prune stale room caches in background (rooms that no longer exist or are archived)
     pruneStaleRoomCaches(chatLocalStore, getSessionService().getBackendUrl()).catch(
@@ -202,10 +213,6 @@ export function activate(context: vscode.ExtensionContext): void {
         fsm,
         checkBackendHealth,
         () => getSessionService().getBackendUrl(),
-        () => {
-            getSessionService().resetSession();
-            return getSessionService().getRoomId();
-        },
     );
 
     // Persist FSM state to globalState on every transition
@@ -993,6 +1000,26 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     if (this._ragBatchTimer) { clearTimeout(this._ragBatchTimer); this._ragBatchTimer = null; }
                     this._ragPendingChanges.clear();
                     this._stopFileWatcher();
+                    // Delete local session + chat cache (end = permanent close)
+                    {
+                        const endedRoomId = getSessionService().getRoomId();
+                        console.log(`[Conductor] sessionEnded: deleting roomId=${endedRoomId}`);
+                        if (localSessionManager && endedRoomId) {
+                            localSessionManager.deleteSession(endedRoomId);
+                            console.log(`[Conductor] Deleted session from sessions.json`);
+                        }
+                        if (chatLocalStore && endedRoomId) {
+                            await chatLocalStore.clearRoom(endedRoomId);
+                            console.log(`[Conductor] Cleared chat history for ${endedRoomId}`);
+                        }
+                        // Push updated session list immediately so login page is correct
+                        if (localSessionManager) {
+                            this._view?.webview.postMessage({
+                                command: 'localSessionsList',
+                                sessions: localSessionManager.getAllSessions(),
+                            });
+                        }
+                    }
                     // Reset session state and generate new roomId
                     getSessionService().resetSession();
                     vscode.window.showInformationMessage('Chat session has ended.');
@@ -1065,40 +1092,114 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     return;
                 }
                 case 'loadLocalMessages': {
-                    // WebView requests cached messages for a room
+                    // WebView requests cached messages for a room (ChatRecord v2)
                     if (chatLocalStore && message.roomId) {
-                        const cache = await chatLocalStore.loadMessages(message.roomId);
-                        const lastId = cache && cache.messages.length > 0
-                            ? cache.messages[cache.messages.length - 1].id
-                            : null;
+                        const result = await chatLocalStore.loadDenormalized(message.roomId);
+                        const msgs = result ? result.messages : [];
+                        const lastId = msgs.length > 0 ? msgs[msgs.length - 1].id : null;
                         this._view?.webview.postMessage({
                             command: 'localMessagesLoaded',
                             roomId: message.roomId,
-                            messages: cache ? cache.messages : [],
+                            messages: msgs,
+                            participants: result ? result.participants : {},
                             lastMessageId: lastId,
                         });
                     }
                     return;
                 }
-                case 'saveLocalMessages':
-                    // WebView sends messages to cache locally
+                case 'saveLocalMessages': {
+                    // WebView sends messages to cache locally (ChatRecord v2)
                     if (chatLocalStore && message.roomId && message.messages) {
-                        await chatLocalStore.appendMessages(message.roomId, message.messages);
+                        const rawMsgs = message.messages as Record<string, unknown>[];
+                        const recordMsgs = rawMsgs.map(toRecordMessage);
+                        // Build participants from message data
+                        const participants: Record<string, { name: string; role: 'host' | 'engineer' | 'ai'; status: 'active' | 'left'; email?: string; identitySource?: string; avatarColor?: number }> = {};
+                        if (message.participants) {
+                            Object.assign(participants, message.participants);
+                        }
+                        for (const raw of rawMsgs) {
+                            const uid = (raw.userId as string) || '';
+                            if (uid && uid !== 'system' && !participants[uid]) {
+                                participants[uid] = toParticipant(raw);
+                            }
+                        }
+                        // Enrich SSO participants with identity (name, email).
+                        // Can't match by getSessionService().getUserId() because the
+                        // backend assigns a different UUID on WS connect. Instead,
+                        // enrich any non-AI SSO participant missing an email.
+                        const sso = this._getValidSSOIdentity();
+                        if (sso) {
+                            const ssoName = (sso.name as string) || (sso.email as string)?.split('@')[0];
+                            for (const [, p] of Object.entries(participants)) {
+                                if (p.role !== 'ai' && !p.email) {
+                                    if (ssoName) p.name = ssoName;
+                                    if (sso.email) p.email = sso.email as string;
+                                    p.identitySource = 'sso';
+                                }
+                            }
+                        }
+                        await chatLocalStore.appendMessages(message.roomId, recordMsgs, participants);
                     }
                     return;
+                }
                 case 'clearLocalMessages':
                     if (chatLocalStore && message.roomId) {
                         await chatLocalStore.clearRoom(message.roomId);
                     }
                     return;
                 case 'rejoinRoom':
-                    // Set the session to the quit room's ID and start hosting
+                    // Rejoin a previously left session
                     if (message.roomId) {
+                        // Check workspace mismatch
+                        const targetSession = localSessionManager?.getAllSessions().find(s => s.roomId === message.roomId);
+                        const currentWorkspace = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+                        if (targetSession?.workspacePath && currentWorkspace && targetSession.workspacePath !== currentWorkspace) {
+                            const choice = await vscode.window.showWarningMessage(
+                                `This session belongs to "${targetSession.workspaceName}". Switch workspace?`,
+                                { modal: true },
+                                'Switch Workspace',
+                                'Cancel'
+                            );
+                            if (choice === 'Switch Workspace') {
+                                await vscode.commands.executeCommand(
+                                    'vscode.openFolder',
+                                    vscode.Uri.file(targetSession.workspacePath),
+                                    false
+                                );
+                            }
+                            return;
+                        }
+
                         getSessionService().removeQuitRoom(message.roomId);
-                        // Trigger a join using the room ID as an invite URL
-                        this._handleJoinSession(
-                            getSessionService().getBackendUrl() + '/chat?roomId=' + message.roomId
-                        );
+
+                        // Local sessions: rejoin as HOST with the SAME roomId
+                        if (targetSession?.mode === 'local') {
+                            // 1. Health check if needed
+                            const curState = this._controller.getState();
+                            if (curState === ConductorState.Idle || curState === ConductorState.BackendDisconnected) {
+                                const afterHealth = await this._controller.start();
+                                if (afterHealth !== ConductorState.ReadyToHost) return;
+                            }
+
+                            // 2. Detect ngrok if needed
+                            if (!getSessionService().getNgrokUrl()) {
+                                await getSessionService().detectNgrokUrl();
+                            }
+
+                            // 3. Set old roomId, then transition FSM (same startHosting, no new ID)
+                            getSessionService().setRoomId(message.roomId);
+                            this._controller.startHosting();
+
+                            // 4. Register workspace + send state to WebView
+                            await this._handleSetupLocalWorkspace();
+                            this._sendConductorState(this._controller.getState());
+                        } else {
+                            // Online sessions: rejoin as guest via invite URL
+                            this._handleJoinSession(
+                                getSessionService().getBackendUrl() + '/chat?roomId=' + message.roomId
+                            );
+                        }
                     }
                     return;
                 case 'uploadFile':
@@ -1140,10 +1241,14 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     console.log('[Conductor] Received setClassifier message from WebView:', message.enabled, message.modelId);
                     this._handleSetClassifier(message.enabled, message.modelId);
                     return;
-                case 'setExplorer':
-                    console.log('[Conductor] Received setExplorer message from WebView:', message.enabled, message.modelId);
-                    this._handleSetExplorer(message.enabled, message.modelId);
+                case 'setExplorer': {
+                    // WebView sends { explorer: "model-id" } from AIConfigModal select
+                    const explorerModel = message.explorer || message.modelId || null;
+                    const explorerEnabled = message.enabled !== undefined ? message.enabled : !!explorerModel;
+                    console.log('[Conductor] Received setExplorer message from WebView:', explorerEnabled, explorerModel);
+                    this._handleSetExplorer(explorerEnabled, explorerModel);
                     return;
+                }
                 case 'summarize':
                     this._handleSummarizeAndPost(message.messages);
                     return;
@@ -1176,6 +1281,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                     });
                     return;
                 case 'ssoClearCache':
+                    clearSSO();
                     this._context.globalState.update('conductor.ssoIdentity', undefined);
                     this._view?.webview.postMessage({ command: 'ssoCacheCleared' });
                     console.log('[Conductor] SSO identity cache cleared');
@@ -1262,6 +1368,35 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'setupLocalWorkspace':
                     await this._handleSetupLocalWorkspace();
                     return;
+                case 'getLocalSessions': {
+                    const email = message.email || '';
+                    const sessions = localSessionManager
+                        ? (email ? localSessionManager.getSessionsForUser(email) : localSessionManager.getAllSessions())
+                        : [];
+                    this._view?.webview.postMessage({ command: 'localSessionsList', sessions });
+                    return;
+                }
+                case 'deleteLocalSession': {
+                    if (localSessionManager && message.roomId) {
+                        localSessionManager.deleteSession(message.roomId);
+                        // Also clear local message cache
+                        if (chatLocalStore) {
+                            await chatLocalStore.clearRoom(message.roomId);
+                        }
+                    }
+                    // Send updated list back
+                    const updatedSessions = localSessionManager
+                        ? localSessionManager.getAllSessions()
+                        : [];
+                    this._view?.webview.postMessage({ command: 'localSessionsList', sessions: updatedSessions });
+                    return;
+                }
+                case 'renameLocalSession': {
+                    if (localSessionManager && message.roomId && message.displayName) {
+                        localSessionManager.rename(message.roomId, message.displayName);
+                    }
+                    return;
+                }
                 case 'tool_request':
                     // Backend requests a tool execution on local workspace
                     await this._handleLocalToolRequest(message);
@@ -1375,7 +1510,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 await getSessionService().detectNgrokUrl();
             }
 
-            const roomId = this._controller.startHosting();
+            // Generate new roomId, then transition FSM
+            getSessionService().resetSession();
+            this._controller.startHosting();
+            const roomId = getSessionService().getRoomId();
             console.log(`[Conductor] Hosting started, roomId=${roomId}`);
 
             // Initialize .conductor/ workspace storage directory and load config.
@@ -1407,6 +1545,16 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         }
                     } catch (regErr) {
                         console.warn('[Conductor][StartSession] Workspace registration error:', regErr);
+                    }
+
+                    // Track this local session
+                    if (localSessionManager) {
+                        const ssoIdentity = this._getValidSSOIdentity();
+                        localSessionManager.upsertSession(
+                            roomId,
+                            wsRoot,
+                            (ssoIdentity?.email as string) || '',
+                        );
                     }
 
                     // Start watching for file changes (hot incremental updates).
@@ -1485,9 +1633,15 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
-     * Extract valid (non-expired) SSO identity from globalState, or null.
+     * Extract valid (non-expired) SSO identity from ~/.conductor/credentials/sso.json, or null.
      */
     private _getValidSSOIdentity(): Record<string, unknown> | null {
+        // Try new file-based store first
+        const fileBased = loadSSO();
+        if (fileBased) {
+            return fileBased as unknown as Record<string, unknown>;
+        }
+        // Fallback to legacy globalState (migration path)
         const stored = this._context.globalState.get('conductor.ssoIdentity');
         return getValidIdentity(stored);
     }
@@ -1496,6 +1650,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      * Extract the SSO provider from the stored identity wrapper, or undefined.
      */
     private _getStoredSSOProvider(): SSOProvider | undefined {
+        const fileBased = loadSSO();
+        if (fileBased) {
+            return fileBased.provider as SSOProvider;
+        }
         const stored = this._context.globalState.get('conductor.ssoIdentity');
         return getStoredProvider(stored);
     }
@@ -1587,7 +1745,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      * Handle "Quit Chat" command from WebView.
      * Preserves room data and saves room for later rejoin.
      */
-    private _handleQuitChat(): void {
+    private async _handleQuitChat(): Promise<void> {
         try {
             const sessionService = getSessionService();
             const roomId = sessionService.getRoomId();
@@ -1596,9 +1754,30 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             // Save room for later rejoin
             sessionService.saveQuitRoom(roomId, backendUrl);
 
+            // Update local session manager with latest message count (await before FSM transition)
+            if (localSessionManager) {
+                try {
+                    const cache = chatLocalStore ? await chatLocalStore.loadRecord(roomId) : null;
+                    const count = cache?.messageCount ?? 0;
+                    console.log(`[Conductor] quitChat: roomId=${roomId}, cached msgs=${count}`);
+                    localSessionManager.touch(roomId, count);
+                } catch (e) {
+                    console.warn(`[Conductor] quitChat: failed to read cache for ${roomId}:`, e);
+                    localSessionManager.touch(roomId);
+                }
+            }
+
             // FSM transition (does NOT reset session — roomId preserved)
             this._controller.quitSession();
             console.log(`[Conductor] Quit chat — room ${roomId} saved for rejoin`);
+
+            // Push updated session list so login page shows correct data
+            if (localSessionManager) {
+                this._view?.webview.postMessage({
+                    command: 'localSessionsList',
+                    sessions: localSessionManager.getAllSessions(),
+                });
+            }
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error);
             console.warn('[Conductor] quitChat failed:', msg);
@@ -1686,6 +1865,17 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
 
             // Decode base64 file data
             const fileBuffer = Buffer.from(message.fileData, 'base64');
+
+            // Local mode: save to workspace .conductor/uploads/ instead of backend
+            if (this._isLocalMode(message.roomId)) {
+                const result = await this._saveFileLocally(message.roomId, message.fileName, message.mimeType, fileBuffer);
+                this._view?.webview.postMessage({
+                    command: 'uploadFileResult',
+                    success: true,
+                    result,
+                });
+                return;
+            }
             console.log('[Conductor] File buffer size:', fileBuffer.length, 'bytes');
 
             // Build FormData using Node.js built-in API (available in Node 18+)
@@ -1793,6 +1983,57 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * Check if a room is using local workspace mode.
+     * Local mode = VS Code has a workspace folder open (not a remote/clone).
+     */
+    private _isLocalMode(_roomId: string): boolean {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) { return false; }
+        // If the controller is in Hosting state with a local workspace, it's local mode
+        try {
+            return this._controller.getState() === 'Hosting';
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Save a file locally to ~/.conductor/projects/{sanitized}/uploads/
+     */
+    private async _saveFileLocally(
+        roomId: string,
+        fileName: string,
+        mimeType: string,
+        fileBuffer: Buffer,
+    ): Promise<Record<string, unknown>> {
+        const folders = vscode.workspace.workspaceFolders;
+        if (!folders || folders.length === 0) {
+            throw new Error('No workspace folder open');
+        }
+
+        const uploadsDir = getUploadsDir(folders[0].uri.fsPath);
+
+        // Generate unique filename
+        const ext = path.extname(fileName);
+        const base = path.basename(fileName, ext);
+        const uniqueName = `${base}-${Date.now()}${ext}`;
+        const filePath = path.join(uploadsDir, uniqueName);
+
+        fs.writeFileSync(filePath, fileBuffer);
+        console.log('[Conductor] File saved locally:', filePath);
+
+        return {
+            id: `local-${Date.now()}`,
+            original_filename: fileName,
+            stored_filename: uniqueName,
+            file_type: ext.replace('.', ''),
+            mime_type: mimeType,
+            size_bytes: fileBuffer.length,
+            download_url: `file://${filePath}`,
+        };
+    }
+
+    /**
      * Handle file download request from WebView.
      * Downloads file from backend and prompts user to save locally.
      */
@@ -1817,14 +2058,24 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 return;
             }
 
-            // Fetch file from backend
-            const response = await fetch(this._normalizeUrl(message.downloadUrl));
-            if (!response.ok) {
-                throw new Error(`Download failed: HTTP ${response.status}`);
-            }
+            let buffer: Buffer;
 
-            const arrayBuffer = await response.arrayBuffer();
-            const buffer = Buffer.from(arrayBuffer);
+            if (message.downloadUrl.startsWith('file://')) {
+                // Local mode: read directly from filesystem
+                const localPath = message.downloadUrl.replace('file://', '');
+                if (!fs.existsSync(localPath)) {
+                    throw new Error(`Local file not found: ${localPath}`);
+                }
+                buffer = fs.readFileSync(localPath);
+            } else {
+                // Online mode: fetch from backend
+                const response = await fetch(this._normalizeUrl(message.downloadUrl));
+                if (!response.ok) {
+                    throw new Error(`Download failed: HTTP ${response.status}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                buffer = Buffer.from(arrayBuffer);
+            }
 
             // Write to file
             await vscode.workspace.fs.writeFile(uri, buffer);
@@ -1948,8 +2199,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             });
 
             // Navigate to the line range (convert from 1-based to 0-based)
-            const startLineIndex = Math.max(0, startLine - 1);
-            const endLineIndex = Math.max(0, endLine - 1);
+            const safeLine = (n: unknown) => (typeof n === 'number' && n >= 1) ? n : 1;
+            const startLineIndex = Math.max(0, safeLine(startLine) - 1);
+            const endLineIndex = Math.min(document.lineCount - 1, Math.max(0, safeLine(endLine || startLine) - 1));
 
             // Create a selection that highlights the code range
             const startPosition = new vscode.Position(startLineIndex, 0);
@@ -2802,11 +3054,27 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         return; // Keep polling
                     }
 
-                    // Stop polling for any terminal status
+                    // "error" from concurrent poll (e.g. "device code already redeemed")
+                    // means another poll already succeeded — don't cancel, just ignore.
+                    if (pollData.status === 'error') {
+                        console.warn(`[Conductor] SSO poll error (ignoring, may be race): ${pollData.error}`);
+                        return;
+                    }
+
+                    // Stop polling for definitive terminal status (complete or expired)
                     this._handleSSOCancel();
 
                     if (pollData.status === 'complete' && pollData.identity) {
-                        // Store identity in globalState with timestamp and provider for 24h expiry
+                        // Enrich identity with display name from backend user profile
+                        // (AWS SSO doesn't return a name; backend derives one from email)
+                        const userProfile = (pollData as Record<string, unknown>).userProfile as Record<string, unknown> | undefined;
+                        if (userProfile?.display_name && !pollData.identity.name) {
+                            pollData.identity.name = userProfile.display_name as string;
+                        }
+                        // Store identity + userUuid in ~/.conductor/credentials/sso.json
+                        const userUuid = (pollData as Record<string, unknown>).userUuid as string | undefined;
+                        saveSSO(pollData.identity, provider, userUuid);
+                        // Also keep in globalState for backward compat during migration
                         this._context.globalState.update(
                             'conductor.ssoIdentity',
                             wrapIdentity(pollData.identity, provider)
@@ -2815,8 +3083,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             command: 'ssoLoginResult',
                             identity: pollData.identity,
                             provider,
+                            userUuid,
                         });
-                        console.log(`[Conductor] ${provider} SSO login complete:`, pollData.identity);
+                        console.log(`[Conductor] ${provider} SSO login complete:`, pollData.identity, 'userUuid:', userUuid);
                     } else {
                         this._view?.webview.postMessage({
                             command: 'ssoLoginResult',
@@ -3849,9 +4118,13 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     /**
      * Fetch paginated chat history from the backend and relay it to the WebView.
      */
-    private async _handleLoadHistory(roomId: string, before: number, limit: number): Promise<void> {
+    private async _handleLoadHistory(roomId: string, before?: number, limit?: number): Promise<void> {
         try {
-            const url = `${getBackendUrl()}/chat/${encodeURIComponent(roomId)}/history?before=${before}&limit=${limit}`;
+            const params = new URLSearchParams();
+            if (before != null) params.set('before', String(before));
+            if (limit != null) params.set('limit', String(limit));
+            const qs = params.toString();
+            const url = `${getBackendUrl()}/chat/${encodeURIComponent(roomId)}/history${qs ? '?' + qs : ''}`;
             console.log('[Conductor] Loading history:', url);
             const response = await fetch(url);
             if (!response.ok) {
@@ -4681,6 +4954,16 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 throw new Error(`Registration failed (${resp.status}): ${err}`);
             }
 
+            // Track this local session
+            if (localSessionManager) {
+                const ssoIdentity = this._getValidSSOIdentity();
+                localSessionManager.upsertSession(
+                    roomId,
+                    wsRoot,
+                    (ssoIdentity?.email as string) || '',
+                );
+            }
+
             this._view?.webview.postMessage({
                 command: 'setupAndIndexComplete',
                 success: true,
@@ -4971,8 +5254,22 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 // --no-ignore: Python grep walks files manually and ignores .gitignore.
                 // Without this, rg skips files that .gitignore excludes, causing 0 results
                 // for valid patterns in workspaces with aggressive gitignore rules.
+                //
+                // Resolution order for rg:
+                //   1. VS Code's bundled ripgrep (always available — ships with VS Code)
+                //   2. System rg (if user installed it)
+                //   3. Fallback to system grep -E
                 let stdout: string;
                 try {
+                    // VS Code bundles ripgrep — resolve its path
+                    const rgBin = (() => {
+                        try {
+                            const vsRg = path.join(vscode.env.appRoot, 'node_modules', '@vscode', 'ripgrep', 'bin', 'rg');
+                            if (fs.existsSync(vsRg)) return vsRg;
+                        } catch { /* ignore */ }
+                        return 'rg'; // fall through to system PATH
+                    })();
+
                     const rgArgs = [
                         '-n', '--no-heading', '--with-filename',
                         '--no-ignore',        // don't skip files via .gitignore
@@ -4992,10 +5289,10 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                         rgArgs.push('--glob', includeGlob);
                     }
                     rgArgs.push('--', pattern, grepPath);
-                    const result = await run('rg', rgArgs);
+                    const result = await run(rgBin, rgArgs);
                     stdout = result.stdout;
                 } catch (rgError: any) {
-                    // Fallback to system grep if rg is not installed or fails.
+                    // Fallback to system grep if rg is not available.
                     // -E enables extended regex (|, +, ?, etc.) to match rg behavior.
                     console.warn('[Conductor][grep] rg failed, falling back to system grep:', rgError?.message || rgError);
                     const grepArgs = ['-rn', '-E'];
@@ -5972,10 +6269,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
      */
     private async _handleLoadJiraTickets(): Promise<void> {
         if (!this._ticketProvider) {
+            console.warn('[Conductor] loadJiraTickets: no ticket provider — skipping');
             this._view?.webview.postMessage({
                 command: 'jiraTicketsLoaded',
                 tickets: [],
-                error: 'No ticket provider configured',
+                error: 'No ticket provider configured. Open a workspace folder first.',
             });
             return;
         }
@@ -5983,6 +6281,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
         try {
             // Try fetching directly — isAuthenticated checks both local + backend tokens
             const isAuth = await this._ticketProvider.isAuthenticated();
+            console.log('[Conductor] loadJiraTickets: isAuthenticated =', isAuth);
             if (!isAuth) {
                 this._view?.webview.postMessage({
                     command: 'jiraTicketsLoaded',
@@ -5993,6 +6292,7 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             }
 
             const { tickets, epics, unassignedTickets } = await this._ticketProvider.fetchMyTickets();
+            console.log('[Conductor] loadJiraTickets: got', tickets.length, 'tickets,', unassignedTickets.length, 'unassigned');
 
             // Also scan TODOs to find associations
             const todos = await scanWorkspaceTodos();
@@ -6035,39 +6335,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
     }
 
     private _getHtmlContent(webview: vscode.Webview): string {
-        // Get path to the chat.html file
-        const htmlPath = vscode.Uri.joinPath(this._extensionUri, 'media', 'chat.html');
-
-        // Read the HTML file
-        let html = fs.readFileSync(htmlPath.fsPath, 'utf8');
-
-        // Get the URI for the CSS file that can be used in the webview
-        const cssUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'tailwind.css')
-        );
-
-        // Replace the relative CSS path with the webview URI
-        html = html.replace('href="tailwind.css"', `href="${cssUri}"`);
-
-        // Highlight.js for code syntax highlighting
-        const hljsJsUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'highlight.min.js')
-        );
-        const hljsCssUri = webview.asWebviewUri(
-            vscode.Uri.joinPath(this._extensionUri, 'media', 'github-dark.min.css')
-        );
-        html = html.replace('src="highlight.min.js"', `src="${hljsJsUri}"`);
-        html = html.replace('href="github-dark.min.css"', `href="${hljsCssUri}"`);
-
-        // Build Content Security Policy that allows WebSocket and fetch connections.
-        // Include both localhost and all ngrok patterns explicitly so that the CSP
-        // remains valid even if session.backendUrl is updated to a ngrok URL after
-        // the webview is first rendered (race between detectNgrokUrl and render time).
+        // --- Common: compute initial state scripts and CSP ---
         const backendUrl = getSessionService().getBackendUrl();
         const wsUrl = backendUrl.replace('http', 'ws');
         const cspMeta = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src ${webview.cspSource} 'unsafe-inline' https://cdn.jsdelivr.net; connect-src ${backendUrl} ${wsUrl} http://localhost:* https://localhost:* ws://localhost:* wss://localhost:* https://*.ngrok-free.dev wss://*.ngrok-free.dev https://*.ngrok-free.app wss://*.ngrok-free.app https://*.ngrok.io wss://*.ngrok.io https://*.ngrok.app wss://*.ngrok.app;">`;
 
-        // Inject initial permissions data (including sessionRole based on FSM state)
         const permissions = getPermissionsService().getPermissionsForWebView();
         const currentState = this._controller.getState();
         let sessionRole: 'host' | 'guest' | 'none' = 'none';
@@ -6077,29 +6349,47 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             sessionRole = 'guest';
         }
         const permissionsWithRole = { ...permissions, sessionRole };
-        const permissionsScript = `<script>window.initialPermissions = ${JSON.stringify(permissionsWithRole)};</script>`;
-
-        // Inject session state (roomId, hostId, createdAt)
         const sessionState = getSessionService().getSessionStateForWebView();
-        const sessionScript = `<script>window.initialSession = ${JSON.stringify(sessionState)};</script>`;
-
-        // Inject current conductor FSM state so WebView can render correctly on reload
         const conductorState = this._controller.getState();
-        const conductorScript = `<script>window.initialConductorState = ${JSON.stringify(conductorState)};</script>`;
-
-        // Inject SSO identity from globalState (if previously signed in, within 24h)
         const ssoIdentity = this._getValidSSOIdentity();
         const ssoProvider = this._getStoredSSOProvider();
-        // Clear expired/old-format entries from globalState
         const rawSso = this._context.globalState.get('conductor.ssoIdentity');
         if (isStale(rawSso)) {
             this._context.globalState.update('conductor.ssoIdentity', undefined);
         }
-        const ssoScript = `<script>window.initialSSOIdentity = ${JSON.stringify(ssoIdentity)};window.initialSSOProvider = ${JSON.stringify(ssoProvider || null)};window.initialEnabledSSOProviders = ${JSON.stringify(this._enabledSSOProviders)};</script>`;
 
-        html = html.replace('</head>', `${cspMeta}${permissionsScript}${sessionScript}${conductorScript}${ssoScript}</head>`);
+        const initialStateScripts = [
+            `<script>window.initialPermissions = ${JSON.stringify(permissionsWithRole)};</script>`,
+            `<script>window.initialSession = ${JSON.stringify(sessionState)};</script>`,
+            `<script>window.initialConductorState = ${JSON.stringify(conductorState)};</script>`,
+            `<script>window.initialSSOIdentity = ${JSON.stringify(ssoIdentity)};window.initialSSOProvider = ${JSON.stringify(ssoProvider || null)};window.initialEnabledSSOProviders = ${JSON.stringify(this._enabledSSOProviders)};window.__conductorCurrentWorkspace = ${JSON.stringify(vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || null)};</script>`,
+        ].join('\n');
 
-        return html;
+        // --- React WebView (media/webview.js) ---
+        const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'tailwind.css'));
+        const webviewCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.css'));
+        const hljsCssUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'github-dark.min.css'));
+        const hljsJsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'highlight.min.js'));
+        const webviewJsUri = webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'webview.js'));
+
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  ${cspMeta}
+  <link rel="stylesheet" href="${cssUri}" />
+  <link rel="stylesheet" href="${webviewCssUri}" />
+  <link rel="stylesheet" href="${hljsCssUri}" />
+  <title>Conductor</title>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="${hljsJsUri}"></script>
+  ${initialStateScripts}
+  <script src="${webviewJsUri}"></script>
+</body>
+</html>`;
     }
 }
 

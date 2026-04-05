@@ -176,14 +176,11 @@ describe('ConductorController', () => {
 
     describe('startHosting()', () => {
         /** Helper: bring FSM to ReadyToHost via a healthy start(). */
-        async function readyController(
-            sessionResetFn?: () => string,
-        ): Promise<ConductorController> {
+        async function readyController(): Promise<ConductorController> {
             const ctrl = new ConductorController(
                 fsm,
                 healthyCheck,
                 urlProvider,
-                sessionResetFn,
             );
             await ctrl.start();
             assert.equal(ctrl.getState(), S.ReadyToHost);
@@ -191,23 +188,9 @@ describe('ConductorController', () => {
         }
 
         it('transitions from ReadyToHost to Hosting', async () => {
-            const ctrl = await readyController(() => 'room-abc');
-            const roomId = ctrl.startHosting();
-
-            assert.equal(roomId, 'room-abc');
+            const ctrl = await readyController();
+            ctrl.startHosting();
             assert.equal(ctrl.getState(), S.Hosting);
-        });
-
-        it('calls sessionReset and returns its value', async () => {
-            let called = false;
-            const ctrl = await readyController(() => {
-                called = true;
-                return 'fresh-room-id';
-            });
-
-            const roomId = ctrl.startHosting();
-            assert.ok(called, 'sessionReset must be called');
-            assert.equal(roomId, 'fresh-room-id');
         });
 
         it('throws when FSM is in Idle', () => {
@@ -219,7 +202,7 @@ describe('ConductorController', () => {
         });
 
         it('throws when FSM is in Hosting', async () => {
-            const ctrl = await readyController(() => 'r1');
+            const ctrl = await readyController();
             ctrl.startHosting(); // now Hosting
             assert.throws(
                 () => ctrl.startHosting(),
@@ -245,7 +228,6 @@ describe('ConductorController', () => {
                 fsm,
                 healthyCheck,
                 urlProvider,
-                () => 'room-xyz',
             );
             await ctrl.start();
             ctrl.startHosting();
@@ -361,7 +343,7 @@ describe('ConductorController', () => {
 
         it('throws when FSM is in Hosting', async () => {
             const ctrl = new ConductorController(
-                fsm, healthyCheck, urlProvider, () => 'r1',
+                fsm, healthyCheck, urlProvider,
             );
             await ctrl.start();
             ctrl.startHosting();
@@ -491,7 +473,7 @@ describe('ConductorController', () => {
 
         it('throws when FSM is in Hosting', async () => {
             const ctrl = new ConductorController(
-                fsm, healthyCheck, urlProvider, () => 'r1',
+                fsm, healthyCheck, urlProvider,
             );
             await ctrl.start();
             ctrl.startHosting();

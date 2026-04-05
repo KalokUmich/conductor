@@ -31,6 +31,8 @@ export interface SessionState {
     createdAt: number;
     /** Backend server URL for API calls. */
     backendUrl: string;
+    /** True when session uses a local workspace folder (not a remote git clone). */
+    isLocal?: boolean;
 }
 
 /**
@@ -274,12 +276,18 @@ export class SessionService {
      * This returns a serializable object that can be sent to the frontend.
      */
     public getSessionStateForWebView(): SessionState {
+        // Detect local mode: has a real filesystem workspace folder (not conductor://)
+        const vscodeModule = require('vscode') as typeof import('vscode');
+        const folders = vscodeModule.workspace.workspaceFolders;
+        const hasLocalFolder = folders?.some(f => f.uri.scheme === 'file') ?? false;
+
         return {
             roomId: this.getRoomId(),
             hostId: this.getHostId(),
             userId: this.getUserId(),
             createdAt: this.getCreatedAt(),
             backendUrl: this.getBackendUrl(),
+            isLocal: hasLocalFolder,
         };
     }
 
@@ -326,6 +334,18 @@ export class SessionService {
         console.log(
             `[SessionService] Joined as guest: roomId=${roomId}, backendUrl=${backendUrl}`,
         );
+    }
+
+    /**
+     * Set roomId to a specific value (for session rejoin).
+     */
+    public setRoomId(roomId: string): void {
+        if (!this._context) {
+            throw new Error('SessionService not initialized.');
+        }
+        this._roomId = roomId;
+        this._context.globalState.update(SessionService.ROOM_ID_KEY, roomId);
+        console.log(`[SessionService] Room ID set to: ${roomId}`);
     }
 
     /**

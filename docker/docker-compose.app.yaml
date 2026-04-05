@@ -23,6 +23,8 @@ services:
       REDIS_URL: "redis://conductor-redis:6379/0"
       BACKEND_HOST: "0.0.0.0"
       BACKEND_PORT: "8000"
+      # Langfuse SDK: use Docker network name (localhost won't work inside container)
+      LANGFUSE_HOST: "http://conductor-langfuse:3000"
     ports:
       - "8000:8000"
     volumes:
@@ -62,7 +64,7 @@ services:
     networks:
       - conductor
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/public/health"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health"]
       interval: 10s
       timeout: 5s
       retries: 5

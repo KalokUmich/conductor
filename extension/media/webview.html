@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP will be injected by extension host -->
+  <link rel="stylesheet" href="{{tailwindCss}}" />
+  <link rel="stylesheet" href="{{githubDarkCss}}" />
+  <title>Conductor</title>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Highlight.js bundled (used by CodeBlock component) -->
+  <script src="{{highlightJs}}"></script>
+
+  <!-- Initial state injected by extension host -->
+  {{initialStateScripts}}
+
+  <!-- React bundle -->
+  <script src="{{webviewJs}}"></script>
+</body>
+</html>

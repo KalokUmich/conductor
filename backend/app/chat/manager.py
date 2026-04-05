@@ -465,6 +465,11 @@ class ConnectionManager:
             self.message_history[room_id] = []
         self.message_history[room_id].append(message)
         msg_dict = message.model_dump()
+
+        # Local mode: skip Redis/Postgres — extension stores messages locally
+        if self._is_local_room(room_id):
+            return message
+
         # Write-through to Redis (hot cache)
         if self._redis_store:
             try:
@@ -982,6 +987,16 @@ class ConnectionManager:
             return merged
         except (json.JSONDecodeError, OSError):
             return None
+
+    def _is_local_room(self, room_id: str) -> bool:
+        """Check if a room is using local workspace mode."""
+        try:
+            from app.git_workspace.service import get_git_workspace_service
+
+            svc = get_git_workspace_service()
+            return bool(svc and svc.is_local_workspace(room_id))
+        except Exception:
+            return False
 
     def _settings_file_path(self, room_id: str):
         """Return .conductor/room_settings.json path for local workspaces."""

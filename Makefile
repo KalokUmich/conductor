@@ -123,10 +123,10 @@ run-backend-port: ensure-backend-deps
 # ===========================
 # Testing
 # ===========================
-.PHONY: test test-backend test-extension test-parity integration-test
+.PHONY: test test-backend test-extension test-webview test-frontend test-parity integration-test
 
-## Run all tests (backend + extension + parity)
-test: test-backend test-extension test-parity
+## Run all tests (backend + extension + webview + parity)
+test: test-backend test-extension test-webview test-parity
 	@echo "All tests passed!"
 
 ## Run backend tests
@@ -134,14 +134,19 @@ test-backend: ensure-backend-deps
 	@echo "Running backend tests..."
 	cd backend && $(PYTHON) -m pytest tests/ -v
 
-## Run extension tests
+## Run extension service tests (node:test — FSM, controllers, services)
 test-extension:
-	@echo "Running extension tests..."
-	@if [ -f "extension/package.json" ] && grep -q '"test"' extension/package.json; then \
-		cd extension && npm test; \
-	else \
-		echo "No extension tests configured"; \
-	fi
+	@echo "Running extension service tests..."
+	cd extension && npm test
+
+## Run React WebView tests (vitest — components, reducers, pure logic)
+test-webview:
+	@echo "Running WebView tests..."
+	cd extension && npm run test:webview
+
+## Run all frontend tests (extension + webview)
+test-frontend: test-extension test-webview
+	@echo "All frontend tests passed!"
 
 ## Run backend integration tests (requires real API credentials)
 integration-test: ensure-backend-deps
@@ -162,18 +167,28 @@ test-parity: ensure-backend-deps
 # ===========================
 # Build / Compile
 # ===========================
-.PHONY: compile compile-ts compile-css package update-contracts update-prompt-library
+.PHONY: compile compile-all compile-ts compile-webview compile-css package update-contracts update-prompt-library
 
-## Compile extension (TypeScript + Tailwind CSS)
-compile: compile-ts compile-css
+## Compile extension (TypeScript + React WebView + Tailwind CSS)
+compile: compile-all
 	@echo "Extension compiled!"
 
-## Compile TypeScript
-compile-ts:
-	@echo "Compiling TypeScript..."
+## Compile all (TS + WebView + CSS via npm run compile)
+compile-all:
+	@echo "Compiling extension (TS + React WebView + CSS)..."
 	cd extension && npm run compile
 
-## Compile Tailwind CSS
+## Compile TypeScript only
+compile-ts:
+	@echo "Compiling TypeScript..."
+	cd extension && npm run compile:ts
+
+## Compile React WebView only
+compile-webview:
+	@echo "Building React WebView..."
+	cd extension && npm run compile:webview
+
+## Compile Tailwind CSS only
 compile-css:
 	@echo "Building Tailwind CSS..."
 	cd extension && npm run build:css
@@ -223,12 +238,14 @@ data-logs:
 app-up:
 	@echo "Starting app tier (Backend + Langfuse)..."
 	docker compose -f $(APP_COMPOSE) up -d --build
+	@docker image prune -f --filter "label=com.docker.compose.project=docker" >/dev/null 2>&1 || true
 	@echo "App tier starting. Backend: localhost:8000, Langfuse: localhost:3001"
 
 ## Rebuild and restart a single app service (usage: make app-rebuild SVC=backend)
 app-rebuild:
 	@echo "Rebuilding $(SVC)..."
 	docker compose -f $(APP_COMPOSE) up -d --build --force-recreate $(SVC)
+	@docker image prune -f --filter "label=com.docker.compose.project=docker" >/dev/null 2>&1 || true
 	@echo "$(SVC) rebuilt and restarted."
 
 ## Restart backend after config/secrets change (no rebuild needed)
@@ -269,6 +286,7 @@ docker-clean: docker-down
 	@echo "Removing conductor containers and images..."
 	-docker rm -f conductor-backend conductor-postgres conductor-redis conductor-langfuse 2>/dev/null
 	-docker rmi conductor/backend:latest postgres:16-alpine redis:7-alpine langfuse/langfuse:2 2>/dev/null
+	-docker image prune -f --filter "label=com.docker.compose.project=docker" 2>/dev/null
 	@echo "Docker clean complete."
 
 # ===========================
@@ -381,9 +399,11 @@ help:
 	@echo "  make run-backend-port PORT=8001  Start on custom port"
 	@echo ""
 	@echo "Testing:"
-	@echo "  make test               Run all tests (backend + extension)"
+	@echo "  make test               Run all tests (backend + extension + webview + parity)"
 	@echo "  make test-backend       Run backend unit tests"
-	@echo "  make test-extension     Run extension tests"
+	@echo "  make test-extension     Run extension service tests (node:test)"
+	@echo "  make test-webview       Run React WebView tests (vitest)"
+	@echo "  make test-frontend      Run all frontend tests (extension + webview)"
 	@echo "  make test-parity        Validate Python<>TS tool parity"
 	@echo "  make integration-test   Run integration tests (needs API keys)"
 	@echo ""

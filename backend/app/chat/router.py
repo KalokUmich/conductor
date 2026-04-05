@@ -472,18 +472,20 @@ async def websocket_chat_endpoint(
             history = manager.get_messages_since(room_id, since)
             logger.info(f"[WS] Reconnect recovery: sending {len(history)} messages since {since}")
 
-        # Ensure room exists in Postgres (upsert)
-        _persistence = getattr(manager, "_persistence", None)
-        if _persistence:
-            sso_info = manager.room_sso_hosts.get(room_id, {})
-            try:
-                await _persistence.ensure_room(
-                    room_id,
-                    owner_email=sso_info.get("email"),
-                    owner_provider=sso_info.get("provider"),
-                )
-            except Exception as exc:
-                logger.warning(f"[WS] ensure_room failed for {room_id}: {exc}")
+        # Ensure room exists in Postgres (upsert) — skip for local mode
+        # Local mode stores everything client-side; no Postgres dependency needed.
+        if not manager._is_local_room(room_id):
+            _persistence = getattr(manager, "_persistence", None)
+            if _persistence:
+                sso_info = manager.room_sso_hosts.get(room_id, {})
+                try:
+                    await _persistence.ensure_room(
+                        room_id,
+                        owner_email=sso_info.get("email"),
+                        owner_provider=sso_info.get("provider"),
+                    )
+                except Exception as exc:
+                    logger.warning(f"[WS] ensure_room failed for {room_id}: {exc}")
 
         # Send message history and user list to the newly connected client
         # For code_snippet messages, copy metadata → codeSnippet so the
@@ -518,12 +520,35 @@ async def websocket_chat_endpoint(
                 logger.info(f"[WS] JOIN from backend-assigned userId={assigned_user_id}, role={assigned_role}")
                 sso_email = data.get("ssoEmail")
                 sso_provider = data.get("ssoProvider")
+                user_uuid = data.get("userUuid")  # Stable UUID from SSO/Postgres
                 display_name = data.get("displayName", "")
                 identity_source = data.get("identitySource", "anonymous")
 
-                # Identity reconciliation: if this SSO user was in the room
-                # before, reuse their original user_id to avoid duplicates.
-                if sso_email:
+                # Stable identity: if SSO provides a userUuid (from Postgres users table),
+                # use it instead of the random UUID from connect(). This ensures messages
+                # always carry the same userId across sessions and reconnections.
+                if user_uuid and identity_source == "sso":
+                    old_id = assigned_user_id
+                    assigned_user_id = user_uuid
+                    # Migrate room host/lead references from temp ID to stable UUID
+                    if manager.room_hosts.get(room_id) == old_id:
+                        manager.room_hosts[room_id] = assigned_user_id
+                    if manager.room_leads.get(room_id) == old_id:
+                        manager.room_leads[room_id] = assigned_user_id
+                    # Send corrected identity to client
+                    await websocket.send_json(
+                        {
+                            "type": "connected",
+                            "userId": assigned_user_id,
+                            "role": assigned_role,
+                            "leadId": manager.get_lead_id(room_id),
+                        }
+                    )
+                    logger.info(f"[WS] Using stable userUuid={assigned_user_id} (was temp={old_id}) in room {room_id}")
+
+                # Legacy identity reconciliation: if this SSO user was in the room
+                # before (no userUuid), reuse their original user_id to avoid duplicates.
+                elif sso_email:
                     reclaimed_id = manager.reclaim_user_by_sso(
                         room_id,
                         assigned_user_id,

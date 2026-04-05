@@ -45,9 +45,27 @@ async def _poll_for_identity(
             return {"status": "pending"}
 
         identity = get_identity_fn(access_token)
+
+        # Create or fetch persistent user profile
+        user_profile = None
+        try:
+            from .user_service import UserService
+            user_svc = UserService.get_instance()
+            email = identity.get("email") or identity.get("arn", "")
+            if email:
+                user_profile = await user_svc.get_or_create_user(
+                    email=email,
+                    display_name=identity.get("name") or identity.get("given_name"),
+                    auth_provider=provider_label.lower().replace(" ", "_"),
+                )
+        except Exception as e:
+            logger.warning(f"[Auth] User profile creation failed: {e}")
+
         return {
             "status": "complete",
             "identity": identity,
+            "userUuid": user_profile["id"] if user_profile else None,
+            "userProfile": user_profile,
         }
     except Exception as e:
         error_msg = str(e)

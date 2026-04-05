@@ -99,10 +99,12 @@ def init_langfuse(settings=None) -> bool:
     os.environ["LANGFUSE_PUBLIC_KEY"] = public_key
     os.environ["LANGFUSE_SECRET_KEY"] = secret_key
     os.environ["LANGFUSE_HOST"] = host
+    # Langfuse SDK v2.x uses native API (no OTEL dependency).
+    # requirements.txt pins langfuse<3.0 to match server v2.
 
     _langfuse_enabled = True
     _langfuse_initialized = True
-    logger.info("Langfuse: initialized (host=%s)", langfuse_settings.host)
+    logger.info("Langfuse: initialized (host=%s)", host)
     return True
 
 

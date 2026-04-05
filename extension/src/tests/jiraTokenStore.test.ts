@@ -140,6 +140,10 @@ describe('JiraTokenStore', () => {
                 JSON.stringify({ expiresAt: Date.now() + 3600000, cloudId: 'c', siteUrl: 's' }),
             );
 
+            // Clear unified credential store to prevent fallback from finding tokens
+            const { clearJira } = await import('../services/credentialStore');
+            clearJira();
+
             assert.equal(await store.getValidTokens(), null);
         });
 

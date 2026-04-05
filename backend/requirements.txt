@@ -36,8 +36,8 @@ openai>=1.0.0
 
 # --- Langfuse (Observability) ---
 # LLM tracing, cost tracking, execution tree visualization
-# Self-hosted via docker/docker-compose.langfuse.yaml
-langfuse>=2.0
+# Self-hosted via docker/docker-compose.langfuse.yaml (server v2 — no OTEL)
+langfuse>=2.0,<3.0
 
 # --- Playwright (Browser Automation) ---
 # Headless browser for web browsing, form filling, screenshots

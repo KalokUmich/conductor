@@ -856,6 +856,85 @@ Completed 2026-03-22. Quality-of-life improvements and infrastructure fixes.
 - [x] **Error banners**: unified `.error-banner` class with dismiss button across all 5 error containers
 - [x] **Markdown enhancements**: tables, links, italic in `inlineFormat()`, larger code blocks (`max-h-80`)
 
+## Phase 8.5: React WebView Migration (COMPLETE — 2026-04-05)
+
+Full migration from legacy `chat.html` (11,425 lines) to React 18 WebView. Legacy HTML deleted.
+
+- [x] React 18 + esbuild pipeline (IIFE bundle, 268KB JS / 71KB CSS)
+- [x] All chat components: MessageBubble (8 message types), ChatInput (slash commands), ThinkingIndicator, AgentQuestionCard
+- [x] All modals: AIConfig, Jira (with OAuth pending flow), RoomSettings, Summarize, StackTrace, SetupIndex, RebuildIndex, WorkspaceTodoEdit
+- [x] State panels: Idle, Disconnected, ReadyToHost (local sessions + online rooms + quit rooms)
+- [x] Task Board: 3-section backlog + AI Working Space + drag-and-drop + dependency graph + Jira popup
+- [x] ChatRecord v2: participants map, sender UUID, aiMeta
+- [x] Mermaid diagram lightbox/zoom (click SVG → fullscreen overlay)
+- [x] Auto-apply logic in PendingChangesCard (reads autoApplyEnabled, auto-sends applyChanges)
+- [x] Lead Transfer button in UsersSidebar (host only, sends transfer_lead via WebSocket)
+- [x] role_restored handling in useWebSocket (updates session role + system message)
+- [x] AI message copy button, code prompt generation button
+- [x] File drag-drop hint on ChatInput (glow effect + toast)
+- [x] Read receipts via IntersectionObserver (useReadReceipts hook)
+- [x] Scanning overlay with branch-changed banner + AST-only badge
+- [x] Index progress bar in ChatHeader
+- [x] Legacy chat.html deleted, fallback code removed from extension.ts
+- [x] TypeScript strict mode: 0 errors
+- [x] Vitest test suite: 151 tests (9 files) — pure logic, reducers, components, command contracts
+- [x] File uploads migrated to `~/.conductor/projects/{sanitized}/uploads/` via conductorPaths.ts
+- [x] Makefile: `make test-webview`, `make test-frontend`, `make test-all`
+
+## Phase 8.6: 美学 (Aesthetics) — UI/UX Overhaul (COMPLETE — 2026-04-05)
+
+Comprehensive UI/UX redesign drawing from Apple HIG, Claude.ai, ChatGPT, Linear, JetBrains, Cursor. Design identity: "Warm Intelligence" — three pillars: Material Quality, Kinetic Harmony, Flow State Protection.
+
+### Phase A+B: Foundation + Core Interactions (COMPLETE)
+- [x] Design tokens rewrite: Apple semantic labels, unified violet tint, material layers, elevation system
+- [x] Warmer background (#141210), neutral-cool text, Apple dark-mode status colors (desaturated)
+- [x] Spring physics motion system (3 curves: snappy/gentle/bouncy) with 5-level duration scale
+- [x] Three-layer Apple shadow recipe, 0.5px Retina-ready borders throughout
+- [x] iMessage-inspired message bubbles: flat violet own, glass other, warm parchment AI (no borders)
+- [x] Apple sheet-style modals (blurred overlay, enter/exit animations)
+- [x] Glass material tab bar with `backdrop-filter: saturate(180%) blur(12px)`
+- [x] Toast system moved to bottom-left with glass material
+- [x] `prefers-reduced-motion` + `prefers-contrast: more` accessibility fallbacks
+- [x] ARIA roles: `role="log" aria-live="polite"` on messages, `role="status"` on ThinkingIndicator
+
+### Phase C: AI Experience (COMPLETE)
+- [x] Enhanced markdown renderer: headers, lists, blockquotes, horizontal rules, file path auto-linking
+- [x] Investigation disclosure on AI messages ("Investigated 3 files with 6 tools ▸" — expandable)
+- [x] File path auto-linking (`src/file.ts:42` → clickable, navigates to editor)
+- [x] Streaming cursor CSS (`cursorBlink` keyframe)
+- [x] Robot avatar for AI (cute face with animated antenna pulse + eye blink during thinking)
+
+### Phase D: Slash Commands + Code Intelligence (COMPLETE)
+- [x] Expanded from 3 to 6 slash commands: `/ask`, `/pr`, `/jira`, `/summary`, `/diff`, `/help`
+- [x] `@` agent scopes: `@brain`, `@review`, `@workspace`
+- [x] `#` context injection: `#file:path`, `#symbol:name`, `#ticket:KEY`
+- [x] Three-category command matching with ghost hints for all prefix types
+
+### Phase E: Responsive Layout (COMPLETE)
+- [x] `useContainerWidth` hook (ResizeObserver, 3 breakpoints: narrow <350px, default, wide >500px)
+- [x] `app-narrow/default/wide` CSS classes on root element
+- [x] Narrow: compact avatars, full-width messages; Wide: split tasks layout, 70% message width
+
+### Phase F: WebSocket Enhancement (COMPLETE)
+- [x] `ConnectionStatus` component: 2px green (connected), 24px amber (reconnecting), 24px red (disconnected)
+- [x] Smooth height transition with spring animation
+
+### Phase G: Command Palette (COMPLETE)
+- [x] `CommandPalette` component: Cmd+K fuzzy search across all commands
+- [x] Glass material styling, keyboard navigation (↑↓ Enter Esc)
+- [x] Category icons: ⚡ action, 🤖 agent, 📎 context
+
+### Phase H: Interaction Expansion 交互性拓展 (PLANNED)
+Three-channel aesthetics: Human→AI (intuitive), AI→Human (zero cognitive burden), AI↔AI (max signal/token).
+
+- [ ] `agent_report.py`: labeled plain text format for AI↔AI communication (replace JSON AgentFindings with `Scope:`, `Result:`, `Evidence:` labels — 30% fewer tokens)
+- [ ] `<persisted-output>` pattern for large tool results >50K chars (disk persistence with preview stub)
+- [ ] Concurrent read-only tool execution via `asyncio.gather` (tools declare `is_concurrent_safe`)
+- [ ] Standardize `_summarize_result()` with category icons and formatted metadata in SSE events
+- [ ] Enrich SSE `tool_result` events: `duration_ms`, `result_size`, `category`, `display_name`
+- [ ] Brain synthesis prompt: formatting guidelines (inverted pyramid, file:line citations, evidence lists)
+- [ ] Begin extracting stabilized components into `conductor-ui/` library (primitives, surfaces, patterns)
+
 ## Phase 9: Claude Code Pattern Adoption (IN PROGRESS)
 
 **Reference**: `reference/claude-code/` — Anthropic's official CLI source (~205K lines TypeScript). Extracted from npm sourcemaps 2026-03-31. Read-only study material.
@@ -1213,6 +1292,9 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 | Phase 7.3–7.4: Jira Extension UI | ✅ Complete | Sprint 11 |
 | Phase 7.5–7.6: Teams + Slack | 🟡 Planned | Sprint 12 |
 | Phase 8: Infrastructure & UI Hardening | ✅ Complete | Sprint 12 |
+| Phase 8.5: React WebView Migration | ✅ Complete | Sprint 13 |
+| Phase 8.6: 美学 UI/UX Overhaul (A-G) | ✅ Complete | Sprint 13 |
+| Phase 8.6H: Interaction Expansion 交互性拓展 | 🟡 Planned | Sprint 14 |
 | Phase 9: Claude Code Pattern Adoption | 🟢 In Progress | Sprint 13+ |
 | Phase 10: Companion & Developer Experience | 🟡 Planned | Sprint 14+ |
 | Phase 11: Engineering Infrastructure | 🟡 Planned | Sprint 13+ |

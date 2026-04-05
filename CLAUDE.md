@@ -23,7 +23,9 @@ make setup          # create venv + install all dependencies
 make data-up        # start Postgres + Redis (Docker)
 make db-update      # apply Liquibase schema migrations
 make run-backend    # start backend (dev mode, auto-reload)
-make test           # run all tests (backend + extension)
+make test           # run all tests (backend + extension + webview + parity)
+make test-frontend  # run all frontend tests (extension services + React WebView)
+make test-webview   # run React WebView tests only (vitest)
 make package        # compile and package extension as .vsix
 make test-parity    # validate Python↔TS tool parity
 make lint           # lint backend Python (ruff, auto-fix)
@@ -46,9 +48,12 @@ pytest --cov=. --cov-report=html
 ### Extension (TypeScript/VS Code)
 ```bash
 cd extension
-npm run compile    # one-time build
-npm run watch      # watch mode
-npm test
+npm run compile           # one-time build (TS + React WebView + CSS)
+npm run compile:webview   # rebuild React WebView only
+npm run watch             # watch mode (TS only)
+npm run watch:webview     # watch React WebView
+npm test                  # 321 extension service tests (node:test)
+npm run test:webview      # 151 React WebView tests (vitest)
 # F5 in VS Code → "Run VS Code Extension" to debug
 ```
 
@@ -105,9 +110,11 @@ Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `
 ## Testing Notes
 
 - Backend: `pytest` with mocked external dependencies. See `backend/CLAUDE.md` for full test file list.
-- Extension: `npm test`. See `extension/CLAUDE.md` for tool parity testing.
+- Extension services: `npm test` (321 tests, node:test). See `extension/CLAUDE.md` for tool parity testing.
+- React WebView: `npm run test:webview` (151 tests, vitest + jsdom). Covers reducers, slash commands, message parsing, component behavior.
 - `conftest.py`: stubs for cocoindex, sentence_transformers, sqlite_vec
 - Agent loop tests: `MockProvider` subclass with scripted responses
+- Full frontend: `make test-frontend` (472 tests = 321 service + 151 WebView)
 
 ## What's Next
 

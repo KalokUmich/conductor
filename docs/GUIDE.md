@@ -99,8 +99,12 @@ config/
 
 ```
 VS Code Extension
-├── chat.html                  — 聊天 WebView，@AI 斜杠命令 (/ask /pr /jira)，Backlog + TODO
-│                                在线模式房间列表，renderMessageByType，Highlight.js 代码高亮
+├── webview-ui/src/            — React 18 WebView 源代码（esbuild → media/webview.js）
+│   ├── components/            — MessageBubble、ChatInput、ChatHeader、TaskBoard、Modals
+│   ├── contexts/              — ChatContext、SessionContext、VSCodeContext
+│   ├── hooks/                 — useWebSocket、useReadReceipts、useHistoryPagination
+│   └── types/                 — postMessage 命令契约（commands.ts）
+├── media/webview.js           — React WebView 编译产物（268KB）
 ├── workflow.html              — 工作流可视化面板（SVG 图）
 ├── workflowPanel.ts           — 面板控制器
 └── services/
@@ -237,14 +241,13 @@ make test-parity
 
 ### 3.1 场景 A：用户输入 `@AI /ask 认证逻辑在哪里？`
 
-**第一步：Extension 解析命令**（`extension/media/chat.html`）
+**第一步：Extension 解析命令**（`extension/webview-ui/src/components/chat/ChatInput.tsx`）
 
 用户在 textarea 里输入 `@AI /ask 认证逻辑在哪里？` 并按 Enter。
 
-```javascript
-// chat.html — sendMessage()
-function sendMessage() {
-    const text = textarea.value;
+```typescript
+// ChatInput.tsx — handleSend() + slashCommands.ts
+const { query, isAI } = parseMessageForAI(text);
     // 匹配 "@AI /ask xxx" 或 "@AI /pr xxx" 或 "@AI /jira xxx"
     const slashMatch = text.match(/@AI\s+\/(\w+)\s+(.*)/is);
     if (slashMatch) {
@@ -344,11 +347,11 @@ async def run_stream(self, query, workspace_path):
 
 **整条链路：**
 ```
-浏览器输入 → chat.html 解析 → extension.ts SSE 请求 →
+用户输入 → ChatInput.tsx 解析 → useWebSocket/extension.ts SSE 请求 →
 agent_loop/router.py → WorkflowEngine.run_stream() →
 ClassifierEngine.classify() → _run_pipeline() →
 AgentLoopService.run_stream() → LLM ↔ execute_tool() 循环 →
-SSE 事件流回 → chat.html 显示实时进度
+SSE 事件流回 → ChatContext → ThinkingIndicator/MessageBubble 实时渲染
 ```
 
 ---
@@ -1465,9 +1468,10 @@ Extension 在用户退出房间时调用此接口，彻底清除历史。
 ### 11.2 在线模式：房间列表加载
 
 ```typescript
-// chat.html — 用户选择在线模式时触发
-function selectMode(mode) {
-    if (mode === 'online') {
+// StatePanels.tsx — ReadyToHostPanel 模式切换
+// 用户在 Local/Online tab 之间切换
+const [mode, setMode] = useState<"local" | "online">("local");
+// 选择在线模式时:
         loadOnlineRooms();  // 发消息给 Extension Host
     }
 }
@@ -1810,7 +1814,7 @@ Extension 提供 TODO 与 Jira 票的双向关联：
 |------|------|
 | `ticketProvider.ts` | `ITicketProvider` 接口 + `JiraTicketProvider` 实现（批量状态查询、my tickets）|
 | `todoScanner.ts` | 工作区 TODO 扫描器（支持 `{jira:KEY}` 标签 + 裸 KEY 模式，43+ 文件类型）|
-| `chat.html` | 3 分区 Backlog UI + AI Working Space + drag-and-drop |
+| `webview-ui/src/components/tasks/TasksTab.tsx` | 3 分区 Backlog UI + AI Working Space + drag-and-drop |
 
 **`{jira:KEY}` 标签：**
 
@@ -1883,7 +1887,7 @@ Token 不再仅存内存。Extension 通过 `JiraTokenStore` 本地持久化：
 | 症状 | 原因 | 解法 |
 |------|------|------|
 | `Jira integration is not enabled` | `jira.client_id` 未在 secrets 中配置 | 填写 `conductor.secrets.yaml` → `make app-restart` |
-| 连接后 ticket key 不自动链接 | `jiraSiteUrl` 未设置 | 确认 Jira 已连接（chat.html 的 showJiraForm 会设置 URL）|
+| 连接后 ticket key 不自动链接 | `jiraSiteUrl` 未设置 | 确认 Jira 已连接（JiraModal 组件收到 `jiraConnected` 后设置 siteUrl）|
 | `jira_update_issue` 无法关闭票 | 安全阻止 Done/Closed/Resolved | 设计如此——agent 不应自动关闭票，需用户在 Jira 手动操作 |
 | Team 字段找不到 | `customfield_10001` 因 Jira 实例不同而变化 | 先调用 `GET /create-meta` 确认 team_field_key |
 | "my sprint" 返回空 | 项目未配置 Sprint board | 确认 Jira 项目启用了 Scrum board 且有活跃 Sprint |

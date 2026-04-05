@@ -1,0 +1,657 @@
+/* ============================================================
+   Conductor Design System — Design Tokens (美学 Edition)
+
+   Identity: "Warm Intelligence"
+   Three Pillars: Material Quality · Kinetic Harmony · Flow State Protection
+
+   Sources: Apple HIG · Claude.ai · ChatGPT · Linear · iMessage
+   ============================================================ */
+
+:root {
+  /* ── Brand Palette ──────────────────────────────────────── */
+  /* Warm amber/terracotta — brand identity, AI accent */
+  --c-brand-50:  #fef7ed;
+  --c-brand-100: #fdecd3;
+  --c-brand-200: #fad5a6;
+  --c-brand-300: #f6b86e;
+  --c-brand-400: #f19335;
+  --c-brand-500: #ee7a13;
+  --c-brand-600: #df600a;
+  --c-brand-700: #b9470b;
+  --c-brand-800: #933810;
+  --c-brand-900: #773010;
+
+  /* Accent: violet — sole interactive tint (Apple: ONE accent) */
+  --c-accent-50:  #f5f3ff;
+  --c-accent-100: #ede9fe;
+  --c-accent-200: #ddd6fe;
+  --c-accent-300: #c4b5fd;
+  --c-accent-400: #a78bfa;
+  --c-accent-500: #8b5cf6;
+  --c-accent-600: #7c3aed;
+  --c-accent-700: #6d28d9;
+  --c-accent-800: #5b21b6;
+  --c-accent-900: #4c1d95;
+
+  /* ── Unified Tint System (violet as sole interactive color) ── */
+  --c-tint:            #8b5cf6;
+  --c-tint-prominent:  #a78bfa;
+  --c-tint-bg:         rgba(139, 92, 246, 0.12);
+  --c-tint-hover:      rgba(139, 92, 246, 0.06);
+  --c-tint-subtle:     rgba(139, 92, 246, 0.04);
+
+  /* ── Semantic Colors — Apple-aligned labels ─────────────── */
+  --c-label:             rgba(255, 255, 255, 0.92);
+  --c-secondary-label:   rgba(255, 255, 255, 0.60);
+  --c-tertiary-label:    rgba(255, 255, 255, 0.40);
+  --c-quaternary-label:  rgba(255, 255, 255, 0.24);
+
+  /* Fills (buttons, controls) */
+  --c-fill:             rgba(120, 120, 128, 0.36);
+  --c-secondary-fill:   rgba(120, 120, 128, 0.32);
+  --c-tertiary-fill:    rgba(120, 120, 128, 0.24);
+  --c-quaternary-fill:  rgba(120, 120, 128, 0.18);
+
+  /* Separators */
+  --c-separator:         rgba(255, 255, 255, 0.08);
+  --c-opaque-separator:  #2c2c2e;
+
+  /* ── Backgrounds — warmer base (Claude.ai-inspired) ────── */
+  --c-bg-primary:    #141210;
+  --c-bg-secondary:  #1c1a18;
+  --c-bg-tertiary:   #252320;
+  --c-bg-elevated:   #2c2a27;
+  --c-bg-hover:      #333130;
+  --c-bg-active:     #3a3836;
+
+  /* Surfaces */
+  --c-surface-chat:     #181614;
+  --c-surface-card:     rgba(255, 255, 255, 0.03);
+  --c-surface-card-hover: rgba(255, 255, 255, 0.06);
+
+  /* ── Elevation System (dark mode: higher = lighter) ────���─ */
+  --elevation-0: #0e0c0a;
+  --elevation-1: #1c1a18;
+  --elevation-2: #2c2a27;
+  --elevation-3: #3a3836;
+  --elevation-4: #484644;
+
+  /* ── Text — neutral-cool for clean readability ─────────── */
+  --c-text-primary:   #f5f5f7;
+  --c-text-secondary: #98989d;
+  --c-text-tertiary:  #6e6e73;
+  --c-text-muted:     #545456;   /* WCAG AA 4.5:1 on dark bg */
+  --c-text-inverse:   #1c1917;
+
+  /* ── Borders — 0.5px Retina-ready ──────────────────────── */
+  --c-border-subtle:  rgba(255, 255, 255, 0.06);
+  --c-border-default: rgba(255, 255, 255, 0.10);
+  --c-border-strong:  rgba(255, 255, 255, 0.16);
+
+  /* ── Status Colors — Apple dark mode (desaturated) ─────── */
+  --c-success:     #30d158;
+  --c-success-bg:  rgba(48, 209, 88, 0.12);
+  --c-warning:     #ffd60a;
+  --c-warning-bg:  rgba(255, 214, 10, 0.12);
+  --c-error:       #ff453a;
+  --c-error-bg:    rgba(255, 69, 58, 0.12);
+  --c-info:        #64d2ff;
+  --c-info-bg:     rgba(100, 210, 255, 0.12);
+
+  /* ── AI Colors — brand-aligned, not separate blue ──────── */
+  --c-ai-thinking:  var(--c-brand-500);
+  --c-ai-brain:     rgba(238, 122, 19, 0.10);
+  --c-ai-agent:     var(--c-brand-300);
+  --c-ai-tool-ok:   var(--c-success);
+  --c-ai-tool-fail: var(--c-error);
+
+  /* ── AI Response Content — warm hierarchy palette ──────── */
+  /* Inspired by: Material Design 3 surface tint, Catppuccin Mocha,
+     Charmbracelet Glamour, Apple dark-mode semantic colors.
+     Warm analogous scheme + two cool departures (sage, lavender). */
+  --c-ai-h1:          #e8be82;  /* warm gold — section anchor */
+  --c-ai-h2:          #d4a080;  /* dusty copper — subsection */
+  --c-ai-h3:          #a8b8a0;  /* muted sage — cool departure, lowest heading */
+  --c-ai-bold:        #f0e6d8;  /* warm ivory — subtle emphasis */
+  --c-ai-italic:      #b8a8c8;  /* soft lavender — cool departure, asides */
+  --c-ai-blockquote:  #c8b8a0;  /* warm parchment — quoted content */
+  --c-ai-table-head:  #dcc0a0;  /* desert sand — column headers */
+  --c-ai-inline-code: #d4b898;  /* chai — code references */
+  --c-ai-code-label:  #a09888;  /* warm stone — decorative labels */
+  --c-ai-hr:          rgba(232, 190, 130, 0.20);  /* warm gold gradient */
+  --c-ai-warm-tint:   rgba(200, 150, 100, 0.06);  /* reusable warm bg */
+
+  /* User message bubble */
+  --c-bubble-user-bg:     var(--c-tint);
+  --c-bubble-user-shadow: rgba(139, 92, 246, 0.18);
+
+  /* Other message bubble (glass) */
+  --c-bubble-other-bg:     rgba(255, 255, 255, 0.05);
+
+  /* AI message bubble (warm parchment) */
+  --c-bubble-ai-bg:     rgba(238, 122, 19, 0.06);
+  --c-bubble-ai-border: rgba(238, 122, 19, 0.12);
+
+  /* ── Materials — glass layers with backdrop-filter ─────── */
+  --material-ultra-thin: rgba(30, 28, 26, 0.44);
+  --material-thin:       rgba(30, 28, 26, 0.55);
+  --material-regular:    rgba(30, 28, 26, 0.72);
+  --material-thick:      rgba(30, 28, 26, 0.85);
+  --material-chrome:     rgba(36, 34, 32, 0.92);
+
+  --blur-ultra-thin: 40px;
+  --blur-thin:       30px;
+  --blur-regular:    20px;
+  --blur-thick:      16px;
+  --blur-chrome:     12px;
+
+  /* ── Typography — Apple HIG-aligned scale ──────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', ui-monospace, monospace;
+
+  /* Type scale */
+  --text-title:    1.125rem;   /* 18px */
+  --text-headline: 0.9375rem;  /* 15px */
+  --text-body:     0.8125rem;  /* 13px — VS Code base */
+  --text-footnote: 0.75rem;    /* 12px */
+  --text-caption:  0.6875rem;  /* 11px */
+  --text-caption2: 0.625rem;   /* 10px */
+
+  /* Legacy aliases (backward compat) */
+  --text-xs:   var(--text-caption);
+  --text-sm:   var(--text-body);
+  --text-base: 0.875rem;
+  --text-lg:   1rem;
+  --text-xl:   var(--text-title);
+
+  /* Tracking — widens at small sizes (Apple optical correction) */
+  --tracking-title:    -0.015em;
+  --tracking-headline: -0.01em;
+  --tracking-body:      0;
+  --tracking-footnote:  0.01em;
+  --tracking-caption:   0.02em;
+  --tracking-caption2:  0.03em;
+
+  /* Leading — by context */
+  --leading-heading:  1.2;
+  --leading-body:     1.47;
+  --leading-long:     1.65;
+  --leading-compact:  1.3;
+
+  /* Legacy aliases */
+  --leading-tight:   var(--leading-compact);
+  --leading-normal:  var(--leading-body);
+  --leading-relaxed: var(--leading-long);
+
+  --weight-normal:   400;
+  --weight-medium:   500;
+  --weight-semibold: 600;
+  --weight-bold:     700;
+
+  /* ── Spacing Scale ──────────────────────────────────────── */
+  --space-0:  0;
+  --space-1:  0.25rem;   /* 4px */
+  --space-2:  0.5rem;    /* 8px */
+  --space-3:  0.75rem;   /* 12px */
+  --space-4:  1rem;      /* 16px */
+  --space-5:  1.25rem;   /* 20px */
+  --space-6:  1.5rem;    /* 24px */
+  --space-8:  2rem;      /* 32px */
+  --space-10: 2.5rem;    /* 40px */
+
+  /* ── Border Radius ──────────────────────────────────────── */
+  --radius-sm:   0.375rem;  /* 6px */
+  --radius-md:   0.5rem;    /* 8px */
+  --radius-lg:   0.75rem;   /* 12px */
+  --radius-xl:   1rem;      /* 16px */
+  --radius-2xl:  1.25rem;   /* 20px */
+  --radius-full: 9999px;
+
+  /* ── Shadows — Apple three-layer recipe ─────────────────── */
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-lg:  0 8px 28px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-xl:  0 16px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-glow-brand:  0 0 20px rgba(238, 122, 19, 0.15);
+  --shadow-glow-accent: 0 0 20px rgba(139, 92, 246, 0.15);
+
+  /* ── Motion — Spring Physics ────────────────────────────── */
+  --spring-snappy:  cubic-bezier(0.2, 0.8, 0.2, 1);
+  --spring-gentle:  cubic-bezier(0.34, 1.3, 0.64, 1);
+  --spring-bouncy:  cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Duration scale (enter > exit) */
+  --dur-micro:   100ms;
+  --dur-fast:    200ms;
+  --dur-medium:  350ms;
+  --dur-slow:    500ms;
+  --dur-exit:    200ms;
+
+  /* Legacy aliases */
+  --ease-out:     var(--spring-snappy);
+  --ease-in-out:  cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-spring:  var(--spring-bouncy);
+  --duration-fast:    var(--dur-fast);
+  --duration-normal:  var(--dur-fast);
+  --duration-slow:    var(--dur-medium);
+  --duration-enter:   var(--dur-slow);
+
+  /* ── Z-index Scale ──────────────────────────────────────── */
+  --z-base:     0;
+  --z-elevated: 10;
+  --z-sticky:   20;
+  --z-overlay:  30;
+  --z-modal:    40;
+  --z-toast:    50;
+}
+
+/* ============================================================
+   Base Styles
+   ============================================================ */
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  letter-spacing: var(--tracking-body);
+  color: var(--c-text-primary);
+  background-color: var(--c-bg-primary);
+  background-image:
+    radial-gradient(ellipse 60% 50% at 20% 0%, rgba(200, 120, 60, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 80% 10%, rgba(139, 92, 246, 0.06) 0%, transparent 55%),
+    radial-gradient(ellipse 40% 50% at 50% 100%, rgba(160, 100, 50, 0.04) 0%, transparent 60%);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+/* Dark select fix for VS Code WebView */
+select, select option {
+  color-scheme: dark;
+  background-color: #111827;
+  color: #e5e7eb;
+}
+
+/* ============================================================
+   Scrollbar — Apple macOS style
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-full);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* ============================================================
+   Animations — spring-based, purposeful
+   ============================================================ */
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* Message entry — translate only, no scale (Apple Messages) */
+@keyframes messageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Grouped message — tighter slide */
+@keyframes messageEnterGrouped {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Modal enter/exit — Apple sheet style */
+@keyframes modalEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalExit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+
+/* FAB appear — spring scale from center */
+@keyframes fabEnter {
+  from { opacity: 0; transform: scale(0.5); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+/* AI thinking — gentle breathe */
+@keyframes aiPulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.02); }
+}
+
+/* Streaming cursor blink */
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0; }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes typingDot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30%           { transform: translateY(-4px); opacity: 1; }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.6; }
+  50%      { transform: scale(1.05); opacity: 1; }
+}
+
+/* Utility animation classes */
+.animate-fade-in    { animation: fadeIn var(--dur-fast) var(--spring-snappy) both; }
+.animate-slide-up   { animation: slideUp var(--dur-slow) var(--spring-gentle) both; }
+.animate-slide-down { animation: slideDown var(--dur-fast) var(--spring-snappy) both; }
+.animate-scale-in   { animation: scaleIn var(--dur-medium) var(--spring-gentle) both; }
+.animate-message    { animation: messageEnter var(--dur-medium) var(--spring-gentle) both; }
+.animate-message-grouped { animation: messageEnterGrouped var(--dur-fast) var(--spring-snappy) both; }
+
+.animate-shimmer {
+  background: linear-gradient(110deg,
+    var(--c-bg-tertiary) 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    var(--c-bg-tertiary) 60%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+.animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+.animate-spin       { animation: spin 1s linear infinite; }
+.animate-breathe    { animation: breathe 3s ease-in-out infinite; }
+
+/* Staggered children animation */
+.stagger-children > * {
+  animation: slideUp var(--dur-slow) var(--spring-gentle) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+
+/* ============================================================
+   Code blocks — feel like native VS Code
+   ============================================================ */
+
+.code-block {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin: var(--space-2) 0;
+  border: 0.5px solid var(--c-border-subtle);
+  background: #1e1e1e;
+}
+
+.code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-3);
+  background: var(--c-ai-warm-tint);
+  border-bottom: 0.5px solid rgba(200, 150, 100, 0.10);
+  font-size: var(--text-caption);
+  color: var(--c-ai-code-label);
+  letter-spacing: var(--tracking-caption);
+  color: var(--c-text-tertiary);
+}
+
+.code-block pre {
+  margin: 0;
+  padding: var(--space-3);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: var(--leading-long);
+  -webkit-font-feature-settings: "liga" 0;
+}
+
+.code-block .copy-btn {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--c-border-subtle);
+  background: var(--c-bg-elevated);
+  color: var(--c-text-tertiary);
+  font-size: var(--text-caption);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-micro) var(--spring-snappy);
+}
+
+.code-block:hover .copy-btn {
+  opacity: 1;
+}
+
+.copy-btn:hover {
+  background: var(--c-bg-hover);
+  color: var(--c-text-primary);
+}
+
+.copy-btn.copied {
+  color: var(--c-success);
+  background: var(--c-success-bg);
+}
+
+/* ============================================================
+   Focus & interactive states — Apple-correct
+   ============================================================ */
+
+:focus-visible {
+  outline: 2px solid var(--c-tint);
+  outline-offset: 2px;
+  border-radius: inherit;
+}
+
+button, [role="button"] {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  transition:
+    background var(--dur-micro) var(--spring-snappy),
+    color var(--dur-micro) var(--spring-snappy),
+    transform var(--dur-micro) var(--spring-snappy),
+    box-shadow var(--dur-micro) var(--spring-snappy);
+}
+
+button:active {
+  transform: scale(0.95);
+}
+
+/* Icon buttons — consistent hover/press */
+.icon-btn {
+  border-radius: var(--radius-sm);
+  padding: 6px;
+}
+.icon-btn:hover {
+  background: var(--c-quaternary-fill);
+}
+.icon-btn:active {
+  transform: scale(0.92);
+  background: var(--c-tertiary-fill);
+}
+
+/* ============================================================
+   Typing indicator dots
+   ============================================================ */
+
+.typing-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  padding: 0 var(--space-1);
+}
+
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--c-text-tertiary);
+  animation: typingDot 1.4s ease-in-out infinite;
+}
+
+.typing-dots span:nth-child(2) { animation-delay: 0.2s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+/* ============================================================
+   Skeleton loader
+   ============================================================ */
+
+.skeleton {
+  background: linear-gradient(110deg,
+    var(--c-bg-tertiary) 0%,
+    rgba(255, 255, 255, 0.04) 40%,
+    var(--c-bg-tertiary) 60%
+  );
+  background-size: 250% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   Toast notification — bottom-left, stackable
+   ============================================================ */
+
+.toast-container {
+  position: fixed;
+  bottom: var(--space-4);
+  left: var(--space-4);
+  z-index: var(--z-toast);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.toast {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  pointer-events: auto;
+  background: var(--material-thick);
+  backdrop-filter: blur(var(--blur-thick));
+  border: 0.5px solid var(--c-border-default);
+  box-shadow: var(--shadow-md);
+  animation: slideUp var(--dur-slow) var(--spring-gentle) both;
+}
+
+.toast-success {
+  background: var(--c-success-bg);
+  color: var(--c-success);
+  border-color: rgba(48, 209, 88, 0.25);
+}
+
+.toast-error {
+  background: var(--c-error-bg);
+  color: var(--c-error);
+  border-color: rgba(255, 69, 58, 0.25);
+}
+
+/* ============================================================
+   Accessibility — reduced motion & high contrast
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .typing-dots span { animation: none; opacity: 0.6; }
+  .skeleton { animation: none; }
+  .animate-spin { animation: none; }
+}
+
+@media (prefers-contrast: more) {
+  :root {
+    --c-border-subtle:  rgba(255, 255, 255, 0.2);
+    --c-border-default: rgba(255, 255, 255, 0.3);
+    --c-border-strong:  rgba(255, 255, 255, 0.5);
+    --c-text-muted:     #78716c;
+  }
+}

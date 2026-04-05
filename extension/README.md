@@ -133,8 +133,10 @@ extension/
 │  │  ├─ languageDetector.ts             # Workspace language detection
 │  │  └─ conductorDb.ts                  # SQLite DB wrapper (.conductor/)
 │  └─ tests/                             # Node test runner tests
+├─ webview-ui/                            # React 18 WebView source (esbuild → media/webview.js)
 ├─ media/
-│  ├─ chat.html                          # WebView HTML — @AI slash commands (/ask /pr), AI Config modal
+│  ├─ webview.js                         # React WebView bundle (built from webview-ui/)
+│  ├─ webview.css                        # React WebView styles
 │  ├─ workflow.html                      # Workflow visualization WebView — SVG graph + agent details
 │  ├─ input.css
 │  └─ tailwind.css

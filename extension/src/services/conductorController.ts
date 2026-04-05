@@ -45,24 +45,20 @@ export class ConductorController {
     private readonly _fsm: ConductorStateMachine;
     private readonly _healthCheck: HealthCheckFn;
     private readonly _urlProvider: () => string;
-    private readonly _sessionResetFn: (() => string) | undefined;
 
     /**
      * @param fsm             - Externally owned state machine instance.
      * @param healthCheck     - Async function that checks backend reachability.
      * @param urlProvider     - Called each time the backend URL is needed.
-     * @param sessionResetFn  - Optional; called by `startHosting()` to generate a room ID.
      */
     constructor(
         fsm: ConductorStateMachine,
         healthCheck: HealthCheckFn,
         urlProvider: () => string,
-        sessionResetFn?: () => string,
     ) {
         this._fsm          = fsm;
         this._healthCheck  = healthCheck;
         this._urlProvider  = urlProvider;
-        this._sessionResetFn = sessionResetFn;
     }
 
     // -----------------------------------------------------------------------
@@ -135,15 +131,21 @@ export class ConductorController {
      *          no reset function was provided.
      * @throws {Error} When the FSM is not in ReadyToHost.
      */
-    startHosting(): string {
+    /**
+     * Transition to Hosting state. FSM-only — does NOT manage roomId.
+     *
+     * Caller must set roomId before calling this:
+     *   - New session:  sessionService.resetSession()  → new roomId
+     *   - Rejoin:       sessionService.setRoomId(old)  → old roomId
+     *
+     * @throws {Error} When the FSM is not in ReadyToHost.
+     */
+    startHosting(): void {
         const current = this._fsm.getState();
         if (current !== ConductorState.ReadyToHost) {
             throw new Error(`Cannot start hosting from state: ${current}`);
         }
-
-        const roomId = this._sessionResetFn ? this._sessionResetFn() : '';
         this._fsm.transition(ConductorEvent.START_HOSTING);
-        return roomId;
     }
 
     /**

@@ -16,6 +16,7 @@
 import type * as vscodeT from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { saveJira, loadJira, clearJira } from './credentialStore';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -85,6 +86,9 @@ export class JiraTokenStore {
             siteUrl,
         };
         await this._writeMeta(meta);
+
+        // Also save to unified credential store (~/.conductor/credentials/jira.json)
+        saveJira({ accessToken, refreshToken, expiresAt: meta.expiresAt, cloudId, siteUrl });
     }
 
     /**
@@ -101,7 +105,18 @@ export class JiraTokenStore {
             this._secrets.get(SECRET_KEY_REFRESH),
         ]);
 
-        if (!accessToken || !refreshToken) return null;
+        if (!accessToken || !refreshToken) {
+            // Fallback: try unified credential store
+            const unified = loadJira();
+            if (unified && unified.accessToken && unified.refreshToken) {
+                return {
+                    accessToken: unified.accessToken,
+                    refreshToken: unified.refreshToken,
+                    meta: { expiresAt: unified.expiresAt, cloudId: unified.cloudId, siteUrl: unified.siteUrl },
+                };
+            }
+            return null;
+        }
 
         // Check if access token is still valid (with margin)
         if (Date.now() < meta.expiresAt - REFRESH_MARGIN_MS) {
@@ -141,6 +156,8 @@ export class JiraTokenStore {
         } catch {
             // File may not exist
         }
+        // Also clear from unified credential store
+        clearJira();
     }
 
     // -----------------------------------------------------------------------
