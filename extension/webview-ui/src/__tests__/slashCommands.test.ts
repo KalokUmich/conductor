@@ -11,8 +11,8 @@ import {
 // ============================================================
 
 describe("SLASH_COMMANDS", () => {
-  it("has 3 commands defined", () => {
-    expect(SLASH_COMMANDS).toHaveLength(3);
+  it("has 6 commands defined", () => {
+    expect(SLASH_COMMANDS).toHaveLength(6);
   });
 
   it("all commands start with /", () => {
@@ -21,8 +21,8 @@ describe("SLASH_COMMANDS", () => {
     });
   });
 
-  it("all commands have isAI set to true", () => {
-    SLASH_COMMANDS.forEach((cmd) => {
+  it("all AI commands have isAI set to true", () => {
+    SLASH_COMMANDS.filter(c => c.name !== "/help").forEach((cmd) => {
       expect(cmd.isAI).toBe(true);
     });
   });
@@ -53,9 +53,9 @@ describe("matchSlashCommands", () => {
     expect(matches[0].name).toBe("/pr");
   });
 
-  it("matches / to all commands", () => {
+  it("matches / to all slash commands", () => {
     const matches = matchSlashCommands("/");
-    expect(matches).toHaveLength(3);
+    expect(matches).toHaveLength(6);
   });
 
   it("returns empty after space (command already completed)", () => {

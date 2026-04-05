@@ -48,7 +48,7 @@ export function ChatTab() {
       <ScanningOverlay />
 
       {/* Message area */}
-      <div ref={scrollContainerRef} className="chat-messages-area" onScroll={handleScroll}>
+      <div ref={scrollContainerRef} className="chat-messages-area" onScroll={handleScroll} role="log" aria-live="polite" aria-label="Chat messages">
         {/* Empty state */}
         {state.messages.length === 0 && !state.isAIThinking && (
           <div className="chat-empty">

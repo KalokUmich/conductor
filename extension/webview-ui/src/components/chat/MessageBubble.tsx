@@ -158,6 +158,30 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
     });
   }, [send, sessionState.session?.roomId, message.summary]);
 
+  const [showSteps, setShowSteps] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const thinkingSteps = message.thinkingSteps || [];
+  const toolSteps = thinkingSteps.filter(
+    (s: { kind?: string }) => s.kind === "tool_call" || s.kind === "tool_result"
+  );
+  const toolCount = toolSteps.length;
+  const fileCount = new Set(
+    thinkingSteps
+      .filter((s: { kind?: string; tool?: string }) => s.kind === "tool_result" && s.tool === "read_file")
+      .map((s: { params?: { path?: string } }) => s.params?.path)
+      .filter(Boolean)
+  ).size;
+
+  // Extract first meaningful line as collapse summary
+  const summaryLine = useMemo(() => {
+    const lines = content.split("\n").filter(l => l.trim() && !l.startsWith("#") && !l.startsWith("---") && !l.startsWith("```"));
+    const first = lines[0] || "";
+    return first.length > 80 ? first.slice(0, 80) + "..." : first;
+  }, [content]);
+
+  // Auto-collapse long messages (>15 lines)
+  const isLong = content.split("\n").length > 15;
+
   return (
     <div className={`message-row message-other ${isGrouped ? "message-grouped" : ""}`}>
       <Avatar name="AI" colorIndex={-1} hidden={isGrouped} isAI />
@@ -166,7 +190,43 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
           <MessageHeader name="Brain" role="ai" />
         )}
         <div className="message-bubble bubble-ai">
-          <AIContent content={content} />
+          {/* Collapse bar for long AI messages */}
+          {isLong && (
+            <button className="ai-collapse-bar" onClick={() => setCollapsed(!collapsed)}>
+              <span className={`ai-collapse-chevron ${collapsed ? "" : "expanded"}`}>▸</span>
+              <span className="ai-collapse-summary">
+                {collapsed ? summaryLine : (message.type === "ai_summary" ? "Summary" : "AI Response")}
+              </span>
+            </button>
+          )}
+          {!collapsed && <AIContent content={content} />}
+          {/* Investigation steps disclosure (post-completion) */}
+          {toolCount > 0 && (
+            <div className="investigation-disclosure">
+              <button
+                className="investigation-toggle"
+                onClick={() => setShowSteps(!showSteps)}
+                aria-expanded={showSteps}
+              >
+                <span className="investigation-chevron">{showSteps ? "▾" : "▸"}</span>
+                {fileCount > 0
+                  ? `Investigated ${fileCount} file${fileCount > 1 ? "s" : ""} with ${toolCount} tool${toolCount > 1 ? "s" : ""}`
+                  : `Used ${toolCount} tool${toolCount > 1 ? "s" : ""}`}
+              </button>
+              {showSteps && (
+                <div className="investigation-steps">
+                  {thinkingSteps
+                    .filter((s: { kind?: string }) => s.kind === "tool_call")
+                    .map((step: { tool?: string; summary?: string; success?: boolean }, i: number) => (
+                      <div key={i} className={`investigation-step ${step.success === false ? "step-fail" : "step-ok"}`}>
+                        <span className="step-icon">{step.success === false ? "✗" : "✓"}</span>
+                        <span className="step-text">{step.summary || step.tool || "tool"}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </div>
+          )}
           {/* AI message actions: copy + code prompt */}
           <div className="ai-message-actions">
             <button
@@ -223,36 +283,56 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
   );
 }
 
-/** Render AI content with markdown-like formatting + mermaid */
+/** Render AI content with markdown-like formatting + mermaid + file nav */
 function AIContent({ content }: { content: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [lightboxSvg, setLightboxSvg] = useState<string | null>(null);
+  const { send } = useVSCode();
 
   // Split by code blocks
   const parts = content.split(/(```[\s\S]*?```)/g);
 
-  // After render, try to render mermaid diagrams + add click-to-zoom
+  // After render: mermaid diagrams + file-ref click handlers
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || !window.mermaid) return;
-    const mermaidEls = el.querySelectorAll<HTMLElement>(".mermaid-source");
-    let counter = 0;
-    mermaidEls.forEach(async (mel) => {
-      if (mel.dataset.rendered === "true") return;
-      const code = mel.textContent || "";
-      const id = `mermaid-ai-${Date.now()}-${counter++}`;
-      try {
-        const { svg } = await window.mermaid!.render(id, code);
-        mel.innerHTML = svg;
-        mel.dataset.rendered = "true";
-        mel.classList.add("mermaid-clickable");
-        mel.title = "Click to zoom";
-        mel.addEventListener("click", () => setLightboxSvg(mel.innerHTML));
-      } catch {
-        // keep raw source
+    if (!el) return;
+
+    // Mermaid rendering
+    if (window.mermaid) {
+      const mermaidEls = el.querySelectorAll<HTMLElement>(".mermaid-source");
+      let counter = 0;
+      mermaidEls.forEach(async (mel) => {
+        if (mel.dataset.rendered === "true") return;
+        const code = mel.textContent || "";
+        const id = `mermaid-ai-${Date.now()}-${counter++}`;
+        try {
+          const { svg } = await window.mermaid!.render(id, code);
+          mel.innerHTML = svg;
+          mel.dataset.rendered = "true";
+          mel.classList.add("mermaid-clickable");
+          mel.title = "Click to zoom";
+          mel.addEventListener("click", () => setLightboxSvg(mel.innerHTML));
+        } catch {
+          // keep raw source
+        }
+      });
+    }
+
+    // File reference click handlers
+    const fileRefs = el.querySelectorAll<HTMLButtonElement>(".file-ref");
+    const handleFileRefClick = (e: Event) => {
+      const btn = e.currentTarget as HTMLButtonElement;
+      const path = btn.dataset.path;
+      const line = parseInt(btn.dataset.line || "1", 10);
+      if (path) {
+        send({ command: "navigateToCode", relativePath: path, startLine: line, endLine: line });
       }
-    });
-  }, [content]);
+    };
+    fileRefs.forEach(ref => ref.addEventListener("click", handleFileRefClick));
+    return () => {
+      fileRefs.forEach(ref => ref.removeEventListener("click", handleFileRefClick));
+    };
+  }, [content, send]);
 
   return (
     <div className="ai-content" ref={containerRef}>
@@ -291,13 +371,101 @@ function AIContent({ content }: { content: string }) {
 
 
 
-/** Simple markdown → HTML renderer (bold, italic, inline code, links) */
+/** Markdown → HTML renderer (headers, bold, italic, inline code, lists, blockquotes, tables, links, hr) */
 export function renderMarkdown(text: string): string {
-  return escapeHtml(text)
-    .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.*?)\*/g, "<em>$1</em>")
-    .replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>')
-    .replace(/\n/g, "<br />");
+  let html = escapeHtml(text);
+
+  // Strip blank lines to single \n before block-level matching.
+  // This prevents \n* greediness issues between adjacent headers.
+  html = html.replace(/\n{2,}/g, "\n");
+
+  // Horizontal rule
+  html = html.replace(/^ {0,3}---$/gm, '<hr class="md-hr" />');
+
+  // Headers — process ### before ## before # (greedy order)
+  // Strip **bold** wrapping inside headers (headers are already bold by CSS)
+  const stripBold = (s: string) => s.replace(/^\*\*(.*)\*\*$/, "$1").replace(/\*\*(.*?)\*\*/g, "$1");
+  html = html.replace(/^ {0,3}###\s+(.+)$/gm, (_, t) => `<h3 class="md-h3">${stripBold(t)}</h3>`);
+  html = html.replace(/^ {0,3}##\s+(.+)$/gm, (_, t) => `<h2 class="md-h2">${stripBold(t)}</h2>`);
+  html = html.replace(/^ {0,3}#\s+(.+)$/gm, (_, t) => `<h1 class="md-h1">${stripBold(t)}</h1>`);
+
+  // Blockquotes: > text
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote class="md-blockquote">$1</blockquote>');
+
+  // Tables: | col | col | with header separator |---|---|
+  html = html.replace(/(?:^\|.+\|$\n?)+/gm, (match) => {
+    const rows = match.trim().split("\n").filter(r => r.trim());
+    if (rows.length < 2) return match;
+    // Check for separator row: every cell contains only dashes, colons, spaces
+    const isSepRow = (r: string) => {
+      const cells = r.split("|").filter((_, i, a) => i > 0 && i < a.length - 1);
+      return cells.length > 0 && cells.every(c => /^[\s:-]+$/.test(c));
+    };
+    const sepIdx = rows.findIndex(isSepRow);
+    if (sepIdx < 0) return match;
+    const headerRows = rows.slice(0, sepIdx);
+    const bodyRows = rows.slice(sepIdx + 1);
+    const parseCells = (row: string) =>
+      row.split("|").filter((_, i, a) => i > 0 && i < a.length - 1).map(c => c.trim());
+
+    let table = '<table>';
+    if (headerRows.length > 0) {
+      table += '<thead>';
+      for (const hr of headerRows) {
+        table += '<tr>' + parseCells(hr).map(c => `<th>${c}</th>`).join("") + '</tr>';
+      }
+      table += '</thead>';
+    }
+    if (bodyRows.length > 0) {
+      table += '<tbody>';
+      for (const br of bodyRows) {
+        table += '<tr>' + parseCells(br).map(c => `<td>${c}</td>`).join("") + '</tr>';
+      }
+      table += '</tbody>';
+    }
+    table += '</table>';
+    return table;
+  });
+
+  // Unordered lists: - item (consecutive lines)
+  html = html.replace(/(?:^- (.+)$\n?)+/gm, (match) => {
+    const items = match.trim().split("\n").map(line => {
+      const content = line.replace(/^- /, "");
+      return `<li>${content}</li>`;
+    }).join("");
+    return `<ul class="md-ul">${items}</ul>`;
+  });
+
+  // Ordered lists: 1. item (consecutive lines)
+  html = html.replace(/(?:^\d+\. (.+)$\n?)+/gm, (match) => {
+    const items = match.trim().split("\n").map(line => {
+      const content = line.replace(/^\d+\. /, "");
+      return `<li>${content}</li>`;
+    }).join("");
+    return `<ol class="md-ol">${items}</ol>`;
+  });
+
+  // Bold, italic, inline code
+  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
+  html = html.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+
+  // File path auto-linking: src/path/file.ts:42 → clickable reference
+  html = html.replace(
+    /(?<!["\w/])([a-zA-Z0-9_][a-zA-Z0-9_/.-]+\.[a-zA-Z]{1,5}):(\d+)/g,
+    '<button class="file-ref" data-path="$1" data-line="$2">$1:$2</button>'
+  );
+
+  // Newlines → <br />
+  html = html.replace(/\n/g, "<br />");
+
+  // Clean up: remove <br /> immediately before/after block elements
+  html = html.replace(/(<br \/>)+(<(?:h[1-3]|hr|ul|ol|table|blockquote))/g, "$2");
+  html = html.replace(/(<\/(?:h[1-3]|ul|ol|table|blockquote)>)(<br \/>)+/g, "$1");
+  html = html.replace(/(<hr class="md-hr" \/>)(<br \/>)+/g, "$1");
+  html = html.replace(/(<br \/>)+(<hr class="md-hr" \/>)/g, "$2");
+
+  return html;
 }
 
 // ── Code Snippet Message ──────────────────────────────────
@@ -633,13 +801,14 @@ function Avatar({
     return (
       <div className="avatar avatar-ai">
         <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
-          <path
-            d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
+          {/* Robot face — cute AI avatar */}
+          <rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="9" cy="14" r="1.5" fill="currentColor" />
+          <circle cx="15" cy="14" r="1.5" fill="currentColor" />
+          <path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M2 13h2M20 13h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </div>
     );

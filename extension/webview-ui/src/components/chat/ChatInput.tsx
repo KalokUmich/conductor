@@ -23,13 +23,15 @@ import type { SlashCommand } from "../../utils/slashCommands";
 /** Rotating help tips shown as placeholder text. Add/remove freely. */
 const HELP_TIPS: string[] = [
   "Message, /ask, /pr, /jira, or @AI...",
+  "Try: /ask what does this function do?",
+  "Try: /pr review my latest changes",
+  "Try: /jira create a bug ticket",
   "Try: @AI explain this codebase",
-  "Try: @AI /ask what does this function do?",
-  "Try: @AI /pr review my latest changes",
-  "Try: @AI /jira create a bug ticket",
-  "Tip: Attach code with the </> button, then @AI",
+  "Try: /summary summarize our decisions",
+  "Tip: Attach code with </>, then /ask or @AI",
   "Tip: Shift+Enter for multi-line messages",
   "Tip: Paste a stack trace with the \u26A0 button",
+  "Tip: Cmd+K to open command palette",
 ];
 
 /** Cycle interval in milliseconds (2 minutes). */

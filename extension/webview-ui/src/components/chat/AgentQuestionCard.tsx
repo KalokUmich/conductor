@@ -30,7 +30,7 @@ export function AgentQuestionCard({ question }: Props) {
   if (submitted) {
     return (
       <div className="agent-question-card submitted animate-fade-in">
-        <div className="aq-avatar">?</div>
+        <div className="aq-avatar"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5"/><circle cx="9" cy="14" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5"/></svg></div>
         <div className="aq-summary">
           <div className="aq-summary-q">Q: {question.question}</div>
           <div className="aq-summary-a">A: {submittedAnswer || "(skipped)"}</div>
@@ -41,7 +41,7 @@ export function AgentQuestionCard({ question }: Props) {
 
   return (
     <div className="agent-question-card animate-slide-up">
-      <div className="aq-avatar">?</div>
+      <div className="aq-avatar"><svg viewBox="0 0 24 24" fill="none" width="14" height="14"><rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5"/><circle cx="9" cy="14" r="1.5" fill="currentColor"/><circle cx="15" cy="14" r="1.5" fill="currentColor"/><path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5"/></svg></div>
       <div className="aq-content">
         <div className="aq-label">AI needs your input</div>
         <div className="aq-question">{question.question}</div>

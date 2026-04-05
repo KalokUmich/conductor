@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useSession } from "../contexts/SessionContext";
 import { ChatProvider } from "../contexts/ChatContext";
 import { ChatTab } from "./chat/ChatTab";
@@ -6,6 +6,7 @@ import { TasksTab } from "./tasks/TasksTab";
 import { StatePanels } from "./panels/StatePanels";
 import { ChatHeader } from "./chat/ChatHeader";
 import { UsersSidebar } from "./chat/UsersSidebar";
+import { useContainerWidth } from "../hooks/useContainerWidth";
 import type { ConductorState } from "../types/messages";
 
 type TabId = "chat" | "tasks";
@@ -16,6 +17,8 @@ export function App() {
   const { state } = useSession();
   const [activeTab, setActiveTab] = useState<TabId>("chat");
   const [showUsers, setShowUsers] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const widthBreakpoint = useContainerWidth(shellRef);
 
   const isActive = ACTIVE_STATES.includes(state.conductorState);
 
@@ -25,7 +28,7 @@ export function App() {
 
   return (
     <ChatProvider>
-      <div className="app-shell">
+      <div ref={shellRef} className={`app-shell app-${widthBreakpoint}`}>
         <ChatHeader showUsers={showUsers} onToggleUsers={() => setShowUsers(!showUsers)} />
 
         <TabBar activeTab={activeTab} onTabChange={setActiveTab} />

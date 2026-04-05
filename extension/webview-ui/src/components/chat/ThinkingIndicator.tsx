@@ -28,16 +28,17 @@ export const ThinkingIndicator = memo(function ThinkingIndicator({
   const agentEntries = Object.entries(deferredTree.agents);
 
   return (
-    <div className="thinking-indicator animate-slide-up">
-      {/* AI Avatar */}
+    <div className="thinking-indicator animate-slide-up" role="status" aria-label={`AI is working: ${deferredAction}`}>
+      {/* AI Robot Avatar */}
       <div className="thinking-avatar">
-        <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none">
-          <circle opacity="0.25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-          <path
-            opacity="0.75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="thinking-robot">
+          <rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5" />
+          <circle cx="9" cy="14" r="1.5" fill="currentColor" className="robot-eye-left" />
+          <circle cx="15" cy="14" r="1.5" fill="currentColor" className="robot-eye-right" />
+          <path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5" className="robot-antenna" />
+          <path d="M2 13h2M20 13h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
       </div>
 

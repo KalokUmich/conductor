@@ -79,9 +79,64 @@ The WebView is a React 18 SPA built with esbuild (`npm run compile:webview`). Ke
 - **Message rendering**: `MessageBubble.tsx` dispatches by `msg.type` (`text`, `code_snippet`, `ai_answer`, `file`, `stack_trace`, `test_failures`, `system`, etc.)
 - **Syntax highlighting**: `CodeBlock.tsx` uses bundled Highlight.js (`highlight.min.js` + `github-dark.min.css`)
 - **Mermaid diagrams**: `AIContent` renders `.mermaid-source` elements; click opens `DiagramLightbox` (fullscreen zoom). Falls back to raw source on parse error.
+- **Markdown rendering**: `renderMarkdown()` in `MessageBubble.tsx` — headers, bold/italic, lists, blockquotes, inline code, horizontal rules, file path auto-linking (`src/file.ts:42` → clickable)
 - **State management**: `ChatContext` (messages + AI state), `SessionContext` (FSM + permissions + SSO), `VSCodeContext` (postMessage bridge)
 - **WebSocket**: `useWebSocket.ts` — full lifecycle (connect → auth → history → join → messages → reconnect)
 - **Typed commands**: `commands.ts` defines `IncomingCommand` / `OutgoingCommand` union types for the postMessage contract
+- **Responsive layout**: `useContainerWidth` hook (ResizeObserver → `app-narrow/default/wide` CSS class)
+- **Command palette**: `CommandPalette.tsx` — Cmd+K fuzzy search across all commands
+- **Connection status**: `ConnectionStatus.tsx` — thin strip (connected/reconnecting/disconnected)
+- **Command system**: `slashCommands.ts` — `/` actions, `@` agent scopes, `#` context injection
+
+## 美学 Design Principles
+
+Identity: **"Warm Intelligence"** — three pillars guiding all UI/UX decisions:
+
+### Pillar 1: Material Quality (视觉质感)
+- Glass materials with `backdrop-filter: blur()` on header, modals, slash menu, FABs
+- 5 material layers: `--material-ultra-thin` through `--material-chrome`
+- 0.5px Retina-ready borders (not 1px)
+- Apple three-layer shadow recipe (inline + diffuse + ground)
+- Elevation system: higher z-index = lighter surface in dark mode
+
+### Pillar 2: Kinetic Harmony (动态和谐)
+- Spring physics for all motion: `--spring-snappy`, `--spring-gentle`, `--spring-bouncy`
+- Duration: enter (350-500ms) > exit (200ms) — new content needs registration time
+- Message animation: `translateY` only (no scale — avoids "popping")
+- All animations interruptible, respect `prefers-reduced-motion`
+
+### Pillar 3: Flow State Protection (心流保护)
+- Notifications follow severity hierarchy (status bar → inline → toast → modal)
+- Keyboard shortcuts for every action; `Cmd+K` command palette
+- AI thinking uses `useDeferredValue` — input never blocks during streaming
+- Progressive disclosure: investigation steps collapsed by default, expandable
+
+### Three-Channel Aesthetics (三通道美学)
+- **Human → AI**: Intuitive input (slash commands, @mentions, #context injection)
+- **AI → Human**: Zero cognitive burden (formatted responses, scannable tool logs)
+- **AI ↔ AI**: Max signal per token (labeled text > JSON for inter-agent communication)
+
+### AI Response Color Hierarchy (暖色层次)
+Warm analogous scheme + two cool departures. Sources: Material Design 3, Catppuccin Mocha, Charmbracelet Glamour.
+- **h1**: `#e8be82` warm gold — section anchors visible from scroll distance
+- **h2**: `#d4a080` dusty copper — subsection, self-tinted underline
+- **h3**: `#a8b8a0` muted sage — cool departure for lowest heading
+- **bold**: `#f0e6d8` warm ivory — subtle emphasis over neutral body text
+- **italic**: `#b8a8c8` soft lavender — cool departure, bridges to violet accent
+- **inline code**: `#d4b898` chai — warm pill with tinted border
+- **table headers**: `#dcc0a0` desert sand — column anchors
+- **blockquote**: `#c8b8a0` warm parchment — copper border at 45% opacity
+- **HR divider**: warm gold gradient fading at edges
+- **body text**: `#f5f5f7` unchanged — neutral canvas lets warm accents pop
+
+### Key Design Decisions
+- **One accent color**: Violet (`--c-tint: #8b5cf6`) for all interactive elements
+- **iMessage bubble DNA**: Flat own (violet), glass other (no border), warm AI (parchment)
+- **Robot avatar**: Cute robot face for AI messages (antenna pulse + eye blink animation)
+- **Apple sheet modals**: Blurred overlay, scale+translate enter, fast exit
+- **Linear-style Kanban**: Flat rows with 2px status border (no bordered cards)
+- **Responsive**: `useContainerWidth` hook (narrow <350px, default, wide >500px)
+- **Markdown tables**: Pipe-delimited table parsing with warm desert sand headers
 
 ## Tool Parity Testing
 

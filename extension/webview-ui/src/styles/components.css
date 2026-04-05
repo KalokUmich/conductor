@@ -27,27 +27,30 @@
   align-items: center;
   gap: var(--space-1);
   padding: 0 var(--space-3);
-  height: 36px;
-  background: var(--c-bg-secondary);
-  border-bottom: 1px solid var(--c-border-subtle);
+  height: 40px;
+  background: var(--material-chrome);
+  backdrop-filter: saturate(180%) blur(var(--blur-chrome));
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-chrome));
+  border-bottom: 0.5px solid var(--c-separator);
   flex-shrink: 0;
 }
 
 .tab-button {
   position: relative;
   padding: var(--space-2) var(--space-3);
-  font-size: var(--text-sm);
+  font-size: var(--text-body);
   font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-body);
   color: var(--c-text-tertiary);
   transition:
-    color var(--duration-fast) var(--ease-out),
-    background var(--duration-fast) var(--ease-out);
+    color var(--dur-micro) var(--spring-snappy),
+    background var(--dur-micro) var(--spring-snappy);
   border-radius: var(--radius-sm);
 }
 
 .tab-button:hover {
   color: var(--c-text-secondary);
-  background: var(--c-bg-hover);
+  background: var(--c-quaternary-fill);
 }
 
 .tab-active {
@@ -115,11 +118,12 @@
   display: flex;
   gap: var(--space-2);
   margin-top: var(--space-3);
-  animation: messageEnter var(--duration-enter) var(--ease-spring) both;
+  animation: messageEnter var(--dur-medium) var(--spring-gentle) both;
 }
 
 .message-grouped {
-  margin-top: var(--space-1);
+  margin-top: 2px;
+  animation: messageEnterGrouped var(--dur-fast) var(--spring-snappy) both;
 }
 
 .message-own {
@@ -163,37 +167,48 @@
 
 /* ── Message Bubble ────────────────────────────────────── */
 
+/* Message bubble — iMessage-inspired radius: 18px with 4px tail corner */
 .message-bubble {
-  padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-xl);
+  padding: 8px 12px;
+  border-radius: 18px;
   overflow: hidden;
   word-break: break-word;
 }
 
+/* Own bubble — solid tint fill (iMessage: no gradient, no border) */
 .bubble-own {
-  background: linear-gradient(135deg, var(--c-bubble-user-from), var(--c-bubble-user-to));
+  background: var(--c-bubble-user-bg);
   color: white;
-  border-bottom-right-radius: var(--radius-sm);
-  box-shadow: 0 2px 12px var(--c-bubble-user-shadow);
+  border-bottom-right-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
 }
 
+/* Other bubble — glass material (no border, iMessage style) */
 .bubble-other {
   background: var(--c-bubble-other-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
   color: var(--c-text-primary);
-  border: 1px solid var(--c-bubble-other-border);
-  border-bottom-left-radius: var(--radius-sm);
+  border-bottom-left-radius: 4px;
 }
 
+/* AI bubble — warm parchment with subtle gradient depth */
 .bubble-ai {
-  background: rgba(238, 122, 19, 0.06);
-  border: 1px solid rgba(238, 122, 19, 0.12);
-  border-bottom-left-radius: var(--radius-sm);
+  background: linear-gradient(135deg, var(--c-bubble-ai-bg), rgba(238, 122, 19, 0.03));
+  border: 0.5px solid var(--c-bubble-ai-border);
+  border-bottom-left-radius: 4px;
   color: var(--c-text-primary);
+}
+
+/* AI bubble — full width for richer content */
+.bubble-ai .message-content-wrapper,
+.message-row:has(.bubble-ai) .message-content-wrapper {
+  max-width: calc(100% - 40px);
 }
 
 .bubble-code {
   background: var(--c-bg-tertiary);
-  border: 1px solid var(--c-border-subtle);
+  border: 0.5px solid var(--c-border-subtle);
   border-radius: var(--radius-lg);
   padding: 0;
   overflow: hidden;
@@ -204,10 +219,10 @@
   align-items: center;
   gap: var(--space-3);
   background: var(--c-bg-tertiary);
-  border: 1px solid var(--c-border-subtle);
+  border: 0.5px solid var(--c-border-subtle);
   border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out);
+  transition: background var(--dur-micro) var(--spring-snappy);
 }
 
 .bubble-file:hover {
@@ -215,16 +230,16 @@
 }
 
 .bubble-test-fail {
-  background: rgba(234, 88, 12, 0.06);
-  border: 1px solid rgba(234, 88, 12, 0.15);
+  background: rgba(255, 69, 58, 0.06);
+  border: 0.5px solid rgba(255, 69, 58, 0.15);
   border-radius: var(--radius-lg);
   padding: 0;
   overflow: hidden;
 }
 
 .bubble-stack-trace {
-  background: rgba(239, 68, 68, 0.06);
-  border: 1px solid rgba(239, 68, 68, 0.15);
+  background: rgba(255, 69, 58, 0.06);
+  border: 0.5px solid rgba(255, 69, 58, 0.15);
   border-radius: var(--radius-lg);
   padding: 0;
   overflow: hidden;
@@ -233,30 +248,66 @@
 /* ── Message Text ──────────────────────────────────────── */
 
 .message-text {
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);
+  letter-spacing: var(--tracking-body);
   white-space: pre-wrap;
 }
 
 .ai-text {
-  font-size: var(--text-sm);
-  line-height: var(--leading-relaxed);
+  font-size: var(--text-body);
+  line-height: var(--leading-body);  /* 1.47 not 1.65 — tighter for compact feel */
+  letter-spacing: var(--tracking-body);
 }
 
+/* Code blocks inside AI messages — tighter margins */
+.ai-content .code-block {
+  margin: 3px 0;
+}
+
+/* Tables inside AI messages — warm desert sand headers */
+.ai-text table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-caption);
+  margin: 3px 0;
+  display: block;
+  overflow-x: auto;
+}
+.ai-text th, .ai-text td {
+  padding: 2px 6px;
+  border: 0.5px solid var(--c-border-subtle);
+  text-align: left;
+  line-height: var(--leading-compact);
+}
+.ai-text th {
+  font-weight: var(--weight-semibold);
+  color: var(--c-ai-table-head);
+  background: rgba(220, 192, 160, 0.08);
+}
+.ai-text tr:nth-child(even) {
+  background: rgba(200, 150, 100, 0.04);
+}
+
+/* Bold — warm ivory for subtle emphasis */
 .ai-text strong {
   font-weight: var(--weight-semibold);
-  color: var(--c-brand-300);
+  color: var(--c-ai-bold);
 }
 
+/* Italic — soft lavender, cool departure */
 .ai-text em {
   font-style: italic;
-  color: var(--c-text-secondary);
+  color: var(--c-ai-italic);
 }
 
+/* Inline code — chai with warm tinted pill */
 .inline-code {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(200, 150, 100, 0.10);
+  color: var(--c-ai-inline-code);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
+  border: 0.5px solid rgba(200, 150, 100, 0.12);
   font-family: var(--font-mono);
   font-size: 0.8em;
 }
@@ -264,7 +315,220 @@
 .ai-content {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: 3px;  /* compact: reduce空旷感 */
+}
+
+/* ── AI message collapse/expand ──────────────────────── */
+
+.ai-collapse-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-caption);
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+  padding: 2px 0;
+  margin-bottom: 2px;
+  background: none !important;
+  transform: none !important;
+  width: 100%;
+  text-align: left;
+}
+
+.ai-collapse-bar:hover {
+  color: var(--c-text-secondary);
+}
+
+.ai-collapse-chevron {
+  font-size: 0.65em;
+  width: 10px;
+  transition: transform var(--dur-micro) var(--spring-snappy);
+}
+
+.ai-collapse-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.ai-collapse-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* ── Markdown elements in AI responses (compact) ─────── */
+
+/* h1: warm gold — section anchor point */
+.md-h1 {
+  font-size: var(--text-headline);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-headline);
+  color: var(--c-ai-h1);
+  margin-top: 10px;
+  margin-bottom: 3px;
+  padding-bottom: 3px;
+  border-bottom: 0.5px solid rgba(232, 190, 130, 0.25);
+}
+.md-h1:first-child { margin-top: 0; }
+
+/* h2: dusty copper — subsection with self-tinted underline */
+.md-h2 {
+  font-size: var(--text-footnote);
+  font-weight: var(--weight-bold);
+  letter-spacing: var(--tracking-footnote);
+  color: var(--c-ai-h2);
+  margin-top: 8px;
+  margin-bottom: 2px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(212, 160, 128, 0.20);
+}
+
+/* h3: muted sage — cool departure, lowest heading level */
+.md-h3 {
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
+  color: var(--c-ai-h3);
+  margin-top: 6px;
+  margin-bottom: 1px;
+}
+
+/* Section divider — warm gradient line, fades at edges */
+.md-hr {
+  border: none;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--c-ai-hr) 20%,
+    var(--c-ai-hr) 80%,
+    transparent
+  );
+  margin: 4px 10px 12px 10px;
+}
+
+/* Blockquote — warm parchment with copper border */
+.md-blockquote {
+  border-left: 2px solid rgba(212, 160, 128, 0.45);
+  padding: 1px var(--space-2);
+  margin: 2px 0;
+  color: var(--c-ai-blockquote);
+  background: rgba(200, 150, 100, 0.05);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.md-ul, .md-ol {
+  padding-left: var(--space-4);
+  margin: 1px 0;
+}
+
+.md-ul li, .md-ol li {
+  margin-bottom: 0;
+  line-height: var(--leading-body);
+}
+
+.md-ul li::marker {
+  color: var(--c-brand-400);
+}
+
+.md-ol li::marker {
+  color: var(--c-brand-400);
+}
+
+/* File path reference links in AI text */
+.file-ref {
+  color: var(--c-tint-prominent) !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(167, 139, 250, 0.3);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 0;
+  background: none !important;
+  border: none !important;
+  transform: none !important;
+}
+
+.file-ref:hover {
+  text-decoration-color: var(--c-tint-prominent);
+}
+
+/* ── Investigation Steps Disclosure ──────────────────── */
+
+.investigation-disclosure {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 0.5px solid var(--c-border-subtle);
+}
+
+.investigation-toggle {
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-caption);
+  color: var(--c-text-tertiary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) 0;
+  background: none !important;
+  transform: none !important;
+}
+
+.investigation-toggle:hover {
+  color: var(--c-text-secondary);
+}
+
+.investigation-chevron {
+  font-size: 0.7em;
+  width: 12px;
+  text-align: center;
+}
+
+.investigation-steps {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.investigation-step {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-caption);
+  color: var(--c-text-tertiary);
+  padding: 2px 0;
+}
+
+.step-icon {
+  flex-shrink: 0;
+  width: 14px;
+  text-align: center;
+}
+
+.step-ok .step-icon { color: var(--c-success); }
+.step-fail .step-icon { color: var(--c-error); }
+
+.step-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Streaming cursor ────────────────────────────────── */
+
+.ai-streaming::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  background: var(--c-brand-400);
+  margin-left: 2px;
+  animation: cursorBlink 1s step-end infinite;
+  vertical-align: text-bottom;
 }
 
 /* ── Message Header ────────────────────────────────────── */
@@ -552,7 +816,7 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--c-ai-thinking), #3b82f6aa);
+  background: linear-gradient(135deg, var(--c-brand-600), var(--c-brand-400));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -561,13 +825,35 @@
   margin-top: 2px;
 }
 
+/* Robot thinking animation — antenna pulses, eyes blink */
+.thinking-robot .robot-antenna {
+  animation: antennaPulse 1.5s ease-in-out infinite;
+}
+.thinking-robot .robot-eye-left,
+.thinking-robot .robot-eye-right {
+  animation: robotBlink 3s ease-in-out infinite;
+}
+.thinking-robot .robot-eye-right {
+  animation-delay: 0.15s;
+}
+
+@keyframes antennaPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes robotBlink {
+  0%, 42%, 46%, 100% { transform: scaleY(1); }
+  44% { transform: scaleY(0.1); }
+}
+
 .thinking-content {
   max-width: 85%;
   min-width: 0;
   background: var(--c-ai-brain);
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(59, 130, 246, 0.12);
+  border: 0.5px solid rgba(238, 122, 19, 0.15);
   padding: var(--space-2) var(--space-3);
+  animation: aiPulse 2.5s ease-in-out infinite;
 }
 
 .thinking-header {
@@ -577,13 +863,14 @@
 }
 
 .thinking-label {
-  font-size: var(--text-xs);
+  font-size: var(--text-caption);
   font-weight: var(--weight-semibold);
-  color: #93bbfd;
+  letter-spacing: var(--tracking-caption);
+  color: var(--c-brand-300);
 }
 
 .thinking-agent-count {
-  font-size: 0.55rem;
+  font-size: var(--text-caption2);
   color: var(--c-text-muted);
 }
 
@@ -592,8 +879,8 @@
   width: 20px;
   height: 20px;
   border-radius: var(--radius-sm);
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: var(--c-error-bg);
+  border: 0.5px solid rgba(255, 69, 58, 0.3);
   color: #fca5a5;
   display: flex;
   align-items: center;
@@ -2370,26 +2657,36 @@
 
 /* ── Modal ─────────────────────────────────────────────── */
 
+/* Apple sheet-style modal */
 .modal-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: saturate(150%) blur(20px);
+  -webkit-backdrop-filter: saturate(150%) blur(20px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: var(--z-modal);
   padding: var(--space-4);
+  animation: fadeIn var(--dur-fast) var(--spring-snappy) both;
 }
 
 .modal-container {
-  background: var(--c-bg-secondary);
-  border: 1px solid var(--c-border-default);
+  background: var(--material-thick);
+  backdrop-filter: saturate(180%) blur(var(--blur-thick));
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-thick));
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-xl);
   width: 100%;
   max-width: 380px;
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: var(--shadow-xl);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.3),
+    0 8px 40px rgba(0, 0, 0, 0.45),
+    0 2px 12px rgba(0, 0, 0, 0.3);
+  animation: modalEnter var(--dur-slow) var(--spring-gentle) both;
 }
 
 .modal-header {
@@ -2397,12 +2694,13 @@
   align-items: center;
   justify-content: space-between;
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--c-border-subtle);
+  border-bottom: 0.5px solid var(--c-separator);
 }
 
 .modal-title {
-  font-size: var(--text-base);
+  font-size: var(--text-headline);
   font-weight: var(--weight-semibold);
+  letter-spacing: var(--tracking-headline);
   color: var(--c-text-primary);
 }
 
@@ -4289,4 +4587,251 @@
 
 .session-different-ws {
   color: var(--c-info);
+}
+
+/* ============================================================
+   Responsive — ResizeObserver breakpoints via app-{narrow|default|wide}
+   ============================================================ */
+
+/* ── Narrow (<350px) — compact mode ──────────────────── */
+
+.app-narrow .message-content-wrapper {
+  max-width: 90%;
+}
+
+.app-narrow .avatar,
+.app-narrow .avatar-spacer {
+  width: 22px;
+  height: 22px;
+  font-size: 0.5rem;
+}
+
+.app-narrow .avatar svg {
+  width: 12px;
+  height: 12px;
+}
+
+.app-narrow .chat-header-row {
+  gap: var(--space-1);
+}
+
+.app-narrow .tab-button {
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-caption);
+}
+
+.app-narrow .code-block pre {
+  font-size: 0.6rem;
+}
+
+.app-narrow .thinking-content {
+  max-width: 95%;
+}
+
+/* ── Wide (>500px) — expanded mode ───────────────────── */
+
+.app-wide .message-content-wrapper {
+  max-width: 70%;
+}
+
+.app-wide .bubble-ai .message-content-wrapper {
+  max-width: 85%;
+}
+
+.app-wide .code-block pre {
+  font-size: var(--text-caption);
+  line-height: var(--leading-long);
+}
+
+/* Split Tasks layout at wide widths */
+.app-wide .tasks-tab {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-3);
+}
+
+.app-wide .tasks-backlog {
+  flex: 3;
+  min-width: 0;
+}
+
+.app-wide .tasks-workspace {
+  flex: 2;
+  min-width: 0;
+}
+
+/* ── Connection Status Strip ─────────────────────────── */
+
+.connection-strip {
+  height: 2px;
+  flex-shrink: 0;
+  overflow: hidden;
+  transition: height var(--dur-medium) var(--spring-gentle),
+              background var(--dur-fast) var(--spring-snappy);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-caption);
+}
+
+.connection-connected {
+  background: var(--c-success);
+  height: 2px;
+}
+
+.connection-reconnecting {
+  background: var(--c-warning-bg);
+  border-bottom: 0.5px solid rgba(255, 214, 10, 0.2);
+  height: 24px;
+  color: var(--c-warning);
+}
+
+.connection-disconnected {
+  background: var(--c-error-bg);
+  border-bottom: 0.5px solid rgba(255, 69, 58, 0.2);
+  height: 24px;
+  color: var(--c-error);
+}
+
+.connection-text {
+  font-weight: var(--weight-medium);
+}
+
+.connection-retry {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  color: var(--c-error);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+
+.connection-retry:hover {
+  background: rgba(255, 69, 58, 0.1);
+}
+
+/* ── Command Palette (Cmd+K) ─────────────────────────── */
+
+.cmd-palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: var(--z-modal);
+  display: flex;
+  justify-content: center;
+  padding-top: 60px;
+  animation: fadeIn var(--dur-fast) var(--spring-snappy) both;
+}
+
+.cmd-palette {
+  width: 100%;
+  max-width: 340px;
+  background: var(--material-thick);
+  backdrop-filter: saturate(180%) blur(var(--blur-thick));
+  -webkit-backdrop-filter: saturate(180%) blur(var(--blur-thick));
+  border: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-lg);
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.3),
+    0 8px 40px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  animation: scaleIn var(--dur-medium) var(--spring-gentle) both;
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cmd-palette-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 0.5px solid var(--c-separator);
+  color: var(--c-text-tertiary);
+}
+
+.cmd-palette-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: var(--text-body);
+  color: var(--c-text-primary);
+  font-family: var(--font-sans);
+}
+
+.cmd-palette-input::placeholder {
+  color: var(--c-text-muted);
+}
+
+.cmd-palette-esc {
+  font-size: var(--text-caption2);
+  color: var(--c-text-muted);
+  background: var(--c-quaternary-fill);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-sans);
+}
+
+.cmd-palette-list {
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.cmd-palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  width: 100%;
+  text-align: left;
+  color: var(--c-text-primary);
+  font-size: var(--text-body);
+  transition: background var(--dur-micro) var(--spring-snappy);
+  transform: none !important;
+}
+
+.cmd-palette-item:hover,
+.cmd-palette-active {
+  background: var(--c-tint-hover);
+}
+
+.cmd-palette-active {
+  background: var(--c-tint-bg);
+}
+
+.cmd-palette-icon {
+  font-size: var(--text-body);
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.cmd-palette-name {
+  font-weight: var(--weight-medium);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--c-tint-prominent);
+  flex-shrink: 0;
+}
+
+.cmd-palette-desc {
+  color: var(--c-text-tertiary);
+  font-size: var(--text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cmd-palette-empty {
+  padding: var(--space-4) var(--space-3);
+  text-align: center;
+  color: var(--c-text-muted);
+  font-size: var(--text-caption);
 }
