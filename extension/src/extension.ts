@@ -2199,8 +2199,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
             });
 
             // Navigate to the line range (convert from 1-based to 0-based)
-            const startLineIndex = Math.max(0, startLine - 1);
-            const endLineIndex = Math.max(0, endLine - 1);
+            const safeLine = (n: unknown) => (typeof n === 'number' && n >= 1) ? n : 1;
+            const startLineIndex = Math.max(0, safeLine(startLine) - 1);
+            const endLineIndex = Math.min(document.lineCount - 1, Math.max(0, safeLine(endLine || startLine) - 1));
 
             // Create a selection that highlights the code range
             const startPosition = new vscode.Position(startLineIndex, 0);

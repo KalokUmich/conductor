@@ -33,7 +33,7 @@ export const MessageBubble = memo(function MessageBubble({
   isGrouped,
 }: MessageBubbleProps) {
   const { state } = useSession();
-  const isOwn = message.userId === state.session?.userId;
+  const isOwn = state.knownUserIds.has(message.userId);
 
   switch (message.type) {
     case "system":
@@ -102,9 +102,14 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
   const { state: sessionState } = useSession();
   const [codePromptLoading, setCodePromptLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [planApplied, setPlanApplied] = useState(false);
+  const [planApplying, setPlanApplying] = useState(false);
 
   // Code prompt generation: show button for ai_summary messages with content
   const isSummary = message.type === "ai_summary" && !!message.summary;
+
+  // Plan apply bar: show when AI responded to a planMode query
+  const hasPlan = !!message.planQuery && !!content;
 
   const handleCopyMessage = useCallback(() => {
     navigator.clipboard.writeText(content).then(() => {
@@ -112,6 +117,36 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
       setTimeout(() => setCopied(false), 2000);
     });
   }, [content]);
+
+  const handleMarkCode = useCallback(() => {
+    if (!sessionState.session?.roomId || !content) return;
+    setPlanApplying(true);
+
+    // Detect if this is an investigation (needs TODO markers) vs code change
+    const isInvestigation = /investigate|investigation|findings|jira.*ticket/i.test(message.planQuery || "");
+    const ticketKeyMatch = content.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+    const ticketTag = ticketKeyMatch ? `{jira:${ticketKeyMatch[1]}}` : "";
+
+    const applyQuery = isInvestigation
+      ? `[apply] Based on the investigation below, add TODO comments at each identified code location. ` +
+        `For each file mentioned in the plan:\n` +
+        `1. Use read_file to read the file\n` +
+        `2. Use file_edit to add a TODO comment at or near the identified line\n` +
+        `3. Format: "// TODO: ${ticketTag} [short description of what needs to change]"\n` +
+        `4. Add a TODO_DESC line: "// TODO_DESC: [details from the plan]"\n` +
+        `Do NOT re-investigate or re-analyze. Just add TODO markers at the locations identified below.\n` +
+        `After all TODOs are added, list what was marked.\n\n---\n\n${content}`
+      : `[apply] Execute the following plan. Use file_edit and file_write tools to make the changes. ` +
+        `Apply all changes described below. For each file, use read_file first, then file_edit for precise changes. ` +
+        `After all changes, summarize what was modified.\n\n---\n\n${content}`;
+
+    send({
+      command: "askAI",
+      roomId: sessionState.session.roomId,
+      query: applyQuery,
+    });
+    setPlanApplied(true);
+  }, [send, sessionState.session?.roomId, content, message.planQuery]);
 
   const handleGenerateCodePrompt = useCallback(() => {
     if (!sessionState.session?.roomId || !message.summary) return;
@@ -156,6 +191,30 @@ function AIMessage({ message, isGrouped }: { message: ChatMessage; isGrouped: bo
                 {codePromptLoading ? "Generating..." : "Generate Code Prompt"}
               </button>
             </div>
+          )}
+          {/* Plan Apply Bar — appears after AI responds to planMode investigation */}
+          {hasPlan && !planApplied && (
+            <div className="plan-apply-bar">
+              <button
+                className="plan-apply-btn"
+                onClick={handleMarkCode}
+                disabled={planApplying}
+              >
+                <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                </svg>
+                {planApplying ? "Marking..." : "Mark Code"}
+              </button>
+              <button
+                className="plan-dismiss-btn"
+                onClick={() => setPlanApplied(true)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          {hasPlan && planApplied && !planApplying && (
+            <div className="plan-applied-badge">Applied</div>
           )}
         </div>
         <MessageMeta ts={message.ts} isOwn={false} />

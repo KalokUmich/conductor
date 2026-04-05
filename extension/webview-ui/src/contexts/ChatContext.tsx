@@ -31,6 +31,8 @@ export interface ChatState {
   typingUsers: Map<string, number>; // userId → timeout id
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
+  /** Original query when planMode was used — enables plan-apply bar on AI response */
+  pendingPlanQuery: string | null;
 }
 
 export type ChatAction =
@@ -43,6 +45,7 @@ export type ChatAction =
   | { type: "SET_TYPING"; userId: string; isTyping: boolean }
   | { type: "SET_HISTORY_LOADING"; loading: boolean }
   | { type: "SET_HAS_MORE_HISTORY"; hasMore: boolean }
+  | { type: "SET_PLAN_QUERY"; query: string | null }
   | { type: "CLEAR_MESSAGES" };
 
 function updateBrainTree(tree: BrainTree, event: AIProgressEvent): BrainTree {
@@ -206,20 +209,21 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       };
     }
     case "AI_DONE": {
-      // Attach thinking steps to the last AI message for local cache persistence
+      // Attach thinking steps + plan query to the last AI message
       const steps = action.thinkingSteps || state.thinkingSteps;
       let messages = state.messages;
-      if (steps.length > 0) {
-        // Find the last AI message and attach thinking metadata
-        const lastIdx = [...messages].reverse().findIndex(m =>
-          m.type === "ai_answer" || m.type === "ai_explanation" || m.type === "ai_summary"
-        );
-        if (lastIdx >= 0) {
-          const idx = messages.length - 1 - lastIdx;
-          const updated = { ...messages[idx], thinkingSteps: steps };
-          messages = [...messages];
-          messages[idx] = updated;
-        }
+      const lastIdx = [...messages].reverse().findIndex(m =>
+        m.type === "ai_answer" || m.type === "ai_explanation" || m.type === "ai_summary"
+      );
+      if (lastIdx >= 0) {
+        const idx = messages.length - 1 - lastIdx;
+        const updated = {
+          ...messages[idx],
+          ...(steps.length > 0 ? { thinkingSteps: steps } : {}),
+          ...(state.pendingPlanQuery ? { planQuery: state.pendingPlanQuery } : {}),
+        };
+        messages = [...messages];
+        messages[idx] = updated;
       }
       return {
         ...state,
@@ -229,6 +233,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         currentAction: "",
         thinkingSteps: [],
         agentQuestion: null,
+        pendingPlanQuery: null,
       };
     }
     case "AGENT_QUESTION":
@@ -248,6 +253,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, isLoadingHistory: action.loading };
     case "SET_HAS_MORE_HISTORY":
       return { ...state, hasMoreHistory: action.hasMore };
+    case "SET_PLAN_QUERY":
+      return { ...state, pendingPlanQuery: action.query };
     case "CLEAR_MESSAGES":
       return {
         ...state,
@@ -271,6 +278,7 @@ const initialChatState: ChatState = {
   typingUsers: new Map(),
   hasMoreHistory: true,
   isLoadingHistory: false,
+  pendingPlanQuery: null,
 };
 
 interface ChatContextValue {
@@ -331,7 +339,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const askAI = useCallback(
     (query: string, codeContext?: Record<string, unknown>) => {
       if (!sessionState.session?.roomId) return;
-      const isPlanMode = /^\[query_type:issue_tracking\]\s*(create|investigate)/i.test(query);
+      const isPlanMode = /^\[query_type:issue_tracking\]\s*(create|investigate)/i.test(query)
+        || /^\[jira\]/i.test(query); // TasksTab investigate sends [jira] prefix
       send({
         command: "askAI",
         roomId: sessionState.session.roomId,
@@ -339,6 +348,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         planMode: isPlanMode,
         codeContext,
       });
+      // Track plan query so AI response can show the plan-apply bar
+      if (isPlanMode) {
+        dispatch({ type: "SET_PLAN_QUERY", query });
+      }
       dispatch({
         type: "AI_PROGRESS",
         event: { phase: "agent", kind: "start", message: "Connecting to AI...", detail: {} },

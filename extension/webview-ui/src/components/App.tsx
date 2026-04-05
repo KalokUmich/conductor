@@ -32,11 +32,11 @@ export function App() {
 
         <div className="app-content-row">
           <div className="app-content">
-            {/* Both tabs stay mounted — CSS hides inactive tab to preserve state */}
-            <div style={{ display: activeTab === "chat" ? "contents" : "none" }}>
+            {/* Both tabs stay mounted via stacked layers — preserves state across switches */}
+            <div className={`tab-panel tab-panel-chat ${activeTab === "chat" ? "tab-panel-active" : "tab-panel-hidden"}`}>
               <ChatTab />
             </div>
-            <div style={{ display: activeTab === "tasks" ? "contents" : "none" }}>
+            <div className={`tab-panel tab-panel-tasks ${activeTab === "tasks" ? "tab-panel-active" : "tab-panel-hidden"}`}>
               <TasksTab />
             </div>
           </div>

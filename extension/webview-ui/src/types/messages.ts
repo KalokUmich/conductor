@@ -48,6 +48,8 @@ export interface ChatMessage {
   thinkingSteps?: ThinkingStep[];
   summary?: string;
   codePrompt?: string;
+  // Plan mode — original query for plan-apply bar
+  planQuery?: string;
   // Stack trace fields
   stackTrace?: StackTraceData;
   // Test failures fields

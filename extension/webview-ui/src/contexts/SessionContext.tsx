@@ -39,6 +39,8 @@ export interface SessionState {
   isAIBusy: boolean;
   ssoUIState: SSOUIState;
   ssoPending: SSOPendingInfo | null;
+  /** All known user IDs for this user (initial + WS-assigned) — used for isOwn check */
+  knownUserIds: Set<string>;
 }
 
 export type SessionAction =
@@ -59,14 +61,20 @@ export type SessionAction =
 
 export function sessionReducer(state: SessionState, action: SessionAction): SessionState {
   switch (action.type) {
-    case "SET_CONDUCTOR_STATE":
+    case "SET_CONDUCTOR_STATE": {
+      const newSession = action.session ?? state.session;
+      // Collect all known user IDs (initial + WS-assigned) for isOwn matching
+      const knownUserIds = new Set(state.knownUserIds);
+      if (newSession?.userId) knownUserIds.add(newSession.userId);
       return {
         ...state,
         conductorState: action.state,
-        session: action.session ?? state.session,
+        session: newSession,
         ssoIdentity: action.ssoIdentity ?? state.ssoIdentity,
         ssoProvider: action.ssoProvider ?? state.ssoProvider,
+        knownUserIds,
       };
+    }
     case "SET_PERMISSIONS":
       return { ...state, permissions: action.permissions };
     case "SET_AUTO_APPLY":
@@ -87,9 +95,10 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
       return { ...state, users };
     }
     case "MERGE_PARTICIPANTS": {
-      // Merge ChatRecord participants into users map (don't overwrite existing online users)
+      // Merge ChatRecord participants into users map (skip AI participants, don't overwrite online users)
       const users = new Map(state.users);
       for (const [uid, p] of Object.entries(action.participants)) {
+        if (p.role === "ai") continue; // AI is not a real participant
         if (!users.has(uid)) {
           users.set(uid, {
             displayName: p.name,
@@ -115,6 +124,10 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
     case "SSO_DONE": {
       // Derive display name from email (part before @)
       const displayName = action.identity.name || action.identity.email?.split("@")[0] || "User";
+      // Add userUuid to known IDs for isOwn matching
+      const ssoKnownIds = new Set(state.knownUserIds);
+      const uuid = (action.identity as unknown as Record<string, unknown>).userUuid as string;
+      if (uuid) ssoKnownIds.add(uuid);
       return {
         ...state,
         ssoUIState: "done",
@@ -122,6 +135,7 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
         ssoIdentity: action.identity,
         ssoProvider: action.provider,
         session: state.session ? { ...state.session, displayName } : state.session,
+        knownUserIds: ssoKnownIds,
       };
     }
     case "SSO_CLEARED":
@@ -138,6 +152,7 @@ export function sessionReducer(state: SessionState, action: SessionAction): Sess
         session: null,
         users: new Map(),
         isAIBusy: false,
+        knownUserIds: new Set(),
       };
     default:
       return state;
@@ -170,6 +185,12 @@ function getInitialState(): SessionState {
     isAIBusy: false,
     ssoUIState: (w.initialSSOIdentity as SSOIdentity)?.email ? "done" : "idle",
     ssoPending: null,
+    knownUserIds: new Set(
+      [
+        (w.initialSession as Session)?.userId,
+        (w.initialSSOIdentity as Record<string, unknown>)?.userUuid as string,
+      ].filter(Boolean) as string[]
+    ),
   };
 }
 

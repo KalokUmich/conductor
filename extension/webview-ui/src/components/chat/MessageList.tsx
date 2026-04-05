@@ -48,7 +48,7 @@ export const MessageList = memo(function MessageList({
 }: MessageListProps) {
   const { state } = useSession();
   const { observe } = useReadReceipts(scrollContainerRef);
-  const ownUserId = state.session?.userId;
+  const knownUserIds = state.knownUserIds;
 
   // Ref callback: observe non-own messages for read receipts
   const messageRefCallback = useCallback(
@@ -64,7 +64,7 @@ export const MessageList = memo(function MessageList({
         const prev = i > 0 ? messages[i - 1] : null;
         const showSeparator = needsDateSeparator(msg, prev);
         const isGrouped = shouldGroup(msg, prev);
-        const isOwn = msg.userId === ownUserId;
+        const isOwn = knownUserIds.has(msg.userId);
 
         return (
           <div

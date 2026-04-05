@@ -116,9 +116,14 @@ const SKIP_DIRS = new Set([
 ]);
 
 /** Regex to match a TODO comment line.
- *  Captures: (1) comment prefix, (2) title text.
+ *  Captures: (1) comment prefix, (2) rest of line after TODO (may include {jira:...} tag + title).
+ *  Supports:
+ *    // TODO: title
+ *    // TODO title
+ *    // TODO {jira:DEV-123#1}: title
+ *    // TODO {jira:DEV-123#1|after:2}: title
  */
-const TODO_RE = /^(\s*(?:\/\/|#|--|;;|\/\*)\s*)TODO:?\s+(.+)/i;
+const TODO_RE = /^(\s*(?:\/\/|#|--|;;|\/\*)\s*)TODO\b\s*(.+)/i;
 
 /** Regex to match a TODO_DESC line immediately following a TODO line.
  *  Captures: (1) comment prefix, (2) description text.
@@ -182,7 +187,7 @@ function parseFileTodos(filePath: string, content: string): WorkspaceTodo[] {
 
         const prefixRaw = match[1].trim(); // e.g. '//' or '#'
         const commentPrefix = prefixRaw.replace(/\s+$/, '');
-        const rawTitle = match[2].trim();
+        const rawTitle = match[2].trim().replace(/^:+\s*/, ''); // Strip leading colon(s) from "TODO: title"
         if (!rawTitle) continue;
 
         // --- Extract structured {jira:...} tag from rawTitle ---

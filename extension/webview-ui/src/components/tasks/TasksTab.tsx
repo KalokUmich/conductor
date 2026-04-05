@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVSCode, useCommand } from "../../contexts/VSCodeContext";
 import { useSession } from "../../contexts/SessionContext";
+import { useChat } from "../../contexts/ChatContext";
 import { WorkspaceTodoEditModal } from "../modals/WorkspaceTodoEditModal";
 import type { Todo, WorkspaceItem } from "../../types/messages";
 
@@ -144,8 +145,10 @@ export function TasksTab() {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [editingTodo, setEditingTodo] = useState<WorkspaceItem | null>(null);
   const [jiraAuthNeeded, setJiraAuthNeeded] = useState(false);
+  const [jiraEpics, setJiraEpics] = useState<Record<string, { key: string; summary: string; status: string; priority: string; assignee: string; browseUrl: string }>>({});
   const { send, onAny } = useVSCode();
   const { state: sessionState } = useSession();
+  const { askAI, state: chatState } = useChat();
 
   const roomId = sessionState.session?.roomId;
 
@@ -182,14 +185,34 @@ export function TasksTab() {
     if (msg.command !== "workspaceTodosScanned") return;
     setScanning(false);
     const raw = msg as unknown as {
-      todos: Todo[];
+      todos: Array<Record<string, unknown>>;
       ticketStatuses?: Record<string, TicketStatus>;
     };
-    setWorkspaceTodos(raw.todos || []);
+    // Map WorkspaceTodo fields to Todo fields (ticketKey → jiraKey)
+    const mapped: Todo[] = (raw.todos || []).map((t) => ({
+      id: t.id as string,
+      title: t.title as string,
+      description: t.description as string | undefined,
+      status: "pending" as const,
+      source: (t.ticketKey ? "linked" : "code") as "linked" | "code",
+      jiraKey: t.ticketKey as string | undefined,
+      filePath: t.filePath as string | undefined,
+      lineNumber: t.lineNumber as number | undefined,
+      relativePath: t.relativePath as string | undefined,
+      commentPrefix: t.commentPrefix as string | undefined,
+      descriptionLine: t.descriptionLine as number | undefined,
+      rawTag: t.rawTag as string | undefined,
+      blockEndLine: t.blockEndLine as number | undefined,
+      changeNumber: t.changeNumber as number | undefined,
+      afterDeps: t.afterDeps as number[] | undefined,
+      blockedBy: t.blockedBy as string[] | undefined,
+      parentTicket: t.parentTicket as string | undefined,
+    }));
+    setWorkspaceTodos(mapped);
     if (raw.ticketStatuses) setTicketStatuses(raw.ticketStatuses);
 
     // Auto-refresh Jira tickets if scan found linked ticket keys
-    const hasLinkedKeys = (raw.todos || []).some((t) => t.jiraKey);
+    const hasLinkedKeys = mapped.some((t) => t.jiraKey);
     if (hasLinkedKeys) {
       send({ command: "loadJiraTickets" });
     }
@@ -202,17 +225,34 @@ export function TasksTab() {
       if (cmd === "jiraTicketsLoaded") {
         const data = msg as unknown as {
           tickets?: Array<Record<string, unknown>>;
+          epics?: Record<string, Record<string, unknown>>;
           error?: string;
           authNeeded?: boolean;
         };
-        console.log("[TasksTab] jiraTicketsLoaded:", data.tickets?.length ?? 0, "tickets, error:", data.error, "authNeeded:", data.authNeeded);
         if (data.authNeeded) {
           setJiraAuthNeeded(true);
-        } else {
-          setJiraAuthNeeded(false);
+          // Trigger Jira connect via extension command — ChatHeader's JiraModal will handle it
+          send({ command: "jiraConnect" });
+          return;
         }
+        setJiraAuthNeeded(false);
         if (data.error) {
           console.warn("[TasksTab] Jira load error:", data.error);
+        }
+        // Capture epic metadata
+        if (data.epics) {
+          const mapped: typeof jiraEpics = {};
+          for (const [key, e] of Object.entries(data.epics)) {
+            mapped[key] = {
+              key: (e.key as string) || key,
+              summary: (e.summary as string) || "",
+              status: (e.status as string) || "",
+              priority: (e.priority as string) || "",
+              assignee: (e.assignee as string) || "",
+              browseUrl: (e.browse_url as string) || (e.browseUrl as string) || "",
+            };
+          }
+          setJiraEpics(mapped);
         }
         if (data.tickets && data.tickets.length > 0) {
           const mapped: Todo[] = data.tickets.map((t) => ({
@@ -330,6 +370,17 @@ export function TasksTab() {
     setAiWorkspaceItems((prev) => prev.filter((i) => i.id !== id));
   }, []);
 
+  const handleAddToWorkspace = useCallback(
+    (item: WorkspaceItem) => {
+      setAiWorkspaceItems((prev) => {
+        if (prev.some((i) => i.id === item.id)) return prev; // dedup
+        if (depGraph[item.id]) return prev; // blocked by dependency
+        return [...prev, item];
+      });
+    },
+    [depGraph]
+  );
+
   const handleInvestigate = useCallback(
     (item: WorkspaceItem) => {
       if (!roomId) return;
@@ -347,9 +398,9 @@ export function TasksTab() {
         `If this is a Jira ticket, update the description with your findings. ` +
         `If this is a code TODO, update the TODO_DESC with key findings.`;
 
-      send({ command: "askAI", roomId, query, planMode: true });
+      askAI(query);
     },
-    [send, roomId]
+    [askAI, roomId]
   );
 
   const totalCount = linkedItems.length + codeItems.length + jiraItems.length;
@@ -381,6 +432,7 @@ export function TasksTab() {
         items={aiWorkspaceItems}
         depGraph={depGraph}
         roomId={roomId}
+        isAIBusy={chatState.isAIThinking}
         onDrop={handleDrop}
         onRemove={handleRemoveFromWorkspace}
         onInvestigate={handleInvestigate}
@@ -397,6 +449,7 @@ export function TasksTab() {
         depGraph={depGraph}
         ticketStatuses={ticketStatuses}
         onEdit={(todo) => setEditingTodo(todoToWorkspaceItem(todo, ticketStatuses))}
+        onAddToWorkspace={handleAddToWorkspace}
       />
 
       <BacklogSection
@@ -409,6 +462,7 @@ export function TasksTab() {
         depGraph={depGraph}
         ticketStatuses={ticketStatuses}
         onEdit={(todo) => setEditingTodo(todoToWorkspaceItem(todo, ticketStatuses))}
+        onAddToWorkspace={handleAddToWorkspace}
       />
 
       <JiraSectionComp
@@ -416,8 +470,10 @@ export function TasksTab() {
         expanded={expandedSections.has("jira")}
         onToggle={() => toggleSection("jira")}
         tickets={jiraItems}
+        epics={jiraEpics}
         authNeeded={jiraAuthNeeded}
       />
+
 
       {/* Workspace TODO Edit Modal */}
       <WorkspaceTodoEditModal
@@ -447,6 +503,7 @@ function WorkspaceSection({
   items,
   depGraph,
   roomId,
+  isAIBusy,
   onDrop,
   onRemove,
   onInvestigate,
@@ -454,6 +511,7 @@ function WorkspaceSection({
   items: WorkspaceItem[];
   depGraph: Record<string, DepEntry>;
   roomId?: string;
+  isAIBusy: boolean;
   onDrop: (e: React.DragEvent) => void;
   onRemove: (id: string) => void;
   onInvestigate: (item: WorkspaceItem) => void;
@@ -499,6 +557,7 @@ function WorkspaceSection({
                 item={item}
                 depGraph={depGraph}
                 roomId={roomId}
+                isAIBusy={isAIBusy}
                 onRemove={onRemove}
                 onInvestigate={onInvestigate}
                 delay={idx * 30}
@@ -517,6 +576,7 @@ const WorkspaceCard = memo(function WorkspaceCard({
   item,
   depGraph,
   roomId,
+  isAIBusy,
   onRemove,
   onInvestigate,
   delay,
@@ -524,14 +584,21 @@ const WorkspaceCard = memo(function WorkspaceCard({
   item: WorkspaceItem;
   depGraph: Record<string, DepEntry>;
   roomId?: string;
+  isAIBusy: boolean;
   onRemove: (id: string) => void;
   onInvestigate: (item: WorkspaceItem) => void;
   delay: number;
 }) {
   const [investigating, setInvestigating] = useState(false);
+
+  // Reset investigating when AI finishes
+  useEffect(() => {
+    if (!isAIBusy && investigating) setInvestigating(false);
+  }, [isAIBusy, investigating]);
+
   const deps = depGraph[item.id];
   const isBlocked = !!deps;
-  const invDisabled = item.isDone || isBlocked || !roomId || investigating;
+  const invDisabled = item.isDone || isBlocked || !roomId || isAIBusy;
 
   let blockTitle = "";
   if (deps) {
@@ -541,13 +608,19 @@ const WorkspaceCard = memo(function WorkspaceCard({
     blockTitle = "Blocked by: " + parts.join(", ");
   }
 
+  // Item classification for button visibility
+  const isJiraOnly = item.source === "ticket" && !item.relativePath;
+  const isLinked = item.source === "code" && !!item.ticketKey;
+
   const sourceBadge = item.isDone
     ? "Completed"
-    : item.source === "code"
-      ? "TODO"
-      : "Jira";
+    : isJiraOnly
+      ? "Jira"
+      : isLinked
+        ? "Linked"
+        : "TODO";
 
-  const badgeClass = item.isDone ? "badge-done" : "badge-todo";
+  const badgeClass = item.isDone ? "badge-done" : isJiraOnly ? "badge-jira" : isLinked ? "badge-linked" : "badge-todo";
 
   const handleInvestigate = useCallback(() => {
     setInvestigating(true);
@@ -612,7 +685,8 @@ const WorkspaceCard = memo(function WorkspaceCard({
             </>
           )}
         </button>
-        <button className="ws-action-btn btn-implement" disabled title="Coming soon">
+        {/* Implement button: only for linked TODOs (has code location + ticket) */}
+        {!isJiraOnly && <button className="ws-action-btn btn-implement" disabled title="Coming soon — requires linked TODO with code location">
           <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
             <path
               fillRule="evenodd"
@@ -621,7 +695,7 @@ const WorkspaceCard = memo(function WorkspaceCard({
             />
           </svg>
           Implement
-        </button>
+        </button>}
       </div>
     </div>
   );
@@ -639,6 +713,7 @@ function BacklogSection({
   depGraph,
   ticketStatuses,
   onEdit,
+  onAddToWorkspace,
 }: {
   title: string;
   section: TodoSection;
@@ -649,6 +724,7 @@ function BacklogSection({
   depGraph: Record<string, DepEntry>;
   ticketStatuses: Record<string, TicketStatus>;
   onEdit?: (todo: Todo) => void;
+  onAddToWorkspace?: (item: WorkspaceItem) => void;
 }) {
   if (count === 0) return null;
 
@@ -670,6 +746,7 @@ function BacklogSection({
               isLinked={section === "linked"}
               delay={i * 30}
               onEdit={onEdit}
+              onAddToWorkspace={onAddToWorkspace}
             />
           ))}
         </div>
@@ -687,6 +764,7 @@ const BacklogCard = memo(function BacklogCard({
   isLinked,
   delay,
   onEdit,
+  onAddToWorkspace,
 }: {
   todo: Todo;
   depGraph: Record<string, DepEntry>;
@@ -694,12 +772,15 @@ const BacklogCard = memo(function BacklogCard({
   isLinked: boolean;
   delay: number;
   onEdit?: (todo: Todo) => void;
+  onAddToWorkspace?: (item: WorkspaceItem) => void;
 }) {
   const { send } = useVSCode();
   const itemId = "todo:" + todo.id;
   const deps = depGraph[itemId];
   const ts = todo.jiraKey ? ticketStatuses[todo.jiraKey] : undefined;
-  const isDone = ts?.isDone || todo.isDone || todo.status === "done";
+  const tsLower = (ts?.status || "").toLowerCase();
+  const isTicketCompleted = ts?.isDone || ["done", "closed", "resolved", "in review", "merged"].includes(tsLower);
+  const isDone = isTicketCompleted || todo.isDone || todo.status === "done";
   const isBlocked = !!deps;
   const canDrag = isLinked && !isDone && !isBlocked;
 
@@ -733,25 +814,39 @@ const BacklogCard = memo(function BacklogCard({
   }
 
   const statusBadgeClass = ts
-    ? ["done", "closed", "resolved"].includes((ts.status || "").toLowerCase())
+    ? ["done", "closed", "resolved", "merged"].includes(tsLower)
       ? "badge-done"
-      : ["in progress", "in review", "in development"].includes((ts.status || "").toLowerCase())
+      : ["in progress", "in review", "in development"].includes(tsLower)
         ? "badge-todo"
         : ""
     : "";
+
+  // Determine badge text based on linked state + ticket status
+  let badgeText = "TODO";
+  let badgeClass = "badge-todo";
+  if (isTicketCompleted) {
+    badgeText = ts?.status || "Done";
+    badgeClass = "badge-done";
+  } else if (isLinked && ts) {
+    badgeText = "Linked";
+    badgeClass = "badge-linked";
+  } else if (isDone) {
+    badgeText = "Done";
+    badgeClass = "badge-done";
+  }
 
   return (
     <div
       className={`backlog-card ${cardClass}`}
       draggable={canDrag}
       onDragStart={canDrag ? handleDragStart : undefined}
-      title={blockTitle || undefined}
+      title={blockTitle || (isTicketCompleted ? `Jira: ${ts?.status} — this task may be completed` : undefined)}
       style={{ animationDelay: delay + "ms" }}
     >
       <div className="backlog-card-top">
         <div className="backlog-card-info">
-          <span className={`badge ${isDone ? "badge-done" : "badge-todo"}`}>
-            {isDone ? "Done" : "TODO"}
+          <span className={`badge ${badgeClass}`}>
+            {badgeText}
           </span>
           <span className="backlog-card-title" onClick={handleNavigate}>
             {todo.title}
@@ -766,6 +861,18 @@ const BacklogCard = memo(function BacklogCard({
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 20 20" fill="currentColor">
               <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
             </svg>
+          </button>
+        )}
+        {canDrag && onAddToWorkspace && (
+          <button
+            className="backlog-add-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAddToWorkspace(todoToWorkspaceItem(todo, ticketStatuses));
+            }}
+            title="Add to AI Working Space"
+          >
+            +
           </button>
         )}
         {canDrag && <span className="drag-handle" title="Drag to Working Space">⠿</span>}
@@ -792,27 +899,43 @@ const BacklogCard = memo(function BacklogCard({
         )}
         {isBlocked && <span className="badge badge-blocked">Blocked</span>}
       </div>
+      {/* Completion hint for tickets that are done/in review/merged */}
+      {isTicketCompleted && ts && (
+        <div className="backlog-completed-hint">
+          Jira says: {ts.status} — consider removing this TODO
+        </div>
+      )}
     </div>
   );
 });
 
 // ── Jira Section with Epic Grouping ──────────────────────
 
+/** Epic metadata from the extension */
+interface EpicMeta {
+  key: string;
+  summary: string;
+  status: string;
+  priority: string;
+  assignee: string;
+  browseUrl: string;
+}
+
 function JiraSectionComp({
   count,
   expanded,
   onToggle,
   tickets,
+  epics,
   authNeeded,
 }: {
   count: number;
   expanded: boolean;
   onToggle: () => void;
   tickets: Todo[];
+  epics: Record<string, EpicMeta>;
   authNeeded?: boolean;
 }) {
-  const { send } = useVSCode();
-
   // Group by epic
   const epicGroups = new Map<string, Todo[]>();
   const noEpic: Todo[] = [];
@@ -835,56 +958,91 @@ function JiraSectionComp({
       {expanded && (
         <div className="jira-ticket-list">
           {tickets.length === 0 ? (
-            authNeeded ? (
-              <div className="jira-auth-hint-panel">
-                <p className="todo-empty">Connect Jira to load tickets</p>
-                <button
-                  className="action-btn action-brand"
-                  onClick={() => send({ command: "jiraConnect" })}
-                >
-                  Connect Jira
-                </button>
-              </div>
-            ) : (
-              <div className="todo-empty">No tickets loaded</div>
-            )
+            <div className="todo-empty">
+              {authNeeded ? "Connect Jira to load tickets" : "No tickets loaded"}
+            </div>
           ) : (
             <>
-              {Array.from(epicGroups.entries()).map(([epicKey, items]) => {
-                const epicName = items[0]?.epicName || epicKey;
-                const epicColor = items[0]?.epicColor || "var(--c-accent-400)";
-                return (
-                  <div key={epicKey} className="epic-group">
-                    <div className="epic-header" style={{ borderLeftColor: epicColor }}>
-                      <span className="epic-name">{epicName}</span>
-                      <span className="epic-count">{items.length}</span>
-                    </div>
-                    {items.map((t) => (
-                      <JiraTicketCard key={t.id} ticket={t} />
-                    ))}
-                  </div>
-                );
-              })}
+              {Array.from(epicGroups.entries()).map(([epicKey, items]) => (
+                <CollapsibleEpicGroup
+                  key={epicKey}
+                  epicKey={epicKey}
+                  epicMeta={epics[epicKey]}
+                  tickets={items}
+                />
+              ))}
               {noEpic.length > 0 && (
-                <div className="epic-group">
-                  {epicGroups.size > 0 && (
-                    <div
-                      className="epic-header"
-                      style={{ borderLeftColor: "var(--c-text-muted)" }}
-                    >
-                      <span className="epic-name" style={{ color: "var(--c-text-muted)" }}>
-                        No Epic
-                      </span>
-                      <span className="epic-count">{noEpic.length}</span>
-                    </div>
-                  )}
-                  {noEpic.map((t) => (
-                    <JiraTicketCard key={t.id} ticket={t} />
-                  ))}
-                </div>
+                <CollapsibleEpicGroup
+                  key="__no_epic__"
+                  epicKey=""
+                  tickets={noEpic}
+                />
               )}
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Collapsible Epic Group ───────────────────────────────
+
+function CollapsibleEpicGroup({
+  epicKey,
+  epicMeta,
+  tickets,
+}: {
+  epicKey: string;
+  epicMeta?: EpicMeta;
+  tickets: Todo[];
+}) {
+  const [open, setOpen] = useState(false);
+  const { send } = useVSCode();
+
+  const epicName = epicMeta?.summary || tickets[0]?.epicName || epicKey || "No Epic";
+  const epicColor = tickets[0]?.epicColor || (epicKey ? "var(--c-brand-400)" : "var(--c-text-muted)");
+
+  return (
+    <div className="epic-group">
+      <button
+        className="epic-header-btn"
+        onClick={() => setOpen(!open)}
+        style={{ borderLeftColor: epicColor }}
+      >
+        <span className={`todo-chevron ${open ? "chevron-open" : ""}`}>›</span>
+        <div className="epic-header-info">
+          <div className="epic-header-top">
+            <span className="epic-name">{epicName}</span>
+            <span className="epic-count">{tickets.length}</span>
+          </div>
+          {epicMeta && epicKey && (
+            <div className="epic-meta-row">
+              <span className="badge badge-jira">{epicMeta.key}</span>
+              {epicMeta.status && <span className="epic-status">{epicMeta.status}</span>}
+              {epicMeta.priority && <span className="epic-priority">{epicMeta.priority}</span>}
+              {epicMeta.assignee && <span className="epic-assignee">{epicMeta.assignee}</span>}
+            </div>
+          )}
+        </div>
+        {epicMeta?.browseUrl && (
+          <span
+            className="epic-link"
+            onClick={(e) => {
+              e.stopPropagation();
+              send({ command: "openExternal", url: epicMeta.browseUrl });
+            }}
+            title="Open in Jira"
+          >
+            ↗
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="epic-tickets">
+          {tickets.map((t) => (
+            <JiraTicketCard key={t.id} ticket={t} />
+          ))}
         </div>
       )}
     </div>
