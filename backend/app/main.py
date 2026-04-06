@@ -118,6 +118,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             FileStorageService.get_instance(engine=app.state.db_engine)
 
             from .auth.user_service import UserService
+
             UserService.init(app.state.db_engine)
             logger.info("Singleton services initialized: TODOService, AuditLogService, FileStorageService, UserService")
         except Exception as exc:
@@ -220,7 +221,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     langfuse_ok = init_langfuse(settings)
     if langfuse_ok:
         import os
-        logger.info("Langfuse observability: enabled (host=%s)", os.environ.get("LANGFUSE_HOST", settings.langfuse.host))
+
+        logger.info(
+            "Langfuse observability: enabled (host=%s)", os.environ.get("LANGFUSE_HOST", settings.langfuse.host)
+        )
     else:
         logger.info("Langfuse observability: disabled")
 
@@ -302,6 +306,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.jira_service = None
         app.state.jira_allowed_projects = set()
         logger.info("Jira integration: disabled")
+
+    # ---- Azure DevOps ----
+    if conductor_cfg.azure_devops.enabled and conductor_cfg.azure_devops_secrets.pat:
+        from .integrations.azure_devops.mcp_client import AzureDevOpsClient
+        from .integrations.azure_devops.workspace import ensure_workspace
+
+        app.state.azure_devops_client = AzureDevOpsClient(
+            org_url=conductor_cfg.azure_devops_secrets.org_url,
+            pat=conductor_cfg.azure_devops_secrets.pat,
+        )
+
+        # Auto-clone or fetch the repo so code review has a local workspace
+        ado_workspace = await ensure_workspace(
+            repo_url=conductor_cfg.azure_devops.repo_url,
+            pat=conductor_cfg.azure_devops_secrets.pat,
+            workspace_path=conductor_cfg.azure_devops.workspace_path,
+        )
+        app.state.azure_devops_workspace = ado_workspace
+
+        # Initialize CodeReviewService for Azure DevOps PR reviews
+        if agent_provider and ado_workspace:
+            from .code_review.service import CodeReviewService
+
+            app.state.code_review_service = CodeReviewService(
+                provider=agent_provider,
+                explorer_provider=explorer_provider,
+                trace_writer=trace_writer,
+            )
+            logger.info("Azure DevOps code review service: ready")
+
+        logger.info(
+            "Azure DevOps integration: enabled (org=%s, workspace=%s)",
+            conductor_cfg.azure_devops_secrets.org_url,
+            ado_workspace,
+        )
+    else:
+        app.state.azure_devops_client = None
+        app.state.azure_devops_workspace = None
+        logger.info("Azure DevOps integration: disabled")
 
     logger.info("Conducator startup complete.")
     yield
@@ -435,6 +478,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .code_tools.router import router as code_tools_router
     from .files.router import router as files_router
     from .git_workspace.router import router as git_workspace_router
+    from .integrations.azure_devops.router import router as azure_devops_router
     from .integrations.jira.router import router as jira_router
     from .langextract.router import router as langextract_router
     from .policy.router import router as policy_router
@@ -466,6 +510,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(workflow_router)
     app.include_router(brain_router)
     app.include_router(jira_router)
+    app.include_router(azure_devops_router)
     if _browser_router is not None:
         app.include_router(_browser_router)
         logger.info("Browser tools: enabled (Playwright)")

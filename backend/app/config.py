@@ -65,6 +65,8 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_MOONSHOT_BASE_URL": ("ai_providers", "moonshot", "base_url"),
     "CONDUCTOR_JIRA_CLIENT_ID": ("jira", "client_id"),
     "CONDUCTOR_JIRA_CLIENT_SECRET": ("jira", "client_secret"),
+    "CONDUCTOR_AZURE_DEVOPS_ORG_URL": ("azure_devops", "org_url"),
+    "CONDUCTOR_AZURE_DEVOPS_PAT": ("azure_devops", "pat"),
     "CONDUCTOR_GOOGLE_CLIENT_ID": ("google_sso", "client_id"),
     "CONDUCTOR_GOOGLE_CLIENT_SECRET": ("google_sso", "client_secret"),
     "CONDUCTOR_NGROK_AUTHTOKEN": ("ngrok", "authtoken"),
@@ -498,6 +500,22 @@ class JiraSecretsConfig(BaseModel):
     client_secret: str = ""
 
 
+class AzureDevOpsSettings(BaseModel):
+    """Azure DevOps integration configuration."""
+
+    enabled: bool = False
+    project: str = ""  # Azure DevOps project name
+    repo_url: str = ""  # Git clone URL, e.g. https://dev.azure.com/myorg/MyProject/_git/my-repo
+    workspace_path: str = ""  # auto-resolved if empty: ~/.conductor/azure_workspaces/{repo_name}
+
+
+class AzureDevOpsSecretsConfig(BaseModel):
+    """Azure DevOps credentials (from conductor.secrets.yaml)."""
+
+    org_url: str = ""  # e.g. https://dev.azure.com/myorg
+    pat: str = ""  # Personal Access Token
+
+
 # ---------------------------------------------------------------------------
 # Logging config model
 # ---------------------------------------------------------------------------
@@ -558,6 +576,8 @@ class ConductorConfig(BaseModel):
     google_sso_secrets: GoogleSSOSecretsConfig = Field(default_factory=GoogleSSOSecretsConfig)
     jira: JiraSettings = Field(default_factory=JiraSettings)
     jira_secrets: JiraSecretsConfig = Field(default_factory=JiraSecretsConfig)
+    azure_devops: AzureDevOpsSettings = Field(default_factory=AzureDevOpsSettings)
+    azure_devops_secrets: AzureDevOpsSecretsConfig = Field(default_factory=AzureDevOpsSecretsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     prompt: PromptConfig = Field(default_factory=PromptConfig)
     change_limits: ChangeLimitsConfig = Field(default_factory=ChangeLimitsConfig)
@@ -666,6 +686,19 @@ def load_config(
         client_secret=_env("CONDUCTOR_JIRA_CLIENT_SECRET", jira_sec.get("client_secret", "")),
     )
 
+    ado_data = raw.get("azure_devops", {})
+    ado_cfg = AzureDevOpsSettings(
+        enabled=ado_data.get("enabled", False),
+        project=ado_data.get("project", ""),
+        repo_url=ado_data.get("repo_url", ""),
+        workspace_path=ado_data.get("workspace_path", ""),
+    )
+    ado_sec = secrets_raw.get("azure_devops", {})
+    ado_secrets_cfg = AzureDevOpsSecretsConfig(
+        org_url=_env("CONDUCTOR_AZURE_DEVOPS_ORG_URL", ado_sec.get("org_url", "")),
+        pat=_env("CONDUCTOR_AZURE_DEVOPS_PAT", ado_sec.get("pat", "")),
+    )
+
     summary_data = raw.get("summary", {})
     summary_cfg = SummaryConfig(
         enabled=summary_data.get("enabled", False),
@@ -730,6 +763,8 @@ def load_config(
         change_limits=change_limits_cfg,
         jira=jira_cfg,
         jira_secrets=jira_secrets_cfg,
+        azure_devops=ado_cfg,
+        azure_devops_secrets=ado_secrets_cfg,
     )
 
 

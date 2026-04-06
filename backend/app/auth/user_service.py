@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Optional
 from uuid import uuid4
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -25,18 +25,18 @@ AVATAR_COLOR_COUNT = 10
 class UserService:
     """Singleton service for user profile CRUD."""
 
-    _instance: Optional["UserService"] = None
+    _instance: Optional[UserService] = None
 
     def __init__(self, engine: AsyncEngine):
         self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     @classmethod
-    def init(cls, engine: AsyncEngine) -> "UserService":
+    def init(cls, engine: AsyncEngine) -> UserService:
         cls._instance = cls(engine)
         return cls._instance
 
     @classmethod
-    def get_instance(cls) -> "UserService":
+    def get_instance(cls) -> UserService:
         if not cls._instance:
             raise RuntimeError("UserService not initialized. Call init() first.")
         return cls._instance
@@ -59,18 +59,12 @@ class UserService:
 
         async with self._session_factory() as session:
             # Try to find existing user
-            result = await session.execute(
-                select(User).where(User.email == normalized_email)
-            )
+            result = await session.execute(select(User).where(User.email == normalized_email))
             user = result.scalar_one_or_none()
 
             if user:
                 # Update last_seen
-                await session.execute(
-                    update(User)
-                    .where(User.id == user.id)
-                    .values(last_seen_at=datetime.now(timezone.utc))
-                )
+                await session.execute(update(User).where(User.id == user.id).values(last_seen_at=datetime.now(UTC)))
                 await session.commit()
                 logger.info(f"[UserService] Existing user: {user.email} (id={user.id})")
                 return self._to_dict(user)
@@ -96,9 +90,7 @@ class UserService:
         from app.db.models import User
 
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(User).where(User.email == email.lower().strip())
-            )
+            result = await session.execute(select(User).where(User.email == email.lower().strip()))
             user = result.scalar_one_or_none()
             return self._to_dict(user) if user else None
 

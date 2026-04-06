@@ -50,6 +50,7 @@ async def _poll_for_identity(
         user_profile = None
         try:
             from .user_service import UserService
+
             user_svc = UserService.get_instance()
             email = identity.get("email") or identity.get("arn", "")
             if email:

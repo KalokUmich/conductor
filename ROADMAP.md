@@ -1174,6 +1174,7 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 9.8 (Tool Metadata) ────> benefits from 9.2 ────> enhances streaming
 9.9 (Brain Planning) ───> standalone ───────────> enhances auditability
 9.10 (Competitive) ─────> ongoing ──────────���───> informs 7.8, 9.1-9.7
+9.11 (Prompt Cache) ────> benefits from 9.3 ───> reduces token cost
 ```
 
 ### 9.9 Brain Explicit Planning & Dynamic Agent Composition (COMPLETE)
@@ -1250,6 +1251,18 @@ Continuous study of competing products alongside the Claude Code reference analy
 4. **Track differentiation**: maintain a comparison matrix showing where Conductor leads vs follows
 
 **Storage**: `reference/competitive/{cline,coderabbit,cursor}/` — one directory per product with dated analysis notes.
+
+### 9.11 Prompt Caching for Agent Loop (PLANNED)
+Add `cache_control` / `cachePoint` breakpoints to system prompts and tool definitions in Bedrock + Direct providers. Claude Code pattern: static/dynamic boundary marker, max 4 breakpoints. Expected ~45% token reduction for PR reviews (810K/1.82M cacheable). Bedrock uses `cachePoint`, Anthropic Direct uses `cache_control`.
+
+- [ ] Identify static/dynamic boundary in system prompts (identity + tools = static; user context = dynamic)
+- [ ] Add `cache_control: {"type": "ephemeral"}` breakpoints in Anthropic Direct provider
+- [ ] Add `cachePoint: {"type": "default"}` breakpoints in Bedrock Converse provider
+- [ ] Limit to max 4 breakpoints per request (API constraint)
+- [ ] Apply to tool definitions (tool schemas are static across iterations)
+- [ ] Apply to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
+- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Expected impact: ~45% input token reduction for PR review pipeline (810K/1.82M tokens cacheable)
 
 ### Reference Study Process
 For each sub-phase:

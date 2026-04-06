@@ -108,6 +108,14 @@ unverified business/design assumption?"
    from the code shown here.
 6. **If a finding depends on unseen config/infra/schema**, cap it at warning and note
    what context is missing.
+7. **Self-contradicting evidence → drop or nit.** If the finding's own evidence
+   acknowledges that the concern is "already handled", "already being used",
+   "already in place", or recommends only "verify that X" with no concrete defect,
+   the finding lacks a provable trigger. Drop it or cap at nit.
+8. **Intentional changes visible in the diff are NOT defects.** If the diff shows a
+   deliberate refactor (e.g., POST→GET, renamed method, migrated framework), and the
+   finding merely questions the design choice without proving it breaks something,
+   that is a design disagreement — cap at nit or drop.
 
 ## Severity definitions
 - **critical**: Code-provable defect. Concrete trigger scenario from code facts only.
