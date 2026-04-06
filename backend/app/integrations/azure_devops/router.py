@@ -104,11 +104,31 @@ async def review_pull_request(
                 project=req.project,
                 repo=req.repo,
                 pr_id=req.pr_id,
-                pr_title=pr_data.get("title", "") if not req.source_branch else "",
+                pr_title=pr_data.get("title", ""),
                 source_branch=source_branch,
                 worktree_path=worktree_path,
                 diff_spec=diff_spec,
             )
+
+            # Step 2.5: Check diff size — skip review for trivial PRs
+            _total_changed = _count_changed_lines(worktree_path, diff_spec)
+            _MIN_REVIEW_LINES = 30
+
+            if _total_changed < _MIN_REVIEW_LINES:
+                logger.info(
+                    "[AzureDevOps] PR #%d has %d lines — below %d threshold, skipping review (summary only)",
+                    req.pr_id,
+                    _total_changed,
+                    _MIN_REVIEW_LINES,
+                )
+                return AzureDevOpsReviewResponse(
+                    status="ok",
+                    pr_id=req.pr_id,
+                    threads_created=0,
+                    findings_count=0,
+                    merge_recommendation="approve",
+                    vote=0,
+                )
 
             # Step 3: Full review via PRBrainOrchestrator
             orchestrator = pr_brain_factory(worktree_path, diff_spec)
@@ -248,6 +268,26 @@ async def review_pull_request(
             pr_id=req.pr_id,
             error=str(exc),
         )
+
+
+def _count_changed_lines(worktree_path: str, diff_spec: str) -> int:
+    """Count total insertions + deletions from git diff --shortstat."""
+    import re
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--shortstat"] + diff_spec.split() + ["--"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        # " 3 files changed, 12 insertions(+), 5 deletions(-)"
+        nums = re.findall(r"(\d+) insertion|(\d+) deletion", result.stdout)
+        return sum(int(n) for pair in nums for n in pair if n)
+    except Exception:
+        return 999  # fail open — run review if we can't count
 
 
 async def _generate_and_post_summary(
