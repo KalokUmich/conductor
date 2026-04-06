@@ -1196,9 +1196,9 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             getSessionService().setRoomId(message.roomId);
                             this._controller.startHosting();
 
-                            // 4. Register workspace + send state to WebView
+                            // 4. Register workspace + send state + permissions to WebView
                             await this._handleSetupLocalWorkspace();
-                            this._sendConductorState(this._controller.getState());
+                            this._sendSessionAndState();
                         } else {
                             // Online sessions: rejoin with SSO identity
                             const sso = this._getValidSSOIdentity();
