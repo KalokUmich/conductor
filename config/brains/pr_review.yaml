@@ -9,7 +9,7 @@ model: strong
 
 limits:
   total_session_tokens: 2500000
-  max_concurrent_agents: 3
+  max_concurrent_agents: 6
   llm_concurrency_limit: 2          # Max parallel LLM API calls (Bedrock throttle guard)
   sub_agent_timeout: 480
   reject_above: 6000
