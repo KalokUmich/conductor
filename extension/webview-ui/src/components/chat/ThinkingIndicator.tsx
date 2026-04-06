@@ -2,6 +2,7 @@ import { memo, useCallback, useDeferredValue } from "react";
 import { useChat } from "../../contexts/ChatContext";
 import type { BrainTree, AgentState } from "../../types/messages";
 import { escapeHtml } from "../../utils/format";
+import { ConductorAvatar } from "./ConductorAvatar";
 
 // ============================================================
 // ThinkingIndicator — concurrent rendering with useDeferredValue
@@ -29,17 +30,9 @@ export const ThinkingIndicator = memo(function ThinkingIndicator({
 
   return (
     <div className="thinking-indicator animate-slide-up" role="status" aria-label={`AI is working: ${deferredAction}`}>
-      {/* AI Robot Avatar */}
+      {/* AI Conductor Avatar — thinking state */}
       <div className="thinking-avatar">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className="thinking-robot">
-          <rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5" />
-          <circle cx="9" cy="14" r="1.5" fill="currentColor" className="robot-eye-left" />
-          <circle cx="15" cy="14" r="1.5" fill="currentColor" className="robot-eye-right" />
-          <path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5" className="robot-antenna" />
-          <path d="M2 13h2M20 13h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
+        <ConductorAvatar variant="thinking" size={20} />
       </div>
 
       {/* Content */}

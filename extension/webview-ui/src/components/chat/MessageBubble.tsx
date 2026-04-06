@@ -3,6 +3,7 @@ import { useSession } from "../../contexts/SessionContext";
 import { useVSCode } from "../../contexts/VSCodeContext";
 import type { ChatMessage } from "../../types/messages";
 import { escapeHtml, formatTime, getInitials, getAvatarColor } from "../../utils/format";
+import { ConductorAvatar } from "./ConductorAvatar";
 import { CodeBlock } from "../shared/CodeBlock";
 import { DiagramLightbox } from "../shared/DiagramLightbox";
 
@@ -808,16 +809,7 @@ function Avatar({
   if (isAI) {
     return (
       <div className="avatar avatar-ai">
-        <svg viewBox="0 0 24 24" fill="none" width="16" height="16">
-          {/* Robot face — cute AI avatar */}
-          <rect x="4" y="8" width="16" height="12" rx="3" stroke="currentColor" strokeWidth="1.5" />
-          <circle cx="9" cy="14" r="1.5" fill="currentColor" />
-          <circle cx="15" cy="14" r="1.5" fill="currentColor" />
-          <path d="M10 17.5h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <path d="M12 4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          <circle cx="12" cy="3" r="1.5" stroke="currentColor" strokeWidth="1.5" />
-          <path d="M2 13h2M20 13h2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-        </svg>
+        <ConductorAvatar variant="idle" size={20} />
       </div>
     );
   }

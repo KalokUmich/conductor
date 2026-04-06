@@ -846,6 +846,24 @@
   44% { transform: scaleY(0.1); }
 }
 
+/* ConductorAvatar animations */
+.eye-blink {
+  animation: robotBlink 4s ease-in-out infinite;
+  transform-origin: center;
+}
+.antenna-pulse {
+  animation: antennaPulse 1.2s ease-in-out infinite;
+}
+.thinking-dot {
+  animation: thinkingDotFade 1.8s ease-in-out infinite;
+}
+.thinking-dot-2 { animation-delay: 0.3s; }
+.thinking-dot-3 { animation-delay: 0.6s; }
+@keyframes thinkingDotFade {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
 .thinking-content {
   max-width: 85%;
   min-width: 0;
