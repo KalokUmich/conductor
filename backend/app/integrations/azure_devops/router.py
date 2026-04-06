@@ -72,7 +72,6 @@ async def review_pull_request(
         diff_spec = f"origin/{target_branch}...origin/{source_branch}"
         logger.info("[AzureDevOps] Diff spec: %s", diff_spec)
 
-        # Step 1.5: Create isolated worktree for this PR review
         main_workspace = getattr(request.app.state, "azure_devops_workspace", None)
         if not main_workspace:
             raise HTTPException(
@@ -87,8 +86,30 @@ async def review_pull_request(
                 detail="PR Brain not initialized.",
             )
 
-        from .workspace import cleanup_pr_worktree, create_pr_worktree
+        # Step 1.5: Fetch latest refs + check diff size on main clone (no worktree needed)
+        from .workspace import cleanup_pr_worktree, create_pr_worktree, fetch_latest
 
+        await fetch_latest(main_workspace)
+        _total_changed = _count_changed_lines(main_workspace, diff_spec)
+        _MIN_REVIEW_LINES = 30
+
+        if _total_changed < _MIN_REVIEW_LINES:
+            logger.info(
+                "[AzureDevOps] PR #%d has %d lines — below %d, skipping",
+                req.pr_id,
+                _total_changed,
+                _MIN_REVIEW_LINES,
+            )
+            return AzureDevOpsReviewResponse(
+                status="ok",
+                pr_id=req.pr_id,
+                threads_created=0,
+                findings_count=0,
+                merge_recommendation="approve",
+                vote=0,
+            )
+
+        # Step 2: Create worktree (only for PRs worth reviewing)
         worktree_path = await create_pr_worktree(main_workspace, source_branch, req.pr_id)
         if not worktree_path:
             raise HTTPException(
@@ -97,26 +118,6 @@ async def review_pull_request(
             )
 
         try:
-            # Step 2: Check diff size first (no LLM call, instant)
-            _total_changed = _count_changed_lines(worktree_path, diff_spec)
-            _MIN_REVIEW_LINES = 30
-
-            if _total_changed < _MIN_REVIEW_LINES:
-                logger.info(
-                    "[AzureDevOps] PR #%d has %d lines — below %d, skipping summary and review",
-                    req.pr_id,
-                    _total_changed,
-                    _MIN_REVIEW_LINES,
-                )
-                return AzureDevOpsReviewResponse(
-                    status="ok",
-                    pr_id=req.pr_id,
-                    threads_created=0,
-                    findings_count=0,
-                    merge_recommendation="approve",
-                    vote=0,
-                )
-
             # Step 3: Generate PR summary (Haiku, ~5s — failure won't block review)
             await _generate_and_post_summary(
                 client=client,

@@ -169,6 +169,18 @@ async def create_pr_worktree(
     return worktree_path
 
 
+async def fetch_latest(workspace_path: str) -> bool:
+    """Run ``git fetch --all --prune`` on the main clone.
+
+    Used to refresh remote refs before line-count checks (no worktree needed).
+    """
+    rc, _, stderr = await _run(["git", "fetch", "--all", "--prune"], cwd=workspace_path)
+    if rc != 0:
+        logger.error("[AzureDevOps] git fetch failed: %s", stderr.strip())
+        return False
+    return True
+
+
 async def cleanup_pr_worktree(main_workspace: str, worktree_path: str) -> None:
     """Remove a PR review worktree after the review is complete."""
     rc, _, stderr = await _run(
