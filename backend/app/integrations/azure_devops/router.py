@@ -268,7 +268,22 @@ async def _generate_and_post_summary(
     """
     import subprocess
 
-    from .summarizer import build_description_with_summary, generate_pr_summary
+    from .summarizer import (
+        AI_SUMMARY_MARKER,
+        build_description_with_summary,
+        generate_pr_summary,
+    )
+
+    # Skip if this PR already has an AI summary (idempotent)
+    try:
+        pr_data = await client.get_pull_request(project, repo, pr_id)
+        existing_desc = pr_data.get("description", "") or ""
+        if AI_SUMMARY_MARKER in existing_desc:
+            logger.info("[AzureDevOps] PR #%d already has AI summary — skipping", pr_id)
+            return
+    except Exception as exc:
+        logger.warning("[AzureDevOps] Failed to check PR description: %s", exc)
+        return
 
     explorer = getattr(request.app.state, "explorer_provider", None)
     if not explorer:
@@ -308,10 +323,8 @@ async def _generate_and_post_summary(
     if not summary:
         return
 
-    # Get existing description and append summary
+    # Append summary to existing description (existing_desc already fetched above)
     try:
-        pr_data = await client.get_pull_request(project, repo, pr_id)
-        existing_desc = pr_data.get("description", "") or ""
         new_desc = build_description_with_summary(existing_desc, summary)
         await client.update_pr_description(project, repo, pr_id, new_desc)
         logger.info("[AzureDevOps] PR #%d description updated with AI summary", pr_id)

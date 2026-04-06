@@ -13,7 +13,7 @@ from app.ai_provider.base import AIProvider
 
 logger = logging.getLogger(__name__)
 
-_AI_SUMMARY_MARKER = "<!-- conductor-ai-summary -->"
+AI_SUMMARY_MARKER = "<!-- conductor-ai-summary -->"
 
 _SUMMARY_SYSTEM = """\
 You generate concise PR summaries for developers. Your output is appended \
@@ -101,8 +101,8 @@ def build_description_with_summary(
     so re-runs don't duplicate the summary section.
     """
     # Remove previous AI summary if present
-    if _AI_SUMMARY_MARKER in existing_description:
-        parts = existing_description.split(_AI_SUMMARY_MARKER)
+    if AI_SUMMARY_MARKER in existing_description:
+        parts = existing_description.split(AI_SUMMARY_MARKER)
         existing_description = parts[0].rstrip()
 
     # Build new description
@@ -110,6 +110,12 @@ def build_description_with_summary(
     if existing_description.strip():
         sections.append(existing_description.strip())
 
-    sections.append(f"{_AI_SUMMARY_MARKER}\n\n---\n\n{summary}")
+    header = (
+        "## \U0001f916 AI Summary\n\n"
+        "_Auto-generated from diff — high-level overview only, "
+        "may not capture full context or intent. "
+        "See inline review comments for detailed findings._"
+    )
+    sections.append(f"{AI_SUMMARY_MARKER}\n\n---\n\n{header}\n\n{summary}")
 
     return "\n\n".join(sections)
