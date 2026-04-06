@@ -115,6 +115,7 @@ const TRANSITION_TABLE: Record<string, ConductorState> = {
     [`${ConductorState.Joined}:${ConductorEvent.LEAVE_SESSION}`]: ConductorState.ReadyToHost,
     [`${ConductorState.Joined}:${ConductorEvent.QUIT_SESSION}`]: ConductorState.ReadyToHost,
     [`${ConductorState.Joined}:${ConductorEvent.BACKEND_LOST}`]: ConductorState.BackendDisconnected,
+    [`${ConductorState.Joined}:${ConductorEvent.START_HOSTING}`]: ConductorState.Hosting,
 };
 
 // ---------------------------------------------------------------------------

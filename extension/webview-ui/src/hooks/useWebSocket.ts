@@ -289,11 +289,13 @@ export function useWebSocket() {
 
       // ── 10. role_restored — update session role (suppress duplicate on reconnect) ──
       if (type === "role_restored") {
-        const newRole = (data.sessionRole as string) || "host";
-        sessionDispatch({
+        const newRole = (data.role as string) || (data.sessionRole as string) || "host";
+        sessionDispatchRef.current({
           type: "SET_PERMISSIONS",
           permissions: { sessionRole: newRole as "host" | "guest" | "none" },
         });
+        // Notify extension host so it can promote FSM from Joined → Hosting
+        sendRef.current({ command: "backendRoleRestored", role: newRole });
         // Only show system message on first occurrence, not reconnects
         if (!hasJoinedOnce) {
           addMessageRef.current({

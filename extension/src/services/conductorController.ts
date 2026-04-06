@@ -245,6 +245,20 @@ export class ConductorController {
     }
 
     /**
+     * Promote from Joined → Hosting when backend restores host role.
+     *
+     * Called when the backend sends `role_restored` for a returning SSO host.
+     * No-op if already in Hosting or any other non-Joined state.
+     */
+    promoteToHost(): void {
+        const current = this._fsm.getState();
+        if (current !== ConductorState.Joined) {
+            return;
+        }
+        this._fsm.transition(ConductorEvent.START_HOSTING);
+    }
+
+    /**
      * Quit the session (leave but preserve data for later rejoin).
      *
      * Valid from Hosting or Joined states.  Unlike leaveSession / stopHosting,
