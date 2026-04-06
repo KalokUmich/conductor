@@ -166,15 +166,30 @@ async def create_pr_worktree(
     return worktree_path
 
 
+_FETCH_COOLDOWN_SECONDS = 60
+_last_fetch_time: float = 0.0
+
+
 async def fetch_latest(workspace_path: str) -> bool:
     """Run ``git fetch --all --prune`` on the main clone.
 
-    Used to refresh remote refs before line-count checks (no worktree needed).
+    Skips if last fetch was less than 60 seconds ago — avoids redundant
+    network calls when multiple PR reviews arrive in quick succession.
     """
+    global _last_fetch_time
+    import time
+
+    now = time.monotonic()
+    if now - _last_fetch_time < _FETCH_COOLDOWN_SECONDS:
+        logger.debug("[AzureDevOps] Fetch skipped — last fetch %.0fs ago", now - _last_fetch_time)
+        return True
+
     rc, _, stderr = await _run(["git", "fetch", "--all", "--prune"], cwd=workspace_path)
     if rc != 0:
         logger.error("[AzureDevOps] git fetch failed: %s", stderr.strip())
         return False
+
+    _last_fetch_time = now
     return True
 
 
