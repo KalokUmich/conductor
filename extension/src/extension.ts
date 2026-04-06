@@ -1042,6 +1042,11 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                 case 'getConductorState':
                     this._sendConductorState(this._controller.getState());
                     return;
+                case 'backendRoleRestored':
+                    // Backend confirmed host role (SSO reconnect) — promote FSM
+                    this._controller.promoteToHost();
+                    this._sendPermissions();
+                    return;
                 case 'copyInviteLink':
                     this._handleCopyInviteLink();
                     return;
@@ -1195,10 +1200,32 @@ class AICollabViewProvider implements vscode.WebviewViewProvider {
                             await this._handleSetupLocalWorkspace();
                             this._sendConductorState(this._controller.getState());
                         } else {
-                            // Online sessions: rejoin as guest via invite URL
-                            this._handleJoinSession(
-                                getSessionService().getBackendUrl() + '/chat?roomId=' + message.roomId
-                            );
+                            // Online sessions: rejoin with SSO identity
+                            const sso = this._getValidSSOIdentity();
+                            const savedBackendUrl = targetSession?.backendUrl || getSessionService().getBackendUrl();
+
+                            if (sso) {
+                                // SSO valid — rejoin as host
+                                // 1. Health check if needed
+                                const curState = this._controller.getState();
+                                if (curState === ConductorState.Idle || curState === ConductorState.BackendDisconnected) {
+                                    const afterHealth = await this._controller.start();
+                                    if (afterHealth !== ConductorState.ReadyToHost) {
+                                        // Backend not reachable — fall back to guest join
+                                        this._handleJoinSession(savedBackendUrl + '/chat?roomId=' + message.roomId);
+                                        return;
+                                    }
+                                }
+                                // 2. Set roomId, then transition FSM to Hosting
+                                getSessionService().setRoomId(message.roomId);
+                                this._controller.startHosting();
+                                this._sendSessionAndState();
+                            } else {
+                                // No SSO — fall back to guest join
+                                this._handleJoinSession(
+                                    savedBackendUrl + '/chat?roomId=' + message.roomId
+                                );
+                            }
                         }
                     }
                     return;
