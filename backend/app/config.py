@@ -132,6 +132,46 @@ def _load_yaml(path: Optional[Path]) -> Dict[str, Any]:
         return yaml.safe_load(fh) or {}
 
 
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Deep-merge *override* into *base* (override wins on conflict).
+
+    - Dicts are merged recursively.
+    - Lists and scalars in *override* replace the base value entirely.
+    - Keys only in *base* are preserved.
+    """
+    merged = dict(base)
+    for key, val in override.items():
+        if key in merged and isinstance(merged[key], dict) and isinstance(val, dict):
+            merged[key] = _deep_merge(merged[key], val)
+        else:
+            merged[key] = val
+    return merged
+
+
+def _load_yaml_with_local(filename: str) -> Dict[str, Any]:
+    """Load a YAML config file with optional ``.local`` override.
+
+    Searches for ``filename`` and ``filename.replace('.yaml', '.local.yaml')``
+    in the standard config file locations.  If both exist, the local file's
+    values are deep-merged on top of the base file.
+
+    This allows ``conductor.settings.yaml`` to be committed with safe defaults
+    while ``conductor.settings.local.yaml`` (gitignored) holds machine-specific
+    overrides like API keys, ngrok domains, and team-specific config.
+    """
+    base_path = _find_config_file(filename)
+    local_filename = filename.replace(".yaml", ".local.yaml")
+    local_path = _find_config_file(local_filename)
+
+    base = _load_yaml(base_path)
+    local = _load_yaml(local_path)
+
+    if local:
+        logger.info("Local override loaded: %s", local_path)
+        return _deep_merge(base, local)
+    return base
+
+
 # ---------------------------------------------------------------------------
 # Secrets models
 # ---------------------------------------------------------------------------
@@ -327,11 +367,8 @@ def load_settings() -> AppSettings:
     Searches for config files in standard locations
     (see :func:`_find_config_file` for the search order).
     """
-    settings_path = _find_config_file("conductor.settings.yaml")
-    secrets_path = _find_config_file("conductor.secrets.yaml")
-
-    settings_data = _load_yaml(settings_path)
-    secrets_data = _load_yaml(secrets_path)
+    settings_data = _load_yaml_with_local("conductor.settings.yaml")
+    secrets_data = _load_yaml_with_local("conductor.secrets.yaml")
 
     # Apply environment variable overrides to secrets
     _apply_env_overrides(secrets_data)
@@ -631,11 +668,16 @@ def load_config(
         A fully populated :class:`ConductorConfig`.
     """
     if settings_path is None:
-        settings_path = _find_config_file("conductor.settings.yaml")
-    if secrets_path is None:
-        secrets_path = _find_config_file("conductor.secrets.yaml")
+        # Use local override pattern (settings.local.yaml deep-merged over settings.yaml)
+        raw = _load_yaml_with_local("conductor.settings.yaml")
+        settings_path = _find_config_file("conductor.settings.yaml")  # for audit_path resolution
+    else:
+        raw = _load_yaml(settings_path)
 
-    raw = _load_yaml(settings_path)
+    if secrets_path is None:
+        secrets_raw_merged = _load_yaml_with_local("conductor.secrets.yaml")
+    else:
+        secrets_raw_merged = _load_yaml(secrets_path)
 
     # Build nested sub-configs from raw YAML sections
     logging_data = raw.get("logging", {})
@@ -668,7 +710,7 @@ def load_config(
     google_sso_cfg = GoogleSSOConfig(enabled=gsso_data.get("enabled", False))
 
     # Secrets — env vars override YAML values (for cloud deployment)
-    secrets_raw = _load_yaml(secrets_path)
+    secrets_raw = secrets_raw_merged
     gsso_sec = secrets_raw.get("google_sso", {})
     google_sso_secrets_cfg = GoogleSSOSecretsConfig(
         client_id=_env("CONDUCTOR_GOOGLE_CLIENT_ID", gsso_sec.get("client_id", "")),

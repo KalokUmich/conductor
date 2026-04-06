@@ -76,10 +76,15 @@ logs/
 *.pem
 *.key
 
-# Config files with secrets (use .example files as templates)
-# conductor.secrets.yaml contains API keys - MUST be gitignored
+# Config files with secrets and local overrides — NEVER committed
+# Use conductor.settings.local.yaml for machine-specific settings (deep-merged over base)
+# Use conductor.secrets.yaml for API keys and credentials
 config/conductor.secrets.yaml
+config/conductor.secrets.local.yaml
+config/conductor.settings.local.yaml
 conductor.secrets.yaml
+conductor.secrets.local.yaml
+conductor.settings.local.yaml
 # Docker env file with database credentials
 docker/.env
 # Tool comparison generated outputs
@@ -89,7 +94,7 @@ tool_lsp_results.json
 # Legacy config file (replaced by separate secrets/settings files)
 config/conductor.yaml
 conductor.yaml
-# Note: conductor.settings.yaml is NOT gitignored - it can be committed
+# Note: conductor.settings.yaml is NOT gitignored - it contains safe defaults
 
 # =============================================================================
 # Conductor Workspace Storage (per-workspace local data)

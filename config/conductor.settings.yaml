@@ -1,13 +1,16 @@
-# Conductor Settings Configuration
+# Conductor Settings Configuration — safe defaults (committed to git)
 # =============================================================================
-# This file contains non-sensitive settings and CAN be committed to git.
+# This file contains non-sensitive default settings.
+#
+# To override for your environment, create conductor.settings.local.yaml
+# in the same directory (gitignored). Local values are deep-merged on top.
+#
 # For API keys and secrets, use conductor.secrets.yaml (gitignored).
 #
-# Configuration file search order:
-#   1. ./config/conductor.settings.yaml
-#   2. ./conductor.settings.yaml
-#   3. ../config/conductor.settings.yaml
-#   4. ~/.conductor/conductor.settings.yaml
+# Load order:
+#   1. conductor.settings.yaml           ← this file (defaults)
+#   2. conductor.settings.local.yaml     ← your overrides (gitignored)
+#   3. Environment variables             ← highest priority
 
 # =============================================================================
 # Server Configuration
@@ -27,7 +30,7 @@ server:
   # Public URL for external access (set by ngrok or other tunnel service)
   # When ngrok is enabled, the live tunnel URL takes priority over this value.
   # Leave empty to use localhost (only works when NOT in VS Code Remote-WSL).
-  public_url: "https://preoriginal-bromidically-elliana.ngrok-free.dev"
+  public_url: ""
 
 # =============================================================================
 # Ngrok Settings (non-secrets)
@@ -37,8 +40,8 @@ ngrok:
   # Region (us, eu, ap, au, sa, jp, in)
   region: "eu"
 
-  # Enable ngrok tunnel on startup
-  enabled: true
+  # Enable ngrok tunnel on startup (set true in .local.yaml)
+  enabled: false
 
 # =============================================================================
 # Database (legacy settings)
@@ -91,8 +94,8 @@ rooms:
 # AWS SSO Configuration
 # =============================================================================
 sso:
-  enabled: true
-  start_url: "https://d-9c67136d70.awsapps.com/start"
+  enabled: false
+  start_url: ""
   region: "eu-west-2"
 
 # =============================================================================
@@ -387,38 +390,13 @@ langfuse:
 # Atlassian OAuth 2.0 (3LO) for Jira Cloud.
 # Create an OAuth 2.0 app at https://developer.atlassian.com/console/myapps/
 # Set callback URL to: {your_backend_url}/api/integrations/jira/callback
+azure_devops:
+  enabled: false
+  project: ""
+  repo_url: ""
+
 jira:
-  enabled: true
-  # client_id and client_secret are in conductor.secrets.yaml
-  # Team UUIDs for customfield_10001 (Atlassian Teams).
-  # Find each UUID at: https://team.atlassian.com/people/team/{uuid}
-  # The Teams API does not support OAuth 2.0, so we configure them statically here.
-  # Branch naming templates. {ticket} = issue key, {content} = slugified summary.
-  branch_formats:
-    feature: "feature/{ticket}-{content}"
-    bugfix: "bugfix/{ticket}-{content}"
-  # Restrict project list to these keys. Empty list = show all projects.
-  allowed_projects:
-    - DEV    # Development
-    - FN     # Finance
-    - FO     # FinOps
-    - HELP   # Helpdesk
-    - PT     # Pen Testing
-    - REN    # Render
-  teams:
-    - id: "3b379d3e-9882-424a-93e9-5afa069303f6"
-      name: "Platform"
-    - id: "a40c6d14-1836-426c-822f-8adb93a8952a"
-      name: "UPL"
-    - id: "792f3500-076c-432e-9fd3-4a81ce35931e"
-      name: "Data Science"
-    - id: "f51b8336-878c-44bd-ae22-ec3b37e07668"
-      name: "FinOps"
-    - id: "953341fd-d0b3-403d-85ce-5a2b02b2dcc7"
-      name: "Support"
-    - id: "8f86a9e3-c5aa-49f4-92b3-80dc795afae4"
-      name: "Mortgages"
-    - id: "c10aa23e-6973-4b1e-a47d-9bfdcee857db"
-      name: "IT & Security"
-    - id: "93553b1a-50c8-4312-995a-4abaad903daf"
-      name: "Customer Operations"
+  enabled: false
+  # Override in conductor.settings.local.yaml with:
+  #   enabled: true, branch_formats, allowed_projects, teams
+  # Secrets (client_id, client_secret) go in conductor.secrets.yaml
