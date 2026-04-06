@@ -657,6 +657,10 @@ class AgentToolExecutor(ToolExecutor):
             condensed = condense_result(result)
             # Add quality metadata from agent template
             condensed["need_brain_review"] = agent_config.quality.need_brain_review
+            # Add token usage for upstream reporting
+            if result.budget_summary:
+                condensed["total_input_tokens"] = result.budget_summary.get("total_input_tokens", 0)
+                condensed["total_output_tokens"] = result.budget_summary.get("total_output_tokens", 0)
             return ToolResult(tool_name="dispatch_agent", success=True, data=condensed)
 
         except TimeoutError:

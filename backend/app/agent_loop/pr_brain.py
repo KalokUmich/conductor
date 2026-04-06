@@ -381,7 +381,8 @@ class PRBrainOrchestrator:
         for result in agent_results:
             if result.success and isinstance(result.data, dict):
                 total_iterations += result.data.get("iterations", 0)
-                total_tokens += result.data.get("tool_calls_made", 0) * 2000  # rough estimate
+                total_tokens += result.data.get("total_input_tokens", 0)
+                total_tokens += result.data.get("total_output_tokens", 0)
 
         yield WorkflowEvent(
             "done",
