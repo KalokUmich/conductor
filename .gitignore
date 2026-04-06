@@ -76,13 +76,12 @@ logs/
 *.pem
 *.key
 
-# Config files with secrets and local overrides — NEVER committed
-# Use conductor.settings.local.yaml for machine-specific settings (deep-merged over base)
-# Use conductor.secrets.yaml for API keys and credentials
-config/conductor.secrets.yaml
+# Local config overrides — NEVER committed
+# conductor.secrets.yaml is committed (safe defaults only, no real keys)
+# conductor.secrets.local.yaml has your real credentials (gitignored)
+# conductor.settings.local.yaml has your environment overrides (gitignored)
 config/conductor.secrets.local.yaml
 config/conductor.settings.local.yaml
-conductor.secrets.yaml
 conductor.secrets.local.yaml
 conductor.settings.local.yaml
 # Docker env file with database credentials
