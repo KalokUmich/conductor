@@ -50,6 +50,7 @@ from app.code_review.shared import (
     parse_findings,
     post_filter,
     prefetch_diffs,
+    repair_output,
     should_reject_pr,
 )
 from app.code_tools.executor import ToolExecutor
@@ -308,7 +309,7 @@ class PRBrainOrchestrator:
         # Phase 3: Post-process (deterministic)
         # ------------------------------------------------------------------
 
-        findings = self._post_process(agent_results, pr_context)
+        findings = await self._post_process(agent_results, pr_context)
 
         yield WorkflowEvent(
             "post_processing",
@@ -659,7 +660,7 @@ When reviewing diffs, distinguish these categories:
     # Phase 3 helpers
     # ------------------------------------------------------------------
 
-    def _post_process(
+    async def _post_process(
         self,
         agent_results: List[ToolResult],
         pr_context: PRContext,
@@ -697,6 +698,21 @@ When reviewing diffs, distinguish these categories:
 
             # Parse JSON findings from agent answer
             findings = parse_findings(answer, agent_name, category)
+
+            # Repair fallback: if parse failed but answer has substance
+            # (>100 chars), make a cheap reformat call to recover findings.
+            # This catches truncated outputs from FORCE_CONCLUDE — the agent
+            # ran out of budget mid-investigation but still has evidence
+            # in its accumulated text.
+            if not findings and len(answer) > 100:
+                logger.info(
+                    "Attempting repair for %s agent (answer=%d chars)",
+                    agent_name,
+                    len(answer),
+                )
+                findings = await repair_output(
+                    answer, agent_name, category, self._explorer_provider
+                )
 
             # Evidence gate (downgrade under-evidenced criticals)
             if findings:

@@ -159,22 +159,32 @@ class BrainBudgetManager:
 
     Brain reserves a portion for its own LLM calls (thinking, synthesis).
     Remaining budget is allocated to sub-agents on demand.
+
+    Allocations are pre-deducted from the pool at ``allocate()`` time so
+    that parallel sub-agent dispatches see a correctly draining pool. The
+    reservation is moved to ``used`` when ``report()`` is called with the
+    actual token consumption — overruns and underruns both reconcile via
+    the ``used`` total.
     """
 
     def __init__(self, total_tokens: int, brain_reserve_ratio: float = 0.15):
         self.total = total_tokens
         self.brain_reserve = min(_MAX_BRAIN_RESERVE, int(total_tokens * brain_reserve_ratio))
-        self.used: Dict[str, int] = {}  # agent_name → tokens consumed
+        self.used: Dict[str, int] = {}  # agent_name → actual tokens consumed (post-report)
+        self.reserved: Dict[str, int] = {}  # agent_name → tokens held at allocate() time
         self._lock = asyncio.Lock()
 
     @property
     def remaining(self) -> int:
-        return max(0, self.total - sum(self.used.values()) - self.brain_reserve)
+        committed = sum(self.used.values()) + sum(self.reserved.values())
+        return max(0, self.total - committed - self.brain_reserve)
 
     async def allocate(self, agent_name: str, weight: float = 1.0) -> int:
         """Allocate tokens for a sub-agent.
 
-        Guarantees at least 50 000 tokens even when the pool is nearly
+        Pre-deducts the allocation from the pool so concurrent dispatches
+        see the pool drain correctly. Guarantees at least
+        ``_MIN_AGENT_BUDGET`` tokens even when the pool is nearly
         exhausted, to prevent agents from starting with too small a budget.
 
         Args:
@@ -199,19 +209,25 @@ class BrainBudgetManager:
                 # Old system: ~460K per agent. Don't starve them.
                 allocated = min(int(available * 0.6 * weight), _MAX_AGENT_BUDGET)
                 allocated = max(allocated, _DEFAULT_AGENT_BUDGET)
+            # Pre-deduct: hold this allocation in reserved until report() arrives.
+            # Cumulative per-agent so a single agent dispatched twice gets summed.
+            self.reserved[agent_name] = self.reserved.get(agent_name, 0) + allocated
             logger.info(
                 "Budget allocated %d tokens to %s (remaining: %d)",
                 allocated,
                 agent_name,
-                available - allocated,
+                self.remaining,
             )
             return allocated
 
     async def report(self, agent_name: str, tokens_used: int) -> None:
         """Record actual token usage after a sub-agent completes.
 
-        Cumulative per-agent — calling this multiple times for the same
-        agent name adds to the previously reported total.
+        Releases the agent's reservation and moves the actual usage into
+        ``used``. Underruns return budget to the pool; overruns are recorded
+        as-is and consume future capacity. Cumulative per-agent — calling
+        this multiple times for the same agent name adds to the previously
+        reported total.
 
         Args:
             agent_name: Name of the sub-agent that completed.
@@ -219,6 +235,9 @@ class BrainBudgetManager:
         """
         async with self._lock:
             self.used[agent_name] = self.used.get(agent_name, 0) + tokens_used
+            # Release the reservation — the actual usage in `used` now
+            # represents this agent's pool consumption.
+            self.reserved.pop(agent_name, None)
 
 
 # ---------------------------------------------------------------------------

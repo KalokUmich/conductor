@@ -334,7 +334,8 @@ class TestBuildAgentQuery:
 
 
 class TestPostProcess:
-    def test_post_process_parses_findings(self):
+    @pytest.mark.asyncio
+    async def test_post_process_parses_findings(self):
         brain = _make_pr_brain()
         ctx = _make_pr_context()
         findings_json = json.dumps(
@@ -353,11 +354,12 @@ class TestPostProcess:
             ]
         )
         results = [_make_tool_result("correctness", f"```json\n{findings_json}\n```")]
-        output = brain._post_process(results, ctx)
+        output = await brain._post_process(results, ctx)
         assert len(output) >= 1
         assert output[0].title == "Null dereference"
 
-    def test_post_process_caps_per_agent(self):
+    @pytest.mark.asyncio
+    async def test_post_process_caps_per_agent(self):
         brain = _make_pr_brain()
         ctx = _make_pr_context()
         # Create more than _MAX_FINDINGS_PER_AGENT findings
@@ -377,11 +379,12 @@ class TestPostProcess:
         ]
         answer = json.dumps(findings_list)
         results = [_make_tool_result("correctness", answer, tool_calls_made=5)]
-        output = brain._post_process(results, ctx)
+        output = await brain._post_process(results, ctx)
         # Should be capped at _MAX_FINDINGS_PER_AGENT per agent
         assert len(output) <= _MAX_FINDINGS_PER_AGENT
 
-    def test_post_process_filters_test_files(self):
+    @pytest.mark.asyncio
+    async def test_post_process_filters_test_files(self):
         brain = _make_pr_brain()
         # Create context with both source and test findings
         ctx = PRContext(
@@ -420,7 +423,7 @@ class TestPostProcess:
         }
         answer = json.dumps([source_finding, test_file_finding])
         results = [_make_tool_result("test_coverage", answer, tool_calls_made=5)]
-        output = brain._post_process(results, ctx)
+        output = await brain._post_process(results, ctx)
         # The test-file-only finding should be dropped when source findings exist
         test_files = [f for f in output if "tests/" in f.file]
         source_files = [f for f in output if f.file == "app/service.py"]
@@ -428,7 +431,8 @@ class TestPostProcess:
         # test_service.py finding (test_coverage category) should be dropped
         assert len(test_files) == 0
 
-    def test_post_process_handles_failed_agent(self):
+    @pytest.mark.asyncio
+    async def test_post_process_handles_failed_agent(self):
         brain = _make_pr_brain()
         ctx = _make_pr_context()
         failed_result = ToolResult(
@@ -437,13 +441,78 @@ class TestPostProcess:
             error="Agent timed out",
         )
         # Should not raise — failed results are silently skipped
-        output = brain._post_process([failed_result], ctx)
+        output = await brain._post_process([failed_result], ctx)
         assert isinstance(output, list)
 
-    def test_post_process_empty_results(self):
+    @pytest.mark.asyncio
+    async def test_post_process_empty_results(self):
         brain = _make_pr_brain()
         ctx = _make_pr_context()
-        output = brain._post_process([], ctx)
+        output = await brain._post_process([], ctx)
+        assert output == []
+
+    @pytest.mark.asyncio
+    async def test_post_process_repairs_truncated_output(self):
+        """When parse_findings fails on a substantive answer (>100 chars),
+        _post_process should call repair_output via the explorer provider
+        to recover findings. This catches the FORCE_CONCLUDE truncation
+        case where the agent ran out of budget mid-investigation but still
+        had evidence in its accumulated text."""
+        brain = _make_pr_brain()
+        ctx = _make_pr_context()
+
+        # Truncated agent output: prose with file refs but no JSON.
+        # 4 review agents had outputs like this in PR 13858 trace.
+        truncated = (
+            "I investigated the auth flow and found that the rate limiter "
+            "in app/service.py at line 42 has a fail-open Redis catch that "
+            "bypasses the throttle on errors. This means an attacker could "
+            "trigger Redis errors to bypass the throttle entirely. Severity: warning."
+        )
+        assert len(truncated) > 100  # sanity: triggers repair branch
+
+        # Mock the explorer provider's call_model (the repair LLM call)
+        # to return a properly-formatted JSON array.
+        repaired_json = json.dumps(
+            [
+                {
+                    "title": "Fail-open rate limiter bypass",
+                    "severity": "warning",
+                    "confidence": 0.85,
+                    "file": "app/service.py",
+                    "start_line": 42,
+                    "end_line": 42,
+                    "evidence": ["fail-open Redis catch at line 42"],
+                    "risk": "throttle bypass",
+                    "suggested_fix": "fail closed on Redis errors",
+                }
+            ]
+        )
+        brain._explorer_provider.call_model = MagicMock(return_value=repaired_json)
+
+        results = [_make_tool_result("correctness", truncated)]
+        output = await brain._post_process(results, ctx)
+
+        # Repair should have been called with the truncated answer
+        brain._explorer_provider.call_model.assert_called_once()
+        # And recovered the finding
+        assert len(output) == 1
+        assert output[0].title == "Fail-open rate limiter bypass"
+        assert output[0].file == "app/service.py"
+
+    @pytest.mark.asyncio
+    async def test_post_process_skips_repair_for_short_answer(self):
+        """If the answer is too short (<=100 chars) the repair LLM call
+        is skipped — there's nothing to recover."""
+        brain = _make_pr_brain()
+        ctx = _make_pr_context()
+        brain._explorer_provider.call_model = MagicMock(return_value="[]")
+
+        results = [_make_tool_result("correctness", "no findings")]  # 11 chars
+        output = await brain._post_process(results, ctx)
+
+        # Repair must NOT be called for short answers
+        brain._explorer_provider.call_model.assert_not_called()
         assert output == []
 
 

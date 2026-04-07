@@ -724,10 +724,29 @@ class ClaudeBedrockProvider(AIProvider):
             "messages": messages,
             "inferenceConfig": inference_config,
         }
+        # Prompt caching: insert cachePoint markers on the static prefixes
+        # (system prompt + tool definitions). Bedrock caches everything UP TO
+        # the cachePoint, so on subsequent iters within the same agent run
+        # we only pay full input cost for the messages tail. Cuts per-iter
+        # input processing latency from ~10-15s to ~1-2s and bills cached
+        # tokens at ~10% of normal. Only enable for Claude models — Qwen,
+        # Nova, DeepSeek, etc. on Bedrock don't support cachePoint and would
+        # return ValidationException.
+        cache_eligible = "claude" in self.model_id.lower()
         if tool_specs:
-            kwargs["toolConfig"] = {"tools": tool_specs}
+            tool_config = {"tools": list(tool_specs)}
+            # Append a cachePoint at the end of the tool list so all tool
+            # definitions are cached together (they don't change between iters).
+            if cache_eligible:
+                tool_config["tools"].append({"cachePoint": {"type": "default"}})
+            kwargs["toolConfig"] = tool_config
         if system:
-            kwargs["system"] = [{"text": system}]
+            system_blocks: List[Dict[str, Any]] = [{"text": system}]
+            # Cache the system prompt (agent identity + skills + workflow) —
+            # static for the entire agent run.
+            if cache_eligible:
+                system_blocks.append({"cachePoint": {"type": "default"}})
+            kwargs["system"] = system_blocks
 
         # Estimate request size for diagnostics
         import time as _time
@@ -768,11 +787,13 @@ class ClaudeBedrockProvider(AIProvider):
         elapsed = (_time.monotonic() - t0) * 1000
         raw_usage = response.get("usage", {})
         logger.info(
-            "Bedrock converse DONE model=%s %.0fms in=%d out=%d stop=%s",
+            "Bedrock converse DONE model=%s %.0fms in=%d out=%d cache_read=%d cache_write=%d stop=%s",
             self.model_id,
             elapsed,
             raw_usage.get("inputTokens", 0),
             raw_usage.get("outputTokens", 0),
+            raw_usage.get("cacheReadInputTokens", 0),
+            raw_usage.get("cacheWriteInputTokens", 0),
             response.get("stopReason", "?"),
         )
 

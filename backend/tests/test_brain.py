@@ -155,6 +155,43 @@ class TestBrainBudgetManager:
         mgr = BrainBudgetManager(total_tokens=500_000, brain_reserve_ratio=0.2)
         assert mgr.brain_reserve == 100_000
 
+    @pytest.mark.asyncio
+    async def test_allocate_pre_deducts_pool(self):
+        # Pool is shared across parallel agents — each allocate must
+        # immediately drain `remaining` so concurrent dispatches don't
+        # all see the full pool.
+        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+        before = mgr.remaining
+        first = await mgr.allocate("agent_a")
+        after_first = mgr.remaining
+        assert after_first == before - first
+
+        second = await mgr.allocate("agent_b")
+        after_second = mgr.remaining
+        assert after_second == after_first - second
+
+    @pytest.mark.asyncio
+    async def test_report_releases_reservation(self):
+        # Underrun: agent uses less than reserved → pool gets the diff back.
+        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+        allocated = await mgr.allocate("agent_a")
+        after_allocate = mgr.remaining
+        # Agent reports it actually only used half its allocation
+        await mgr.report("agent_a", allocated // 2)
+        # Reservation released; only `used` consumes pool now
+        assert mgr.remaining > after_allocate
+        assert mgr.used["agent_a"] == allocated // 2
+        assert "agent_a" not in mgr.reserved
+
+    @pytest.mark.asyncio
+    async def test_report_handles_overrun(self):
+        # Overrun: agent uses MORE than reserved → recorded as-is.
+        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+        allocated = await mgr.allocate("agent_a")
+        await mgr.report("agent_a", allocated * 2)
+        assert mgr.used["agent_a"] == allocated * 2
+        assert "agent_a" not in mgr.reserved
+
 
 # ---------------------------------------------------------------------------
 # condense_result

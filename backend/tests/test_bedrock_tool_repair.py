@@ -731,6 +731,64 @@ class TestChatWithToolsIntegration:
         # Per-property title removed
         assert "title" not in grep_schema["properties"]["pattern"]
 
+    def test_cache_point_added_for_claude_model(self):
+        """Claude models should get cachePoint blocks on system + tool defs.
+
+        Bedrock prompt caching cuts per-iter prompt processing latency
+        from ~10s to ~1s on cached prefixes; the system prompt and tool
+        definitions are static across an agent run, so they're prime
+        candidates for caching.
+        """
+        response = {
+            "output": {"message": {"content": [{"text": "ok"}]}},
+            "stopReason": "end_turn",
+        }
+        provider, mock_client = self._make_provider(response)
+        # Default model_id is a claude model
+        assert "claude" in provider.model_id.lower()
+        provider.chat_with_tools(
+            messages=[{"role": "user", "content": [{"text": "test"}]}],
+            tools=self.SAMPLE_TOOLS,
+            system="You are a code review agent.",
+        )
+        call_args = mock_client.converse.call_args
+        tool_config = call_args.kwargs["toolConfig"]
+        system_blocks = call_args.kwargs["system"]
+
+        # cachePoint should be the LAST entry in system, so the text block
+        # ahead of it gets cached
+        assert system_blocks[-1] == {"cachePoint": {"type": "default"}}
+        assert system_blocks[0] == {"text": "You are a code review agent."}
+
+        # cachePoint should be the LAST entry in tools, so all tool defs
+        # get cached together
+        assert tool_config["tools"][-1] == {"cachePoint": {"type": "default"}}
+        # Real tool specs come BEFORE the cachePoint
+        non_cache_tools = [t for t in tool_config["tools"] if "toolSpec" in t]
+        assert len(non_cache_tools) == len(self.SAMPLE_TOOLS)
+
+    def test_cache_point_skipped_for_non_claude_model(self):
+        """Non-Claude Bedrock models (Qwen, Nova, DeepSeek) reject cachePoint
+        with ValidationException — must NOT add it for them."""
+        response = {
+            "output": {"message": {"content": [{"text": "ok"}]}},
+            "stopReason": "end_turn",
+        }
+        provider, mock_client = self._make_provider(response)
+        provider.model_id = "qwen.qwen3-coder-next"
+        provider.chat_with_tools(
+            messages=[{"role": "user", "content": [{"text": "test"}]}],
+            tools=self.SAMPLE_TOOLS,
+            system="You are a code review agent.",
+        )
+        call_args = mock_client.converse.call_args
+        tool_config = call_args.kwargs["toolConfig"]
+        system_blocks = call_args.kwargs["system"]
+
+        # No cachePoint should appear for non-Claude models
+        assert all("cachePoint" not in b for b in system_blocks)
+        assert all("cachePoint" not in t for t in tool_config["tools"])
+
     def test_malformed_tool_calls_repaired(self):
         """Tool calls with params in name field should be repaired."""
         response = {
