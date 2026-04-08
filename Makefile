@@ -134,7 +134,7 @@ run-backend-port: ensure-backend-deps
 # ===========================
 # Testing
 # ===========================
-.PHONY: test test-backend test-extension test-webview test-frontend test-parity integration-test
+.PHONY: test test-backend test-extension test-webview test-frontend test-parity integration-test postdeploy-check
 
 ## Run all tests (backend + extension + webview + parity)
 test: test-backend test-extension test-webview test-parity
@@ -174,6 +174,27 @@ test-parity: ensure-backend-deps ensure-extension-deps
 	@echo "Step 3: Run cross-language parity tests..."
 	cd backend && $(PYTHON) -m pytest tests/test_tool_parity_subprocess.py tests/test_tool_parity_deep.py tests/test_tool_parity_ast.py -v
 	@echo "All parity checks passed."
+
+## Release gate: simulate a fresh deploy by deleting all wasm grammars,
+## re-downloading them from GitHub (the same path that runs in production
+## via npm postinstall), then running the full test suite to verify the
+## downloaded grammars produce working AST tools.
+##
+## NOT part of `make test` — requires network, ~8MB download, slower.
+## Run before release. CI should run this on a release branch.
+postdeploy-check: ensure-extension-deps
+	@echo "=== Post-deploy check: forcing grammar re-download ==="
+	@echo "Removing all wasm grammars to simulate Azure DevOps deploy env..."
+	rm -f extension/grammars/tree-sitter-*.wasm \
+	      extension/grammars/web-tree-sitter.wasm
+	@echo ""
+	@echo "Downloading fresh wasms from GitHub releases..."
+	cd extension && bash scripts/download-grammars.sh
+	@echo ""
+	@echo "=== Running full test suite with freshly downloaded wasms ==="
+	$(MAKE) test
+	@echo ""
+	@echo "[ok] Post-deploy check passed — tools work with downloaded grammars"
 
 # ===========================
 # Build / Compile
