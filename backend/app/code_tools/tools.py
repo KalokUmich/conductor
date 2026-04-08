@@ -885,7 +885,24 @@ def glob_files(
     ws = Path(workspace).resolve()
     results: List[Dict] = []
 
-    for match in search_root.glob(pattern):
+    # ``pathlib.Path.glob`` is strict about ``**`` — it must be a complete
+    # path component (``**/*.py``), not embedded inside another segment
+    # (``**foo.py`` raises ValueError). Translate that into a friendly error
+    # so the agent gets actionable guidance instead of a stack trace.
+    try:
+        matches = list(search_root.glob(pattern))
+    except ValueError as exc:
+        return ToolResult(
+            tool_name="glob",
+            success=False,
+            error=(
+                f"Invalid glob pattern {pattern!r}: {exc}. "
+                "Use '**' only as a complete path segment, e.g. '**/*.py' "
+                "or 'src/**/*.ts' (NOT '**.py' or 'src**/foo')."
+            ),
+        )
+
+    for match in matches:
         if not match.is_file():
             continue
         # Skip excluded directories

@@ -777,6 +777,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "- Use when you know the filename pattern but not the exact directory "
             "(e.g. glob('**/test_*.py') finds all test files).\n"
             "- Supports glob patterns: '**/*.py', 'src/**/*.ts', '**/Dockerfile'.\n"
+            "- '**' must be a COMPLETE path segment. '**/*.py' is valid; '**.py' "
+            "and 'src**/foo' are NOT.\n"
             "- Use list_files instead to browse a directory tree with depth control.\n"
             "- Use grep instead to search file contents (not file names).\n"
             "- Use find_symbol instead to find where a class/function is defined."

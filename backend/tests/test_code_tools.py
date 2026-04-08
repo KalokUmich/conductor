@@ -1417,6 +1417,23 @@ class TestGlob:
         for m in result.data:
             assert m["path"].endswith(".ts")
 
+    def test_invalid_double_star_pattern_returns_friendly_error(self, ws):
+        """``**`` must be a complete path segment; otherwise pathlib raises
+        ValueError. The tool should catch it and return an actionable error
+        instead of letting the stack trace bubble up."""
+        result = glob_files(ws, "**foo.py")
+        assert not result.success
+        assert "Invalid glob pattern" in result.error
+        assert "**" in result.error  # mentions the offending token
+        assert "**/*.py" in result.error  # gives a corrected example
+
+    def test_invalid_pattern_via_dispatcher_does_not_raise(self, ws):
+        """``execute_tool`` must surface the same friendly error so the agent
+        sees it in the loop instead of crashing."""
+        result = execute_tool("glob", ws, {"pattern": "src**/foo"})
+        assert not result.success
+        assert "Invalid glob pattern" in result.error
+
 
 # ---------------------------------------------------------------------------
 # ToolMetadata (Phase D)
