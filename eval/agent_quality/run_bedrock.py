@@ -272,18 +272,28 @@ async def main():
     parser.add_argument("--brain", action="store_true", help="Use Brain orchestrator")
     parser.add_argument("--compare", action="store_true", help="Run both direct and Brain")
     parser.add_argument("--haiku", action="store_true", help="Use Haiku as explorer, Sonnet as judge")
+    parser.add_argument("--opus", action="store_true", help="Use Sonnet as explorer, Opus as judge (premium tier)")
     args = parser.parse_args()
+
+    if args.haiku and args.opus:
+        logger.error("--haiku and --opus are mutually exclusive")
+        sys.exit(2)
 
     baselines = load_baselines(args.case)
     if not baselines:
         logger.error("No baselines found in %s", BASELINE_DIR)
         sys.exit(1)
 
-    provider = _create_provider("eu.anthropic.claude-sonnet-4-6")
-    explorer_provider = None
-    if args.haiku:
-        explorer_provider = _create_provider("eu.anthropic.claude-haiku-4-5-20251001-v1:0")
-        logger.info("Workflow mode: explorer=haiku-4-5, judge=sonnet-4-6")
+    if args.opus:
+        provider = _create_provider("eu.anthropic.claude-opus-4-6-v1")
+        explorer_provider = _create_provider("eu.anthropic.claude-sonnet-4-6")
+        logger.info("Premium mode: explorer=sonnet-4-6, judge=opus-4-6")
+    else:
+        provider = _create_provider("eu.anthropic.claude-sonnet-4-6")
+        explorer_provider = None
+        if args.haiku:
+            explorer_provider = _create_provider("eu.anthropic.claude-haiku-4-5-20251001-v1:0")
+            logger.info("Workflow mode: explorer=haiku-4-5, judge=sonnet-4-6")
     all_results = {}
 
     for baseline in baselines:
@@ -311,7 +321,12 @@ async def main():
                 label = mode
             else:
                 run_result = await run_brain(provider, workspace, question, explorer_provider=explorer_provider)
-                label = f"{mode} [haiku→sonnet]" if args.haiku else mode
+                if args.opus:
+                    label = f"{mode} [sonnet→opus]"
+                elif args.haiku:
+                    label = f"{mode} [haiku→sonnet]"
+                else:
+                    label = mode
 
             scoring = score_answer(run_result["answer"], required)
             print_report(case_id, label, run_result, scoring)
