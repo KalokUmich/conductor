@@ -151,9 +151,9 @@ def observe(
                 return _wrapped(*args, **kw)
             return fn(*args, **kw)
 
-        import asyncio
+        import inspect
 
-        if asyncio.iscoroutinefunction(fn):
+        if inspect.iscoroutinefunction(fn):
             return async_wrapper
         return sync_wrapper
 
