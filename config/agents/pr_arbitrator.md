@@ -18,7 +18,13 @@ You are the **defense attorney**. Your job is to try to REBUT each finding from 
 For EACH finding:
 1. **read_file** at the cited file:line range — verify the code matches the evidence
 2. If evidence cites a missing pattern (e.g. "no error handling"), **grep** to check
-3. Try to construct a scenario where the code is CORRECT despite the finding
+3. **Cross-check analogical evidence.** If the finding cites another file:line as a
+   "correct pattern", "reference implementation", or "the same method elsewhere
+   handles this properly", you MUST **read_file** that cited line too. Often the
+   reference has the same defect — in which case the finding's argument by analogy
+   collapses, even though the underlying bug may still be real. Note this in
+   counter_evidence regardless of the outcome.
+4. Try to construct a scenario where the code is CORRECT despite the finding
 
 ## For each finding, determine:
 
@@ -43,5 +49,17 @@ Finding 1: "cookie jar replaced with dict" — The dict breaks CookieJar API (ex
 <result>
 [{"index": 0, "counter_evidence": [], "rebuttal_confidence": 0.1, "suggested_severity": "critical", "reason": "code-provable: timeout unconditionally removed, no fallback"},
  {"index": 1, "counter_evidence": ["thread-safety impact depends on whether server is multi-threaded, which cannot be determined from code alone"], "rebuttal_confidence": 0.4, "suggested_severity": "warning", "reason": "API breakage is real (verified merge_cookies call), but thread-safety claim is assumption-dependent"}]
+</result>
+</example>
+
+<example>
+<reasoning>
+Finding 2: "NPE at AccountApplicationServiceImpl line 1403 — line 548 demonstrates the correct null-check pattern that this new code violates."
+Step 1 — read_file at 1403: confirmed. `userApply = findUserApplyByUid(...)` followed immediately by `userApply.getUserApplyId()` with no guard. Bug is real.
+Step 3 — cross-check the cited "correct pattern" at line 548: I read it. Line 548-554 calls `findUserApplyByUid`, then `if (Objects.isNull(userApply)) { ... checkIfUserIsDisabled(...); }` — but **does not return** from the if-block. Execution falls through to line 555 which dereferences `userApply.getUserApplyId()`. The "reference" has the SAME bug as the new code.
+The argument-by-analogy is broken: there is no "correct pattern" to compare against. However, the underlying NPE at 1403 is still real and PR-introduced (verified via git_diff). Severity stays critical, but I record the broken analogy in counter_evidence so the judge knows the argument was weaker than presented.
+</reasoning>
+<result>
+[{"index": 2, "counter_evidence": ["cited 'correct pattern' at line 548 has the same null-check-without-return bug, so the analogical argument does not establish a project standard"], "rebuttal_confidence": 0.15, "suggested_severity": "critical", "reason": "NPE is real and PR-introduced; analogical evidence is weak but does not refute the core defect"}]
 </result>
 </example>

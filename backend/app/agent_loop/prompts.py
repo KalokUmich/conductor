@@ -837,6 +837,78 @@ then Y is a defect."
 - Premature abstractions — three similar lines of code is fine; don't suggest \
 extracting a helper for one-time operations
 
+### Verifying "PR-introduced" before flagging
+
+Before reporting any defect at file `F` line `N`, verify it is actually introduced
+by this diff. Check `git_diff` for `F`: does line `N` appear as an added (`+`) line,
+OR does the diff add a NEW caller path that reaches the buggy line?
+
+- **Both no** → pre-existing bug. Drop it. Even if it's a real bug, it is not in
+  scope for this PR review.
+- **Diff adds a new caller path that reaches a pre-existing buggy line** → flag as
+  **warning** (not critical), and say so explicitly in the title. Example title:
+  "Pre-existing NPE risk now reachable via new RetailFinance code path".
+- **The buggy line itself is a `+` line** → flag at the severity the evidence supports.
+
+<example>
+Considered: NPE in FileMarkerService.replacePDFContent line 138.
+Verification: I checked `git_diff` for FileMarkerService.java. Lines 134-139 are
+NOT in the diff (no `+` markers). The null-check-without-return pattern is pre-existing.
+However, line 165 (`getLoanPurposeTextFromCustomFields(userId, userApply.getUserApplyId())`)
+IS a new `+` line in a new RetailFinance branch — it adds a fresh deref of `userApply`
+that reaches the pre-existing NPE.
+Outcome: Flag as **warning**, title "Pre-existing NPE risk in replacePDFContent now
+reachable via new RetailFinance branch (line 165)". Not critical, because the root
+defect is not PR-introduced.
+</example>
+
+### Sanity-check claims about build / compilation failure
+
+LLMs over-confidently assert "this will fail compilation" based on pattern matching
+against rules from other languages. Before claiming a build break, verify the claim
+against the actual language spec — most "looks fatal" patterns are legal and silently
+handled by the compiler.
+
+A "build will fail" claim is only valid if **at least one** of these is true:
+
+- The change deletes a symbol that is referenced elsewhere in the same compilation unit
+- The change introduces a name collision between two DIFFERENT types with the same
+  simple name (e.g. importing `java.util.Date` AND `java.sql.Date` in the same file)
+- The change introduces a syntax error (unmatched brace, missing semicolon in C-family,
+  etc.) that you can point to a specific column for
+- You can cite a CI config (`pom.xml`, `build.gradle`, `pyproject.toml`) that runs a
+  strict linter/formatter (Spotless, Checkstyle, ruff `--strict`) which would reject
+  this specific pattern — and "Spotless might reject this" is a **warning**, not
+  critical, because Spotless violations don't break the binary
+
+If none of the above hold, downgrade the finding from "build will fail" to its real
+severity (usually nit or warning for code-smell), or drop it.
+
+<example>
+Considered: "Duplicate Java imports in BankAccountServiceImpl will fail compilation"
+
+Initial observation: lines 22-31 re-import 9 classes already imported at lines 13-21.
+Verification: Java Language Spec §7.5.1 explicitly allows duplicate single-type-import
+declarations of the same canonical class — javac silently dedupes them with no warning
+required. I checked the pom.xml: Spotless is configured with `removeUnusedImports`
+which would auto-clean these on the next format run, but the build itself does not
+fail on duplicates.
+Outcome: Reported as **nit** ("redundant duplicate imports left from a likely merge
+artifact — clean up"), NOT critical. The original "compilation failure" framing was
+factually wrong.
+</example>
+
+<example>
+Considered: "Two methods with the same name in the same class will cause an
+ambiguity error"
+
+Verification: Read both signatures. They differ in parameter types
+(`process(String)` and `process(Integer)`). Java method overloading is resolved at
+compile time by argument types — same name + different parameter lists is a legal
+overload, not an error.
+Outcome: Not flagged. No defect exists.
+</example>
+
 ### Quality rules
 
 - Report at most **5 findings**. Prioritize by real-world impact.
