@@ -20,7 +20,7 @@ try {
     complexTools = require(path.join(outDir, 'complexToolRunner'));
 } catch (e) {
     // If out/ doesn't exist, try loading from src/ via ts-node or tsx
-    console.error(JSON.stringify({
+    console.log(JSON.stringify({
         success: false,
         data: null,
         error: `Cannot load complexToolRunner: ${e.message}. Run 'npm run compile' first.`,
@@ -32,7 +32,7 @@ try {
 const [,, toolName, workspace, paramsJson] = process.argv;
 
 if (!toolName || !workspace) {
-    console.error(JSON.stringify({
+    console.log(JSON.stringify({
         success: false,
         data: null,
         error: 'Usage: node run_complex_tool.js <tool> <workspace> \'<json_params>\'',
@@ -45,7 +45,7 @@ if (paramsJson) {
     try {
         params = JSON.parse(paramsJson);
     } catch (e) {
-        console.error(JSON.stringify({
+        console.log(JSON.stringify({
             success: false,
             data: null,
             error: `Invalid JSON params: ${e.message}`,
