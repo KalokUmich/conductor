@@ -734,6 +734,53 @@ class TestPRContext:
         assert len(ctx.test_files()) == 1
         assert len(ctx.config_files()) == 1
 
+    def test_security_sensitive_files_matches_path_patterns(self):
+        """Security scoping is category-agnostic — matches auth/crypto/session
+        paths even when diff_parser classified them as INFRA or SCHEMA."""
+        ctx = PRContext(
+            diff_spec="x",
+            files=[
+                # Category-agnostic matches — pattern-matched regardless of classification
+                ChangedFile(path="src/auth/middleware.py", category=FileCategory.INFRA),
+                ChangedFile(path="lib/crypto/rsa.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="app/session_store.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="migrations/0042_add_permissions_table.sql", category=FileCategory.SCHEMA),
+                ChangedFile(path="src/oauth2/callback.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="src/auth_service/token_refresh.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="config/secrets.yaml", category=FileCategory.CONFIG),
+                # Non-matches — should NOT be included
+                ChangedFile(path="src/payment/service.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="tests/test_auth.py", category=FileCategory.TEST),  # test file matches on 'auth'
+                ChangedFile(path="README.md", category=FileCategory.INFRA),
+            ],
+        )
+        sensitive = ctx.security_sensitive_files()
+        paths = {f.path for f in sensitive}
+        assert "src/auth/middleware.py" in paths
+        assert "lib/crypto/rsa.py" in paths
+        assert "app/session_store.py" in paths
+        assert "migrations/0042_add_permissions_table.sql" in paths
+        assert "src/oauth2/callback.py" in paths
+        assert "src/auth_service/token_refresh.py" in paths
+        assert "config/secrets.yaml" in paths
+        # Matched on 'auth' in the filename — acceptable false positive
+        # (security scoping is intentionally broad to avoid false negatives)
+        assert "tests/test_auth.py" in paths
+        # Non-matches
+        assert "src/payment/service.py" not in paths
+        assert "README.md" not in paths
+
+    def test_security_sensitive_files_empty(self):
+        """Returns empty list when no path matches."""
+        ctx = PRContext(
+            diff_spec="x",
+            files=[
+                ChangedFile(path="src/payment/service.py", category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="README.md", category=FileCategory.INFRA),
+            ],
+        )
+        assert ctx.security_sensitive_files() == []
+
     def test_finding_score(self):
         f = ReviewFinding(title="x", category=FindingCategory.CORRECTNESS, severity=Severity.CRITICAL, confidence=0.9)
         assert f.score() == 0.9  # 1.0 * 0.9

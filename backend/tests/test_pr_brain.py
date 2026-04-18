@@ -314,6 +314,63 @@ class TestBuildAgentQuery:
         # Security agent scopes to business_logic + config files
         assert "config/settings.yaml" in query
 
+    def test_build_query_security_widens_to_security_sensitive_paths(self):
+        """Security agent picks up auth/crypto/session files even when
+        classified outside business_logic (e.g. INFRA, SCHEMA). Also
+        deduplicates when a file matches multiple scoping rules."""
+        brain = _make_pr_brain()
+        ctx = PRContext(
+            diff_spec="HEAD~1..HEAD",
+            files=[
+                # Classified as INFRA but matches auth path — should appear
+                ChangedFile(path="deploy/auth_middleware.py", additions=5, deletions=0, category=FileCategory.INFRA),
+                # Classified as SCHEMA but matches permission keyword — should appear
+                ChangedFile(path="migrations/0042_add_permissions.sql", additions=3, deletions=0, category=FileCategory.SCHEMA),
+                # Regular business logic — always in scope
+                ChangedFile(path="app/payment.py", additions=8, deletions=0, category=FileCategory.BUSINESS_LOGIC),
+                # Both BUSINESS_LOGIC AND security-sensitive — must dedup
+                ChangedFile(path="app/auth_service.py", additions=12, deletions=0, category=FileCategory.BUSINESS_LOGIC),
+                # INFRA, no security keyword — should NOT appear
+                ChangedFile(path="Dockerfile", additions=2, deletions=0, category=FileCategory.INFRA),
+            ],
+            total_additions=30,
+            total_deletions=0,
+            total_changed_lines=30,
+            file_count=5,
+        )
+        risk = _low_risk_profile()
+        query = brain._build_agent_query("security", ctx, risk, {}, "")
+        # Security-sensitive paths picked up regardless of category
+        assert "deploy/auth_middleware.py" in query
+        assert "migrations/0042_add_permissions.sql" in query
+        # Regular business logic still in scope
+        assert "app/payment.py" in query
+        # Dedup: auth_service.py appears exactly once, not twice
+        assert query.count("app/auth_service.py") == 1
+        # Non-matching infra file excluded
+        assert "Dockerfile" not in query
+
+    def test_build_query_non_security_unaffected_by_new_scoping(self):
+        """correctness/concurrency/reliability/performance still get only
+        business_logic files (no widening to security-sensitive paths)."""
+        brain = _make_pr_brain()
+        ctx = PRContext(
+            diff_spec="HEAD~1..HEAD",
+            files=[
+                ChangedFile(path="app/payment.py", additions=8, deletions=0, category=FileCategory.BUSINESS_LOGIC),
+                ChangedFile(path="deploy/auth_middleware.py", additions=5, deletions=0, category=FileCategory.INFRA),
+            ],
+            total_additions=13,
+            total_deletions=0,
+            total_changed_lines=13,
+            file_count=2,
+        )
+        risk = _low_risk_profile()
+        query = brain._build_agent_query("correctness", ctx, risk, {}, "")
+        assert "app/payment.py" in query
+        # correctness stays narrow — auth file classified as INFRA stays out
+        assert "deploy/auth_middleware.py" not in query
+
     def test_build_query_contains_pr_context_section(self):
         brain, ctx, risk = self._make_brain_and_ctx()
         query = brain._build_agent_query("correctness", ctx, risk, {}, "")

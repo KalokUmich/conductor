@@ -254,15 +254,32 @@ class ClaudeDirectProvider(AIProvider):
                 }
             )
 
+        # Prompt caching: insert cache_control breakpoints on the static prefixes
+        # (tool definitions + system prompt). Anthropic caches everything UP TO
+        # the breakpoint; on subsequent iters within the same agent run we only
+        # pay full input cost for the messages tail. Cached tokens bill at ~10%
+        # of normal. Only enable for Claude models — non-Claude deployments
+        # behind the Anthropic SDK wouldn't accept cache_control.
+        cache_eligible = "claude" in self.model.lower()
+
         kwargs: dict = {
             "model": self.model,
             "max_tokens": max_tokens,
             "messages": _converse_to_anthropic(messages),
         }
         if anthropic_tools:
+            if cache_eligible:
+                # Breakpoint on the LAST tool caches the whole tool array.
+                anthropic_tools[-1]["cache_control"] = {"type": "ephemeral"}
             kwargs["tools"] = anthropic_tools
         if system:
-            kwargs["system"] = system
+            if cache_eligible:
+                # List-of-blocks form so we can attach cache_control to the last block.
+                kwargs["system"] = [
+                    {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+                ]
+            else:
+                kwargs["system"] = system
 
         response = client.messages.create(**kwargs)
 

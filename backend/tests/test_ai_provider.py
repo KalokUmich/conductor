@@ -181,6 +181,87 @@ class TestClaudeDirectProvider:
             with pytest.raises(ValueError, match="Invalid JSON response"):
                 provider.summarize_structured(messages)
 
+    def _mock_anthropic_tool_response(self):
+        """Build a minimal Anthropic messages.create() return value usable by chat_with_tools."""
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "done"
+        response = MagicMock()
+        response.content = [text_block]
+        response.stop_reason = "end_turn"
+        usage = MagicMock()
+        usage.input_tokens = 10
+        usage.output_tokens = 5
+        usage.cache_read_input_tokens = 0
+        usage.cache_creation_input_tokens = 0
+        response.usage = usage
+        return response
+
+    def test_chat_with_tools_caches_tools_and_system_on_claude(self):
+        """Claude models get cache_control breakpoints on last tool + system block."""
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = self._mock_anthropic_tool_response()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            provider = ClaudeDirectProvider(api_key="test-key", model="claude-sonnet-4-6-20250725")
+            provider.chat_with_tools(
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                tools=[
+                    {"name": "grep", "description": "search", "input_schema": {}},
+                    {"name": "read_file", "description": "read", "input_schema": {}},
+                ],
+                system="You are a helpful agent.",
+            )
+
+        kwargs = mock_client.messages.create.call_args.kwargs
+        # Last tool has cache_control; earlier tools do not
+        assert kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in kwargs["tools"][0]
+        # System is list-of-blocks with cache_control on the block
+        assert isinstance(kwargs["system"], list)
+        assert kwargs["system"][0]["type"] == "text"
+        assert kwargs["system"][0]["cache_control"] == {"type": "ephemeral"}
+        assert kwargs["system"][0]["text"] == "You are a helpful agent."
+
+    def test_chat_with_tools_skips_caching_on_non_claude_model(self):
+        """Non-Claude models keep the plain string system and uncached tools."""
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = self._mock_anthropic_tool_response()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            provider = ClaudeDirectProvider(api_key="test-key", model="gpt-4o")
+            provider.chat_with_tools(
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                tools=[{"name": "grep", "description": "search", "input_schema": {}}],
+                system="prompt",
+            )
+
+        kwargs = mock_client.messages.create.call_args.kwargs
+        assert "cache_control" not in kwargs["tools"][-1]
+        # System remains a plain string for non-Claude
+        assert kwargs["system"] == "prompt"
+
+    def test_chat_with_tools_no_system_no_cache_block(self):
+        """Without a system prompt, no system key is emitted at all."""
+        mock_anthropic = MagicMock()
+        mock_client = MagicMock()
+        mock_anthropic.Anthropic.return_value = mock_client
+        mock_client.messages.create.return_value = self._mock_anthropic_tool_response()
+
+        with patch.dict("sys.modules", {"anthropic": mock_anthropic}):
+            provider = ClaudeDirectProvider(api_key="test-key", model="claude-sonnet-4-6-20250725")
+            provider.chat_with_tools(
+                messages=[{"role": "user", "content": [{"text": "hi"}]}],
+                tools=[{"name": "grep", "description": "search", "input_schema": {}}],
+            )
+
+        kwargs = mock_client.messages.create.call_args.kwargs
+        assert "system" not in kwargs
+
 
 class TestClaudeBedrockProvider:
     """Tests for ClaudeBedrockProvider implementation."""

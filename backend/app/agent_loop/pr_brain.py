@@ -595,12 +595,27 @@ class PRBrainOrchestrator:
         Returns:
             Formatted user-message string ready for injection as Layer 4.
         """
-        # Scope files per agent type
+        # Scope files per agent type (9.12 diff sharding — keep per-agent input
+        # token count low; security widens to path-pattern-matched auth/crypto/
+        # session files so it sees helpers classified outside business_logic).
         files = pr_context.business_logic_files()
         if agent_name == "test_coverage":
             files = pr_context.files
         elif agent_name == "security":
-            files = pr_context.business_logic_files() + pr_context.config_files()
+            # Deduplicate while preserving order — a file can match multiple
+            # scoping rules (e.g. auth_service.py is both business_logic AND
+            # security_sensitive).
+            seen: set = set()
+            combined = []
+            for f in (
+                pr_context.business_logic_files()
+                + pr_context.config_files()
+                + pr_context.security_sensitive_files()
+            ):
+                if f.path not in seen:
+                    seen.add(f.path)
+                    combined.append(f)
+            files = combined
 
         diffs_section = build_diffs_section(files, file_diffs)
 

@@ -63,6 +63,29 @@ class PRContext:
     def config_files(self) -> List[ChangedFile]:
         return [f for f in self.files if f.category == FileCategory.CONFIG]
 
+    def security_sensitive_files(self) -> List[ChangedFile]:
+        """Files whose path patterns suggest security-critical surface area.
+
+        Category-agnostic — catches e.g. an auth helper that was classified
+        as INFRA or a migration adding a permissions table. Used by the
+        security review sub-agent to widen its scope beyond business_logic
+        files alone.
+        """
+        import re
+
+        # Match a keyword preceded by a path separator (`/`, `_`, `-`, `.`) or
+        # the start of string. Letting `_` and `-` count as separators catches
+        # files like `0042_add_permissions_table.sql` and `session_store.py`
+        # where the keyword is embedded in a snake_case filename but still
+        # semantically meaningful. Avoids matching mid-word substrings like
+        # "coauthor" where no separator precedes the keyword.
+        pattern = re.compile(
+            r"(?i)(?:^|[/._-])("
+            r"auth|crypto|session|oauth|security|secret|token|credential|permission"
+            r")"
+        )
+        return [f for f in self.files if pattern.search(f.path)]
+
 
 # ---------------------------------------------------------------------------
 # Risk classification
