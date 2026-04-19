@@ -455,8 +455,150 @@ def _extract_with_regex(source: str, language: str, file_path: str) -> FileSymbo
 # ---------------------------------------------------------------------------
 
 
-def extract_definitions(file_path: str, source: Optional[bytes] = None) -> FileSymbols:
+def extract_definitions_with_timeout(
+    file_path: str,
+    source: Optional[bytes] = None,
+    timeout_s: Optional[float] = None,
+) -> FileSymbols:
+    """Like :func:`extract_definitions` but bounded by a wall-clock timeout.
+
+    Phase 9.18 step 1. Pathological inputs (deeply nested TSX with generic
+    type params) can blow up tree-sitter's GLR parser from milliseconds to
+    3–9 minutes — sentry-007 diagnostic caught 4 files eating 200–530 s
+    each. This wrapper caps each file at ``timeout_s`` seconds; if the
+    parse doesn't finish we fall back to :func:`_extract_with_regex`
+    (same safe fallback we already use on exceptions) and record the file
+    in the current-session Fact Vault's ``skip_facts`` so future tool
+    calls on that path short-circuit without retrying.
+
+    ``timeout_s`` defaults to ``CONDUCTOR_PARSE_TIMEOUT_S`` (60 s). Set
+    to ``0`` to disable the timeout, useful for tests.
+
+    Caveat: the timed-out tree-sitter thread keeps running until the
+    C-level parse completes — Python cannot interrupt a GIL-holding C
+    call from userland. Full zombie elimination arrives with the
+    ``ProcessPoolExecutor`` migration in Phase 9.18 Sprint 17.
+    """
+    import os as _os
+
+    if timeout_s is None:
+        try:
+            timeout_s = float(_os.environ.get("CONDUCTOR_PARSE_TIMEOUT_S", "60"))
+        except ValueError:
+            timeout_s = 60.0
+
+    if source is None:
+        try:
+            source = Path(file_path).read_bytes()
+        except OSError as exc:
+            logger.debug("Cannot read %s: %s", file_path, exc)
+            return FileSymbols(file_path=file_path)
+
+    language = detect_language(file_path)
+    if language is None:
+        return FileSymbols(file_path=file_path)
+
+    # Pre-check: if an earlier call in this session already flagged this
+    # path as pathological, don't re-trigger tree-sitter. Regex fallback
+    # only — same symbol shape, zero timeout risk.
+    store = _current_factstore_safe()
+    if store is not None:
+        try:
+            if store.should_skip(file_path):
+                return _extract_with_regex(
+                    source.decode("utf-8", errors="replace"), language, file_path
+                )
+        except Exception as exc:  # best-effort; never block extraction on vault errors
+            logger.debug("skip-list pre-check failed for %s: %s", file_path, exc)
+
+    if timeout_s <= 0:
+        # Timeout disabled — legacy synchronous behaviour with existing
+        # regex fallback on exception.
+        try:
+            return _extract_with_tree_sitter(source, language, file_path)
+        except Exception as exc:
+            logger.debug("tree-sitter extraction failed for %s: %s", file_path, exc)
+            return _extract_with_regex(
+                source.decode("utf-8", errors="replace"), language, file_path
+            )
+
+    # Run the parse on a daemon thread so the main loop unblocks after
+    # ``timeout_s`` even if tree-sitter never returns. The thread keeps
+    # running; it's not safe to interrupt. Subsequent pathological files
+    # don't block the main loop — they each spawn a new daemon thread.
+    import queue as _q
+    import threading as _th
+    import time as _t
+
+    result_q: _q.Queue = _q.Queue(maxsize=1)
+
+    def _worker() -> None:
+        try:
+            result_q.put(("ok", _extract_with_tree_sitter(source, language, file_path)))
+        except Exception as e:
+            result_q.put(("err", e))
+
+    t0 = _t.monotonic()
+    worker_t = _th.Thread(
+        target=_worker, daemon=True, name=f"tsparse-{Path(file_path).name}"
+    )
+    worker_t.start()
+
+    try:
+        kind, val = result_q.get(timeout=timeout_s)
+    except _q.Empty:
+        elapsed_ms = int((_t.monotonic() - t0) * 1000)
+        logger.warning(
+            "tree-sitter parse timed out after %.1fs (limit=%.1fs): %s — "
+            "falling back to regex, file skipped for rest of session",
+            elapsed_ms / 1000, timeout_s, file_path,
+        )
+        if store is not None:
+            try:
+                store.put_skip(
+                    file_path,
+                    reason=f"tree-sitter timeout after {timeout_s:.0f}s",
+                    duration_ms=elapsed_ms,
+                )
+            except Exception as exc:
+                logger.debug("skip-fact write failed for %s: %s", file_path, exc)
+        return _extract_with_regex(
+            source.decode("utf-8", errors="replace"), language, file_path
+        )
+
+    if kind == "err":
+        logger.debug("tree-sitter extraction failed for %s: %s", file_path, val)
+        return _extract_with_regex(
+            source.decode("utf-8", errors="replace"), language, file_path
+        )
+    return val
+
+
+def _current_factstore_safe():
+    """Return the active session FactStore, or None if scratchpad is
+    disabled or not bound. Isolated helper so parser.py's import surface
+    stays minimal — scratchpad is imported lazily."""
+    try:
+        from app.scratchpad.context import current_factstore
+
+        return current_factstore()
+    except Exception:
+        return None
+
+
+def extract_definitions(
+    file_path: str,
+    source: Optional[bytes] = None,
+    *,
+    timeout_s: Optional[float] = None,
+) -> FileSymbols:
     """Extract symbol definitions and references from a source file.
+
+    Phase 9.18 step 1: this call is now bounded by a wall-clock timeout
+    via :func:`extract_definitions_with_timeout` (default 60 s, override
+    with ``CONDUCTOR_PARSE_TIMEOUT_S``). Set ``timeout_s=0`` to keep
+    legacy synchronous behaviour — useful for benchmark / reproducibility
+    tests that must not spawn daemon threads.
 
     Parameters
     ----------
@@ -470,22 +612,7 @@ def extract_definitions(file_path: str, source: Optional[bytes] = None) -> FileS
     FileSymbols
         Definitions and references found in the file.
     """
-    if source is None:
-        try:
-            source = Path(file_path).read_bytes()
-        except OSError as exc:
-            logger.debug("Cannot read %s: %s", file_path, exc)
-            return FileSymbols(file_path=file_path)
-
-    language = detect_language(file_path)
-    if language is None:
-        return FileSymbols(file_path=file_path)
-
-    try:
-        return _extract_with_tree_sitter(source, language, file_path)
-    except Exception as exc:
-        logger.debug("tree-sitter extraction failed for %s: %s", file_path, exc)
-        return _extract_with_regex(source.decode("utf-8", errors="replace"), language, file_path)
+    return extract_definitions_with_timeout(file_path, source, timeout_s=timeout_s)
 
 
 def extract_references(file_path: str, source: Optional[bytes] = None) -> List[SymbolRef]:
