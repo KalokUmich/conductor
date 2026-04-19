@@ -1367,13 +1367,14 @@ Beyond this specific bug, sub-agents routinely re-run identical `grep`/`read_fil
 
 **Why not a dedicated "librarian" sub-agent**: per Claude Code's design — persistent agents are only worth it when they need identity across turns. Memory work is stateless; a service function library is cheaper. (If we later need relevance judgment that requires LLM reasoning, follow Claude Code's `sideQuery` pattern: an inline call, not a standing agent.)
 
-- [ ] `backend/app/scratchpad/` package: `store.py` (SQLite facade), `inflight.py` (per-key thread lock), `keys.py` (canonical key builders)
-- [ ] Migrate `_ensure_graph` to use inflight dedup — single biggest win
-- [ ] Wrap `execute_tool` with `CachedToolExecutor` so `grep`/`read_file`/`find_symbol` transparently consult the vault before running
-- [ ] `search_facts(key)` tool exposed to sub-agents for explicit cross-agent knowledge queries
-- [ ] `INDEX.md` renderer (`python -m app.scratchpad dump`)
-- [ ] Session lifecycle: create at PR-review start, cleanup at `synthesize()` done; cron-style sweep of abandoned sessions > 24h old
-- [ ] Eval: re-run sentry-006 and compare wall-clock (target: 50min → 10min) and token usage
+- [x] `backend/app/scratchpad/` package: `store.py` (SQLite facade), `inflight.py` (per-key thread lock), `keys.py` (canonical key builders), `executor.py` (CachedToolExecutor), `context.py` (ContextVar), `__main__.py` (CLI)
+- [x] Migrate `_ensure_graph` to use inflight dedup — sentry-006 50 min → 7.5 min validated
+- [x] Migrate `_get_symbol_index` to use inflight dedup (second stampede entry point caught via py-spy in sentry-007 diagnostic)
+- [x] Wrap tool executor with `CachedToolExecutor` — transparent cache hits for grep/read_file/find_symbol/find_references/file_outline/get_dependencies/…; range-intersection on read_file/git_blame; negative cache on find_symbol/find_references; skip-list short-circuit
+- [x] `search_facts(tool, path, pattern, limit)` tool — exposed to sub-agents as metadata-only discovery so they can see what's cached before running redundant work
+- [x] `python -m app.scratchpad (list|dump|sweep)` CLI — paper-style markdown INDEX dump from SQLite on demand
+- [x] Session lifecycle in `PRBrainOrchestrator` — FactStore.open at init, cleanup() in caller's finally (engine.py + Azure DevOps router), ContextVar binding for search_facts
+- [ ] Eval: re-run sentry-006 and compare wall-clock (target: 50 min → 10 min) and token usage
 
 **Dependency**: precedes 9.13 Checkpoint A. Task-based sub-agent dispatch becomes dramatically cheaper when facts are shared across investigations.
 
@@ -1718,9 +1719,9 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | Phase 8.6H: Interaction Expansion 交互性拓展 | 🟡 Planned | — |
 | Phase 9: Claude Code Pattern Adoption + Competitive Analysis | 🟢 In Progress | Sprint 13+ (ongoing) |
 | **Phase 9.11/9.12: Prompt Caching + Diff Sharding** | **✅ Complete** | **Sprint 15** |
-| **Phase 9.15 MVP: `_ensure_graph` in-flight dedup** | **🟢 Partial** | **Sprint 15** |
+| **Phase 9.15 MVP: `_ensure_graph` in-flight dedup** | **✅ Complete** | **Sprint 15** |
 | **Phase 9.18 MVP: scan diagnostic logging** | **🟢 Partial** | **Sprint 15** |
-| **Phase 9.15 full: Fact Vault (SQLite + caching)** | **🟡 Planned** | **Sprint 16** |
+| **Phase 9.15 full: Fact Vault (SQLite + CachedToolExecutor + search_facts + CLI)** | **✅ Complete** | **Sprint 15–16** |
 | **Phase 9.18 full: Scan Hardening (timeout + ProcessPool)** | **🟡 Planned** | **Sprint 16–17** |
 | **Phase 9.13 Checkpoint A: `dispatch_subagent` + checks contract** | **🟡 Planned** | **Sprint 16–17** |
 | **Phase 9.16: Forked Agent Pattern** | **🟡 Planned** | **Sprint 17** |
