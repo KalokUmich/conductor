@@ -100,7 +100,7 @@ class MockConvergenceError(Exception):
 
 _nx.PowerIterationFailedConvergence = MockConvergenceError
 
-_stub("tree_sitter_languages")
+_stub("tree_sitter_language_pack")  # Phase 9.18 step 3: replaced tree_sitter_languages
 _stub("cocoindex")
 _stub("sentence_transformers", SentenceTransformer=MagicMock)
 _stub("sqlite_vec")

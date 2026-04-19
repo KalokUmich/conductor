@@ -979,7 +979,7 @@ def find_symbol(
         return ToolResult(
             tool_name="find_symbol",
             success=False,
-            error="Symbol index not available (parser import failed — check tree-sitter-languages install).",
+            error="Symbol index not available (parser import failed — check tree-sitter-language-pack install).",
         )
     if not index:
         logger.warning(

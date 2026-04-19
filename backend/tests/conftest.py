@@ -22,7 +22,7 @@ def _stub(name: str, **attrs) -> types.ModuleType:
 # Stub heavy optional dependencies before any app code is imported
 from unittest.mock import MagicMock
 
-_stub("tree_sitter_languages")
+_stub("tree_sitter_language_pack")  # Phase 9.18 step 3: replaced tree_sitter_languages
 _stub("networkx", DiGraph=MagicMock, pagerank=MagicMock, PowerIterationFailedConvergence=Exception)
 
 # Playwright stubs — browser tools tests mock the service layer, so we only
