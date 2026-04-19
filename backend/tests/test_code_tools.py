@@ -716,6 +716,37 @@ class TestExecuteTool:
         assert xml_repaired is False
         assert lost_chained == []
 
+    def test_repair_preserves_file_write_content_whitespace(self, ws):
+        """file_write.content must NOT be stripped — trailing newlines are
+        the standard POSIX convention for text files and the agent expects
+        its content to land on disk byte-for-byte. Regression test for
+        the Phase 9.18 step 3 fix where Pattern 3's blanket strip silently
+        killed the trailing \\n on every file_write."""
+        from app.code_tools.tools import _repair_tool_params
+
+        content = "line1\nline2\n"  # trailing newline preserved
+        params = {"path": "out.py", "content": content}
+        result, _, _ = _repair_tool_params("file_write", params)
+        assert result["content"] == content, "file_write.content was stripped"
+        # Path still stripped (whitespace around paths is garbage).
+        params_spaced_path = {"path": "  out.py  ", "content": content}
+        result2, _, _ = _repair_tool_params("file_write", params_spaced_path)
+        assert result2["path"] == "out.py"
+        assert result2["content"] == content
+
+    def test_repair_preserves_file_edit_strings(self, ws):
+        """file_edit.old_string and .new_string must keep leading/trailing
+        whitespace — edits often target indented blocks or trailing
+        newlines, and stripping would break those edits silently."""
+        from app.code_tools.tools import _repair_tool_params
+
+        old = "    def foo():\n        pass\n"
+        new = "    def foo():\n        return 1\n"
+        params = {"path": "x.py", "old_string": old, "new_string": new}
+        result, _, _ = _repair_tool_params("file_edit", params)
+        assert result["old_string"] == old
+        assert result["new_string"] == new
+
     def test_repair_xml_chained_invoke_detected(self, ws):
         """Chained <invoke name="X"> in garbled key is detected and reported."""
         from app.code_tools.tools import _repair_tool_params
