@@ -42,12 +42,13 @@ backend/app/
 │   ├── ranking.py           # Score and rank findings
 │   ├── dedup.py             # Merge and deduplicate findings
 │   └── router.py            # /api/code-review/ endpoints (+ SSE stream)
-├── code_tools/              # 42 tools (code + file-edit + Jira + browser) + ToolMetadata
-│   ├── schemas.py           # Pydantic models + TOOL_DEFINITIONS (44) + ToolMetadata (42 entries)
-│   ├── tools.py             # Tool implementations (including glob, enhanced grep)
+├── code_tools/              # 43 tools (code + file-edit + Jira + browser + Fact Vault) + ToolMetadata
+│   ├── schemas.py           # Pydantic models + TOOL_DEFINITIONS + ToolMetadata (43 entries)
+│   ├── tools.py             # Tool implementations (including glob, enhanced grep, search_facts)
 │   ├── output_policy.py     # Per-tool truncation policies (budget-adaptive)
 │   ├── __main__.py          # Python CLI: python -m app.code_tools <tool> <ws> '<params>'
 │   └── router.py            # /api/code-tools/ endpoints
+├── scratchpad/              # Phase 9.15 Fact Vault — per-session SQLite fact cache + CachedToolExecutor wrapper + search_facts + in-flight dedup
 ├── langextract/             # LangExtract + multi-vendor Bedrock integration
 ├── ai_provider/             # LLM provider abstraction (Bedrock, Direct, OpenAI)
 │   ├── base.py              # AIProvider ABC + ToolCall/ToolUseResponse/TokenUsage
@@ -116,12 +117,16 @@ Key design: The arbitrator is a **defense attorney** — it tries to rebut findi
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
-**42 tools** across 3 registries:
-- **Code tools** (31, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`.
+**43 tools** across 3 registries + 1 session-scoped:
+- **Code tools** (32, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`, **`search_facts`** (Phase 9.15).
 - **Jira tools** (5, `integrations/jira/tools.py`): `jira_search` (with convenience JQL: "my tickets", "my sprint", "blockers"), `jira_get_issue`, `jira_create_issue`, `jira_update_issue`, `jira_list_projects`.
 - **Browser tools** (6, `browser/tools.py`): `web_search`, `web_navigate`, `web_click`, `web_fill`, `web_screenshot`, `web_extract`.
 
-**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 42 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
+**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 43 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
+
+**PR-review scratchpad** (Phase 9.15, `app/scratchpad/`): On each PR review start, `PRBrainOrchestrator` opens a per-session SQLite at `~/.conductor/scratchpad/{task_id}-{uuid}.sqlite` and wraps the tool executor with `CachedToolExecutor`. Sub-agent tool calls are transparently deduplicated via exact-key lookup or range-intersection (read_file 100-150 satisfies later 101-130). `search_facts` lets sub-agents query the vault metadata directly. Session file + WAL sidecars are deleted on `cleanup()`. Human-readable `task_id` (e.g. `ado-MyProject-pr-12345`) is folded into the filename so concurrent PR reviews are traceable in activity logs.
+
+**Tree-sitter scan hardening** (Phase 9.18, `app/repo_graph/parse_pool.py`): File parses run in an isolated subprocess (`forkserver` start method on POSIX) so the main process can `SIGKILL` the worker if it exceeds `CONDUCTOR_PARSE_TIMEOUT_S` (default 60s). Required because tree-sitter's Python binding holds the GIL through the C parse — no in-process timeout mechanism can interrupt it. Paired `_estimate_jsx_depth` heuristic routes large `.tsx` files with deep nesting (>15 levels, >20KB) straight to the regex extractor, bypassing the first-encounter SIGKILL budget. Parser uses `tree-sitter 0.25` + `tree-sitter-language-pack 1.6` (replaced the abandoned `tree-sitter-languages`).
 
 Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_params>'` (used by extension local mode).
 
@@ -234,7 +239,7 @@ tests/                                          # 1655 tests total
 ├── test_shared.py                  # 55 tests — Shared code review functions (evidence gate, dedup, ranking)
 ├── test_pr_brain.py                # 32 tests — PRBrainOrchestrator pipeline
 │   # Code tools
-├── test_code_tools.py              # 139 tests — 42 tools + dispatcher + multi-language + grep enhancements + glob + ToolMetadata
+├── test_code_tools.py              # 139 tests — 43 tools + dispatcher + multi-language + grep enhancements + glob + ToolMetadata
 ├── test_compressed_tools.py        # 24 tests — compressed_view, trace_variable, detect_patterns
 ├── test_detect_patterns.py         # 34 tests — detect_patterns tool (pattern extraction)
 ├── test_file_edit_tools.py         # 32 tests — file_edit + file_write tools

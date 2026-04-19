@@ -114,7 +114,7 @@ VS Code Extension
 
 FastAPI Backend
 ├── workflow/          — Config-driven multi-agent workflow engine  <- core new addition
-├── agent_loop/        — LLM Agent Loop (42 tools)
+├── agent_loop/        — LLM Agent Loop (43 tools)
 ├── code_review/       — PR multi-agent review pipeline
 ├── ai_provider/       — Three-provider abstraction layer (Bedrock / Anthropic / OpenAI)
 ├── git_workspace/     — Git bare repo + worktree management
@@ -405,7 +405,7 @@ backend/
 │   │   ├── prompts.py             # Four-layer system prompt builder + 9 Investigation Skills
 │   │   └── router.py              # POST /api/context/query/stream (SSE)
 │   │
-│   ├── code_tools/                # 42 tools (code + file editing + Jira + browser)
+│   ├── code_tools/                # 43 tools (code + file editing + Jira + browser + Fact Vault)
 │   │   ├── tools.py               # All tool implementations + execute_tool() dispatcher
 │   │   ├── schemas.py             # Pydantic models + LLM tool definitions (TOOL_DEFINITIONS)
 │   │   ├── output_policy.py       # Per-tool truncation policy (budget-adaptive)
@@ -480,7 +480,7 @@ backend/
 ├── requirements.txt
 └── tests/                         # 1300+ tests
     ├── conftest.py                # Central stubs (cocoindex, litellm, etc.)
-    ├── test_code_tools.py         # 139: 42 tools + dispatcher + multi-language
+    ├── test_code_tools.py         # 139: 43 tools + dispatcher + multi-language
     ├── test_agent_loop.py         # 55: loop + 4-layer prompt + completeness checks
     ├── test_budget_controller.py  # 20: budget signals
     ├── test_compressed_tools.py   # 24: compressed view tools
@@ -634,6 +634,14 @@ synthesis_guide: |
 
 `pr_review` is the only specialized brain activated via `transfer_to_brain`. It runs `PRBrainOrchestrator`, a 6-phase deterministic pipeline (pre-compute -> dispatch review agents -> post-process -> arbitration -> merge recommendation -> synthesis); see `backend/app/agent_loop/pr_brain.py` for implementation details.
 
+**PR-review-scoped infrastructure** (Phase 9.15 + 9.18 hardening):
+
+* **Fact Vault (short-term memory)** — `backend/app/scratchpad/`. On each PR review start, `PRBrainOrchestrator` opens a per-session SQLite file (`~/.conductor/scratchpad/{task_id}-{uuid}.sqlite`, e.g. `ado-MyProject-pr-12345-b37b7979.sqlite`). Every sub-agent `grep` / `read_file` / `find_symbol` call is routed through `CachedToolExecutor`, which transparently dedupes via exact-key lookup or range-intersection (a cached `read_file` for lines 100-150 satisfies a later request for 101-130). Typical 7-agent parallel review hits 25-40% cache rate; `cleanup()` deletes the file + WAL sidecars when the review ends.
+* **Tree-sitter scan hardening** — `backend/app/repo_graph/parse_pool.py`. Every file parse runs in an isolated subprocess (`forkserver` start method on POSIX) with a 60s wall-clock cap enforced by the main process via `SIGKILL`. This is the only reliable timeout primitive — tree-sitter's Python binding holds the GIL through the C-level parse, so any thread-level timeout blocks forever (py-spy on sentry-007 confirmed). A paired JSX-depth heuristic pre-filters `.tsx` files >20 KB with estimated nesting >15 levels directly to regex, avoiding the first-encounter 60s SIGKILL budget.
+* **Degradation signal surfacing** — when tree-sitter times out or fails, `FileSymbols.extracted_via = "regex"`; `find_symbol` tags each match with `extracted_via: "regex"`, and `file_outline` shape becomes `{"definitions": [...], "extracted_via": "regex", "note": "..."}`. Tool descriptions tell the agent: if you see that marker, prefer `grep` / `read_file` for authoritative structural info.
+
+This infrastructure landed with Phase 9.15 Fact Vault + 9.18 Scan Hardening; see `ROADMAP.md` for the full history. The upcoming PR Brain v2 refactor (`docs/PR_BRAIN_V2_PLAN.md`) will layer on top — switching to a coordinator pattern where Brain plans investigations and Haiku workers answer narrow checks, with severity classification unified in Brain's synthesis phase.
+
 ### 6.5 Query Markers — Shared Frontend/Backend Convention
 
 Frontend slash commands (`/pr`, `/jira`, `/summary`, `/diff`) prepend a `[query_type:X]` marker to the query as a routing hint for the Brain LLM. The marker strings are centrally defined in the `QueryType` enum in `backend/app/agent_loop/query_markers.py`; the frontend's `extension/webview-ui/src/utils/slashCommands.ts` mirrors them via the same-named `QUERY_TYPE` constant (both sides must be updated together).
@@ -680,10 +688,10 @@ LLM sees the question -> decides to grep keywords first
 
 The LLM can decide each next step based on existing information, enabling true multi-step reasoning.
 
-### 7.2 42 Tools (Code + File Editing + Jira + Browser)
+### 7.2 43 Tools (Code + File Editing + Jira + Browser + Fact Vault)
 
 Tools are spread across three registries, dispatched uniformly via `execute_tool(name, workspace, params)`:
-- **Code tools** (31): `code_tools/tools.py`
+- **Code tools** (32): `code_tools/tools.py` (includes `search_facts` added in Phase 9.15)
 - **Jira tools** (5): `integrations/jira/tools.py`
 - **Browser tools** (6): `browser/tools.py`
 
@@ -757,6 +765,14 @@ Tools are spread across three registries, dispatched uniformly via `execute_tool
 |------|------|------|
 | `file_edit` | `path`, `old_text`, `new_text` | Search-and-replace edit (must `read_file` first to prevent overwriting unread content) |
 | `file_write` | `path`, `content` | Full file write/create (existing files require `read_file` first) |
+
+> ⚠️ **file_write / file_edit preserve content whitespace verbatim.** `_repair_tool_params` Pattern 3 normally `.strip()`s every string param, but `file_write.content` / `file_edit.old_string` / `file_edit.new_string` are on a whitelist — otherwise trailing newlines on every written file would be silently killed, breaking POSIX text-file convention (Phase 9.18 step 3 fix).
+
+**Fact Vault tools** (Phase 9.15, only available inside a PR review session):
+
+| Tool | Parameters | Description |
+|------|------|------|
+| `search_facts` | `tool?`, `path?`, `pattern?`, `limit?` | Query previously-cached tool-call results from the current PR review session (`grep` / `read_file` / `find_symbol` / …). Returns metadata only — seeing that a fact exists lets the agent decide whether to re-run (served transparently from cache by `CachedToolExecutor`) or skip the lookup entirely |
 
 **Jira integration tools** (see [§15 Jira Integration](#15-jira-integration) for details):
 
@@ -2015,7 +2031,7 @@ make test-parity                                  # contract check + shape verif
 
 | File | Count | Coverage |
 |------|------|---------|
-| `test_code_tools.py` | 139 | All 42 tools + dispatcher + multi-language |
+| `test_code_tools.py` | 139 | All 43 tools + dispatcher + multi-language |
 | `test_agent_loop.py` | 55 | Agent Loop + 4-layer prompt + completeness checks |
 | `test_brain.py` | 64 | Brain orchestrator + dispatch patterns |
 | `test_jira_tools.py` | 21 | Jira agent tools |

@@ -160,8 +160,10 @@ Current prototype includes:
 
 - VS Code collaboration extension with slash-command `@AI` chat and workflow visualization
 - FastAPI backend with Brain orchestrator (dispatches specialist agents)
-- Agentic code intelligence (42 tools, 4-layer prompt architecture)
+- Agentic code intelligence (43 tools, 4-layer prompt architecture)
 - Multi-agent PR review pipeline (6 specialized agents, adversarial arbitration, synthesis)
+- **Fact Vault** (short-term memory per PR review — task-scoped SQLite cache shared across sub-agents; Phase 9.15)
+- **Hardened tree-sitter scan** — subprocess-isolated parsing with SIGKILL-on-timeout + JSX-depth heuristic; tree-sitter upgraded to 0.25 / language-pack (Phase 9.18)
 - Isolated Git workspaces per room
 - **Task Board**: TODO dependency markers (`{jira:TICKET#N|after:M|blocked:OTHER}`), Epic-grouped Jira tickets, drag-and-drop AI Working Space
 - **Chat persistence**: write-through micro-batch Postgres + Redis hot cache
@@ -170,7 +172,7 @@ Current prototype includes:
 - Langfuse self-hosted observability (nested execution trees, cost tracking)
 - Jira integration (OAuth 3LO, 5 agent tools, 3-phase investigate→mark→update workflow)
 - Cloud-ready: `CONDUCTOR_*` env vars override secrets for ECS/K8s deployment
-- 1655+ automated tests
+- 1777+ automated tests (533 tool-related + parity)
 
 ## Roadmap
 
@@ -302,8 +304,10 @@ npm run compile
 
 - VS Code 协作扩展（斜杠命令 `@AI` 聊天与工作流可视化面板）
 - FastAPI 后端（Brain 编排器分发专业 Agent）
-- Agentic 代码智能（42 个工具，4 层 prompt 架构）
+- Agentic 代码智能（43 个工具，4 层 prompt 架构）
 - 多 Agent PR 代码评审（6 个专用 Agent，对抗仲裁，综合输出）
+- **Fact Vault**（PR review 会话级短期记忆 —— 任务作用域 SQLite 缓存，跨 sub-agent 共享；Phase 9.15）
+- **硬化的 tree-sitter 扫描** —— 子进程隔离解析 + SIGKILL 超时 + JSX 嵌套深度启发式；tree-sitter 升级到 0.25 + language-pack（Phase 9.18）
 - 每个房间独立的 Git 工作区
 - **任务面板**：TODO 依赖标记（`{jira:TICKET#N|after:M|blocked:OTHER}`）、Epic 分组 Jira 票、拖拽 AI 工作区
 - **聊天持久化**：写穿透 micro-batch Postgres + Redis 热缓存
@@ -312,7 +316,7 @@ npm run compile
 - Langfuse 自托管可观测性（嵌套执行树、成本追踪）
 - Jira 集成（OAuth 3LO，5 个 Agent 工具，3 阶段 investigate→mark→update 流程）
 - 云部署就绪：`CONDUCTOR_*` 环境变量覆盖 ECS/K8s 部署的 secrets
-- 1655+ 自动化测试
+- 1777+ 自动化测试（533 工具相关 + parity）
 
 ## Roadmap
 
