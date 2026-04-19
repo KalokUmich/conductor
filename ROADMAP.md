@@ -1472,14 +1472,14 @@ Scope of the hardening:
    - If a TSX file has > N nested JSX levels (quick heuristic pre-scan) → route to `_extract_with_regex` directly, skip tree-sitter
    - Belt-and-suspenders for residual pathological cases after (1)+(3)
 
-- [ ] `_extract_with_tree_sitter` wrapped with per-file time budget (30s default, `CONDUCTOR_PARSE_TIMEOUT_S` env override)
-- [ ] Skip facts recorded to Fact Vault (9.15 prerequisite); all file-touching tools check skip list pre-execution
+- [x] `_extract_with_tree_sitter` wrapped with per-file time budget (60s default, `CONDUCTOR_PARSE_TIMEOUT_S` env override) — shipped as `extract_definitions_with_timeout`, `extract_definitions` now delegates so every caller is protected; daemon-thread pattern leaves zombies running until C-level parse ends (full kill requires ProcessPool in Sprint 17)
+- [x] Skip facts recorded to Fact Vault (9.15 prerequisite); all file-touching tools check skip list pre-execution — parser writes `skip_facts` on timeout, pre-checks on re-entry so pathological files short-circuit to regex for the rest of the session
 - [ ] `_scan_workspace` migrated to ProcessPoolExecutor; results merged back into the returned dict
 - [ ] Dependencies: upgrade `tree-sitter` + grammar provider — **gated on full test suite + parity + eval regression (see item 3 above)**
 - [ ] Co-ordinate TS-side tree-sitter bump in `extension/src/services/astToolRunner.ts` so `make test-parity` stays green
 - [ ] TSX JSX-depth heuristic → regex fallback when above threshold
 - [ ] Agent-timeout zombie mitigation — quick win before ProcessPool lands: track per-agent pending `Future` objects and `.cancel()` them when the agent times out (cancels unstarted work; logs a warning for in-flight workers that can't be killed until item 2 ships)
-- [ ] `_get_symbol_index` protected by `scratchpad.key_lock` (second tree-sitter scan entry point discovered in sentry-007 diagnostic — same stampede shape as `_ensure_graph`, same fix)
+- [x] `_get_symbol_index` protected by `scratchpad.key_lock` (second tree-sitter scan entry point discovered in sentry-007 diagnostic — same stampede shape as `_ensure_graph`, same fix; shipped with Phase 9.15 full, commit 80ccc0d)
 - [ ] Eval: rerun sentry-007, target scan < 2 min (from 24 min)
 - [ ] Eval: rerun 12 requests cases — composite change must be within ±2 pp
 
@@ -1722,7 +1722,8 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 9.15 MVP: `_ensure_graph` in-flight dedup** | **✅ Complete** | **Sprint 15** |
 | **Phase 9.18 MVP: scan diagnostic logging** | **🟢 Partial** | **Sprint 15** |
 | **Phase 9.15 full: Fact Vault (SQLite + CachedToolExecutor + search_facts + CLI)** | **✅ Complete** | **Sprint 15–16** |
-| **Phase 9.18 full: Scan Hardening (timeout + ProcessPool)** | **🟡 Planned** | **Sprint 16–17** |
+| **Phase 9.18 step 1: per-file parse timeout + skip caching** | **✅ Complete** | **Sprint 16** |
+| **Phase 9.18 step 2+: ProcessPool + grammar bump + TSX heuristic** | **🟡 Planned** | **Sprint 17** |
 | **Phase 9.13 Checkpoint A: `dispatch_subagent` + checks contract** | **🟡 Planned** | **Sprint 16–17** |
 | **Phase 9.16: Forked Agent Pattern** | **🟡 Planned** | **Sprint 17** |
 | **Phase 9.13 Checkpoint B: dynamic composition default** | **🟡 Planned** | **Sprint 18** |
