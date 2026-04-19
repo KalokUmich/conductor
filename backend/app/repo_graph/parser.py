@@ -511,6 +511,41 @@ def extract_definitions_with_timeout(
     if language is None:
         return FileSymbols(file_path=file_path)
 
+    # TSX/JSX heuristic — deeply nested JSX blows up tree-sitter's GLR
+    # parser (the sentry-007 pathology). Instead of paying a 60s timeout
+    # on the first encounter, run a cheap byte-level depth estimator and
+    # route obviously-pathological files straight to regex. Only kicks
+    # in on .tsx/.jsx > 20 KB because small files always parse quickly
+    # regardless of JSX depth. Threshold 15 is conservative — the
+    # pathological sentry-007 files were 30+ nested. False positives
+    # (big TSX with wide-but-shallow JSX misrouted to regex) degrade to
+    # the same signal the ``extracted_via: "regex"`` tag already carries,
+    # so the agent knows to grep.
+    if (
+        timeout_s > 0
+        and file_path.endswith((".tsx", ".jsx"))
+        and len(source) > 20_000
+    ):
+        depth = _estimate_jsx_depth(source)
+        if depth > 15:
+            logger.info(
+                "TSX heuristic skip: %s (jsx_depth~%d, size=%d) — regex only",
+                file_path, depth, len(source),
+            )
+            store_h = _current_factstore_safe()
+            if store_h is not None:
+                try:
+                    store_h.put_skip(
+                        file_path,
+                        reason=f"jsx-depth heuristic (~{depth} levels)",
+                        duration_ms=0,
+                    )
+                except Exception as exc:
+                    logger.debug("skip-fact write failed for %s: %s", file_path, exc)
+            return _extract_with_regex(
+                source.decode("utf-8", errors="replace"), language, file_path
+            )
+
     # Pre-check: if an earlier call in this session already flagged this
     # path as pathological, don't re-trigger tree-sitter. Regex fallback
     # only — same symbol shape, zero timeout risk.
@@ -578,6 +613,48 @@ def _current_factstore_safe():
         return current_factstore()
     except Exception:
         return None
+
+
+def _estimate_jsx_depth(source: bytes) -> int:
+    """Byte-level max-depth estimator for JSX nesting.
+
+    Used as a pre-filter for the TSX/JSX heuristic in
+    :func:`extract_definitions_with_timeout`. Not a parser — it counts
+    ``<Xxx`` opens (React-component style: ``<`` followed by an
+    uppercase letter) and ``</`` / ``/>`` closes, tracking running
+    depth. Imperfect across strings, template literals, and TypeScript
+    generic type params sharing the ``<`` token, but good enough to
+    catch the pathological case: deeply nested JSX (15+ levels) is the
+    known trigger for tree-sitter-typescript GLR blowup.
+
+    Cost: ~1-5 ms on a 30 KB file. Only called for ``.tsx``/``.jsx``
+    over the size gate, so overall overhead is negligible.
+    """
+    depth = 0
+    max_depth = 0
+    n = len(source)
+    i = 0
+    while i < n - 1:
+        b = source[i]
+        nb = source[i + 1]
+        if b == 0x3C:  # '<'
+            if nb == 0x2F:  # '</' — JSX close tag
+                depth = max(0, depth - 1)
+                i += 2
+                continue
+            # '<' followed by uppercase ASCII letter — React component open
+            if 0x41 <= nb <= 0x5A:
+                depth += 1
+                if depth > max_depth:
+                    max_depth = depth
+                i += 2
+                continue
+        elif b == 0x2F and nb == 0x3E:  # '/>'  self-closing
+            depth = max(0, depth - 1)
+            i += 2
+            continue
+        i += 1
+    return max_depth
 
 
 def extract_definitions(

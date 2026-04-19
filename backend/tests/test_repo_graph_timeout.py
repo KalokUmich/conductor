@@ -246,6 +246,118 @@ class TestTimeoutConfig:
 # ---------------------------------------------------------------------------
 
 
+class TestTsxJsxDepthHeuristic:
+    """Cheap pre-filter that routes suspected pathological TSX/JSX to
+    the regex extractor before the subprocess pool is invoked — avoids
+    paying the 60s SIGKILL budget on the first encounter."""
+
+    def test_depth_estimator_counts_nested_components(self):
+        """Simple nested JSX: 5 opens, 0 closes → depth 5."""
+        from app.repo_graph.parser import _estimate_jsx_depth
+
+        # <A><B><C><D><E>...</E></D></C></B></A>
+        src = b"<A><B><C><D><E>text</E></D></C></B></A>"
+        assert _estimate_jsx_depth(src) == 5
+
+    def test_depth_estimator_tracks_max_not_current(self):
+        """Depth counter returns the peak, not the final value."""
+        from app.repo_graph.parser import _estimate_jsx_depth
+
+        src = b"<A><B></B></A><C><D><E></E></D></C>"  # peak at E = 3
+        assert _estimate_jsx_depth(src) == 3
+
+    def test_depth_estimator_ignores_lowercase_tags(self):
+        """Lowercase <div> etc. are HTML, not React components —
+        heuristic focuses on component nesting (the GLR trigger)."""
+        from app.repo_graph.parser import _estimate_jsx_depth
+
+        src = b"<div><span><p>hi</p></span></div>"
+        assert _estimate_jsx_depth(src) == 0
+
+    def test_heuristic_routes_deep_tsx_to_regex(
+        self, fake_pool, isolated_vault, tmp_path
+    ):
+        """Synthesise a .tsx file with 20 nested <Component> levels and
+        size > 20 KB. Heuristic must send it to regex, skipping the pool
+        entirely, and record a skip_fact with the heuristic's reason."""
+        # Build a 30 KB file with 20 levels of nested components.
+        opens = b"".join(f"<L{i}>".encode() for i in range(20))
+        closes = b"".join(f"</L{i}>".encode() for i in reversed(range(20)))
+        padding = b"// " + b"padding " * 5000 + b"\n"
+        src = padding + opens + b"text" + closes
+        assert len(src) > 20_000
+        fp = tmp_path / "deep.tsx"
+        fp.write_bytes(src)
+
+        with bind_factstore(isolated_vault):
+            result = extract_definitions_with_timeout(
+                str(fp), source=src, timeout_s=30.0
+            )
+        # Pool NOT invoked — routed straight to regex.
+        assert fake_pool.calls == 0
+        assert result.extracted_via == "regex"
+        # skip_fact recorded with heuristic's reason.
+        reason = isolated_vault.should_skip(str(fp))
+        assert reason is not None
+        assert "jsx-depth" in reason.lower() or "heuristic" in reason.lower()
+
+    def test_heuristic_ignores_shallow_tsx(self, fake_pool, tmp_path):
+        """Large .tsx with only 3-level nesting passes through to the
+        pool — we don't want to degrade legitimate files."""
+        sentinel = FileSymbols(
+            file_path="shallow", language="typescript", extracted_via="tree_sitter"
+        )
+        fake_pool.returns = sentinel
+        # 25 KB of code with only 3-level nesting.
+        shallow = b"<Foo><Bar><Baz>x</Baz></Bar></Foo>\n"
+        src = b"// " + b"padding " * 5000 + b"\n" + shallow * 10
+        assert len(src) > 20_000
+        fp = tmp_path / "shallow.tsx"
+
+        result = extract_definitions_with_timeout(
+            str(fp), source=src, timeout_s=30.0
+        )
+        assert fake_pool.calls == 1
+        assert result is sentinel
+
+    def test_heuristic_ignores_small_tsx_even_if_deep(
+        self, fake_pool, tmp_path
+    ):
+        """Size gate protects small files — a 200-byte file with deep
+        JSX isn't pathological for tree-sitter in practice."""
+        sentinel = FileSymbols(
+            file_path="small", language="typescript", extracted_via="tree_sitter"
+        )
+        fake_pool.returns = sentinel
+        opens = b"".join(f"<L{i}>".encode() for i in range(20))
+        closes = b"".join(f"</L{i}>".encode() for i in reversed(range(20)))
+        src = opens + b"x" + closes  # ~250 bytes total
+        assert len(src) < 20_000
+        fp = tmp_path / "small.tsx"
+
+        extract_definitions_with_timeout(
+            str(fp), source=src, timeout_s=30.0
+        )
+        assert fake_pool.calls == 1  # size gate passed, heuristic skipped
+
+    def test_heuristic_ignores_python(self, fake_pool, tmp_path):
+        """Python files with < chars in type hints or comparisons must
+        not be routed to regex — heuristic is TSX/JSX only."""
+        sentinel = FileSymbols(
+            file_path="p", language="python", extracted_via="tree_sitter"
+        )
+        fake_pool.returns = sentinel
+        # Python generic-heavy code — lots of `<` in comparisons
+        src = b"if x < 1 and y < 2:\n    pass\n" * 2000
+        assert len(src) > 20_000
+        fp = tmp_path / "p.py"
+
+        extract_definitions_with_timeout(
+            str(fp), source=src, timeout_s=30.0
+        )
+        assert fake_pool.calls == 1
+
+
 class TestExtractDefinitionsDelegation:
     def test_extract_definitions_routes_through_pool(self, fake_pool, tmp_path):
         """Every call site in the codebase that uses ``extract_definitions``
