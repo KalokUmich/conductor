@@ -5212,26 +5212,28 @@ TOOL_REGISTRY = {
 
 def search_facts(
     workspace: str,
+    kind: Optional[str] = None,
     tool: Optional[str] = None,
     path: Optional[str] = None,
     pattern: Optional[str] = None,
+    symbol: Optional[str] = None,
+    exists: Optional[bool] = None,
     limit: int = 20,
 ) -> ToolResult:
-    """Search the current session's Fact Vault for previously-cached results.
+    """Search the current session's Fact Vault.
 
-    Returns METADATA only — keys, tool, path, range, agent, timestamp — not
-    the full cached content. The caller can re-run the original tool to get
-    content (CachedToolExecutor serves it from cache transparently), or
-    it can see the fact already exists and decide the lookup is redundant.
+    Two kinds of facts supported:
+      * ``kind`` unset (default) — the tool-call cache (``facts`` table).
+        Returns metadata (keys, tool, path, range, agent, timestamp).
+        Filters: ``tool``, ``path``, ``pattern``.
+      * ``kind='existence'`` — PR Brain v2 Phase 2's existence facts.
+        Returns one record per symbol with exists_flag + evidence.
+        Filters: ``symbol`` (exact match), ``exists`` (True|False|None).
+        Set ``exists=False`` to list all MISSING symbols — these are
+        directly promotable to "ImportError at runtime" findings.
 
-    Filters (all optional, AND-combined):
-        * ``tool``    — exact tool name (``grep``, ``read_file``, …)
-        * ``path``    — substring match on the cached fact's file path
-        * ``pattern`` — substring match on the cache KEY (includes patterns for grep)
-
-    Returns a structured list of dicts the calling sub-agent can inspect.
-    When no FactStore is active (tool called outside a PR review context),
-    returns success=False with an instructive error.
+    Returns success=False with an instructive error when no FactStore is
+    active (i.e. called outside a PR review).
     """
     from app.scratchpad import current_factstore
 
@@ -5246,9 +5248,58 @@ def search_facts(
             ),
         )
 
-    # Build the SQL filter dynamically — None values are omitted.
-    clauses: List[str] = []
-    params: List[Any] = []
+    # --- Existence-facts branch (PR Brain v2) -----------------------------
+    if kind and kind.lower() == "existence":
+        clauses: List[str] = []
+        params: List[Any] = []
+        if symbol:
+            clauses.append("symbol_name = ?")
+            params.append(symbol)
+        if exists is not None:
+            clauses.append("exists_flag = ?")
+            params.append(1 if exists else 0)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(max(1, min(limit, 100)))
+        try:
+            rows = store._conn().execute(
+                f"SELECT symbol_name, symbol_kind, referenced_at, exists_flag, "
+                f"evidence, signature_info, ts_written FROM existence_facts "
+                f"{where} ORDER BY ts_written DESC LIMIT ?",
+                params,
+            ).fetchall()
+        except Exception as e:
+            logger.warning("search_facts (existence) failed: %s", e)
+            return ToolResult(
+                tool_name="search_facts",
+                success=False,
+                error=f"scratchpad query failed: {e}",
+            )
+        existence_list = [
+            {
+                "symbol_name": r["symbol_name"],
+                "symbol_kind": r["symbol_kind"],
+                "referenced_at": r["referenced_at"],
+                "exists": bool(r["exists_flag"]),
+                "evidence": r["evidence"],
+                "signature_info": r["signature_info"],
+                "ts_written": r["ts_written"],
+            }
+            for r in rows
+        ]
+        return ToolResult(
+            tool_name="search_facts",
+            success=True,
+            data={
+                "kind": "existence",
+                "count": len(existence_list),
+                "existence_facts": existence_list,
+                "stats": store.stats(),
+            },
+        )
+
+    # --- Default branch: tool-call cache ----------------------------------
+    clauses = []
+    params = []
     if tool:
         clauses.append("tool = ?")
         params.append(tool.lower())
@@ -5291,6 +5342,7 @@ def search_facts(
         tool_name="search_facts",
         success=True,
         data={
+            "kind": "facts",
             "count": len(headers),
             "facts": headers,
             "stats": store.stats(),

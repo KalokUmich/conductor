@@ -149,7 +149,14 @@ class TestStats:
         store.put_skip("/p1", reason="timeout")
 
         stats = store.stats()
-        assert stats == {"facts": 2, "negative_facts": 1, "skip_facts": 1}
+        assert stats == {
+            "facts": 2,
+            "negative_facts": 1,
+            "skip_facts": 1,
+            "existence_facts": 0,
+            "missing_symbols": 0,
+            "plan_entries": 0,
+        }
 
 
 class TestConcurrency:
@@ -234,3 +241,77 @@ class TestSweepOrphans:
     def test_noop_when_root_missing(self, tmp_path, monkeypatch):
         monkeypatch.setattr("app.scratchpad.store.SCRATCHPAD_ROOT", tmp_path / "does-not-exist")
         assert sweep_orphans() == []
+
+
+class TestPlanMemory:
+    """P4 — per-dispatch plan entries persisted so coordinator sees a
+    recap across replan rounds."""
+
+    def test_empty_on_open(self, store):
+        assert store.count_plan_entries() == 0
+        assert store.iter_plan_entries() == []
+
+    def test_put_then_iter(self, store):
+        store.put_plan_entry(
+            dispatch_index=1,
+            mode="role",
+            role="security",
+            scope="src/auth/oauth.py:40-120",
+            success_criteria="Flag token leaks or state-mismatch.",
+            reason="PKCE migration",
+        )
+        entries = store.iter_plan_entries()
+        assert len(entries) == 1
+        assert entries[0].dispatch_index == 1
+        assert entries[0].role == "security"
+        assert entries[0].reason == "PKCE migration"
+        assert store.count_plan_entries() == 1
+
+    def test_entries_sorted_by_dispatch_index(self, store):
+        for idx in (3, 1, 2):
+            store.put_plan_entry(
+                dispatch_index=idx,
+                mode="checks",
+                role=None,
+                scope=f"file{idx}.py",
+                success_criteria="criteria",
+                reason=None,
+            )
+        entries = store.iter_plan_entries()
+        assert [e.dispatch_index for e in entries] == [1, 2, 3]
+
+    def test_replace_on_same_dispatch_index(self, store):
+        store.put_plan_entry(
+            dispatch_index=1, mode="checks", role=None,
+            scope="v1", success_criteria="c1", reason=None,
+        )
+        store.put_plan_entry(
+            dispatch_index=1, mode="role", role="correctness",
+            scope="v2", success_criteria="c2", reason="updated",
+        )
+        entries = store.iter_plan_entries()
+        assert len(entries) == 1
+        assert entries[0].scope == "v2"
+        assert entries[0].role == "correctness"
+
+    def test_stats_includes_plan_entries(self, store):
+        store.put_plan_entry(
+            dispatch_index=1, mode="role", role="security",
+            scope="s", success_criteria="c", reason=None,
+        )
+        store.put_plan_entry(
+            dispatch_index=2, mode="checks", role=None,
+            scope="s", success_criteria="c", reason=None,
+        )
+        assert store.stats()["plan_entries"] == 2
+
+    def test_long_fields_truncated(self, store):
+        long = "x" * 1000
+        store.put_plan_entry(
+            dispatch_index=1, mode="role", role=None,
+            scope=long, success_criteria=long, reason=long,
+        )
+        entries = store.iter_plan_entries()
+        assert len(entries[0].scope) == 500
+        assert len(entries[0].success_criteria) == 500
+        assert len(entries[0].reason) == 500

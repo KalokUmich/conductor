@@ -53,6 +53,14 @@ class PRContext:
     total_deletions: int = 0
     total_changed_lines: int = 0
     file_count: int = 0
+    # PR intent — populated by the caller (Azure DevOps router from
+    # pr_data["title"]/["description"], eval runner from case.title/
+    # case.description, chat flow from git log as fallback).
+    # Empty strings when the caller didn't supply them; sub-agents must
+    # degrade gracefully (v1 fixed swarm ignores; v2 coordinator includes
+    # when present, falls back to diff-only intent inference when not).
+    title: str = ""
+    description: str = ""
 
     def business_logic_files(self) -> List[ChangedFile]:
         return [f for f in self.files if f.category == FileCategory.BUSINESS_LOGIC]

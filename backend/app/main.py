@@ -339,6 +339,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 workspace: str,
                 diff_spec: str,
                 task_id: Optional[str] = None,
+                pr_title: str = "",
+                pr_description: str = "",
             ) -> PRBrainOrchestrator:
                 return PRBrainOrchestrator(
                     provider=agent_provider,
@@ -350,6 +352,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     tool_executor=LocalToolExecutor(workspace),
                     trace_writer=trace_writer,
                     task_id=task_id,
+                    pr_title=pr_title,
+                    pr_description=pr_description,
                 )
 
             app.state.pr_brain_factory = _make_pr_brain
@@ -364,6 +368,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.azure_devops_client = None
         app.state.azure_devops_workspace = None
         logger.info("Azure DevOps integration: disabled")
+
+    # Sweep orphan scratchpad sessions (older than 24h). Keeps
+    # ~/.conductor/scratchpad/ from growing unbounded across dev runs
+    # and crashed processes whose `cleanup()` path never fired.
+    try:
+        from .scratchpad import sweep_orphans
+
+        sweep_orphans(max_age_hours=24)
+    except Exception as exc:
+        logger.warning("Scratchpad orphan sweep failed on startup: %s", exc)
 
     logger.info("Conducator startup complete.")
     yield

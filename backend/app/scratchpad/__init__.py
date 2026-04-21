@@ -41,9 +41,11 @@ from .keys import (
 )
 from .store import (
     SCRATCHPAD_ROOT,
+    ExistenceFact,
     Fact,
     FactStore,
     NegativeFact,
+    PlanEntry,
     sweep_orphans,
 )
 
@@ -53,9 +55,11 @@ __all__ = [
     "SCHEMA_VERSION",
     "SCRATCHPAD_ROOT",
     "CachedToolExecutor",
+    "ExistenceFact",
     "Fact",
     "FactStore",
     "NegativeFact",
+    "PlanEntry",
     "bind_factstore",
     "build_key",
     "current_factstore",

@@ -71,6 +71,51 @@ _SCHEMA = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS existence_facts (
+        -- PR Brain v2 Phase 2: Verify. Before planning logic checks, the
+        -- coordinator dispatches ONE existence-verification worker that
+        -- records, for each symbol/method/import/attribute this PR
+        -- introduces, whether it actually exists in the codebase.
+        --
+        -- These facts are CONSUMED by Brain's planning step (to decide
+        -- whether to dispatch a logic check on a symbol vs flag an
+        -- ImportError/NameError/TypeError) and by sub-agent verify-
+        -- existence rule (to avoid re-doing grep work already answered).
+        --
+        -- Semantic: "the codebase asserts that X [exists | is missing]"
+        -- — fundamentally different from ``facts`` (tool-call cache)
+        -- which is "the last grep for X returned these rows".
+        symbol_name    TEXT NOT NULL,
+        symbol_kind    TEXT NOT NULL,  -- class | method | function | attribute | import
+        referenced_at  TEXT NOT NULL,  -- file:line where the NEW usage lives
+        exists_flag    INTEGER NOT NULL,  -- 0 | 1  (column name avoids SQL reserved word 'exists')
+        evidence       TEXT,
+        signature_info TEXT,  -- JSON: param mismatch detail for kind=method
+        ts_written     INTEGER NOT NULL,
+        PRIMARY KEY (symbol_name, referenced_at)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_existence_missing
+        ON existence_facts(exists_flag) WHERE exists_flag = 0
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS plan_memory (
+        -- PR Brain v2 P4: coordinator's Plan-phase decisions persisted
+        -- per-dispatch. Injected back into tool results on the 3rd+
+        -- dispatch so Brain's in-context plan history doesn't drift as
+        -- the review loop grows. Auto-populated by `_dispatch_subagent`.
+        dispatch_index INTEGER NOT NULL,     -- 1-based per session
+        mode           TEXT NOT NULL,        -- 'role' | 'checks' | 'combined'
+        role           TEXT,                 -- factory role if role mode
+        scope          TEXT NOT NULL,        -- compact scope descriptor
+        success_criteria TEXT NOT NULL,
+        reason         TEXT,                 -- Brain's direction_hint/context
+        ts_written     INTEGER NOT NULL,
+        PRIMARY KEY (dispatch_index)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS meta (
         k TEXT PRIMARY KEY,
         v TEXT NOT NULL
@@ -102,6 +147,39 @@ class NegativeFact:
     query: str
     reason: Optional[str]
     confidence: Optional[float]
+    ts_written: int
+
+
+@dataclass
+class PlanEntry:
+    """P4: one dispatch decision the coordinator made, persisted so later
+    tool-result returns can include a compact plan recap and prevent
+    Plan→Synthesize drift as context fills."""
+
+    dispatch_index: int
+    mode: str                      # 'role' | 'checks' | 'combined'
+    role: Optional[str]
+    scope: str                     # compact "file1:120-160, file2" descriptor
+    success_criteria: str
+    reason: Optional[str]
+    ts_written: int
+
+
+@dataclass
+class ExistenceFact:
+    """PR Brain v2 — authoritative fact about whether a symbol exists.
+
+    Produced by a single Phase-2 verification sub-agent at the start of a
+    PR review; consumed by the coordinator when planning investigations
+    and by later sub-agents to avoid re-doing existence grep work.
+    """
+
+    symbol_name: str
+    symbol_kind: str           # class | method | function | attribute | import
+    referenced_at: str         # "file.py:12"
+    exists_flag: bool
+    evidence: Optional[str]
+    signature_info: Optional[Dict[str, Any]]  # for kind=method: param mismatches
     ts_written: int
 
 
@@ -361,6 +439,133 @@ class FactStore:
         ).fetchone()
         return row["reason"] if row else None
 
+    # --- existence facts (PR Brain v2 Phase 2) --------------------------
+
+    def put_existence(
+        self,
+        symbol_name: str,
+        symbol_kind: str,
+        referenced_at: str,
+        exists: bool,
+        evidence: Optional[str] = None,
+        signature_info: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record an existence fact. Idempotent — REPLACE semantics on
+        (symbol_name, referenced_at) conflict so re-verifying a symbol
+        just updates the record."""
+        sig_json = json.dumps(signature_info) if signature_info is not None else None
+        self._conn().execute(
+            """
+            INSERT OR REPLACE INTO existence_facts
+              (symbol_name, symbol_kind, referenced_at, exists_flag, evidence,
+               signature_info, ts_written)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                symbol_name,
+                symbol_kind,
+                referenced_at,
+                1 if exists else 0,
+                evidence,
+                sig_json,
+                int(time.time() * 1000),
+            ),
+        )
+        self._conn().commit()
+
+    def get_existence(
+        self, symbol_name: str, referenced_at: Optional[str] = None,
+    ) -> Optional[ExistenceFact]:
+        """Look up a single existence fact. ``referenced_at`` disambiguates
+        when the same symbol is referenced in multiple places; when
+        omitted, returns the most recent entry for the name."""
+        if referenced_at is not None:
+            row = self._conn().execute(
+                "SELECT * FROM existence_facts WHERE symbol_name = ? AND referenced_at = ?",
+                (symbol_name, referenced_at),
+            ).fetchone()
+        else:
+            row = self._conn().execute(
+                "SELECT * FROM existence_facts WHERE symbol_name = ? "
+                "ORDER BY ts_written DESC LIMIT 1",
+                (symbol_name,),
+            ).fetchone()
+        return _row_to_existence(row) if row else None
+
+    def iter_existence(
+        self, exists: Optional[bool] = None,
+    ) -> Iterable[ExistenceFact]:
+        """Iterate existence facts. When ``exists`` is set, filter to that
+        side (handy: ``iter_existence(exists=False)`` = all missing
+        symbols — these are the runtime-error findings the coordinator
+        promotes directly)."""
+        if exists is None:
+            rows = self._conn().execute(
+                "SELECT * FROM existence_facts ORDER BY ts_written DESC"
+            )
+        else:
+            rows = self._conn().execute(
+                "SELECT * FROM existence_facts WHERE exists_flag = ? "
+                "ORDER BY ts_written DESC",
+                (1 if exists else 0,),
+            )
+        for row in rows:
+            yield _row_to_existence(row)
+
+    # --- plan memory (P4) -------------------------------------------------
+
+    def put_plan_entry(
+        self,
+        *,
+        dispatch_index: int,
+        mode: str,
+        role: Optional[str],
+        scope: str,
+        success_criteria: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record one dispatch decision. Idempotent on dispatch_index."""
+        self._conn().execute(
+            """
+            INSERT OR REPLACE INTO plan_memory
+              (dispatch_index, mode, role, scope, success_criteria, reason, ts_written)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                dispatch_index,
+                mode,
+                role,
+                scope[:500],
+                success_criteria[:500],
+                (reason or "")[:500] or None,
+                int(time.time() * 1000),
+            ),
+        )
+        self._conn().commit()
+
+    def iter_plan_entries(self) -> List[PlanEntry]:
+        """All recorded plan entries, ordered by dispatch_index."""
+        rows = self._conn().execute(
+            "SELECT * FROM plan_memory ORDER BY dispatch_index ASC"
+        ).fetchall()
+        return [
+            PlanEntry(
+                dispatch_index=r["dispatch_index"],
+                mode=r["mode"],
+                role=r["role"],
+                scope=r["scope"],
+                success_criteria=r["success_criteria"],
+                reason=r["reason"],
+                ts_written=r["ts_written"],
+            )
+            for r in rows
+        ]
+
+    def count_plan_entries(self) -> int:
+        return self._conn().execute(
+            "SELECT COUNT(*) FROM plan_memory"
+        ).fetchone()[0]
+
     # --- inspection --------------------------------------------------------
 
     def stats(self) -> Dict[str, int]:
@@ -370,6 +575,11 @@ class FactStore:
             "facts": c.execute("SELECT COUNT(*) FROM facts").fetchone()[0],
             "negative_facts": c.execute("SELECT COUNT(*) FROM negative_facts").fetchone()[0],
             "skip_facts": c.execute("SELECT COUNT(*) FROM skip_facts").fetchone()[0],
+            "existence_facts": c.execute("SELECT COUNT(*) FROM existence_facts").fetchone()[0],
+            "missing_symbols": c.execute(
+                "SELECT COUNT(*) FROM existence_facts WHERE exists_flag = 0"
+            ).fetchone()[0],
+            "plan_entries": c.execute("SELECT COUNT(*) FROM plan_memory").fetchone()[0],
         }
 
     def facts_by_tool(self, tool: str) -> List[Fact]:
@@ -396,6 +606,25 @@ def _row_to_fact(row: sqlite3.Row) -> Fact:
         range_end=row["range_end"],
         content=content,
         agent=row["agent"],
+        ts_written=row["ts_written"],
+    )
+
+
+def _row_to_existence(row: sqlite3.Row) -> ExistenceFact:
+    raw_sig = row["signature_info"]
+    sig_info: Optional[Dict[str, Any]] = None
+    if raw_sig:
+        try:
+            sig_info = json.loads(raw_sig)
+        except (ValueError, json.JSONDecodeError):
+            sig_info = None
+    return ExistenceFact(
+        symbol_name=row["symbol_name"],
+        symbol_kind=row["symbol_kind"],
+        referenced_at=row["referenced_at"],
+        exists_flag=bool(row["exists_flag"]),
+        evidence=row["evidence"],
+        signature_info=sig_info,
         ts_written=row["ts_written"],
     )
 

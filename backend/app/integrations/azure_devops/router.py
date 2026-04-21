@@ -135,7 +135,11 @@ async def review_pull_request(
             # the scratchpad SQLite filename traceable back to this PR when
             # multiple reviews run concurrently.
             task_id = f"ado-{req.project}-pr-{req.pr_id}"
-            orchestrator = pr_brain_factory(worktree_path, diff_spec, task_id=task_id)
+            orchestrator = pr_brain_factory(
+                worktree_path, diff_spec, task_id=task_id,
+                pr_title=pr_data.get("title", "") or "",
+                pr_description=pr_data.get("description", "") or "",
+            )
 
             # Collect results from the streaming pipeline
             from app.code_review.models import (

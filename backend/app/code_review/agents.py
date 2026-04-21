@@ -35,6 +35,8 @@ from .shared import (
 )
 from .shared import (
     parse_findings as _parse_findings_shared,
+)
+from .shared import (
     parse_findings_with_status as _parse_findings_with_status_shared,
 )
 from .shared import (

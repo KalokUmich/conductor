@@ -164,6 +164,57 @@ integration-test: ensure-backend-deps
 	@echo "Running backend integration tests (requires API credentials)..."
 	cd backend && $(PYTHON) -m pytest tests/ -v -s -m integration
 
+## PR Brain regression harness — runs requests + greptile-sentry +
+## greptile-grafana + greptile-keycloak in parallel under the current
+## coordinator config, logs each suite's summary to
+## /tmp/brain-regression-<suite>-<tag>.log, and prints a consolidated
+## composite + Judge table on completion.
+##
+## Usage:
+##   make eval-brain-regression TAG=v2k
+##   make eval-brain-regression TAG=p3-p2 MODEL=eu.anthropic.claude-sonnet-4-6
+##   PARALLELISM=3 make eval-brain-regression TAG=fast   # override (risky on large Java repos)
+##
+## Default PARALLELISM is 2 — higher values can trigger OOM-kill on the
+## largest Java/Go repos (observed with 3 concurrent keycloak cases
+## hitting ~14 GB RSS per worker). Override only if your machine has
+## ≥32 GB RAM.
+##
+## Requires valid AWS_PROFILE / AWS_SESSION_TOKEN for Bedrock.
+eval-brain-regression: ensure-backend-deps
+	@if [ -z "$(TAG)" ]; then echo "TAG is required, e.g. make eval-brain-regression TAG=v2k"; exit 1; fi
+	@MODEL=$${MODEL:-eu.anthropic.claude-sonnet-4-6}; \
+	 EXPLORER=$${EXPLORER:-eu.anthropic.claude-haiku-4-5-20251001-v1:0}; \
+	 PARALLELISM=$${PARALLELISM:-2}; \
+	 TAG=$(TAG); \
+	 echo "=== PR Brain regression suite: TAG=$$TAG MODEL=$$MODEL PARALLELISM=$$PARALLELISM ==="; \
+	 PIDS=""; \
+	 for suite in requests greptile-sentry greptile-grafana greptile-keycloak; do \
+	   LOG=/tmp/brain-regression-$$suite-$$TAG.log; \
+	   echo "[$$(date +%H:%M:%S)] launching $$suite -> $$LOG"; \
+	   CONDUCTOR_PR_BRAIN_V2=1 $(PYTHON) eval/code_review/run.py --brain \
+	     --provider bedrock --model $$MODEL --explorer-model $$EXPLORER \
+	     --filter $$suite --parallelism $$PARALLELISM --verbose \
+	     > $$LOG 2>&1 & \
+	   PIDS="$$PIDS $$!"; \
+	 done; \
+	 FAIL=0; \
+	 for pid in $$PIDS; do \
+	   wait $$pid || FAIL=$$((FAIL + 1)); \
+	 done; \
+	 echo ""; \
+	 echo "=== Consolidated results (TAG=$$TAG) ==="; \
+	 for suite in requests greptile-sentry greptile-grafana greptile-keycloak; do \
+	   LOG=/tmp/brain-regression-$$suite-$$TAG.log; \
+	   echo "--- $$suite ---"; \
+	   tail -30 $$LOG | grep -E "^Aggregate|^Case|LLM Judge Verdicts|Catch rate" || true; \
+	   echo ""; \
+	 done; \
+	 if [ $$FAIL -gt 0 ]; then \
+	   echo "!! $$FAIL of 4 suites exited with non-zero status — check logs for truncated runs (OOM, bedrock throttle, etc.)"; \
+	   exit 1; \
+	 fi
+
 ## Validate Python↔TS tool parity (shared contract + cross-language tests)
 test-parity: ensure-backend-deps ensure-extension-deps
 	@echo "Step 1: Check contract matches Python schemas..."

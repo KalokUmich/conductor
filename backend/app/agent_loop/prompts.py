@@ -1264,6 +1264,56 @@ RULES:
 }
 
 
+# ---------------------------------------------------------------------------
+# PR Brain v2 skills — loaded from config/prompts/*.md at module import so
+# the Markdown file is the single source of truth (edits don't need a
+# Python change). Stays consistent with the v1 skills above which are inline
+# Python strings.
+# ---------------------------------------------------------------------------
+
+
+def _load_v2_skill(name: str) -> str:
+    """Read a skill's Markdown from ``config/prompts/{name}.md``.
+
+    Strips YAML frontmatter (``---\\n...\\n---``) if present. Returns an
+    empty string on I/O error so a missing file is fail-soft — the
+    downstream prompt just won't include the skill text.
+    """
+    from pathlib import Path
+
+    # Walk up from this file until we hit a directory containing ``config/``.
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / "config" / "prompts" / f"{name}.md"
+        if candidate.is_file():
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError:
+                return ""
+            # Strip YAML frontmatter if present.
+            if text.startswith("---"):
+                parts = text.split("---", 2)
+                if len(parts) >= 3:
+                    text = parts[2].lstrip("\n")
+            return text
+    return ""
+
+
+_PR_BRAIN_COORDINATOR_SKILL = _load_v2_skill("pr_brain_coordinator")
+_PR_SUBAGENT_CHECKS_SKILL = _load_v2_skill("pr_subagent_checks")
+_PR_EXISTENCE_CHECK_SKILL = _load_v2_skill("pr_existence_check")
+_PR_VERIFICATION_CHECK_SKILL = _load_v2_skill("pr_verification_check")
+
+if _PR_BRAIN_COORDINATOR_SKILL:
+    INVESTIGATION_SKILLS["pr_brain_coordinator"] = _PR_BRAIN_COORDINATOR_SKILL
+if _PR_SUBAGENT_CHECKS_SKILL:
+    INVESTIGATION_SKILLS["pr_subagent_checks"] = _PR_SUBAGENT_CHECKS_SKILL
+if _PR_EXISTENCE_CHECK_SKILL:
+    INVESTIGATION_SKILLS["pr_existence_check"] = _PR_EXISTENCE_CHECK_SKILL
+if _PR_VERIFICATION_CHECK_SKILL:
+    INVESTIGATION_SKILLS["pr_verification_check"] = _PR_VERIFICATION_CHECK_SKILL
+
+
 def build_sub_agent_system_prompt(
     agent_name: str,
     agent_description: str,

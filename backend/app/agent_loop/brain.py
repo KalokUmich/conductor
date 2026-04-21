@@ -41,6 +41,188 @@ _MIN_AGENT_BUDGET = 50_000  # floor budget allocated to any sub-agent
 _MAX_AGENT_BUDGET = 800_000  # ceiling budget allocated to any sub-agent
 _DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is generous
 
+# ---------------------------------------------------------------------------
+# Role-factory template loader (P12 — role-based dispatch)
+# ---------------------------------------------------------------------------
+
+_VALID_FACTORY_ROLES = frozenset({
+    "security",
+    "correctness",
+    "concurrency",
+    "reliability",
+    "performance",
+    "test_coverage",
+})
+
+
+def _load_role_template(role: str) -> Optional[Dict[str, Any]]:
+    """Load a role template from config/agent_factory/{role}.md.
+
+    Returns ``{"frontmatter": {...}, "body": "..."}`` on success, ``None``
+    when the template is missing or malformed. Deliberately tolerant —
+    a missing factory file should not break the Brain; we fall back to
+    a minimal generic prompt.
+    """
+    if role not in _VALID_FACTORY_ROLES:
+        return None
+
+    import yaml
+
+    try:
+        from app.workflow.loader import _find_config_dir
+    except Exception:
+        return None
+
+    try:
+        config_dir = _find_config_dir()
+        template_path = config_dir / "agent_factory" / f"{role}.md"
+        if not template_path.exists():
+            return None
+        content = template_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to read role template %s: %s", role, exc)
+        return None
+
+    import re as _re
+    match = _re.match(r"\A---\s*\n(.*?)\n---\s*\n(.*)", content, _re.DOTALL)
+    if not match:
+        logger.warning("Role template %s missing YAML frontmatter", role)
+        return None
+
+    try:
+        frontmatter = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError as exc:
+        logger.warning("Role template %s has invalid YAML: %s", role, exc)
+        return None
+
+    return {
+        "frontmatter": frontmatter,
+        "body": match.group(2).strip(),
+    }
+
+
+def _compose_role_system_prompt(
+    role: str,
+    role_template: Dict[str, Any],
+    scope_block: str,
+    direction_hint: Optional[str],
+    checks: Optional[List[str]],
+    brain_context: Optional[str],
+    may_subdispatch: bool,
+) -> str:
+    """Compose a role-specialist system prompt.
+
+    **Reference, not copy**: the factory template (Lens / Concerns /
+    Approach / Examples) teaches the mindset; this function fuses that
+    with the PR-specific context Brain has already gathered. The
+    resulting prompt is unique to this dispatch, not a paste of the
+    factory file.
+    """
+    frontmatter = role_template.get("frontmatter", {})
+    role_body = role_template.get("body", "").strip()
+    description = frontmatter.get("description", f"{role} reviewer")
+
+    parts: List[str] = []
+    parts.append(f"# You are a {role} reviewer for this PR")
+    parts.append("")
+    parts.append(f"**Role identity**: {description}")
+    parts.append("")
+    parts.append(
+        "Your lens, typical concerns, investigation approach, and "
+        "finding-shape examples are below. Treat these as how you "
+        "*think*; do not copy their specific examples into your output."
+    )
+    parts.append("")
+    parts.append(role_body)
+    parts.append("")
+    parts.append("---")
+    parts.append("")
+    parts.append("# Your task in THIS PR (composed by the PR Brain)")
+    parts.append("")
+    parts.append("## Scope — stay inside these files")
+    parts.append("")
+    parts.append(scope_block)
+    parts.append("")
+    if direction_hint:
+        parts.append("## Brain's direction hint")
+        parts.append("")
+        parts.append(direction_hint)
+        parts.append("")
+    if brain_context:
+        parts.append("## Context from Brain's Survey")
+        parts.append("")
+        parts.append(brain_context)
+        parts.append("")
+    if checks:
+        parts.append("## Specific checks Brain wants answered")
+        parts.append("")
+        parts.append("\n".join(f"{i+1}. {c}" for i, c in enumerate(checks)))
+        parts.append("")
+        parts.append(
+            "For each check, emit `{id, question, verdict, evidence}`."
+        )
+        parts.append("")
+
+    parts.append("## Output contract — MUST follow")
+    parts.append("")
+    parts.append(
+        "Emit a JSON block at end of turn with this shape:"
+    )
+    parts.append("")
+    parts.append("```json")
+    parts.append("{")
+    parts.append(
+        '  "summary": "≤3 sentences. Overall verdict from your lens.",'
+    )
+    if checks:
+        parts.append('  "checks": [/* verdict per check, in order */],')
+    parts.append(
+        '  "findings": ['
+    )
+    parts.append(
+        '    {"title": "...", "file": "...", "line": N, '
+        '"description": "...", "severity": null, '
+        '"severity_hint": "critical|high|medium|low|nit", '
+        '"confidence": 0.0-1.0}'
+    )
+    parts.append("  ]")
+    parts.append("}")
+    parts.append("```")
+    parts.append("")
+    parts.append(
+        "**Severity rules**: `severity` MUST be `null` — Brain classifies "
+        "severity, not you. `severity_hint` is a HINT Brain may override. "
+        "At most 5 findings; quality > quantity. Every finding MUST have "
+        "file:line evidence quoted from code."
+    )
+    parts.append("")
+    parts.append("## Hard boundaries")
+    parts.append("")
+    parts.append(
+        "- Stay within the scope files above. Cross-file grep only if "
+        "verifying existence of a symbol referenced by your finding."
+    )
+    parts.append(
+        "- No style / naming nits. No pre-existing issues. No speculative "
+        '"potential concern" without a concrete trigger path in THIS diff.'
+    )
+    parts.append(
+        "- If nothing in your lens fires, emit an empty findings array + "
+        "a summary explaining what you verified and why nothing rose."
+    )
+
+    if may_subdispatch:
+        parts.append("")
+        parts.append("## Sub-dispatch permitted (depth 2 hard wall)")
+        parts.append("")
+        parts.append(
+            "Brain set may_subdispatch=true. You may call "
+            "`dispatch_subagent` ONCE to delegate a narrower investigation. "
+            "Sub-sub-agents cannot dispatch further."
+        )
+
+    return "\n".join(parts)
+
 
 # ---------------------------------------------------------------------------
 # Condensed findings returned by sub-agents
@@ -65,6 +247,59 @@ class AgentFindings:
     tool_calls_made: int = 0
     duration_ms: float = 0.0
     error: Optional[str] = None
+
+
+def _parse_subagent_json(raw: str) -> Optional[Dict[str, Any]]:
+    """Best-effort parse of a PR Brain v2 sub-agent's final answer.
+
+    Accepts:
+      * A plain JSON object with {checks, findings, unexpected_observations}.
+      * JSON wrapped in a ```json ... ``` fenced block (one or more blocks —
+        the last fenced block is preferred since models often restate their
+        answer near the end).
+      * JSON embedded in prose — falls back to finding the last balanced
+        ``{...}`` that contains the "checks" key.
+
+    Returns the dict on success, ``None`` if no usable JSON was found.
+    """
+    import json as _json
+    import re as _re
+
+    if not raw:
+        return None
+
+    # Prefer the LAST ```json fenced block — models tend to restate at end.
+    fenced = _re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw)
+    candidates: list = list(reversed(fenced))
+
+    # Fallback: any top-level {...} that contains "checks".
+    if not candidates:
+        # Greedy match from last `{` backwards to first `}` containing "checks"
+        for start in range(len(raw) - 1, -1, -1):
+            if raw[start] != "{":
+                continue
+            depth = 0
+            for end in range(start, len(raw)):
+                if raw[end] == "{":
+                    depth += 1
+                elif raw[end] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        snippet = raw[start : end + 1]
+                        if '"checks"' in snippet:
+                            candidates.append(snippet)
+                        break
+            if candidates:
+                break
+
+    for candidate in candidates:
+        try:
+            parsed = _json.loads(candidate)
+            if isinstance(parsed, dict) and "checks" in parsed:
+                return parsed
+        except (ValueError, _json.JSONDecodeError):
+            continue
+    return None
 
 
 def condense_result(result) -> Dict[str, Any]:
@@ -314,7 +549,7 @@ class AgentToolExecutor(ToolExecutor):
         self._plan: Optional[Dict[str, Any]] = None
 
     async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
-        """Execute a tool. Intercepts create_plan, dispatch_agent, dispatch_swarm, and transfer_to_brain."""
+        """Execute a tool. Intercepts create_plan, dispatch_agent, dispatch_swarm, transfer_to_brain, and dispatch_subagent."""
         if tool_name == "create_plan":
             return await self._create_plan(params)
         elif tool_name == "dispatch_agent":
@@ -323,6 +558,8 @@ class AgentToolExecutor(ToolExecutor):
             return await self._dispatch_swarm(params)
         elif tool_name == "transfer_to_brain":
             return await self._transfer_to_brain(params)
+        elif tool_name == "dispatch_subagent":
+            return await self._dispatch_subagent(params)
         # All other tools (grep, read_file, ask_user, etc.) pass through
         return await self._inner.execute(tool_name, params)
 
@@ -420,6 +657,353 @@ class AgentToolExecutor(ToolExecutor):
                 budget_tokens=params.get("budget_tokens", 300_000),
                 evidence_retries=1,
             ),
+        )
+
+    # -----------------------------------------------------------------
+    # dispatch_subagent — PR Brain v2's coordinator primitive
+    # -----------------------------------------------------------------
+
+    async def _dispatch_subagent(self, params: Dict[str, Any]) -> ToolResult:
+        """Dispatch a scope-bounded sub-agent with exactly 3 falsifiable checks.
+
+        The sub-agent uses the ``pr_subagent_checks`` template (see
+        ``config/agents/pr_subagent_checks.md``) and returns a structured
+        JSON response: per-check verdicts + findings with ``severity: null``
+        + optional unexpected_observations.
+
+        Depth tracking: a ContextVar tracks how deep we are in the dispatch
+        tree. Brain = depth 0, sub-agent = depth 1, sub-sub-agent = depth 2
+        (only allowed if parent set ``may_subdispatch=true``). Depth-2
+        agents cannot sub-dispatch further — hard wall returned as an error
+        the Brain can see.
+        """
+
+        # Depth wall — hard. Brain is depth 0; sub-agent at depth 1 may
+        # subdispatch only if its parent set may_subdispatch=true; a sub-
+        # sub-agent at depth 2 is never allowed to subdispatch.
+        if self._current_depth >= 2:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=(
+                    "dispatch_subagent rejected: you are at recursion depth "
+                    f"{self._current_depth} (≥2 is the hard wall). Answer "
+                    "the checks directly without further sub-dispatch."
+                ),
+            )
+
+        scope = params.get("scope", [])
+        checks = params.get("checks") or []
+        role = (params.get("role") or "").strip().lower() or None
+        direction_hint = params.get("direction_hint") or ""
+        success_criteria = params.get("success_criteria", "")
+        context = params.get("context", "")
+        may_subdispatch = params.get("may_subdispatch", False)
+        model_tier = params.get("model_tier", "explorer")
+
+        # Validate the two dispatch modes: at least one of {checks, role}.
+        if not checks and not role:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=(
+                    "dispatch_subagent requires either 'checks' (3 specific "
+                    "questions) OR 'role' (factory reviewer e.g. 'security'). "
+                    "Got neither."
+                ),
+            )
+        if checks and len(checks) != 3:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=f"dispatch_subagent requires exactly 3 checks when 'checks' is set (got {len(checks)}).",
+            )
+        if role and role not in _VALID_FACTORY_ROLES:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=(
+                    f"Unknown role '{role}'. Available roles in "
+                    f"config/agent_factory/: "
+                    f"{sorted(_VALID_FACTORY_ROLES)}"
+                ),
+            )
+        if not 1 <= len(scope) <= 5:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=f"dispatch_subagent scope must have 1-5 files (got {len(scope)}).",
+            )
+
+        # Build scope block (shared by both modes).
+        scope_lines = []
+        for s in scope:
+            if isinstance(s, dict):
+                f = s.get("file", "")
+                start = s.get("start")
+                end = s.get("end")
+                if start and end:
+                    scope_lines.append(f"- {f}:{start}-{end}")
+                else:
+                    scope_lines.append(f"- {f}")
+            else:
+                scope_lines.append(f"- {s}")
+        scope_block = "\n".join(scope_lines)
+
+        mode_label = (
+            "combined" if (role and checks) else ("role" if role else "checks")
+        )
+        logger.info(
+            "[dispatch_subagent] mode=%s role=%s checks=%d scope_files=%d "
+            "direction_hint=%r depth=%d",
+            mode_label,
+            role or "-",
+            len(checks) if checks else 0,
+            len(scope),
+            (direction_hint[:60] + "...") if direction_hint and len(direction_hint) > 60 else direction_hint,
+            self._current_depth,
+        )
+
+        # P4 — Persist this dispatch decision into the scratchpad's plan
+        # memory. The coordinator's in-context plan tends to drift across
+        # replan rounds as the conversation grows; the plan recap we weave
+        # into later tool-result returns (see below) restores it from an
+        # authoritative source. Depth-0 dispatches only — sub-agent-level
+        # dispatches (depth 1) would pollute the coordinator's recap.
+        plan_dispatch_index: Optional[int] = None
+        if self._current_depth == 0:
+            try:
+                from app.scratchpad import current_factstore
+
+                _store = current_factstore()
+                if _store is not None:
+                    plan_dispatch_index = _store.count_plan_entries() + 1
+                    _store.put_plan_entry(
+                        dispatch_index=plan_dispatch_index,
+                        mode=mode_label,
+                        role=role,
+                        scope=scope_block.replace("\n", " | ")[:500],
+                        success_criteria=success_criteria,
+                        reason=(direction_hint or context or None),
+                    )
+            except Exception as exc:
+                logger.debug("[P4] plan_memory put failed (non-fatal): %s", exc)
+                plan_dispatch_index = None
+
+        if role:
+            # Role mode: compose bespoke system prompt from factory +
+            # PR-specific context, dispatch via dynamic-compose
+            # _dispatch_agent (not template mode).
+            role_template = _load_role_template(role)
+            if role_template is None:
+                return ToolResult(
+                    tool_name="dispatch_subagent",
+                    success=False,
+                    error=(
+                        f"Role '{role}' template not found at "
+                        f"config/agent_factory/{role}.md or failed to "
+                        f"parse. Falling back to checks mode is the "
+                        f"coordinator's responsibility."
+                    ),
+                )
+
+            composed_perspective = _compose_role_system_prompt(
+                role=role,
+                role_template=role_template,
+                scope_block=scope_block,
+                direction_hint=direction_hint or None,
+                checks=checks or None,
+                brain_context=context or None,
+                may_subdispatch=(may_subdispatch and self._current_depth == 0),
+            )
+
+            # Derive tools — use role's tools_hint if provided, else a safe
+            # read-only default.
+            tools_hint = (
+                role_template["frontmatter"].get("tools_hint")
+                or role_template["frontmatter"].get("tools")
+                or [
+                    "grep", "read_file", "find_symbol", "find_references",
+                    "git_diff", "git_show", "file_outline",
+                ]
+            )
+            # P10 — Coordinator's explicit `model_tier="strong"` overrides
+            # the role template's default (most roles default to explorer
+            # to keep cost low). Otherwise, honour the role's model_hint.
+            if model_tier == "strong":
+                model_hint = "strong"
+            else:
+                model_hint = role_template["frontmatter"].get(
+                    "model_hint", model_tier
+                )
+
+            # Dispatch in dynamic mode. The role lens lives in the
+            # perspective; we pass a terse task query since the
+            # perspective already frames the task.
+            task_query = (
+                f"Review the code in your scope through your {role} lens. "
+                f"{success_criteria}"
+            )
+            delegated_params = {
+                "perspective": composed_perspective,
+                "tools": tools_hint,
+                "model": model_hint,
+                "query": task_query,
+                "budget_tokens": params.get("budget_tokens", 120_000),
+                "budget_weight": 1.0,
+                "_subagent_kind": f"pr_role_{role}",
+            }
+            result = await self._dispatch_agent(delegated_params)
+        else:
+            # Checks mode (original v2 behaviour): generic pr_subagent_checks.
+            template = self._agent_registry.get("pr_subagent_checks")
+            if template is None:
+                return ToolResult(
+                    tool_name="dispatch_subagent",
+                    success=False,
+                    error=(
+                        "Agent template 'pr_subagent_checks' missing from "
+                        "registry. Ensure config/agents/pr_subagent_checks.md "
+                        "exists and load_agent_registry() picked it up."
+                    ),
+                )
+
+            check_lines = "\n".join(f"{i+1}. {c}" for i, c in enumerate(checks))
+            sub_query_parts = [
+                "## Investigation scope",
+                "",
+                scope_block,
+                "",
+                "## The 3 checks (answer all, in order)",
+                "",
+                check_lines,
+                "",
+                "## Success criteria",
+                "",
+                success_criteria,
+            ]
+            if context:
+                sub_query_parts.extend(["", "## Context from the Brain", "", context])
+
+            sub_query_parts.extend([
+                "",
+                "## Your output",
+                "",
+                "Emit the JSON schema from your system prompt as your final "
+                "message (wrapped in a ```json block or as the turn body). "
+                "`severity` MUST be null in every finding — the Brain classifies "
+                "severity, not you.",
+            ])
+
+            if may_subdispatch and self._current_depth == 0:
+                sub_query_parts.extend([
+                    "",
+                    "## Sub-dispatch permitted (depth 2 hard wall)",
+                    "",
+                    "The Brain set `may_subdispatch=true`. If a check truly "
+                    "requires subdivision, you may call `dispatch_subagent` ONCE "
+                    "to delegate a narrower investigation. Its result must fold "
+                    "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
+                ])
+
+            sub_query = "\n".join(sub_query_parts)
+
+            delegated_params = {
+                "template": "pr_subagent_checks",
+                "query": sub_query,
+                "model": model_tier,
+                "budget_tokens": params.get("budget_tokens", 150_000),
+                "budget_weight": 1.0,
+            }
+            result = await self._dispatch_agent(delegated_params)
+
+        if not result.success:
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=False,
+                error=f"sub-agent dispatch failed: {result.error}",
+            )
+
+        # Parse the sub-agent's final answer as JSON. Tolerant to ```json fences.
+        condensed = result.data or {}
+        raw_answer = condensed.get("answer") or condensed.get("final_answer") or ""
+        parsed = _parse_subagent_json(raw_answer)
+
+        # Shape guard — if the sub-agent didn't produce the expected shape,
+        # return the raw answer with a warning so the Brain can still act.
+        if parsed is None:
+            logger.warning(
+                "dispatch_subagent: worker did not emit parseable JSON. "
+                "Returning raw answer (%d chars).",
+                len(raw_answer),
+            )
+            return ToolResult(
+                tool_name="dispatch_subagent",
+                success=True,
+                data={
+                    "checks": [],
+                    "findings": [],
+                    "unexpected_observations": [],
+                    "raw_answer": raw_answer[:4000],
+                    "shape_warning": (
+                        "Sub-agent did not return structured JSON — raw answer "
+                        "included for Brain inspection."
+                    ),
+                    "iterations": condensed.get("iterations", 0),
+                    "total_input_tokens": condensed.get("total_input_tokens", 0),
+                    "total_output_tokens": condensed.get("total_output_tokens", 0),
+                },
+            )
+
+        # Enforce severity=null on findings (contract).
+        for f in parsed.get("findings", []) or []:
+            if isinstance(f, dict):
+                f["severity"] = None
+                # Tag role-mode findings for downstream dedup/synthesis.
+                # Allows coordinator + synthesis to group by role lens,
+                # track which specialist surfaced which finding, and
+                # attribute severity_hint to the right source.
+                if role:
+                    f.setdefault("_dispatched_by", f"role={role}")
+
+        parsed.setdefault("checks", [])
+        parsed.setdefault("findings", [])
+        parsed.setdefault("unexpected_observations", [])
+        parsed["iterations"] = condensed.get("iterations", 0)
+        parsed["total_input_tokens"] = condensed.get("total_input_tokens", 0)
+        parsed["total_output_tokens"] = condensed.get("total_output_tokens", 0)
+        parsed["files_accessed"] = condensed.get("files_accessed", [])
+
+        # P4 — From dispatch #3 onward, surface a compact plan recap in the
+        # tool result. Coordinator's in-context memory of "what I already
+        # dispatched and why" degrades as the loop grows; recap pins it.
+        if plan_dispatch_index is not None and plan_dispatch_index >= 3:
+            try:
+                from app.scratchpad import current_factstore
+
+                _store = current_factstore()
+                if _store is not None:
+                    entries = _store.iter_plan_entries()
+                    recap_lines: List[str] = [
+                        f"Plan recap — {len(entries)} dispatches so far:",
+                    ]
+                    for e in entries:
+                        role_label = f" role={e.role}" if e.role else ""
+                        reason_snippet = (
+                            f" — {e.reason[:80]}" if e.reason else ""
+                        )
+                        recap_lines.append(
+                            f"  #{e.dispatch_index} [{e.mode}{role_label}] "
+                            f"{e.scope[:120]}{reason_snippet}"
+                        )
+                    parsed["_plan_recap"] = "\n".join(recap_lines)
+            except Exception as exc:
+                logger.debug("[P4] plan recap failed (non-fatal): %s", exc)
+
+        return ToolResult(
+            tool_name="dispatch_subagent",
+            success=True,
+            data=parsed,
         )
 
     async def _dispatch_agent(self, params: Dict[str, Any]) -> ToolResult:

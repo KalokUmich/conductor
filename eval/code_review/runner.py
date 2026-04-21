@@ -286,6 +286,8 @@ async def run_case_brain(
             agent_registry=agent_registry,
             tool_executor=tool_executor,
             task_id=f"eval-{case.id}",
+            pr_title=case.title or "",
+            pr_description=case.description or "",
         )
 
         # Collect events from the pipeline
