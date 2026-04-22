@@ -60,6 +60,353 @@ _PHASE2_TIMEOUT_SECONDS = 120
 
 
 # ---------------------------------------------------------------------------
+# Mandatory-dispatch path detector
+# ---------------------------------------------------------------------------
+# Pattern: coordinator prompt already has "Hard floors" language telling it
+# to dispatch `security` on auth/crypto paths and `reliability` on DB
+# migrations, but LLM honour-rate is sub-100% — especially on small PRs
+# where the coordinator judges that a survey-only pass is enough. That's
+# how PR #14227 (1339-line change touching
+# .../common/v3/security/ + .../service/v3/V3CmsAuthService.java) shipped
+# a plaintext-password cmp bug: coordinator saw the files, decided no
+# dispatch was needed, and the hard floor got silently ignored.
+#
+# This detector runs in Phase 1 (deterministic, pre-coordinator) against
+# the diff's file paths. When matched, the coordinator's task text gets a
+# "## MANDATORY investigations" section listing the required roles with
+# evidence of the trigger. The section uses strong enforcement language
+# ("non-skippable", "first dispatches must satisfy this list") and the
+# coordinator's non-honour becomes visible in logs + trace.
+#
+# NOT the same as the coordinator prompt's "Hard floors" text — that was
+# advisory; this is path-anchored, evidence-attached, and always appears
+# in the user message (not the system prompt), so it's fresher context.
+
+_MANDATORY_DISPATCH_RULES: List[tuple] = [
+    # (role, reason, regex matched against diff file paths).
+    # Pattern matches any PATH SEGMENT containing the keyword — covers
+    # both path segments (``.../security/...``) and camelCase filenames
+    # (``V3CmsAuthService.java`` contains "Auth"). Case-insensitive.
+    # False-positive risk ("authors/" matches "auth") is acceptable:
+    # a mis-dispatched security role costs ~$0.30 and always improves
+    # review depth — strictly better than silently skipping on a real
+    # auth path (which cost us the PR #14227 plaintext-password miss).
+    (
+        "security",
+        "auth / crypto / session / token / password path touched — "
+        "plaintext comparisons, timing attacks, missing gate coverage, "
+        "and secret leakage are the common failure modes here",
+        re.compile(
+            r"(?:^|/)[a-zA-Z0-9_]*"
+            r"(?:auth|security|oauth|jwt|session|crypto|token|"
+            r"password|credential|secret|signin|signup|login|logout|"
+            r"permission|acl|rbac)"
+            r"[a-zA-Z0-9_]*"
+            r"(?:/|$|\.)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "reliability",
+        "DB migration / schema change detected — NOT NULL without default, "
+        "exclusive locks on large tables, and irreversible migrations ship "
+        "outages and data loss; dedicated dispatch required",
+        re.compile(
+            r"(?:^|/)(?:migrations?|changelog|flyway|liquibase)(?:/|$)"
+            r"|V\d+__[A-Za-z0-9_]+\.sql$",
+            re.IGNORECASE,
+        ),
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 — diff content scanner
+# ---------------------------------------------------------------------------
+# Path-based rules miss any PR whose filename doesn't advertise the
+# concern. Real example: PR #14234's IP whitelist endpoint lived under
+# ``loan/service/SandBoxServiceImpl.java`` — functionally security-
+# relevant (allowlist, production env-gate, Redis trust boundary) but
+# path-pattern-invisible. Tier 2 scans the diff's ``+`` lines for
+# security / reliability **primitives** — the APIs, annotations,
+# imports, and concept words that are load-bearing regardless of
+# where the file lives.
+#
+# Each pattern produces one finding: {role, reason, file, line,
+# matched_snippet}. These merge into Tier 1's path-based findings by
+# role; a single role gets ONE entry with matching_paths aggregated.
+
+# File extension → language tag used to pick which pattern set to run.
+# Missing extension (e.g. Makefile, .yml) → only generic patterns.
+_EXT_TO_LANG: Dict[str, str] = {
+    ".java": "java",
+    ".kt": "kotlin",      # kotlin reuses Java Spring Security
+    ".py": "python",
+    ".go": "go",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+}
+
+
+def _compile_content_patterns(raw: List[tuple], *, case_insensitive: bool = False) -> List[tuple]:
+    """Pre-compile the (regex, reason) pairs for one language."""
+    flags = re.MULTILINE
+    if case_insensitive:
+        flags |= re.IGNORECASE
+    return [(re.compile(p, flags), r) for p, r in raw]
+
+
+# Java + Kotlin (Spring Security ecosystem): annotations, security
+# classes, and crypto / JWT library usage.
+_SECURITY_PATTERNS_JAVA: List[tuple] = _compile_content_patterns([
+    (r"@(?:PreAuthorize|Secured|RolesAllowed|WithMockUser|EnableWebSecurity|PermitAll|DenyAll|PostAuthorize|PreFilter|PostFilter)\b",
+     "Spring Security annotation (access control)"),
+    (r"\bnew\s+(?:BCrypt|Argon2|Pbkdf2|SCrypt)PasswordEncoder\s*\(",
+     "Password encoder constructor (hashing policy)"),
+    (r"\b(?:HttpSecurity|SecurityFilterChain|AuthenticationManager|AuthenticationProvider|UserDetailsService|PasswordEncoder|JwtDecoder|JwtAuthenticationConverter|OAuth2AuthenticationToken|JwtEncoder)\b",
+     "Spring Security configuration / token primitive"),
+    (r"\bMessageDigest\.isEqual\s*\(", "Constant-time byte comparison"),
+    (r"\bSecureRandom\s*\(", "Cryptographic RNG construction"),
+    (r"\bJwts\.(?:builder|parser|parserBuilder|SIG)\b",
+     "JJWT library call (token sign/verify)"),
+    (r'"grant_type"\s*[:,]|"access_token"\s*[:,]|"refresh_token"\s*[:,]',
+     "OAuth2 grant / token field string"),
+    (r"\bCipher\.getInstance\s*\(", "Cipher construction (crypto primitive)"),
+    (r"\b(?:KeyPairGenerator|KeyFactory|KeyGenerator)\.getInstance\s*\(",
+     "Crypto key material setup"),
+])
+
+# Python: decorators + security library imports + password / crypto funcs.
+_SECURITY_PATTERNS_PYTHON: List[tuple] = _compile_content_patterns([
+    (r"^\s*@(?:login_required|permission_required|csrf_exempt|staff_member_required|user_passes_test|api_key_required|token_required)\b",
+     "Auth / CSRF decorator"),
+    (r"^\s*(?:from|import)\s+(?:bcrypt|cryptography|jose|jwt|passlib|authlib|django_otp|oauthlib|pyotp|argon2)\b",
+     "Security library import"),
+    (r"\b(?:check_password|make_password|compare_digest|pbkdf2_hmac|constant_time_compare)\s*\(",
+     "Password / constant-time function call"),
+    (r"\bbcrypt\.(?:hashpw|checkpw|gensalt)\s*\(", "bcrypt call"),
+    (r"\bhmac\.(?:compare_digest|new)\s*\(", "HMAC operation"),
+    (r"\bjwt\.(?:encode|decode|get_unverified_claims)\s*\(", "JWT encode/decode"),
+    (r"\b(?:AES|RSA|Fernet|Ed25519|X25519)\.", "Cryptographic primitive class"),
+])
+
+# Go: security-critical std + popular libraries.
+_SECURITY_PATTERNS_GO: List[tuple] = _compile_content_patterns([
+    (r'"(?:crypto/subtle|crypto/rand|crypto/hmac|crypto/rsa|crypto/ecdsa|crypto/tls|crypto/x509)"',
+     "Crypto stdlib import"),
+    (r'"(?:golang\.org/x/crypto/bcrypt|golang\.org/x/crypto/argon2|golang\.org/x/crypto/scrypt)"',
+     "Password hashing library import"),
+    (r'"(?:github\.com/golang-jwt/jwt|github\.com/dgrijalva/jwt-go|github\.com/lestrrat-go/jwx)',
+     "JWT library import"),
+    (r"\bsubtle\.ConstantTimeCompare\s*\(", "Constant-time comparison"),
+    (r"\bbcrypt\.(?:CompareHashAndPassword|GenerateFromPassword)\s*\(",
+     "bcrypt operation"),
+    (r"\bjwt\.(?:Parse|ParseWithClaims|Sign|New|NewWithClaims)\b", "JWT operation"),
+    (r"\bmiddleware\.(?:BasicAuth|JWTAuth|RequireAuth)\b", "Auth middleware"),
+])
+
+# TypeScript / JavaScript (shared): Node + React + browser auth patterns.
+_SECURITY_PATTERNS_TSJS: List[tuple] = _compile_content_patterns([
+    # Imports / requires from auth/security packages
+    (r"(?:from\s+|require\s*\(\s*)['\"](?:jsonwebtoken|bcrypt(?:js)?|passport(?:-[\w-]+)?|express-session|next-auth|@auth0/[\w-]+|@okta/[\w-]+|firebase/auth|@clerk/[\w-]+|iron-session|cookie-session|csurf|helmet|express-rate-limit|argon2|scrypt-kdf)['\"]",
+     "Auth/security npm package import"),
+    # JWT / bcrypt function calls
+    (r"\b(?:jwt\.(?:sign|verify|decode)|bcrypt\.(?:compare|hash|genSalt))\s*\(",
+     "JWT / bcrypt call"),
+    # Browser credential storage — strong signal for XSS/exfil risk
+    (r"(?:localStorage|sessionStorage)\.(?:setItem|getItem)\s*\(\s*['\"](?:token|auth|session|jwt|accessToken|refreshToken|apiKey)",
+     "Browser-storage credential (XSS exfil surface)"),
+    (r"document\.cookie\s*[=+]", "Direct cookie write"),
+    # React auth components / hooks
+    (r"<(?:AuthGuard|ProtectedRoute|RequireAuth|RoleGuard|PrivateRoute|AuthProvider)\b",
+     "React auth wrapper component"),
+    (r"\b(?:useAuth|useSession|useUser|useClerk|useAuth0)\s*\(", "Auth React hook"),
+    # Passport / middleware
+    (r"\bpassport\.authenticate\s*\(", "Passport strategy invocation"),
+    # CSRF / CORS middleware
+    (r"\b(?:csrf|csurf|helmet|cors)\s*\(\s*\{?", "Security middleware invocation"),
+])
+
+# Map language tag → pattern list so extension lookup stays O(1).
+_SECURITY_PATTERNS_BY_LANG: Dict[str, List[tuple]] = {
+    "java": _SECURITY_PATTERNS_JAVA,
+    "kotlin": _SECURITY_PATTERNS_JAVA,
+    "python": _SECURITY_PATTERNS_PYTHON,
+    "go": _SECURITY_PATTERNS_GO,
+    "typescript": _SECURITY_PATTERNS_TSJS,
+    "javascript": _SECURITY_PATTERNS_TSJS,
+}
+
+# Cross-language: concept words that signal security relevance regardless
+# of filename / language. Case-insensitive so camelCase (`addCountIpWhitelist`),
+# SNAKE_CASE (`COUNT_IP_WHITELIST_KEY`), and plain (`whitelist`) all match
+# the same token. Word-boundary dropped on the list-concept patterns
+# because tokens commonly appear embedded in identifiers
+# (`addCountIpWhitelist` → contains `Whitelist`).
+_GENERIC_SECURITY_PATTERNS: List[tuple] = _compile_content_patterns(
+    [
+        (r"(?:whitelist|allowlist|blocklist|denylist|blacklist)",
+         "Allow/deny list concept"),
+        (r"(?:firewall|ratelimit|rate_limit|throttl\w*)",
+         "Firewall / rate limit concept"),
+        (r"\b(?:allowed_ips?|denied_ips?|trusted_ips?|blocked_ips?)\b",
+         "IP allow/deny list"),
+        (r"\bcsrf[-_]?token\b|\bcsrf_exempt\b|\bSameSite\b|\bHttpOnly\b|\bSecure\s*[;=]",
+         "Cookie / CSRF security attribute"),
+        (r"\b(?:Bearer |Basic )\s+?\{?[A-Za-z0-9._-]+\}?",
+         "HTTP Authorization scheme literal"),
+    ],
+    case_insensitive=True,
+)
+
+# Reliability content patterns — DDL / migration SQL that may ship
+# outages regardless of whether the file sits in a /migrations/ dir.
+_RELIABILITY_CONTENT_PATTERNS: List[tuple] = _compile_content_patterns([
+    (r"\bALTER\s+TABLE\b.*?\b(?:ADD|DROP|ALTER|RENAME)\s+COLUMN\b",
+     "DDL column change (lock / rewrite risk)"),
+    (r"\bDROP\s+(?:TABLE|INDEX|CONSTRAINT|VIEW)\b",
+     "Destructive DDL"),
+    (r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\b",
+     "Index creation (potentially long lock)"),
+])
+
+
+def _detect_required_dispatches_from_diff_content(
+    file_diffs: Dict[str, str],
+    *,
+    max_matches_per_role: int = 10,
+) -> List[Dict[str, Any]]:
+    """Tier 2 detector — scan every `+` line across the diff for
+    security / reliability primitives, regardless of path.
+
+    Returns ``[{role, reason, matching_evidence: [{file, line, snippet}]}, ...]``
+    where ``matching_evidence`` is capped at ``max_matches_per_role`` so
+    a huge diff doesn't produce an unreadable block.
+
+    Scan strategy:
+    - Per file, pick the language-specific pattern list by extension.
+    - Also run the generic / reliability pattern lists on every file.
+    - Only `+` (added) lines matter — existing code isn't this PR's
+      concern.
+    """
+    if not file_diffs:
+        return []
+
+    import os as _os
+
+    # role → list of {file, line, snippet, reason}
+    hits: Dict[str, List[Dict[str, Any]]] = {}
+
+    def _record(role: str, reason: str, file_path: str, line_no: int, snippet: str) -> None:
+        bucket = hits.setdefault(role, [])
+        if len(bucket) >= max_matches_per_role:
+            return
+        bucket.append({
+            "file": file_path,
+            "line": line_no,
+            "snippet": snippet[:120],  # truncate for log / prompt safety
+            "reason": reason,
+        })
+
+    for file_path, diff_text in file_diffs.items():
+        ext = _os.path.splitext(file_path)[1].lower()
+        lang = _EXT_TO_LANG.get(ext)
+        lang_patterns = _SECURITY_PATTERNS_BY_LANG.get(lang or "", [])
+
+        current_new_line = 0
+        for raw in diff_text.splitlines():
+            if raw.startswith("@@"):
+                m = _DIFF_HUNK_HEADER_RE.match(raw)
+                if m:
+                    current_new_line = int(m.group(1))
+                continue
+            if raw.startswith(("---", "+++")):
+                continue
+            if raw.startswith("+") and not raw.startswith("+++"):
+                body = raw[1:]
+                # Language-specific security patterns
+                for pat, reason in lang_patterns:
+                    if pat.search(body):
+                        _record("security", reason, file_path, current_new_line, body.strip())
+                # Cross-language security concepts
+                for pat, reason in _GENERIC_SECURITY_PATTERNS:
+                    if pat.search(body):
+                        _record("security", reason, file_path, current_new_line, body.strip())
+                # Reliability (DDL / migration content)
+                for pat, reason in _RELIABILITY_CONTENT_PATTERNS:
+                    if pat.search(body):
+                        _record("reliability", reason, file_path, current_new_line, body.strip())
+            if not raw.startswith("-"):
+                current_new_line += 1
+
+    results: List[Dict[str, Any]] = []
+    # Preserve the same role ordering as Tier 1 (security, then reliability).
+    for role in ("security", "reliability"):
+        if role not in hits:
+            continue
+        # Unique reasons summary — one reason string covering all triggered
+        # patterns, for use in the coordinator prompt.
+        reasons = sorted({h["reason"] for h in hits[role]})
+        combined_reason = (
+            "Diff content matches security / reliability primitives — "
+            "even though the file path doesn't self-declare as security-"
+            "critical, the code added here is (triggers: "
+            + ", ".join(reasons)
+            + ")"
+        )
+        results.append({
+            "role": role,
+            "reason": combined_reason,
+            "matching_evidence": hits[role],
+        })
+    return results
+
+
+def _detect_required_dispatches(
+    file_diffs: Dict[str, str],
+) -> List[Dict[str, Any]]:
+    """Return mandatory-dispatch role requirements keyed off diff paths
+    (Tier 1) AND `+` line content primitives (Tier 2).
+
+    Tier 1 output shape per entry: ``{role, reason, matching_paths}``.
+    Tier 2 output shape per entry: ``{role, reason, matching_evidence}``
+    where evidence is a list of ``{file, line, snippet, reason}`` dicts.
+
+    When both tiers trigger the same role, both entries are returned —
+    the coordinator prompt renderer lists path-level triggers first,
+    then content-level triggers, so the LLM sees both justifications.
+
+    Empty list when nothing fires.
+    """
+    if not file_diffs:
+        return []
+    paths = list(file_diffs.keys())
+    requirements: List[Dict[str, Any]] = []
+
+    # Tier 1 — path-anchored
+    for role, reason, pattern in _MANDATORY_DISPATCH_RULES:
+        matches = sorted({p for p in paths if pattern.search(p)})
+        if matches:
+            requirements.append({
+                "role": role,
+                "reason": reason,
+                "matching_paths": matches,
+                "_tier": 1,
+            })
+
+    # Tier 2 — diff content
+    for entry in _detect_required_dispatches_from_diff_content(file_diffs):
+        entry["_tier"] = 2
+        requirements.append(entry)
+
+    return requirements
+
+
+# ---------------------------------------------------------------------------
 
 
 class WorkflowEvent:
@@ -516,6 +863,19 @@ class PRBrainOrchestrator:
 
         duration_ms = (time.monotonic() - start_time) * 1000.0
 
+        # Extract total token usage from the coordinator's BudgetController.
+        # ``budget_summary`` is the dict emitted by ``budget.summary()`` —
+        # has ``total_tokens`` which is input+output across every LLM turn
+        # the coordinator made (including dispatched sub-agent calls that
+        # share the coordinator's budget controller).
+        _total_tokens = 0
+        _total_iterations = 0
+        if isinstance(coordinator_result.data, dict):
+            _total_iterations = coordinator_result.data.get("iterations", 0)
+            budget_summary = coordinator_result.data.get("budget_summary")
+            if isinstance(budget_summary, dict):
+                _total_tokens = int(budget_summary.get("total_tokens", 0) or 0)
+
         yield WorkflowEvent(
             "done",
             {
@@ -524,8 +884,8 @@ class PRBrainOrchestrator:
                 "files_reviewed": sorted(files_reviewed_set),
                 "merge_recommendation": review_output["merge_recommendation"],
                 "duration_ms": duration_ms,
-                "total_iterations": coordinator_result.data.get("iterations", 0)
-                if isinstance(coordinator_result.data, dict) else 0,
+                "total_tokens": _total_tokens,
+                "total_iterations": _total_iterations,
                 "agents_dispatched": 1,  # the coordinator itself, sub-dispatches tracked separately
                 "findings_before_arbitration": len(review_output["findings"]),
                 "mode": "pr_brain_v2",
@@ -1021,6 +1381,65 @@ class PRBrainOrchestrator:
             lines.append("```")
             lines.append("")
             remaining -= len(slice_)
+
+        # Mandatory-dispatch injection. Path-anchored (Tier 1) +
+        # content-anchored (Tier 2) rules that the coordinator CANNOT
+        # decide to skip regardless of PR size or apparent complexity.
+        # See ``_detect_required_dispatches``.
+        required = _detect_required_dispatches(file_diffs)
+        if required:
+            lines.append("## MANDATORY investigations (Phase 1 detected)")
+            lines.append("")
+            lines.append(
+                "**These dispatches are non-skippable** — Phase 1 "
+                "detectors flagged files and/or `+` line content whose "
+                "failure modes cannot be adequately assessed by survey "
+                "alone. Your **first dispatches** must satisfy this "
+                "list. Do not claim that 'the survey was sufficient' "
+                "for items listed here; it is not. If you still "
+                "genuinely believe a listed role is unnecessary for "
+                "this specific PR, you must dispatch it anyway AND "
+                "justify the skip in your Synthesize note — one-line "
+                "per skipped role, citing a concrete reason tied to "
+                "the diff content."
+            )
+            lines.append("")
+            # De-dup: if BOTH tiers fire for the same role, we still
+            # render each entry separately (the reasons differ — path-
+            # anchored trigger vs content-anchored trigger — and seeing
+            # both strengthens the coordinator's conviction to
+            # dispatch). Group by role for readability.
+            for req in required:
+                tier = req.get("_tier", 1)
+                tier_label = "Tier 1 — path" if tier == 1 else "Tier 2 — diff content"
+                lines.append(
+                    f"### `role=\"{req['role']}\"` — REQUIRED ({tier_label})"
+                )
+                lines.append("")
+                lines.append(f"**Trigger reason**: {req['reason']}")
+                lines.append("")
+                if "matching_paths" in req:
+                    lines.append("**Matching paths**:")
+                    for p in req["matching_paths"]:
+                        lines.append(f"- `{p}`")
+                    lines.append("")
+                elif "matching_evidence" in req:
+                    lines.append("**Matching evidence** (file:line — why):")
+                    for ev in req["matching_evidence"]:
+                        snippet = ev["snippet"].replace("\n", " ")
+                        lines.append(
+                            f"- `{ev['file']}:{ev['line']}` — {ev['reason']} "
+                            f"— `{snippet[:80]}`"
+                        )
+                    lines.append("")
+            logger.info(
+                "[PR Brain v2] Mandatory-dispatch Phase 1 detected %d "
+                "required role(s) across 2 tiers: %s",
+                len(required),
+                ", ".join(
+                    f"{r['role']}(T{r.get('_tier', 1)})" for r in required
+                ),
+            )
 
         # Dispatch cap scales with PR size (your skill covers the "why"
         # in the Plan section; here we give you the numeric cap). Caps

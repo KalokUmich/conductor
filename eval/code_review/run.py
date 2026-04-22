@@ -617,7 +617,7 @@ async def run_all(args: argparse.Namespace) -> None:
         judge_verdicts=verdicts or None,
         provider="claude-code" if is_gold else args.provider,
         model=args.gold_model if is_gold else (args.model or "default"),
-        mode="gold" if is_gold else ("brain" if is_brain else "pipeline"),
+        mode="gold" if is_gold else "brain",
         gold_baseline=gold_baseline,
     )
     print_report(report)

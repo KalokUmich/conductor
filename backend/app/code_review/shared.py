@@ -627,7 +627,7 @@ def raw_to_finding(
             file=raw.get("file", ""),
             start_line=int(raw.get("start_line", 0)),
             end_line=int(raw.get("end_line", 0)),
-            evidence=raw.get("evidence", []),
+            evidence=_normalize_evidence(raw.get("evidence")),
             risk=raw.get("risk", ""),
             suggested_fix=raw.get("suggested_fix", ""),
             agent=agent_name,
@@ -635,6 +635,60 @@ def raw_to_finding(
         )
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_evidence(raw) -> List[str]:
+    """Coerce the LLM's ``evidence`` field into a clean ``List[str]``.
+
+    The LLM is supposed to emit a JSON array of strings. Real observed
+    malformations:
+
+    * ``None`` or missing — treat as no evidence.
+    * Plain string (``"cache key missing user_id at line 45"``) — LLM
+      emitted a single sentence rather than an array. Wrap in a
+      single-element list.
+    * Re-serialised string-as-list (``["@", "V", "a", "l", "u", "e", ...]``)
+      — happens when a JSON string got round-tripped through a parser
+      that applied ``list(s)`` to an inner string. The rendered markdown
+      shows one character per bullet (observed on ADO PR #14227).
+      Heuristic: ≥ 6 items AND every item is a single character → rejoin.
+    * Array with non-string elements — stringify the stringy ones
+      (``int``/``float`` acceptable), drop the rest (``None``, dicts,
+      nested lists).
+
+    Fail-safe: on any unexpected shape return ``[]`` rather than raise.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        return [stripped] if stripped else []
+    if not isinstance(raw, list):
+        return []
+    out: List[str] = []
+    for item in raw:
+        if isinstance(item, str):
+            if item.strip():
+                out.append(item.strip())
+        elif isinstance(item, (int, float, bool)):
+            out.append(str(item))
+        # silently drop dict / None / nested list
+    # Character-list heuristic — a string that got ``list()``-unpacked
+    # upstream produces a fragmented evidence list. Signs: ≥ 6 items
+    # AND at least 70% of items are 1 character long (real-world
+    # malformed evidence shows up as a mix of single chars + a few
+    # 2-10 char fragments). Rejoin with no separator (the original
+    # string's whitespace lives inside the characters). Threshold is
+    # intentionally below 100% because observed shapes look like
+    # ``['@Value("', 'a', 'b', 'o', 'u', 'n', 'd', '")']`` = 75%
+    # single-char items, and those ARE the fragmented shape we want
+    # to rejoin.
+    if len(out) >= 6:
+        single_char_ratio = sum(1 for s in out if len(s) == 1) / len(out)
+        if single_char_ratio >= 0.7:
+            rejoined = "".join(out).strip()
+            return [rejoined] if rejoined else []
+    return out
 
 
 def _try_parse_json_array(text: str) -> Optional[list]:

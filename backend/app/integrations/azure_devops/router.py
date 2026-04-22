@@ -221,6 +221,7 @@ async def review_pull_request(
                         merge_rec = data.get("merge_recommendation", "")
                         files_reviewed = data.get("files_reviewed", [])
                         total_iterations = data.get("total_iterations", 0)
+                        total_tokens = data.get("total_tokens", 0)
                         duration_ms = data.get("duration_ms", 0.0)
                         for fd in data.get("findings", []):
                             try:
