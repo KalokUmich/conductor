@@ -52,6 +52,14 @@ smaller, independently-reviewable chunks. The goal is NOT to guess at
 correctness — you have not studied every line — but to propose a clean
 decomposition from the diff shape alone.
 
+**Teach, don't command.** This review is the author's chance to learn
+how an experienced reviewer thinks about PR hygiene. Your rationales
+must explain the *why* — what business concern or architectural seam
+ties these files together, what can go wrong if they land mixed with
+other changes, and what makes the chunk a sensible reviewable unit.
+A junior developer reading your output should understand the
+decomposition thinking, not just follow orders.
+
 ## Output shape (markdown)
 
 Produce exactly this structure, with no preamble:
@@ -61,56 +69,86 @@ Produce exactly this structure, with no preamble:
 
 The PR changes {TOTAL_LINES} lines across {FILE_COUNT} files. A
 reviewable chunk lands in the 50–500 line band. Here's one way to
-partition:
+partition, with the reasoning behind each cluster:
 
-### Chunk 1 — {short rationale, e.g. "schema migration"}
+### Chunk 1 — {short descriptive label, e.g. "schema migration for the new billing table"}
 - {file path 1}
 - {file path 2}
-*Rationale*: {1-2 sentences explaining what this chunk self-contains.}
+*Why these belong together*: {2-4 sentences. What business concern or
+architectural layer does this chunk own? What single question does a
+reviewer ask when reviewing it? E.g. "This chunk owns the database
+shape for invoices — every file here is about the new `invoices`
+table's columns, constraints, and initial seed data. A reviewer is
+asking 'is this schema correct and migratable?' — no service logic to
+distract from that."}
+*Why separate from the rest*: {1-2 sentences. What would go wrong if
+this chunk merged with the others? E.g. "Mixing this with the
+billing service code means a reviewer has to context-switch between
+SQL correctness and Python business rules — two different mental
+models, each gets shallower attention."}
 *Approx size*: {line count}
 
-### Chunk 2 — {rationale}
-- {file path 1}
-*Rationale*: {...}
-*Approx size*: {...}
+### Chunk 2 — {descriptive label}
+...
 
 ... (up to 6 chunks)
 
 ## Dependencies
 
-{1-3 sentences. If chunks must land in order, state that. If they can
-land in parallel on separate branches, say that. If some chunks would
-form a stack (each depending on the prior), describe the stack.}
+{2-4 sentences. If chunks must land in order, explain *why* — e.g.
+"Chunk 2 (service code) queries tables Chunk 1 creates; landing 2
+first breaks production." If chunks are independent, say so and
+explain how that's possible — e.g. "The docs chunk and the handler
+chunk touch disjoint paths and reference no shared symbols; safe to
+land in parallel." If a stack forms, describe each dependency edge
+concretely — not just "do 1 then 2 then 3".}
 
 ## What to drop
 
 {Optional section. If any files look like unrelated cleanup that
-shouldn't be in the PR at all, name them here with a one-line reason.
-Skip this section entirely when nothing qualifies.}
+doesn't belong in this PR at all, name them with a one-sentence
+explanation of why they're out of scope. E.g. "`docs/old_api.md` —
+looks like a docs refresh for an unrelated endpoint; revert from this
+PR and submit separately so the reviewer doesn't have to wonder why
+it's here." Skip this section entirely when nothing qualifies — do
+not fabricate cleanup candidates.}
 ```
 
 ## Hard rules
 
-- Propose **2–6** chunks. Fewer than 2 = no split possible; say so in a
-  single sentence under "Suggested split" and omit the chunks / deps /
-  drop sections.
-- Each chunk must be **self-contained enough to review** — a chunk that
-  needs three other chunks to make sense is wrong.
-- Group by *intent* first (schema migration, handler logic,
-  tests, docs, infrastructure), not by file type. Tests go in the same
-  chunk as the code they cover, unless tests are an obvious
-  standalone cleanup block.
-- No line numbers. No code quotes. No severity labels. Author-friendly
-  prose only.
-- If a file must be in multiple chunks (partial split needed), note
-  that explicitly in the chunk that contains the bulk of the changes.
+- Propose **2–6** chunks. Fewer than 2 = no split possible; say so in
+  a sentence under "Suggested split", explain *why* (e.g. "every file
+  touches the same refactored abstraction — the split would have to
+  happen at the design level, not the file level"), and omit the
+  chunks / deps / drop sections.
+- Each chunk must be **self-contained enough to review** — a chunk
+  that needs three other chunks to make sense is wrong. If you catch
+  yourself writing "depends on Chunk 2, 3, and 4", the split is off.
+- **Group by intent / business concern first**, not by file type.
+  Tests go in the same chunk as the code they cover — a reviewer
+  checking handler logic needs the tests for that handler in front of
+  them, not in a separate PR.
+- **Rationale is the product.** A chunk without a substantive
+  "Why these belong together" + "Why separate from the rest" is a
+  failure — even if the chunk itself is correctly scoped. The author
+  learns from your reasoning, not from your file lists.
+- No line numbers. No code quotes. No severity labels. Author-
+  friendly prose only.
+- If a file has to appear in two chunks (e.g. a shared schema file
+  with two logically-separate sections), note it explicitly in the
+  chunk that owns the bulk of the edits AND in the rationale of the
+  other chunk.
 - **No fabrication.** Only reference files and directories visible in
-  the diff summary. Don't invent filenames.
+  the diff. Don't invent filenames. Don't guess at concerns you
+  can't see.
 
 If you genuinely cannot partition the PR (e.g. one monolithic
 feature touching every file), say so in one sentence under
-"Suggested split" and recommend splitting the *feature design* before
-splitting the diff.
+"Suggested split", explain *why* concretely, and recommend splitting
+the *feature design* before splitting the diff (e.g. "this adds one
+new concept — the `Invoice` aggregate — that every file participates
+in; the next PR of this shape should be preceded by a design doc that
+breaks the feature into staged user-visible deliveries").
 
 Output only the markdown — no JSON, no preamble, no commentary.\
 """
@@ -160,7 +198,7 @@ async def generate_pr_split_plan(
     file_count: int,
     provider: AIProvider,
     *,
-    max_tokens: int = 1200,
+    max_tokens: int = 2000,
 ) -> Optional[str]:
     """Generate a suggested split plan for an oversized PR.
 
@@ -177,8 +215,12 @@ async def generate_pr_split_plan(
             Brain's main provider). The fast tier can split simple PRs
             but struggles on mixed-intent oversized PRs, which is
             exactly where this helper earns its keep.
-        max_tokens: Output cap. 1200 fits a 6-chunk plan + deps +
-            drop section with headroom.
+        max_tokens: Output cap. 2000 fits a 6-chunk plan with
+            substantive "Why these belong together" / "Why separate"
+            rationales (4-6 sentences per chunk) + deps + drop section
+            with headroom. Splitter rationales are the product — we'd
+            rather pay a bit more output tokens than truncate the
+            teaching content.
 
     Returns:
         Markdown split plan, or ``None`` on any error (empty diff,
