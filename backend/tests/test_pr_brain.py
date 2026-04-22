@@ -1850,3 +1850,135 @@ class TestPhase2LangHints:
         assert "Python (`.py`)" in query
         assert "Go (`.go`)" in query
         assert "TypeScript" in query
+
+
+class TestPhase2ReorderP13First:
+    """v2u — P13 deterministic scanners must run BEFORE the LLM
+    existence worker, not after. When P13 finds missing symbols, they
+    must appear in the 'Pre-verified by P13' block of the LLM query so
+    the worker knows to skip them and focus on signature-level checks.
+    """
+
+    def _make_ctx(self, paths):
+        files = [
+            ChangedFile(
+                path=p, additions=10, deletions=0,
+                category=FileCategory.BUSINESS_LOGIC,
+            )
+            for p in paths
+        ]
+        return PRContext(
+            diff_spec="HEAD~1..HEAD",
+            files=files,
+            total_changed_lines=10 * len(files),
+            file_count=len(files),
+        )
+
+    def _capture_query(self, brain, ctx, file_diffs, monkeypatch,
+                       python_missing=None, go_missing=None, java_missing=None):
+        """Monkeypatch the 3 P13 scanners + the factstore + capture the LLM query."""
+        from app.agent_loop import pr_brain as pb
+        from app import scratchpad as sp
+
+        monkeypatch.setattr(
+            pb, "_scan_new_python_imports_for_missing",
+            lambda *a, **kw: python_missing or [],
+        )
+        monkeypatch.setattr(
+            pb, "_scan_new_go_references_for_missing",
+            lambda *a, **kw: go_missing or [],
+        )
+        monkeypatch.setattr(
+            pb, "_scan_new_java_references_for_missing",
+            lambda *a, **kw: java_missing or [],
+        )
+        # P13 only runs when a FactStore is available. The autouse
+        # _disable_scratchpad fixture sets the env var OFF so real
+        # reviews don't leak SQLite files into ~/.conductor/. For this
+        # test we need current_factstore() to return SOMETHING store-
+        # shaped so the P13 branch executes.
+        fake_store = MagicMock()
+        fake_store.put_existence = MagicMock()
+        monkeypatch.setattr(sp, "current_factstore", lambda: fake_store)
+
+        captured = {}
+
+        class _FakeExecutor:
+            async def execute(self, tool_name, params):
+                captured["tool"] = tool_name
+                captured["params"] = params
+                return ToolResult(
+                    tool_name=tool_name, success=True,
+                    data={"answer": '{"symbols":[]}'},
+                )
+
+        async def _drive():
+            gen = brain._run_v2_phase2_existence(_FakeExecutor(), ctx, file_diffs)
+            async for _ in gen:
+                pass
+
+        import asyncio as _asyncio
+        _asyncio.run(_drive())
+        return captured
+
+    def test_p13_missing_appear_in_pre_verified_block(self, monkeypatch):
+        brain = _make_pr_brain()
+        ctx = self._make_ctx(["app/service.py"])
+        captured = self._capture_query(
+            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+from x import Y\n"},
+            monkeypatch,
+            python_missing=[{
+                "name": "Y",
+                "referenced_at": "app/service.py:1",
+                "evidence": "from x import Y",
+            }],
+        )
+        query = captured["params"]["query"]
+        assert "Pre-verified by P13" in query
+        assert "`Y`" in query  # backtick-wrapped symbol name
+        assert "app/service.py:1" in query
+
+    def test_no_pre_verified_block_when_p13_empty(self, monkeypatch):
+        brain = _make_pr_brain()
+        ctx = self._make_ctx(["app/service.py"])
+        captured = self._capture_query(
+            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
+            monkeypatch,
+            python_missing=[],
+        )
+        query = captured["params"]["query"]
+        assert "Pre-verified by P13" not in query
+
+    def test_task_text_shifted_to_signature_focus(self, monkeypatch):
+        brain = _make_pr_brain()
+        ctx = self._make_ctx(["app/service.py"])
+        captured = self._capture_query(
+            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
+            monkeypatch,
+        )
+        query = captured["params"]["query"]
+        # New task focuses on signature-level checks
+        assert "Method call signatures" in query
+        assert "signature" in query.lower()
+        # Explicitly tells the worker not to re-verify imports
+        assert "Do NOT re-verify import-level existence" in query
+
+    def test_multi_language_p13_aggregated(self, monkeypatch):
+        brain = _make_pr_brain()
+        ctx = self._make_ctx(["a.py", "b.go", "c.java"])
+        captured = self._capture_query(
+            brain, ctx,
+            {
+                "a.py": "@@ -1 +1 @@\n+from x import Py\n",
+                "b.go": "@@ -1 +1 @@\n+GoRef()\n",
+                "c.java": "@@ -1 +1 @@\n+new JavaRef();\n",
+            },
+            monkeypatch,
+            python_missing=[{"name": "Py", "referenced_at": "a.py:1", "evidence": "..."}],
+            go_missing=[{"name": "GoRef", "referenced_at": "b.go:1", "evidence": "..."}],
+            java_missing=[{"name": "JavaRef", "referenced_at": "c.java:1", "evidence": "..."}],
+        )
+        query = captured["params"]["query"]
+        assert "`Py`" in query
+        assert "`GoRef`" in query
+        assert "`JavaRef`" in query

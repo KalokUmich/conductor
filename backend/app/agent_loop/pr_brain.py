@@ -54,9 +54,16 @@ logger = logging.getLogger(__name__)
 # worker does a handful of greps to verify newly-referenced symbols;
 # prompt-level budgets are hints that LLM workers often ignore on large
 # codebases (~10 min hangs observed on 17K-file repos). This is the
-# hard orchestrator guard — after this deadline, the task is cancelled
-# and the coordinator proceeds without Phase 2 facts.
-_PHASE2_TIMEOUT_SECONDS = 120
+# Hard orchestrator guard — after this deadline, the LLM worker is
+# cancelled and the coordinator proceeds with only P13 deterministic
+# facts. Lowered in v2u from 120s: Phase 2 now runs P13 (Python / Go /
+# Java mechanical scans) BEFORE the LLM worker, so the worker's task
+# is already narrowed to signature-level checks that P13 cannot do.
+# 60s is enough for the narrow task; 120s was pure waste on cold
+# large-repo reviews where the worker never produced facts anyway
+# (observed 4/10 sentry cases + 6/10 grafana + 6/9 keycloak timed out
+# with zero symbols in v2t regression).
+_PHASE2_TIMEOUT_SECONDS = 60
 
 
 # ---------------------------------------------------------------------------
@@ -1017,12 +1024,40 @@ class PRBrainOrchestrator:
             diff_block.append(f"### {path}\n```diff\n{slice_}\n```")
             remaining -= len(slice_)
 
+        # v2u — P13 deterministic scanners run BEFORE this LLM worker, so
+        # import-level existence (Python `from X import Y`, Go bare-call
+        # identifiers, Java class references) is already covered by the
+        # mechanical path and persisted to the Fact Vault. Narrow the
+        # worker's task to the class of checks P13 structurally cannot
+        # do — signature-level invariants. This is why the orchestrator
+        # timeout halved from 120s to 60s.
         task_text = (
-            "For every NEW symbol this PR references on `+` diff lines "
-            "(imports, classes, methods, attributes, decorators), verify "
-            "whether it exists in the codebase. Use grep / find_symbol / "
-            "read_file. Emit the JSON schema from your system prompt as "
-            "your final message."
+            "Phase 2 runs mechanical import-level existence checks "
+            "BEFORE dispatching you. Pre-verified names have already "
+            "been written to the Fact Vault (see the 'Pre-verified "
+            "symbols' section below). Your job is the class of checks "
+            "mechanical grep cannot do:\n\n"
+            "1. **Method call signatures** — for new method calls on `+` "
+            "lines, verify the callee's parameter list matches the "
+            "invocation (arg count, kwarg names, positional order).\n"
+            "2. **Class instantiation shape** — for new `Foo(...)` on `+` "
+            "lines, verify `__init__` / constructor params match.\n"
+            "3. **Attribute access** — for new `obj.attr` access where "
+            "`attr` wasn't present before, verify the type declares it.\n"
+            "4. **Decorator application** — for new decorator usage, "
+            "verify the decorator exists AND accepts the args you "
+            "observe.\n"
+            "5. **Overload resolution** — for languages with method "
+            "overloading (Java, TS), verify the call's argument types "
+            "match at least one overload signature.\n\n"
+            "Do NOT re-verify import-level existence — P13 already "
+            "handled that. Do NOT re-check whether a class or top-level "
+            "function 'exists by name' — that's P13's lane too. Focus "
+            "on signature / invocation correctness on everything else.\n\n"
+            "Use find_symbol as your primary tool; grep only when "
+            "find_symbol doesn't expose the signature info you need. "
+            "Emit the JSON schema from your system prompt as your final "
+            "message."
         )
 
         # P9 — per-language verification hint. Only injected when the diff
@@ -1079,117 +1114,33 @@ class PRBrainOrchestrator:
         if lang_hints:
             hint_block = "\n\n## Language-specific hints\n\n" + "\n\n".join(lang_hints)
 
-        query = (
-            "# PR existence verification\n\n"
-            + task_text
-            + hint_block
-            + "\n\n## Files changed\n\n"
-            + "\n".join(f"- `{f.path}` (+{f.additions} −{f.deletions})" for f in pr_context.files)
-            + "\n\n## Diff\n\n"
-            + "\n".join(diff_block)
-        )
-
-        params = {
-            "template": "pr_existence_check",
-            "query": query,
-            "budget_weight": 0.5,
-        }
-        # Track per-path status so we can ALWAYS run the P13 deterministic
-        # fallback at the end — even if the LLM worker times out or fails
-        # to parse. The LLM worker catches signature mismatches we cannot
-        # do mechanically; P13 catches the import-level phantom cases
-        # regardless. Together they form a belt-and-suspenders pair.
-        llm_symbols: List[Dict[str, Any]] = []
-        llm_error: Optional[str] = None
-        llm_timeout: bool = False
-
-        # Hard orchestrator-level wall-clock cap. Phase 2 is an
-        # optimization, not a correctness gate — if the worker hangs on a
-        # large codebase despite its prompt-level budget, we'd rather skip
-        # existence facts than stall the entire review for 10 minutes.
-        try:
-            result = await asyncio.wait_for(
-                executor.execute("dispatch_agent", params),
-                timeout=float(_PHASE2_TIMEOUT_SECONDS),
-            )
-        except TimeoutError:
-            logger.warning(
-                "[PR Brain v2] existence-check hit %ds wall-clock timeout; "
-                "P13 AST fallback will still run.",
-                _PHASE2_TIMEOUT_SECONDS,
-            )
-            llm_timeout = True
-            result = None
-
-        if result is not None and not result.success:
-            logger.warning(
-                "[PR Brain v2] existence-check dispatch failed: %s", result.error,
-            )
-            llm_error = str(result.error)
-            result = None
-
-        if result is not None:
-            condensed = result.data or {}
-            raw_answer = (
-                condensed.get("answer") or condensed.get("final_answer") or ""
-            )
-            parsed = _parse_existence_json(raw_answer)
-            if parsed is None:
-                logger.warning(
-                    "[PR Brain v2] existence worker output did not parse as JSON",
-                )
-                llm_error = "parse_failed"
-            else:
-                llm_symbols = parsed.get("symbols", []) or []
-
-        # Persist LLM symbols into the vault so later sub-agents can query
-        # via search_facts(kind="existence").
+        # v2u reorder — STEP 1: run the deterministic P13 scanners FIRST.
+        # These are mechanical (zero LLM cost, low tens-of-ms per file,
+        # language-specific regex + grep) and cover import-level
+        # existence comprehensively for Python / Go / Java. Running
+        # them first lets us:
+        #   (a) persist missing-symbol facts to the vault immediately,
+        #       regardless of what the LLM worker does afterward,
+        #   (b) tell the LLM worker what's already been checked so it
+        #       can focus on the signature-level class of checks P13
+        #       cannot do, and
+        #   (c) guarantee coverage even if the LLM worker times out —
+        #       which was observed to happen on virtually every
+        #       sentry / grafana / keycloak case in v2t.
         from app.scratchpad import current_factstore
 
         store = current_factstore()
         missing_count = 0
-        if store is not None and llm_symbols:
-            for sym in llm_symbols:
-                if not isinstance(sym, dict):
-                    continue
-                name = sym.get("name") or ""
-                if not name:
-                    continue
-                exists = bool(sym.get("exists", True))
-                if not exists:
-                    missing_count += 1
-                try:
-                    store.put_existence(
-                        symbol_name=name,
-                        symbol_kind=(sym.get("kind") or "symbol")[:32],
-                        referenced_at=(sym.get("referenced_at") or "")[:256],
-                        exists=exists,
-                        evidence=(sym.get("evidence") or "")[:1000],
-                        signature_info=sym.get("signature_info"),
-                    )
-                except Exception as exc:
-                    logger.debug("put_existence failed for %s: %s", name, exc)
-
-        # P13 — Deterministic phantom-symbol verifiers (belt-and-suspenders).
-        # Runs ALWAYS, regardless of LLM worker timeout / failure / empty
-        # output. Zero LLM cost; narrowly scoped so never overrides an
-        # LLM exists=True verdict (covered by `already_named` check).
-        # Three language scanners run in sequence:
-        #   * Python — phantom `from X import Y` and `import X` names
-        #   * Go     — phantom bare-call identifiers (same-package)
-        #   * Java   — phantom class references (not imported / not same-pkg)
         added_from_ast = 0
+        p13_handled_names: set = set()
+        p13_missing_details: List[Dict[str, str]] = []
+
         if store is not None:
             try:
-                already_named = {
-                    sym.get("name") for sym in llm_symbols if isinstance(sym, dict)
-                }
-
                 def _inject_phantom(found: Dict[str, str], *, kind: str) -> None:
-                    """Shared injection path for all 3 language scanners."""
                     nonlocal added_from_ast, missing_count
                     name = found["name"]
-                    if name in already_named:
+                    if name in p13_handled_names:
                         return
                     try:
                         store.put_existence(
@@ -1200,7 +1151,11 @@ class PRBrainOrchestrator:
                             evidence=found["evidence"],
                             signature_info=None,
                         )
-                        already_named.add(name)
+                        p13_handled_names.add(name)
+                        p13_missing_details.append({
+                            "name": name, "kind": kind,
+                            "referenced_at": found["referenced_at"],
+                        })
                         added_from_ast += 1
                         missing_count += 1
                     except Exception as exc:
@@ -1228,26 +1183,135 @@ class PRBrainOrchestrator:
                     "[PR Brain v2] P13 deterministic scan failed "
                     "(non-fatal): %s", exc,
                 )
+
         if added_from_ast:
             logger.info(
-                "[PR Brain v2] P13 deterministic import scan found %d "
-                "missing symbol(s) the LLM worker did not flag",
+                "[PR Brain v2] P13 deterministic scan (Python/Go/Java) "
+                "flagged %d missing symbol(s) BEFORE LLM dispatch",
                 added_from_ast,
             )
 
+        # STEP 2: build the LLM worker's query with a "pre-verified"
+        # block. The worker sees what P13 already caught so it can skip
+        # those names and focus on signature-level checks.
+        pre_verified_block = ""
+        if p13_missing_details:
+            pre_verified_block = (
+                "\n\n## Pre-verified by P13 (mechanical scan — DO NOT re-check)\n\n"
+                "These symbols have already been identified by the "
+                "deterministic P13 scanner as missing. They are already "
+                "in the Fact Vault as `exists=false`. Ignore them in "
+                "your analysis — do not waste tool calls re-verifying "
+                "import-level existence for these names.\n\n"
+                + "\n".join(
+                    f"- `{d['name']}` (kind={d['kind']}, at `{d['referenced_at']}`)"
+                    for d in p13_missing_details[:40]
+                )
+            )
+
+        query = (
+            "# PR existence verification (signature focus)\n\n"
+            + task_text
+            + pre_verified_block
+            + hint_block
+            + "\n\n## Files changed\n\n"
+            + "\n".join(f"- `{f.path}` (+{f.additions} −{f.deletions})" for f in pr_context.files)
+            + "\n\n## Diff\n\n"
+            + "\n".join(diff_block)
+        )
+
+        params = {
+            "template": "pr_existence_check",
+            "query": query,
+            "budget_weight": 0.5,
+        }
+
+        # STEP 3: dispatch LLM worker with the narrowed task + tight
+        # 60s wall-clock. Task narrowing is the justification for the
+        # shorter timeout — the worker no longer enumerates every
+        # symbol, just the signature-level class.
+        llm_symbols: List[Dict[str, Any]] = []
+        llm_error: Optional[str] = None
+        llm_timeout: bool = False
+
+        try:
+            result = await asyncio.wait_for(
+                executor.execute("dispatch_agent", params),
+                timeout=float(_PHASE2_TIMEOUT_SECONDS),
+            )
+        except TimeoutError:
+            logger.warning(
+                "[PR Brain v2] existence-check LLM worker hit %ds "
+                "wall-clock timeout. P13 facts already persisted (%d "
+                "missing symbols); coordinator proceeds with those.",
+                _PHASE2_TIMEOUT_SECONDS, added_from_ast,
+            )
+            llm_timeout = True
+            result = None
+
+        if result is not None and not result.success:
+            logger.warning(
+                "[PR Brain v2] existence-check dispatch failed: %s", result.error,
+            )
+            llm_error = str(result.error)
+            result = None
+
+        if result is not None:
+            condensed = result.data or {}
+            raw_answer = (
+                condensed.get("answer") or condensed.get("final_answer") or ""
+            )
+            parsed = _parse_existence_json(raw_answer)
+            if parsed is None:
+                logger.warning(
+                    "[PR Brain v2] existence worker output did not parse as JSON",
+                )
+                llm_error = "parse_failed"
+            else:
+                llm_symbols = parsed.get("symbols", []) or []
+
+        # STEP 4: persist LLM-contributed symbols, skipping any whose
+        # name was already handled by P13 (P13 is deterministic truth
+        # on its lane; LLM's signature-focus contributions are
+        # additive, not overriding).
+        if store is not None and llm_symbols:
+            for sym in llm_symbols:
+                if not isinstance(sym, dict):
+                    continue
+                name = sym.get("name") or ""
+                if not name:
+                    continue
+                if name in p13_handled_names:
+                    continue  # P13 wins — don't let the LLM overwrite
+                exists = bool(sym.get("exists", True))
+                if not exists:
+                    missing_count += 1
+                try:
+                    store.put_existence(
+                        symbol_name=name,
+                        symbol_kind=(sym.get("kind") or "symbol")[:32],
+                        referenced_at=(sym.get("referenced_at") or "")[:256],
+                        exists=exists,
+                        evidence=(sym.get("evidence") or "")[:1000],
+                        signature_info=sym.get("signature_info"),
+                    )
+                except Exception as exc:
+                    logger.debug("put_existence failed for %s: %s", name, exc)
+
         logger.info(
-            "[PR Brain v2] Phase 2 existence: %d symbols checked, %d missing "
-            "(+%d from AST scan, llm_timeout=%s, llm_error=%s)",
-            len(llm_symbols), missing_count, added_from_ast,
+            "[PR Brain v2] Phase 2 existence: P13 flagged %d, LLM worker "
+            "added %d more signature-level facts, total missing=%d "
+            "(llm_timeout=%s, llm_error=%s)",
+            added_from_ast, len(llm_symbols), missing_count,
             llm_timeout, llm_error,
         )
         yield WorkflowEvent(
             "v2_phase2_complete",
             {
                 "phase": "existence_verification",
-                "symbols_checked": len(llm_symbols),
+                "p13_missing": added_from_ast,
+                "llm_symbols": len(llm_symbols),
                 "missing": missing_count,
-                "ast_added": added_from_ast,
                 "llm_timeout": llm_timeout,
                 "llm_error": llm_error,
             },
