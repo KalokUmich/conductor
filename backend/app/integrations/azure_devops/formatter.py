@@ -162,8 +162,26 @@ def _format_primary_comment(finding: ReviewFinding, badge: str) -> str:
     return "\n".join(lines)
 
 
-def format_summary_markdown(result: ReviewResult) -> str:
-    """Format the overall review summary as a PR-level comment."""
+def format_summary_markdown(
+    result: ReviewResult,
+    *,
+    overall_summary_override: Optional[str] = None,
+) -> str:
+    """Format the overall review summary as a PR-level comment.
+
+    Args:
+        result: The review result to render.
+        overall_summary_override: If provided, replaces the raw
+            ``result.synthesis`` in the long-form summary section.
+            Intended for
+            ``app.code_review.translate.translate_pr_summary`` output,
+            which rewrites the coordinator's Google-style synthesis into
+            platform-native (e.g. Azure) shape: business intent first,
+            no code quotes (inline threads carry those), no file paths
+            (inline threads own them). When None, the original
+            synthesis is used unchanged under a "Detailed Analysis"
+            header for backward compatibility.
+    """
 
     lines = []
     lines.append("## \U0001f916 Conductor AI Code Review")
@@ -204,11 +222,24 @@ def format_summary_markdown(result: ReviewResult) -> str:
             lines.append(f"| {emoji} {f.severity.value} | {loc} | {f.title} |")
         lines.append("")
 
-    # Synthesis (if available)
-    if result.synthesis:
-        lines.append("### Detailed Analysis")
-        lines.append("")
-        lines.append(result.synthesis)
+    # Long-form body: translator output (platform-shaped) if given,
+    # else the raw coordinator synthesis under a "Detailed Analysis"
+    # header for backward compatibility.
+    summary_body = (
+        overall_summary_override
+        if overall_summary_override is not None
+        else result.synthesis
+    )
+    if summary_body:
+        if overall_summary_override is not None:
+            # Translator output owns its own section hierarchy
+            # (## Summary / ## What went well / ## What needs
+            # attention). Do not wrap in an extra header.
+            lines.append(summary_body.strip())
+        else:
+            lines.append("### Detailed Analysis")
+            lines.append("")
+            lines.append(summary_body)
         lines.append("")
 
     # Agent stats

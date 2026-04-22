@@ -231,8 +231,30 @@ async def review_pull_request(
                         )
 
             # Step 4: Post summary comment
+            # Translate the Google-style synthesis into Azure-shaped
+            # markdown (business-intent first, no code quotes — inline
+            # threads already carry code). Strong-model LLM call, ~$0.02.
+            # Fail-soft: translator returns the original synthesis on
+            # error so the summary still posts.
             try:
-                summary_md = format_summary_markdown(result)
+                from app.code_review.translate import translate_pr_summary
+
+                agent_provider = getattr(request.app.state, "agent_provider", None)
+                translated_summary = result.synthesis
+                if agent_provider is not None and result.synthesis:
+                    translated_summary = await translate_pr_summary(
+                        synthesis=result.synthesis,
+                        findings=result.findings,
+                        platform="azure",
+                        provider=agent_provider,
+                        pr_title=pr_data.get("title", "") or "",
+                        pr_description=pr_data.get("description", "") or "",
+                    )
+
+                summary_md = format_summary_markdown(
+                    result,
+                    overall_summary_override=translated_summary,
+                )
                 await client.create_thread(
                     project=req.project,
                     repo=req.repo,
