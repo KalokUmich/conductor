@@ -143,14 +143,51 @@ async def review_pull_request(
                 "split-recommended notice and skipping AI review",
                 req.pr_id, _total_changed, _MAX_REVIEW_LINES,
             )
+
+            # Phase 7.8.5 — generate an author-friendly split plan using
+            # the strong model (same one the coordinator uses). Appends
+            # to the generic skip message when available; falls back to
+            # the generic message on any failure (no review blocker).
+            split_plan: str | None = None
+            try:
+                from app.code_review.splitter import generate_pr_split_plan
+
+                # Use main clone's diff (no worktree needed for split
+                # planning — we only read, never build/test).
+                full_diff = _git_diff_text(main_workspace, diff_spec)
+                file_count = _count_changed_files(main_workspace, diff_spec)
+
+                strong_provider = getattr(
+                    request.app.state, "pr_brain_strong_provider", None,
+                )
+                if strong_provider and full_diff:
+                    split_plan = await generate_pr_split_plan(
+                        diff_text=full_diff,
+                        pr_title=pr_data.get("title", ""),
+                        pr_description=pr_data.get("description", ""),
+                        total_lines=_total_changed,
+                        file_count=file_count,
+                        provider=strong_provider,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[AzureDevOps] PR #%d split-plan generation failed "
+                    "(falling back to generic skip message): %s",
+                    req.pr_id, exc,
+                )
+
+            skip_content = _large_pr_skip_message(
+                _total_changed, _MAX_REVIEW_LINES,
+            )
+            if split_plan:
+                skip_content = skip_content + "\n\n" + split_plan
+
             try:
                 await client.create_thread(
                     project=req.project,
                     repo=req.repo,
                     pr_id=req.pr_id,
-                    content=_large_pr_skip_message(
-                        _total_changed, _MAX_REVIEW_LINES,
-                    ),
+                    content=skip_content,
                 )
             except Exception as exc:
                 logger.warning(
@@ -417,6 +454,43 @@ def _count_changed_lines(worktree_path: str, diff_spec: str) -> int:
         return sum(int(n) for pair in nums for n in pair if n)
     except Exception:
         return 999  # fail open — run review if we can't count
+
+
+def _count_changed_files(worktree_path: str, diff_spec: str) -> int:
+    """Return number of changed files for a diff-spec."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only"] + diff_spec.split() + ["--"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return sum(1 for line in result.stdout.splitlines() if line.strip())
+    except Exception:
+        return 0
+
+
+def _git_diff_text(worktree_path: str, diff_spec: str, max_bytes: int = 400_000) -> str:
+    """Fetch raw unified diff text; bounded so splitter call stays cheap."""
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["git", "diff"] + diff_spec.split() + ["--"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        diff = result.stdout or ""
+        if len(diff) > max_bytes:
+            return diff[:max_bytes] + f"\n\n[...diff truncated at {max_bytes} bytes...]"
+        return diff
+    except Exception:
+        return ""
 
 
 async def _generate_and_post_summary(

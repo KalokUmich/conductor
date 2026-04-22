@@ -357,6 +357,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
 
             app.state.pr_brain_factory = _make_pr_brain
+            # Phase 7.8.5 — expose the strong provider alongside the
+            # factory so the ADO router can reuse it for the split-plan
+            # helper (generate_pr_split_plan). Kept as a separate attr
+            # rather than smuggled onto the closure so future callers
+            # can pick it up without instantiating a brain.
+            app.state.pr_brain_strong_provider = agent_provider
             logger.info("Azure DevOps PR Brain: ready")
 
         logger.info(
