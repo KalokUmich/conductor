@@ -1195,6 +1195,85 @@ class TestScanNewJavaReferencesForMissing:
         )
         assert found == []
 
+    def test_test_class_finds_main_peer_same_package(self, tmp_path):
+        """Regression for PR #14161 false-positive.
+
+        ``PaymentControllerTest`` sits in ``src/test/java/com/foo/controller/``
+        and references ``PaymentController``. The class lives in the
+        Maven source-set peer ``src/main/java/com/foo/controller/``
+        — same Java package, different physical dir. The P13 scanner
+        must check the peer, not just the test-dir.
+        """
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+        # The class under test lives in main/
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/controller/PaymentController.java",
+            "package com.foo.controller;\n\n"
+            "public class PaymentController {}\n",
+        )
+        # The test lives in test/ — same package, different root
+        self._make_pkg_file(
+            tmp_path,
+            "src/test/java/com/foo/controller/PaymentControllerTest.java",
+            "package com.foo.controller;\n\n"
+            "public class PaymentControllerTest {\n"
+            "    void t() { new PaymentController(); }\n"
+            "}\n",
+        )
+        diff = self._diff(
+            "src/test/java/com/foo/controller/PaymentControllerTest.java",
+            ["package com.foo.controller;", "",
+             "public class PaymentControllerTest {",
+             "    void t() { new PaymentController(); }",
+             "}"],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path),
+            {"src/test/java/com/foo/controller/PaymentControllerTest.java": diff},
+        )
+        # Must NOT flag PaymentController — it's in the main source-set peer
+        names = [f["name"] for f in found]
+        assert "PaymentController" not in names, (
+            f"PaymentController falsely flagged as phantom; found={names}"
+        )
+
+    def test_main_class_finds_test_peer_same_package(self, tmp_path):
+        """Symmetric — main/ class referencing a helper that only lives
+        in test/ (rare but valid Java pattern) should also not flag."""
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+        self._make_pkg_file(
+            tmp_path,
+            "src/test/java/com/foo/util/TestFixture.java",
+            "package com.foo.util;\n\n"
+            "public class TestFixture {}\n",
+        )
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/util/UsesFixture.java",
+            "package com.foo.util;\n\n"
+            "public class UsesFixture {\n"
+            "    void t() { new TestFixture(); }\n"
+            "}\n",
+        )
+        diff = self._diff(
+            "src/main/java/com/foo/util/UsesFixture.java",
+            ["package com.foo.util;", "",
+             "public class UsesFixture {",
+             "    void t() { new TestFixture(); }",
+             "}"],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path),
+            {"src/main/java/com/foo/util/UsesFixture.java": diff},
+        )
+        names = [f["name"] for f in found]
+        assert "TestFixture" not in names
+
     def test_java_lang_implicit_import_not_flagged(self, tmp_path):
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
@@ -1877,8 +1956,8 @@ class TestPhase2ReorderP13First:
     def _capture_query(self, brain, ctx, file_diffs, monkeypatch,
                        python_missing=None, go_missing=None, java_missing=None):
         """Monkeypatch the 3 P13 scanners + the factstore + capture the LLM query."""
-        from app.agent_loop import pr_brain as pb
         from app import scratchpad as sp
+        from app.agent_loop import pr_brain as pb
 
         monkeypatch.setattr(
             pb, "_scan_new_python_imports_for_missing",

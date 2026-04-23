@@ -3239,16 +3239,73 @@ def _parse_java_file_imports(workspace_path: str, file_path: str) -> tuple[set[s
     return (imported_simple, star_imports, own_package)
 
 
+def _java_source_set_peers(package_dir: str) -> List[str]:
+    """Return the package_dir plus its Maven/Gradle source-set peers.
+
+    In Maven/Gradle conventions, ``src/main/java/com/foo`` and
+    ``src/test/java/com/foo`` (plus less-common ``src/integrationTest/java``)
+    hold the same Java package — classes in ``main`` are visible from
+    ``test`` by the "same package" rule without an import statement.
+
+    Returns the input dir first (unchanged), followed by any peer
+    directories that exist logically (caller verifies on disk). If the
+    input doesn't sit under a known source-set root, returns just
+    the input unchanged.
+
+    Regression target: PR #14161 flagged `PaymentController` as phantom
+    from `src/test/java/.../controller/PaymentControllerTest.java`
+    because the scanner only checked the test package-dir. The class
+    lives in the peer `src/main/java/.../controller/PaymentController.java`.
+    """
+    peers: List[str] = [package_dir]
+    known_roots = ("src/test/java/", "src/main/java/", "src/integrationTest/java/")
+    matched_root = None
+    for root in known_roots:
+        if f"/{root}" in f"/{package_dir}/" or package_dir.startswith(root):
+            matched_root = root
+            break
+    if not matched_root:
+        return peers
+    for other in known_roots:
+        if other == matched_root:
+            continue
+        peer = package_dir.replace(matched_root, other, 1)
+        if peer != package_dir and peer not in peers:
+            peers.append(peer)
+    return peers
+
+
 def _java_class_defined_in_package(
     workspace_path: str, package_dir: str, name: str, *, timeout_s: float = 8.0,
 ) -> bool:
-    """Grep package dir for a top-level class/interface/enum/record."""
+    """Grep package dir (+ its Maven source-set peers) for a top-level
+    class/interface/enum/record definition.
+
+    For a file in ``src/test/java/com/foo/``, also checks the peer
+    ``src/main/java/com/foo/`` (same Java package, different source
+    root). Without this check we false-positive every
+    ``FooControllerTest`` that references ``FooController`` in the
+    same package.
+    """
     import os as _os
     import subprocess
 
-    full_dir = _os.path.join(workspace_path, package_dir)
-    if not _os.path.isdir(full_dir):
-        return True  # fail-safe when package dir unresolved
+    candidate_files: List[str] = []
+    for peer in _java_source_set_peers(package_dir):
+        full_dir = _os.path.join(workspace_path, peer)
+        if not _os.path.isdir(full_dir):
+            continue
+        try:
+            candidate_files.extend(
+                _os.path.join(full_dir, f)
+                for f in _os.listdir(full_dir)
+                if f.endswith(".java")
+            )
+        except OSError:
+            continue
+
+    if not candidate_files:
+        return True  # fail-safe when no peer resolves on disk
 
     pattern = (
         rf"^\s*(public\s+|private\s+|protected\s+)?"
@@ -3257,9 +3314,7 @@ def _java_class_defined_in_package(
     )
     try:
         r = subprocess.run(
-            ["grep", "-E", "-l", "--max-count=1", "--include=*.java", pattern]
-            + [_os.path.join(full_dir, f) for f in _os.listdir(full_dir)
-               if f.endswith(".java")],
+            ["grep", "-E", "-l", "--max-count=1", pattern, *candidate_files],
             capture_output=True, text=True, timeout=timeout_s,
         )
         if r.returncode == 0 and r.stdout.strip():
