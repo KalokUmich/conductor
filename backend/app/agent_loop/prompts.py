@@ -1265,15 +1265,15 @@ RULES:
 
 
 # ---------------------------------------------------------------------------
-# PR Brain v2 skills — loaded from config/prompts/*.md at module import so
+# PR Brain v2 skills — loaded from config/skills/*.md at module import so
 # the Markdown file is the single source of truth (edits don't need a
 # Python change). Stays consistent with the v1 skills above which are inline
 # Python strings.
 # ---------------------------------------------------------------------------
 
 
-def _load_v2_skill(name: str) -> str:
-    """Read a skill's Markdown from ``config/prompts/{name}.md``.
+def _load_skill(name: str) -> str:
+    """Read a skill's Markdown from ``config/skills/{name}.md``.
 
     Strips YAML frontmatter (``---\\n...\\n---``) if present. Returns an
     empty string on I/O error so a missing file is fail-soft — the
@@ -1284,7 +1284,7 @@ def _load_v2_skill(name: str) -> str:
     # Walk up from this file until we hit a directory containing ``config/``.
     here = Path(__file__).resolve()
     for parent in here.parents:
-        candidate = parent / "config" / "prompts" / f"{name}.md"
+        candidate = parent / "config" / "skills" / f"{name}.md"
         if candidate.is_file():
             try:
                 text = candidate.read_text(encoding="utf-8")
@@ -1299,10 +1299,10 @@ def _load_v2_skill(name: str) -> str:
     return ""
 
 
-_PR_BRAIN_COORDINATOR_SKILL = _load_v2_skill("pr_brain_coordinator")
-_PR_SUBAGENT_CHECKS_SKILL = _load_v2_skill("pr_subagent_checks")
-_PR_EXISTENCE_CHECK_SKILL = _load_v2_skill("pr_existence_check")
-_PR_VERIFICATION_CHECK_SKILL = _load_v2_skill("pr_verification_check")
+_PR_BRAIN_COORDINATOR_SKILL = _load_skill("pr_brain_coordinator")
+_PR_SUBAGENT_CHECKS_SKILL = _load_skill("pr_subagent_checks")
+_PR_EXISTENCE_CHECK_SKILL = _load_skill("pr_existence_check")
+_PR_VERIFICATION_CHECK_SKILL = _load_skill("pr_verification_check")
 
 if _PR_BRAIN_COORDINATOR_SKILL:
     INVESTIGATION_SKILLS["pr_brain_coordinator"] = _PR_BRAIN_COORDINATOR_SKILL

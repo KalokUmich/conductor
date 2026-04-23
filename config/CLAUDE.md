@@ -20,7 +20,7 @@ config/
 │                           # Brain reads + composes into per-dispatch system prompt; not pasted verbatim
 ├── swarms/                  # Swarm presets (agent group + parallel/sequential)
 │   └── business_flow.yaml   # Business flow tracing swarm
-├── prompts/                 # pr_brain_coordinator.md + supporting templates
+├── skills/                  # Layer 3 skill markdown (pr_brain_coordinator + 3 worker skills)
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 ```
 
@@ -35,19 +35,19 @@ Three folders hold "agent-related markdown" and they are NOT interchangeable. Kn
 | Folder | What it is | When to add/edit | Who loads it |
 |---|---|---|---|
 | `agents/` | **Pre-composed, reusable agent definitions.** Frontmatter (model, tools, limits, skill) + body (Layer 1 identity). Same file fires verbatim on every dispatch. | Adding a new dispatchable agent the Brain can address by `template=NAME` | `AgentLoopService` via `_agent_registry[template]` |
-| `prompts/` | **Layer 3 skills** — reusable shared-knowledge blocks. Loaded on module import into `INVESTIGATION_SKILLS` dict. | Adding/editing the skill text of an existing agent, or a coordinator's meta-skill | `_load_v2_skill(name)` in `agent_loop/prompts.py`; injected into Layer 3 when `skill_key` is set |
+| `skills/` | **Layer 3 skills** — reusable shared-knowledge blocks. Loaded on module import into `INVESTIGATION_SKILLS` dict. | Adding/editing the skill text of an existing agent, or a coordinator's meta-skill | `_load_skill(name)` in `agent_loop/prompts.py`; injected into Layer 3 when `skill_key` is set |
 | `agent_factory/` | **Role-reference templates** for v2 coordinator's on-the-fly worker composition. Lens / Concerns / Approach / Examples. NOT used as-is; always fused with PR-specific scope + direction_hint. | Adding a new review lens (e.g. "api_contract") or refining an existing lens's examples | `_load_role_template(role)` in `agent_loop/brain.py`; `_compose_role_system_prompt` fuses with PR context at `dispatch_subagent(role=...)` or `dispatch_dimension_worker(dimension=...)` time |
 
 **The decision tree:**
 - "I want to add a worker the Brain can dispatch via `template=...`" → `agents/`
-- "I want to edit WHAT an existing worker knows / how it behaves" → `prompts/` (skill text) — usually NOT the agent file
+- "I want to edit WHAT an existing worker knows / how it behaves" → `skills/` (skill text) — usually NOT the agent file
 - "I want to teach the v2 coordinator a new review lens it can compose on the fly" → `agent_factory/`
-- "I want to change the orchestration loop (how the coordinator surveys / plans / synthesizes)" → `prompts/pr_brain_coordinator.md`
+- "I want to change the orchestration loop (how the coordinator surveys / plans / synthesizes)" → `skills/pr_brain_coordinator.md`
 
 **Cross-reference:**
-- Each `agents/<X>.md` frontmatter declares `skill: <Y>` which looks up `prompts/<Y>.md`
+- Each `agents/<X>.md` frontmatter declares `skill: <Y>` which looks up `skills/<Y>.md`
 - Multiple agents can share one skill (e.g. `pr_verification_single` + `pr_verification_batch` both point at `pr_verification_check`)
-- `pr_brain_coordinator` skill exists in `prompts/` but has NO agents/ counterpart — the v2 coordinator is dynamically composed by `_run_v2_coordinator_loop`, not loaded from an agent file
+- `pr_brain_coordinator` skill exists in `skills/` but has NO agents/ counterpart — the v2 coordinator is dynamically composed by `_run_v2_coordinator_loop`, not loaded from an agent file
 - `agent_factory/*.md` are NEVER loaded via `_agent_registry` — they're read directly and composed on every dispatch that uses `role=` or `dimension=`
 
 ## Agent & Prompt Design Principles

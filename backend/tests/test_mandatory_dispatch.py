@@ -183,7 +183,7 @@ class TestCoordinatorSkillEnforcesDispatchFloor:
     def _skill_text(self) -> str:
         from pathlib import Path
         here = Path(__file__).resolve().parents[2]
-        skill_path = here / "config" / "prompts" / "pr_brain_coordinator.md"
+        skill_path = here / "config" / "skills" / "pr_brain_coordinator.md"
         return skill_path.read_text(encoding="utf-8")
 
     def test_cardinal_rule_section_present(self):

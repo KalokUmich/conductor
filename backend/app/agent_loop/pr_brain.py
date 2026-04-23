@@ -753,7 +753,7 @@ class PRBrainOrchestrator:
         # Phase 2: Brain-as-coordinator dispatch loop (agent-as-tool)
         # ------------------------------------------------------------------
         # A single Brain (Sonnet) drives the coordinator loop described in
-        # config/prompts/pr_brain_coordinator.md. Brain surveys the PR,
+        # config/skills/pr_brain_coordinator.md. Brain surveys the PR,
         # plans investigations, dispatches scope-bounded sub-agents via
         # dispatch_subagent, replans on unexpected observations, and
         # synthesises with unified severity classification.

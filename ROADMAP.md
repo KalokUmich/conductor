@@ -1341,13 +1341,13 @@ These are the same refactor — the new sub-agent schema `{checks, findings with
 - Max 8 dispatches total, max 3 checks per dispatch
 - Max recursion depth 2 (Brain=0, dispatched sub-agent=1, sub-agent's strong-model verifier=2)
 
-**Sub-agent contract** (replaces today's role-shaped agents — see `config/prompts/pr_subagent_checks.md` for the current drafted system prompt):
+**Sub-agent contract** (replaces today's role-shaped agents — see `config/skills/pr_subagent_checks.md` for the current drafted system prompt):
 - Input: scope + 3 checks + success_criteria + budget + model_tier
 - Output: `{checks: [{verdict, evidence}], findings: [{severity: null, ...}], unexpected_observations: [{confidence, ...}]}`
 - Sub-agent NEVER classifies severity, NEVER investigates beyond scope, NEVER recurses
 - Applies verify-existence rule: check symbol/signature exists before flagging logic on it (addresses observed failure mode where agents flag hypothetical bugs on non-existent classes — see sentry-001 eval case)
 
-**`config/agents/*.md` reposition**: from dispatch targets → reference material Brain studies for tone and evidence standards. Brain composes each investigation fresh rather than copying these broad framings. See `config/prompts/pr_brain_coordinator.md` for the drafted Brain meta-skill.
+**`config/agents/*.md` reposition**: from dispatch targets → reference material Brain studies for tone and evidence standards. Brain composes each investigation fresh rather than copying these broad framings. See `config/skills/pr_brain_coordinator.md` for the drafted Brain meta-skill.
 
 **Two-checkpoint shipping plan** (risk-managed rollout):
 
@@ -1366,7 +1366,7 @@ These are the same refactor — the new sub-agent schema `{checks, findings with
 - Eval: composite, severity_accuracy, token cost, catch rate all compared against Checkpoint A baseline
 
 - [x] **Checkpoint A**: `dispatch_subagent` tool in Brain toolset (scope, 3 checks, success_criteria, budget, model) — `schemas.py:399 DispatchSubagentParams`
-- [x] **Checkpoint A**: sub-agent checks-based output schema + `pr_subagent_checks` skill — `config/prompts/pr_subagent_checks.md`, `config/agents/pr_subagent_checks.md`
+- [x] **Checkpoint A**: sub-agent checks-based output schema + `pr_subagent_checks` skill — `config/skills/pr_subagent_checks.md`, `config/agents/pr_subagent_checks.md`
 - [x] **Checkpoint A**: Brain synthesize gains severity-classification path for new schema — coordinator skill owns severity
 - [x] **Checkpoint A**: verify-existence rule wired into sub-agent skill — Phase 2 existence check + P13 Python import verifier + P14 stub caller detector
 - [x] **Checkpoint A**: side-by-side eval vs fixed swarm — v2l/v2m/v2n/v2o/v2p/v2r/v2s regressions (see `docs/PR_BRAIN_OPTIMIZATION.md` log)

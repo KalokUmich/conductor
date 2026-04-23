@@ -146,7 +146,7 @@ Key designs:
 - `config/brains/pr_review.yaml` — PR Brain limits + post_processing settings
 - `config/agent_factory/*.md` — 7 role templates (security / correctness / concurrency / reliability / performance / test_coverage / api_contract)
 - `config/agents/*.md` — v2 worker agents (pr_existence_check, pr_subagent_checks, pr_verification_batch, pr_verification_single) + business-flow swarm agents
-- `config/prompts/pr_brain_coordinator.md` — coordinator skill (dispatch rubric + severity + hard floors)
+- `config/skills/pr_brain_coordinator.md` — coordinator skill (dispatch rubric + severity + hard floors)
 - `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode + synthesis_guide)
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
