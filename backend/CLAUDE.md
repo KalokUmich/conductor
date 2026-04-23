@@ -39,7 +39,7 @@ backend/app/
 │   ├── risk_classifier.py   # Risk classification (5 dimensions)
 │   ├── ranking.py           # Score and rank findings
 │   └── dedup.py             # Merge and deduplicate findings
-├── code_tools/              # 43 tools (code + file-edit + Jira + browser + Fact Vault) + ToolMetadata
+├── code_tools/              # 45 tools (code + file-edit + Jira + browser + Fact Vault + Brain primitives) + ToolMetadata
 │   ├── schemas.py           # Pydantic models + TOOL_DEFINITIONS + ToolMetadata (43 entries)
 │   ├── tools.py             # Tool implementations (including glob, enhanced grep, search_facts)
 │   ├── output_policy.py     # Per-tool truncation policies (budget-adaptive)
@@ -92,29 +92,54 @@ Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, transfer_to
 - **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets. Brain must decompose queries into 3-6 search targets before dispatching.
 - **TRANSFER**: `transfer_to_brain("pr_review")` — one-way handoff to specialized Brain (PR reviews)
 
-**PR Brain v2** (`agent_loop/pr_brain.py`): Coordinator-worker orchestrator for PR reviews. Activated via `transfer_to_brain("pr_review")`. **Agent-as-tool** design — a single Brain (Sonnet) surveys the PR, dispatches scope-bounded workers (Haiku) via `dispatch_subagent`, replans on surprises, and synthesises:
+**PR Brain v2** (`agent_loop/pr_brain.py`): Coordinator-worker orchestrator for PR reviews. Activated via `transfer_to_brain("pr_review")`. **Agent-as-tool** design — a single Brain (strong tier) surveys the PR, dispatches scope-bounded workers (explorer tier) via two primitives, replans on surprises, and synthesises:
 
 ```
 transfer_to_brain("pr_review") → PRBrainOrchestrator
-  Phase 1: Pre-compute (parse_diff, classify_risk, prefetch_diffs, impact_graph)
-  Phase 2: Existence check — LLM worker + deterministic scanners
-           ├─ P13 phantom-symbol verifiers (Python / Go / Java)
-           └─ P14 stub-call detector (Go / Python / Java stubs + their callers)
-  Phase 3: Coordinator loop (Sonnet)
-           ├─ Survey diff + impact graph
-           ├─ Dispatch sub-agents via dispatch_subagent (role or checks mode)
-           │    Roles loaded on the fly from config/agent_factory/<role>.md
+  Phase 1: Pre-compute
+           ├─ parse_diff, classify_risk, prefetch_diffs, impact_graph
+           ├─ Tier 1 mandatory-dispatch (path regex: auth / security /
+           │   crypto / migration) + Tier 2 mandatory-dispatch (scans
+           │   `+` diff content in Java / Python / Go / TS/JS for
+           │   password ==, JWT literals, whitelist/allowlist, retry)
+           └─ Tier 3 dimension-worker hints (files with ≥3 caller
+               files or ≥5 calling symbols; coordinator decides
+               whether to fire dispatch_dimension_worker)
+  Phase 2: Existence check (v2u reorder — deterministic first, then LLM)
+           ├─ P13 deterministic phantom-symbol scanners (Py / Go / Java)
+           │   persist missing-symbol facts to the vault BEFORE dispatch
+           ├─ LLM existence-check worker with "Pre-verified by P13"
+           │   block + task shifted to 5 signature-level checks
+           │   (method sig, instantiation, attr access, decorator,
+           │   overload). 60s hard timeout; P13 facts already in
+           │   vault on timeout so coordinator proceeds with those.
+           └─ P14 stub-call detector (Go / Python / Java stubs)
+  Phase 3: Coordinator loop (strong tier)
+           ├─ Survey diff + impact graph + mandatory requirements
+           ├─ Two dispatch primitives:
+           │   • dispatch_subagent — scoped to 1-5 files, 3 checks
+           │     (role or checks mode; role composes from
+           │     config/agent_factory/<role>.md)
+           │   • dispatch_dimension_worker (P12b) — full-diff sweep
+           │     through one lens; cap 0/1/2 by PR size
+           ├─ P10 adaptive model_tier (explorer default, strong for
+           │   hard cross-file logical inference)
            ├─ Replan on unexpected observations
            └─ Emit review + findings directly in its answer
   Phase 4: Deterministic post-process
            ├─ Missing-symbol injection (from Phase 2 facts)
            ├─ P8 reflection against existence facts
-           ├─ P11 diff-scope filter (drop findings outside the diff)
+           ├─ P11 3-band precision filter with per-finding verifier
+           │   (explorer per-finding for N≤2, strong batch for N≥3)
+           ├─ P14 stub-caller injection
+           ├─ Diff-scope filter (drop out-of-scope findings)
            └─ Dedup + rank
   Phase 5: Merge recommendation
 ```
 
-Key design: **Role templates are reference, not paste-targets.** Brain composes each dispatched worker's system prompt from a role template (`config/agent_factory/<role>.md`) fused with PR-specific scope and direction_hint.
+Key designs:
+- **Role templates are reference, not paste-targets.** Brain composes each dispatched worker's system prompt from a role template (`config/agent_factory/<role>.md`) fused with PR-specific scope and direction_hint.
+- **Dimension vs scoped dispatch**: scoped (`dispatch_subagent`) decomposes by file-range, dimension (`dispatch_dimension_worker`) decomposes by bug class. Cross-file pattern (e.g. new contract on a function called from 3+ files) is dimension's case; localised invariant checks are scoped's.
 
 **Configuration:**
 - `config/brain.yaml` — Brain limits (iterations, budget, concurrency, timeout) + core_tools
@@ -126,12 +151,13 @@ Key design: **Role templates are reference, not paste-targets.** Brain composes 
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
-**43 tools** across 3 registries + 1 session-scoped:
+**45 tools** across 3 registries + 1 Brain orchestration:
 - **Code tools** (32, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`, **`search_facts`** (Phase 9.15).
 - **Jira tools** (5, `integrations/jira/tools.py`): `jira_search` (with convenience JQL: "my tickets", "my sprint", "blockers"), `jira_get_issue`, `jira_create_issue`, `jira_update_issue`, `jira_list_projects`.
 - **Browser tools** (6, `browser/tools.py`): `web_search`, `web_navigate`, `web_click`, `web_fill`, `web_screenshot`, `web_extract`.
+- **Brain orchestration tools** (6, `BRAIN_TOOL_DEFINITIONS`): `create_plan`, `dispatch_agent`, `dispatch_swarm`, **`dispatch_subagent`** (PR Brain v2 scoped primitive), **`dispatch_dimension_worker`** (P12b full-diff through one lens), `transfer_to_brain`. Only the coordinator sees these.
 
-**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 43 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
+**Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 45 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
 
 **PR-review scratchpad** (Phase 9.15, `app/scratchpad/`): On each PR review start, `PRBrainOrchestrator` opens a per-session SQLite at `~/.conductor/scratchpad/{task_id}-{uuid}.sqlite` and wraps the tool executor with `CachedToolExecutor`. Sub-agent tool calls are transparently deduplicated via exact-key lookup or range-intersection (read_file 100-150 satisfies later 101-130). `search_facts` lets sub-agents query the vault metadata directly. Session file + WAL sidecars are deleted on `cleanup()`. Human-readable `task_id` (e.g. `ado-MyProject-pr-12345`) is folded into the filename so concurrent PR reviews are traceable in activity logs.
 

@@ -120,8 +120,14 @@ Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `
 
 See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-04):
 
+**Recently shipped (PR Brain v2 productisation):**
+- **Phase 9.13 PR Brain v2** — coordinator-worker agent-as-tool architecture with `dispatch_subagent` (file-range scoped, 3 checks) + `dispatch_dimension_worker` (full-diff through one role lens); 7 agent_factory role templates; legacy v1 fleet deleted.
+- **Phase 9.15 Fact Vault** — task-scoped SQLite cache shared across sub-agents, existence facts, skip-list, plan memory.
+- **Phase 9.18 tree-sitter hardening** — subprocess-isolated parser with SIGKILL-on-timeout; JSX-depth heuristic routes large TSX to regex; tree-sitter 0.25 + language-pack.
+- **Phase 7.8 Azure DevOps Auto Review** — size gates (50-2200 lines), `translate_pr_summary` platform-shaped comments, mandatory-dispatch detector (Tier 1 path + Tier 2 `+`-line content), PR splitter (7.8.5) with teach-not-command rationales.
+- **v2u Phase 2 reorder** — P13 deterministic (Python/Go/Java import scanners) runs BEFORE LLM existence worker; worker sees "Pre-verified by P13" block and focuses on 5 signature-level checks; timeout 120s → 60s. Sentry composite 0.796 → 0.834 (+0.038), catch 7/10 → 8/10, zero OOM after Makefile serial-suite fix.
+
 **Immediate (Sprint 14–16):**
-- **Phase 7.8: Azure DevOps Auto Review** — PR pipeline calls backend, posts inline review comments with code quotes + arbitration-filtered findings
 - **Phase 12: Team Knowledge Base** — Postgres + pgvector, auto-ingest from summaries, context injection into Brain/Summary/Review
 - **Phase 7.5: Teams Bot Integration** — `@Conductor summarize` in Teams channels, lightweight + deep (with KB) modes
 - **Phase 13: AI Summary → Action Pipeline** — `/plan` command bridges summary → Jira tickets + TODOs, one-click workflow

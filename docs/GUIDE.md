@@ -354,26 +354,48 @@ transfer_to_brain("pr_review", params={"workspace_path": ..., "diff_spec": "main
 
 `brain.py:_transfer_to_brain` 校验白名单（目前只允许 `pr_review`），然后启动 `PRBrainOrchestrator`。
 
-**第三步：PRBrainOrchestrator 6 阶段流水线**（`backend/app/agent_loop/pr_brain.py`）
+**第三步：PRBrainOrchestrator v2 流水线**（`backend/app/agent_loop/pr_brain.py`）
+
+v1 固定 swarm（pr_arbitrator + 6 专家 agent）已在 2026-04-22 commit `95f39d9` 中移除；现在统一走 v2 coordinator-worker（agent-as-tool）：
 
 ```
-Phase 1: 预计算（parse_diff、classify_risk、prefetch_diffs、impact_graph）
-Phase 2: 并行 dispatch review agents（correctness、correctness_b、concurrency、security、reliability、performance、test_coverage）
-Phase 3: 后处理（evidence_gate → post_filter → dedup → score_and_rank）
-Phase 4: 对抗仲裁（pr_arbitrator 试图反驳每条 finding）
-Phase 5: Merge recommendation（确定性）
-Phase 6: 综合（Brain 作为最终评判，看到正方证据 + 反方反驳）
+Phase 1: 预计算
+  ├─ parse_diff、classify_risk、prefetch_diffs、impact_graph
+  ├─ Tier 1 强制 dispatch（路径 regex：auth / security / crypto / migration）
+  ├─ Tier 2 强制 dispatch（扫描 + 行内容：password ==、JWT 字面量、whitelist、retry——Java/Py/Go/TS/JS）
+  └─ Tier 3 dimension-worker 提示（≥3 caller 文件或 ≥5 调用符号 → 候选）
+Phase 2: 存在性检查（v2u 重排序：先确定性后 LLM）
+  ├─ P13 机械扫描器（Py / Go / Java import 级幻觉符号）先落库
+  ├─ LLM existence worker 读 "Pre-verified by P13" 块，任务聚焦 5 类签名级 check，60s 超时
+  └─ P14 stub 调用检测（Go / Py / Java）
+Phase 3: Coordinator 循环（strong tier）
+  ├─ Survey diff + impact graph + 强制要求
+  ├─ 两种分发 primitive：
+  │  • dispatch_subagent —— 按文件范围 + 3 个可证伪 check（role 或 checks 模式）
+  │  • dispatch_dimension_worker（P12b）—— 按 bug 类别从一个 role lens 扫整个 diff
+  ├─ P10 自适应 model_tier（explorer 默认，strong 仅限跨文件逻辑推理）
+  ├─ 遇到 unexpected observation 时 replan
+  └─ 直接在 answer 里输出 review + findings
+Phase 4: 确定性后处理
+  ├─ Missing-symbol 注入（来自 Phase 2 facts）
+  ├─ P8 外部信号反思（与 Phase 2 事实矛盾的 finding 被丢弃）
+  ├─ P11 3 档精度过滤 + 逐条 finding 验证（explorer per-finding N≤2，strong batch N≥3）
+  ├─ P14 stub 调用者注入
+  ├─ Diff-scope 过滤（超出 PR 文件的 finding 降级到 secondary）
+  └─ Dedup + 排序
+Phase 5: Merge recommendation（coordinator 在 synthesis 里自己分级 severity）
 ```
 
-每个 review agent 的 `.md` frontmatter 都声明 `skill: code_review_pr`，会通过 `forced_skill` 把 `prompts.py` 里的 `INVESTIGATION_SKILLS["code_review_pr"]` 注入 Layer 3。这个 skill 是 PR review 的单一来源：包含 senior engineer persona、provability framework、DO NOT FLAG 列表、PR-introduced 验证规则和 JSON 输出格式。
+**Role 模板是参考，不是粘贴目标：** Coordinator 从 `config/agent_factory/<role>.md`（7 个 role：security / correctness / concurrency / reliability / performance / test_coverage / api_contract）读取 Lens + 方法 + 示例，融合 PR 特定的 scope + direction_hint 组装每个 worker 的 system prompt。
 
 **整条链路：**
 ```
 "/pr main...feature/auth" →
 slashCommands.transform → "[query_type:code_review] main...feature/auth" →
 Brain LLM 看到 marker → transfer_to_brain("pr_review") →
-PRBrainOrchestrator 6 阶段 →
-parallel review agents → arbitration → synthesis →
+PRBrainOrchestrator v2 流水线 →
+Phase 1 强制检测 + Phase 2 P13/P14 + Phase 3 coordinator 分发 →
+Phase 4 precision filter + P8/P11 →
 最终 ReviewResult
 ```
 

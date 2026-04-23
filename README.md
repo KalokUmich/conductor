@@ -52,7 +52,7 @@ Each collaboration room runs inside its own Git workspace using bare repositorie
 
 ### Agentic Code Intelligence
 
-Conductor uses a Brain orchestrator with tool-based agent loops instead of simple RAG. The Brain (strong model) dispatches specialist sub-agents, each navigating the repository using 42 code tools (up to 40 iterations, 500K token budget):
+Conductor uses a Brain orchestrator with tool-based agent loops instead of simple RAG. The Brain (strong model) dispatches specialist sub-agents, each navigating the repository using 45 code tools (up to 40 iterations, 500K token budget). For PR review, a dedicated **PR Brain v2** takes over via `transfer_to_brain("pr_review")` and runs a coordinator loop with two dispatch primitives: `dispatch_subagent` (file-range scoped, 3 falsifiable checks) and `dispatch_dimension_worker` (full-diff sweep through one role lens — security/correctness/concurrency/reliability/performance/test_coverage/api_contract).
 
 | Tool | Description |
 |------|-------------|
@@ -160,8 +160,8 @@ Current prototype includes:
 
 - VS Code collaboration extension with slash-command `@AI` chat and workflow visualization
 - FastAPI backend with Brain orchestrator (dispatches specialist agents)
-- Agentic code intelligence (43 tools, 4-layer prompt architecture)
-- Multi-agent PR review pipeline (6 specialized agents, adversarial arbitration, synthesis)
+- Agentic code intelligence (45 tools, 4-layer prompt architecture)
+- **PR Brain v2** — coordinator-worker (agent-as-tool) PR review: a Sonnet coordinator surveys the diff, dispatches scope-bounded workers (scoped `dispatch_subagent` + dimension-sliced `dispatch_dimension_worker`) from 7 role templates, classifies severity itself, and runs deterministic post-passes (P8 reflection against Phase 2 facts, P11 per-finding verifier, P13 phantom-symbol scanners for Python/Go/Java, P14 stub-caller detector, diff-scope filter). Mandatory-dispatch detector (Tier 1 path + Tier 2 `+`-line content) forces security/reliability coverage on auth/crypto/migration PRs regardless of survey.
 - **Fact Vault** (short-term memory per PR review — task-scoped SQLite cache shared across sub-agents; Phase 9.15)
 - **Hardened tree-sitter scan** — subprocess-isolated parsing with SIGKILL-on-timeout + JSX-depth heuristic; tree-sitter upgraded to 0.25 / language-pack (Phase 9.18)
 - Isolated Git workspaces per room
@@ -172,7 +172,7 @@ Current prototype includes:
 - Langfuse self-hosted observability (nested execution trees, cost tracking)
 - Jira integration (OAuth 3LO, 5 agent tools, 3-phase investigate→mark→update workflow)
 - Cloud-ready: `CONDUCTOR_*` env vars override secrets for ECS/K8s deployment
-- 1777+ automated tests (533 tool-related + parity)
+- 2000+ automated tests (533 tool-related + parity)
 
 ## Roadmap
 
@@ -263,7 +263,7 @@ AI 提炼
 
 ### Agentic 代码智能
 
-Conductor 使用 Brain 编排器和基于工具的 Agent 循环，而非简单的 RAG。Brain（强模型）分发专业子 Agent，每个 Agent 通过 42 个代码工具迭代探索代码库（最多 40 轮迭代，50 万 token 预算）。
+Conductor 使用 Brain 编排器和基于工具的 Agent 循环，而非简单的 RAG。Brain（强模型）分发专业子 Agent，每个 Agent 通过 45 个代码工具迭代探索代码库（最多 40 轮迭代，50 万 token 预算）。PR 评审由专门的 **PR Brain v2** 接管（通过 `transfer_to_brain("pr_review")`），运行协调循环，配两个分发原语：`dispatch_subagent`（按文件范围 + 3 个可证伪 check）和 `dispatch_dimension_worker`（按 bug 类别从一个 role lens 扫描整个 diff —— security/correctness/concurrency/reliability/performance/test_coverage/api_contract）。
 
 工具详情见上方英文部分。
 
@@ -304,8 +304,8 @@ npm run compile
 
 - VS Code 协作扩展（斜杠命令 `@AI` 聊天与工作流可视化面板）
 - FastAPI 后端（Brain 编排器分发专业 Agent）
-- Agentic 代码智能（43 个工具，4 层 prompt 架构）
-- 多 Agent PR 代码评审（6 个专用 Agent，对抗仲裁，综合输出）
+- Agentic 代码智能（45 个工具，4 层 prompt 架构）
+- **PR Brain v2** —— 协调-worker（agent-as-tool）PR 评审：Sonnet coordinator 扫描 diff，从 7 个 role 模板分发 scope-bounded worker（按文件范围的 `dispatch_subagent` + 按 bug 类别的 `dispatch_dimension_worker`），自己分类 severity，并运行确定性后置检查（P8 现存事实反思、P11 逐条 finding 验证、P13 Python/Go/Java 幻觉符号扫描器、P14 stub 调用检测、diff-scope 过滤）。强制分发检测器（Tier 1 路径 + Tier 2 `+` 行内容）在 auth/crypto/migration PR 上强制 security/reliability 覆盖。
 - **Fact Vault**（PR review 会话级短期记忆 —— 任务作用域 SQLite 缓存，跨 sub-agent 共享；Phase 9.15）
 - **硬化的 tree-sitter 扫描** —— 子进程隔离解析 + SIGKILL 超时 + JSX 嵌套深度启发式；tree-sitter 升级到 0.25 + language-pack（Phase 9.18）
 - 每个房间独立的 Git 工作区
@@ -316,7 +316,7 @@ npm run compile
 - Langfuse 自托管可观测性（嵌套执行树、成本追踪）
 - Jira 集成（OAuth 3LO，5 个 Agent 工具，3 阶段 investigate→mark→update 流程）
 - 云部署就绪：`CONDUCTOR_*` 环境变量覆盖 ECS/K8s 部署的 secrets
-- 1777+ 自动化测试（533 工具相关 + parity）
+- 2000+ 自动化测试（533 工具相关 + parity）
 
 ## Roadmap
 

@@ -842,7 +842,7 @@ Azure DevOps PR trigger → Pipeline YAML step (HTTP POST)
 - [ ] Reuses `formatter.py` logic + `PRBrainOrchestrator` pipeline
 - [ ] GitLab CI `.gitlab-ci.yml` step template
 
-#### 7.8.5 PR Size Gates + Split-Assistant Agent (PLANNED)
+#### 7.8.5 PR Size Gates + Split-Assistant Agent (SHIPPED — single-shot LLM)
 
 Current ADO review pipeline only runs when the PR is in the useful
 size band (**50 ≤ changed_lines ≤ 2200**). Out-of-band PRs are
@@ -853,24 +853,37 @@ skipped with a PR-level comment explaining why:
   review pass can't fit the change into usable model context; the
   valuable intervention is to split, not to review.
 
-The large-PR message currently recommends the author split manually.
-Dedicated assistant to replace that manual step:
+**Shipped 2026-04-22 (commits 79211cc + 5e59146):** single-shot
+strong-tier LLM call in `backend/app/code_review/splitter.py` —
+`generate_pr_split_plan(diff_text, pr_title, pr_description,
+total_lines, file_count, provider)` returns author-friendly markdown
+that's appended to the skip comment. No sub-agents, no new brain —
+follows `translate_pr_summary` pattern. Fail-soft: on any LLM error,
+falls back to the generic skip message.
 
-- [ ] **PR Splitter Agent** (`config/agents/pr_splitter.md` or new role):
-  - Input: the oversized diff + PR title/description
-  - Output: a proposed split plan — N logically-independent chunks
-    each in the reviewable size band, with a one-line rationale per
-    chunk ("schema migration", "handler logic", "tests", "docs",
-    "unrelated cleanup to revert")
-  - Suggest stacked-PR topology where dependencies exist
-- [ ] Backend endpoint: `POST /api/integrations/azure-devops/suggest-split`
-  accepting `{ org, project, repo, pr_id }`, returns the split plan
-  + optional per-chunk patch files
-- [ ] UI integration: post the plan as a PR-level comment; author can
-  accept / modify via follow-up prompt
-- [ ] Scoring / eval: measure split-plan quality against a handful
-  of known-oversized real PRs — primary metric is whether each
-  suggested chunk compiles / tests independently
+- [x] **Single-shot PR splitter** (`code_review/splitter.py`): reads
+  the diff (bounded 40K chars), strong-tier LLM produces a structured
+  plan with 2-6 chunks + per-chunk `*Why these belong together*` /
+  `*Why separate from the rest*` rationales + Dependencies +
+  optional "What to drop".
+- [x] Author-facing prompt tuned to **teach**, not command — junior
+  devs learn from the rationale (hard rule: "Rationale is the
+  product"). max_tokens 2000 to accommodate substantive reasoning.
+- [x] ADO router wiring in `integrations/azure_devops/router.py` —
+  large-PR branch calls splitter, appends plan to skip content
+  (fail-soft on exception).
+- [x] `app.state.pr_brain_strong_provider` plumbed so router can
+  reuse the provider without instantiating a brain.
+- [ ] **Deferred to future:** multi-agent PR Splitter Brain
+  (`transfer_to_brain("pr_splitter")`) — only if single-shot output
+  quality proves insufficient on real oversized PRs. Currently zero
+  validation cases; start simple.
+- [ ] **Deferred to future:** dedicated endpoint
+  `POST /api/integrations/azure-devops/suggest-split` for on-demand
+  split-plan requests (without running the full review path).
+- [ ] Scoring / eval: measure split-plan quality against real
+  oversized PRs — primary metric is whether each suggested chunk
+  compiles / tests independently.
 
 ### Dependency Graph
 ```

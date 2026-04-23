@@ -354,26 +354,50 @@ transfer_to_brain("pr_review", params={"workspace_path": ..., "diff_spec": "main
 
 `brain.py:_transfer_to_brain` validates against an allowlist (currently only `pr_review` is allowed), then launches `PRBrainOrchestrator`.
 
-**Step 3: PRBrainOrchestrator's 6-phase pipeline** (`backend/app/agent_loop/pr_brain.py`)
+**Step 3: PRBrainOrchestrator v2 pipeline** (`backend/app/agent_loop/pr_brain.py`)
+
+The v1 fixed-swarm pipeline (pr_arbitrator + 6 specialist agents) was removed in commit `95f39d9` (2026-04-22). Everything now runs through the v2 coordinator-worker (agent-as-tool) architecture:
 
 ```
-Phase 1: Pre-compute (parse_diff, classify_risk, prefetch_diffs, impact_graph)
-Phase 2: Parallel dispatch of review agents (correctness, correctness_b, concurrency, security, reliability, performance, test_coverage)
-Phase 3: Post-processing (evidence_gate -> post_filter -> dedup -> score_and_rank)
-Phase 4: Adversarial arbitration (pr_arbitrator tries to refute each finding)
-Phase 5: Merge recommendation (deterministic)
-Phase 6: Synthesis (Brain acts as final judge, seeing both supporting evidence and rebuttals)
+Phase 1: Pre-compute
+  ├─ parse_diff, classify_risk, prefetch_diffs, impact_graph
+  ├─ Tier 1 mandatory dispatch (path regex: auth / security / crypto / migration)
+  ├─ Tier 2 mandatory dispatch (scans + diff content: password ==, JWT literals,
+  │   whitelist/allowlist, retry — Java/Py/Go/TS/JS)
+  └─ Tier 3 dimension-worker hints (files with ≥3 caller files or ≥5 calling symbols → candidates)
+Phase 2: Existence check (v2u reorder — deterministic first, then LLM)
+  ├─ P13 deterministic scanners (Py / Go / Java import-level phantoms) persist facts first
+  ├─ LLM existence worker sees "Pre-verified by P13" block and focuses on 5 signature-level
+  │   checks (method sig, instantiation, attr access, decorator, overload) — 60s hard timeout
+  └─ P14 stub-call detector (Go / Py / Java)
+Phase 3: Coordinator loop (strong tier)
+  ├─ Survey diff + impact graph + mandatory requirements
+  ├─ Two dispatch primitives:
+  │   • dispatch_subagent — scoped to 1-5 files, 3 falsifiable checks (role or checks mode)
+  │   • dispatch_dimension_worker (P12b) — full-diff sweep through one role lens
+  ├─ P10 adaptive model_tier (explorer default; strong only for hard cross-file inference)
+  ├─ Replan on unexpected observations
+  └─ Emit review + findings directly in the answer
+Phase 4: Deterministic post-process
+  ├─ Missing-symbol injection (from Phase 2 facts)
+  ├─ P8 external-signal reflection (drop findings whose premise contradicts Phase 2 facts)
+  ├─ P11 3-band precision filter + per-finding verifier (explorer per-finding N≤2, strong batch N≥3)
+  ├─ P14 stub-caller injection
+  ├─ Diff-scope filter (demote out-of-scope findings to secondary)
+  └─ Dedup + rank
+Phase 5: Merge recommendation (coordinator classifies severity itself in synthesis)
 ```
 
-Each review agent's `.md` frontmatter declares `skill: code_review_pr`, which uses `forced_skill` to inject the `INVESTIGATION_SKILLS["code_review_pr"]` entry from `prompts.py` into Layer 3. This skill is the single source of PR review guidance: it carries the senior engineer persona, provability framework, DO NOT FLAG list, PR-introduced verification rules, and JSON output format.
+**Role templates are reference, not paste-targets:** The coordinator loads `config/agent_factory/<role>.md` (7 roles: security / correctness / concurrency / reliability / performance / test_coverage / api_contract), extracts the Lens / Approach / Examples, and fuses them with PR-specific scope + direction_hint to compose each worker's system prompt on the fly.
 
 **The full chain:**
 ```
 "/pr main...feature/auth" ->
 slashCommands.transform -> "[query_type:code_review] main...feature/auth" ->
 Brain LLM sees the marker -> transfer_to_brain("pr_review") ->
-PRBrainOrchestrator 6 phases ->
-parallel review agents -> arbitration -> synthesis ->
+PRBrainOrchestrator v2 pipeline ->
+Phase 1 mandatory detectors + Phase 2 P13/P14 + Phase 3 coordinator dispatch ->
+Phase 4 precision filter + P8/P11 ->
 final ReviewResult
 ```
 

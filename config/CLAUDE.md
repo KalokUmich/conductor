@@ -8,15 +8,25 @@ config/
 ├── conductor.secrets.yaml   # Secrets (gitignored)
 ├── brain.yaml               # Brain orchestrator config (limits, core_tools, model)
 ├── brains/                  # Specialized Brain configs
-│   └── pr_review.yaml       # PR Brain config (agents, budget_weights, post_processing)
-├── agents/                  # 19 agent .md files (YAML frontmatter + Markdown body)
-│   └── pr_arbitrator.md     # Defense attorney for PR review (challenges findings)
+│   └── pr_review.yaml       # PR Brain v2 config (budget_weights, post_processing)
+├── agents/                  # Active dispatchable agents (Brain loads the whole file as system prompt)
+│   ├── pr_existence_check.md      # Phase 2 LLM worker (signature-level checks post v2u)
+│   ├── pr_subagent_checks.md      # PR Brain v2 worker — 3 falsifiable checks
+│   ├── pr_verification_single.md  # P11 single-finding verifier (explorer tier)
+│   ├── pr_verification_batch.md   # P11 batch verifier (strong tier, N≥3 findings)
+│   └── explore_*.md               # Business-flow swarm explorers
+├── agent_factory/           # Role TEMPLATES for PR Brain v2's dimension/role dispatch
+│   └── {security,correctness,concurrency,reliability,performance,test_coverage,api_contract}.md
+│                           # Brain reads + composes into per-dispatch system prompt; not pasted verbatim
 ├── swarms/                  # Swarm presets (agent group + parallel/sequential)
-│   ├── pr_review.yaml       # 5-agent PR review swarm
-│   └── business_flow.yaml   # 2-agent business flow tracing
-├── prompts/                 # review_base.md, explorer_base.md (shared templates)
+│   └── business_flow.yaml   # Business flow tracing swarm
+├── prompts/                 # pr_brain_coordinator.md + supporting templates
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 ```
+
+**Two agent folders, two semantics:**
+- `config/agents/*.md` — **active dispatchable agents**. Brain loads the whole .md as the worker's system prompt. Used by `pr_existence_check`, `pr_subagent_checks` (scoped checks mode), and the P11 verifiers.
+- `config/agent_factory/*.md` — **reference templates** the v2 coordinator studies to compose role-specialised worker prompts on the fly. Used by role-mode `dispatch_subagent(role=...)` and P12b `dispatch_dimension_worker(dimension=...)`. See `agent_factory/_README.md` for composition semantics.
 
 ## Agent & Prompt Design Principles
 
@@ -55,7 +65,7 @@ Every agent prompt — Brain or sub-agent — MUST follow this 4-layer structure
 
 8. **Role specialization** — Each agent has a distinct identity (Layer 1 system prompt). Shared investigation patterns belong in Layer 3, not Layer 1. Never add shared strategies to individual agent identities — this destroys role separation (proven by eval: 60% → 25% regression).
 9. **Structured output via strategy** — Output format templates (e.g. code_review) are injected as a Layer 3 skill when the agent's frontmatter sets `strategy: code_review`. Don't inject investigation procedures for open-ended queries.
-10. **Adversarial arbitration for PR reviews** — Sub-agents provide evidence FOR findings (prosecution). The arbitrator provides evidence AGAINST (defense). The synthesis LLM acts as judge, seeing both sides. The arbitrator does NOT adjust severity — it provides counter-evidence and a rebuttal confidence score.
+10. **Arbitration lives in the coordinator's synthesis step** — PR Brain v2 does not use a separate arbitrator agent. The coordinator sees all worker findings + `unexpected_observations` + Phase 2 existence facts in one context, classifies severity itself using the 2-question rubric (provable? + blast radius?), and applies deterministic post-passes: P8 external-signal reflection against Phase 2 facts (drops findings whose premise contradicts exists=True), P11 3-band precision filter (explorer verifier per-finding for N≤2, strong batch for N≥3), diff-scope filter. The legacy v1 arbitrator (`pr_arbitrator.md`) was removed with the v1 fleet in commit 95f39d9.
 11. **DO NOT FLAG list** — PR review agents have an explicit exclusion list: style/formatting, pre-existing issues, speculative concerns, secondary effects of the same root cause, design disagreements, generated/vendored code.
 12. **Per-agent model selection** — Critical review dimensions (correctness) use the strong model; others use the explorer model. Set `model: strong` in the agent `.md` frontmatter.
 
