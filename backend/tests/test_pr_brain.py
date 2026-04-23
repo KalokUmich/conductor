@@ -1934,7 +1934,7 @@ class TestPhase2ReorderP13First:
             }],
         )
         query = captured["params"]["query"]
-        assert "Pre-verified by P13" in query
+        assert "Pre-verified missing symbols" in query
         assert "`Y`" in query  # backtick-wrapped symbol name
         assert "app/service.py:1" in query
 
@@ -1947,7 +1947,7 @@ class TestPhase2ReorderP13First:
             python_missing=[],
         )
         query = captured["params"]["query"]
-        assert "Pre-verified by P13" not in query
+        assert "Pre-verified missing symbols" not in query
 
     def test_task_text_shifted_to_signature_focus(self, monkeypatch):
         brain = _make_pr_brain()

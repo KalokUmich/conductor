@@ -26,8 +26,9 @@ for verification.
 
 **Every finding you emit in Synthesize must be grounded in one of**:
 1. A **Phase 2 existence fact** (phantom imports, missing classes,
-   stub callers from P13/P14) — promotable directly as ImportError /
-   TypeError / runtime-failure findings.
+   stub callers flagged by the deterministic pre-scan) —
+   promotable directly as ImportError / TypeError / runtime-failure
+   findings.
 2. A **sub-agent verdict** from a `dispatch_subagent` call — the
    worker's `findings[]` array, `unexpected_observations` with
    `confidence ≥ 0.5`, or `violated` verdict on one of its checks.
@@ -291,7 +292,7 @@ verify the caller handles the new None return". The sub-agent then may
 dispatch its own narrower sub-agents (depth 2, hard wall). Default is
 `false`; use sparingly. Sub-sub-agents CANNOT dispatch further.
 
-**model_tier flag** (P10 — adaptive model): `model_tier="explorer"` (Haiku)
+**model_tier flag** (adaptive model): `model_tier="explorer"` (fast tier)
 is the default and correct for the vast majority of dispatches — pattern
 matching, existence grep, check-this-invariant-at-this-line work. Reserve
 `model_tier="strong"` (Sonnet) for investigations that actually need the
@@ -341,7 +342,7 @@ decoding." Single file, single invariant, pattern-matchable — Haiku
 handles this fine. Upgrading to strong here just burns money.
 </example>
 
-**dispatch_dimension_worker** (P12b — full-diff sweep through one lens):
+**dispatch_dimension_worker** (full-diff sweep through one lens):
 a second primitive, complementary to `dispatch_subagent`. Where
 `dispatch_subagent` decomposes by **file-range** (each worker sees 1-5
 files and answers 3 checks), `dispatch_dimension_worker` decomposes by
@@ -362,8 +363,8 @@ bug across every changed file.
   in scope but which ones are broken is the question.
 
 **When to stay with scoped dispatch**:
-- Suspicion is already localised to one invariant at one line (the
-  original P11 / v2 sweet spot).
+- Suspicion is already localised to one invariant at one line — the
+  scoped-dispatch sweet spot.
 - Small PR (<5 files) — dimension cap is 0.
 - You have 3 concrete falsifiable yes/no questions. Then scoped + checks
   is strictly sharper.
