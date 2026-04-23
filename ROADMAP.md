@@ -1369,7 +1369,7 @@ These are the same refactor — the new sub-agent schema `{checks, findings with
 - [x] **Checkpoint A**: sub-agent checks-based output schema + `pr_subagent_checks` skill — `config/skills/pr_subagent_checks.md`, `config/agents/pr_subagent_checks.md`
 - [x] **Checkpoint A**: Brain synthesize gains severity-classification path for new schema — coordinator skill owns severity
 - [x] **Checkpoint A**: verify-existence rule wired into sub-agent skill — Phase 2 existence check + P13 Python import verifier + P14 stub caller detector
-- [x] **Checkpoint A**: side-by-side eval vs fixed swarm — v2l/v2m/v2n/v2o/v2p/v2r/v2s regressions (see `docs/PR_BRAIN_OPTIMIZATION.md` log)
+- [x] **Checkpoint A**: side-by-side eval vs fixed swarm — v2l/v2m/v2n/v2o/v2p/v2r/v2s regressions validated by commit trail
 - [x] **Checkpoint B**: Brain meta-skill (`pr_brain_coordinator.md`) becomes default system prompt
 - [x] **Checkpoint B**: hard invariants enforced in code (min correctness, trigger patterns via Tier 1 path + Tier 2 content detectors in `pr_brain.py::_detect_required_dispatches`, dispatch caps scaled by PR size)
 - [x] **Checkpoint B**: `config/agents/*.md` get reference-only header
@@ -1657,6 +1657,39 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 - [ ] Exponential backoff for external API calls (Jira, AI providers)
 - [ ] Error categorization in Langfuse traces (transient vs permanent)
 
+### 11.9 Lab Notebook System (PLANNED — MEDIUM PRIORITY)
+
+**Problem**: experimental work on the PR Brain (tried-and-reverted attempts, regression comparison across tags, research notes feeding design decisions) used to live in a 791-line `docs/PR_BRAIN_OPTIMIZATION.md` that didn't fit any other doc shape. Deleted 2026-04-23 because project-facing docs shouldn't carry engineering lab-notebook content. Need a real home for this information.
+
+Three dimensions of the problem:
+
+1. **Feature additions** — currently fine: git log + ROADMAP phase entries + CLAUDE.md "Recently shipped" covers what shipped.
+2. **Intermediate experiments** — the gap. v2f → v2g (reverted) → v2h (partially reverted) → v2j (over-reverted) → v2k (targeted restore) narratives. Captures WHY decisions were made, not just WHAT landed.
+3. **Regression tracking** — composite/catch/judge scores per eval tag per suite. Today stored in `/tmp/brain-regression-*-<tag>.log` files that are gitignored and ephemeral.
+
+Three candidate implementations (decide when picking this up):
+
+**A. Git-tracked `docs/lab/` subdirectory** — zero new infra. Narrative notes per tag as markdown files. Honest about being engineering notes not user docs. Downside: still in project repo, still appears in PR diffs.
+
+**B. SQLite-backed `conductor-lab` CLI** — at `~/.conductor/lab.sqlite`, mirrors the scratchpad pattern. Schema:
+```
+experiments(tag, parent_tag, date, description, principle, status)
+regressions(tag, suite, case_id, composite, catch, judge, commit_sha)
+notes(tag, body_md)            -- free-form narrative
+sources(tag, url, note)         -- research bibliography
+```
+Commands: `record` / `regression ingest <log>` / `diff <tag-a> <tag-b>` / `export <range> --markdown`. Ingests existing `/tmp/brain-regression-*.log` format. ~200 lines of Python. Lives outside repo.
+
+**C. Langfuse native** — already running on :3001. Use **Datasets** for eval cases, **Dataset runs** for each tag, **Scores** for composite/catch/judge, **Annotations** for narrative. UI has run-vs-run comparison + cost trends + historical graphs. Downside: need ingester from our log format into Langfuse API; UI is data-first not narrative-first.
+
+**Recommended combo** (when implemented): **B + C** — Langfuse for regression numbers / cost trends (has the UI for it), SQLite CLI for narrative + experimental notes that don't fit structured rows. ROADMAP ADR section captures architecture-level decisions that outlast experimental churn.
+
+- [ ] Pick implementation (A / B / C / combo)
+- [ ] If B/C: write ingester for `/tmp/brain-regression-*-<tag>.log` parser → DB rows
+- [ ] If C: Dataset registration script for 4 Greptile suites (requests / sentry / grafana / keycloak)
+- [ ] CLI for `diff v2u v2v --suite keycloak` style comparison
+- [ ] Migration: extract historical narrative from git log (commits `a993502` through `43e4e44` carry the v2f–v2v story in commit messages); seed the notebook with those
+
 ### Dependency Graph
 ```
 11.1 (CI/CD) ──────────────────> foundation for all others
@@ -1667,6 +1700,7 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 11.6 (Extension Tests) ────────> enforced by 11.1
 11.7 (Deployment) ─────────────> benefits from 11.1 (image build)
 11.8 (Error Handling) ─────────> measured by 11.5
+11.9 (Lab Notebook) ───────────> benefits from 11.5 (Langfuse is option C)
 ```
 
 ## Phase 12: Team Knowledge Base (PLANNED)
@@ -1782,6 +1816,7 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 9.16: Forked Agent Pattern (P11 verifier cache reuse)** | **✅ Complete** | **Sprint 18** |
 | **Phase 9.17: Brain Lifecycle Hooks (4 extension points)** | **✅ Complete** | **Sprint 18** |
 | **Phase 11.3: Type Checking (mypy strict-audit baseline)** | **✅ Complete** | **Sprint 18** |
+| **Phase 11.9: Lab Notebook System (experimental notes + regression history)** | **🟡 Planned** | **TBD** |
 | Phase 10: Companion & Developer Experience | 🟡 Planned | — |
 | Phase 11: Engineering Infrastructure | 🟡 Planned | — |
 | **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
