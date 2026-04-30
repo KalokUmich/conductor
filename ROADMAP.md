@@ -761,15 +761,27 @@ When investigating a Jira ticket that belongs to a different repo than the curre
 - [ ] Fallback: if auto-switch fails, show user a one-click "Open workspace: /path/to/repo" button in chat.
 - [ ] Investigation context handoff: serialize current agent findings + ticket data so the new workspace session can continue where the old one left off.
 
-#### 7.7.11 Jira Webhook Auto-Investigate (PLANNED)
-When a Jira ticket is created/assigned to the user, auto-trigger investigation without manual action.
-- [ ] `POST /api/webhooks/jira` — receiver endpoint for Jira webhooks (issue_created, issue_updated events)
-- [ ] Jira webhook config: register URL in Jira project settings (admin), filter by assignee + event type
-- [ ] On webhook: match assignee to Conductor user → determine workspace from jira_project_guide component mapping
-- [ ] Background agent: run jira_assistant investigate in headless mode (no user session needed)
-- [ ] Store investigation results in DB → surface in Task Board when user opens VS Code ("1 new plan ready")
-- [ ] Cost control: configurable rate limit (e.g. max 5 auto-investigations per hour), skip low-priority tickets
-- [ ] Opt-in via `conductor.settings.yaml`: `jira.webhook_auto_investigate: true`
+#### 7.7.11 Jira Webhook Auto-Investigate (MVP SHIPPED — full investigation deferred)
+When a Jira ticket is created, auto-post a structured triage note as a comment so the assignee has a 30-second head start.
+
+**Shipped (MVP)**:
+- [x] `POST /api/webhooks/jira?token=...` receiver — `backend/app/integrations/jira/webhook_router.py`
+- [x] Token-in-query auth (Atlassian Cloud's native webhooks don't HMAC-sign payloads)
+- [x] Event filter: only `jira:issue_created` (issue_updated explicitly excluded — too noisy in MVP)
+- [x] Background dispatch via `asyncio.create_task` → 200 within 10s for Jira Cloud
+- [x] Lightweight LLM triage (`auto_investigate.investigate_and_comment`): single zero-tool call, reads ticket + `jira_project_guide.yaml` excerpt, emits Triage / Likely components / First investigation steps / Risks structure
+- [x] `JiraReadonlyClient.add_comment` — ADF-formatted body posted via service-account Basic auth (no user session needed)
+- [x] Hardened error paths: 401 wrong token, 503 unconfigured token / unconfigured readonly client / unconfigured AI provider, 200+skip for unsubscribed events
+- [x] 15 tests in `test_jira_webhook.py` covering token validation, event filter, background dispatch, dry-run + happy path + add_comment failure + empty-triage skip
+- [x] Setup docs `docs/JIRA_WEBHOOK_SETUP.md` for site admins (token generation, Atlassian webhook UI walkthrough, JQL filter recommendations, troubleshooting)
+
+**Deferred (full v2)**:
+- [ ] Real code investigation — mount workspace per project (from `jira_project_guide.yaml` repo mapping) → invoke full Brain → produce findings with file:line evidence. MVP punts because Conductor backend doesn't currently keep per-project repo checkouts; needs work in `git_workspace_service` to multi-tenant the workspace dir.
+- [ ] Match assignee to Conductor user (currently triages every ticket regardless of assignee — operator filters via Atlassian-side JQL instead)
+- [ ] Rate limit (e.g. max 5 auto-investigations per hour per project) — currently uncapped, relying on Atlassian-side JQL to gate volume
+- [ ] DB persistence + Task Board UI (`1 new plan ready`) — MVP just posts the comment back to Jira and forgets
+- [ ] Opt-in toggle via `conductor.settings.yaml` (currently controlled by presence/absence of `webhook_token` in secrets — empty token → 503, present → enabled)
+- [ ] Skip low-priority tickets — also deferred to Atlassian-side JQL filter
 
 #### 7.7.12 MCP Server for Jira Tools (PLANNED)
 Expose Conductor's Jira tools as an MCP (Model Context Protocol) server so other AI tools (Claude Desktop, external agents) can use our Jira integration.
@@ -1910,6 +1922,7 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 9.13+: v2u Phase 2 reorder (P13 first, LLM signature-focus, 60s timeout)** | **✅ Complete** | **Sprint 17** |
 | **Phase 7.8.5: PR Splitter (single-shot, teach-not-command rationales)** | **✅ Complete** | **Sprint 17** |
 | **Phase 7.8.6: Atlassian readonly enrichment (Jira + Confluence ticket context for PR Brain)** | **✅ Complete** | **Sprint 18** |
+| **Phase 7.7.11: Jira Webhook Auto-Investigate (MVP — triage note posted as Jira comment)** | **✅ Complete (MVP)** | **Sprint 18** |
 | **Phase 9.9.3: Structured Note-Taking for sub-agents** | **✅ Complete** | **Sprint 18** |
 | **Phase 9.16: Forked Agent Pattern (P11 verifier cache reuse)** | **✅ Complete** | **Sprint 18** |
 | **Phase 9.17: Brain Lifecycle Hooks (4 extension points)** | **✅ Complete** | **Sprint 18** |

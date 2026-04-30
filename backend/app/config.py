@@ -72,6 +72,7 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_ATLASSIAN_READONLY_EMAIL": ("atlassian_readonly", "email"),
     "CONDUCTOR_ATLASSIAN_READONLY_TOKEN": ("atlassian_readonly", "api_token"),
     "CONDUCTOR_ATLASSIAN_READONLY_SITE_URL": ("atlassian_readonly", "site_url"),
+    "CONDUCTOR_JIRA_WEBHOOK_TOKEN": ("atlassian_readonly", "webhook_token"),
     "CONDUCTOR_TEAMS_APP_ID": ("teams", "app_id"),
     "CONDUCTOR_TEAMS_APP_PASSWORD": ("teams", "app_password"),
     "CONDUCTOR_TEAMS_APP_TENANT_ID": ("teams", "app_tenant_id"),
@@ -560,6 +561,12 @@ class AtlassianReadonlySecretsConfig(BaseModel):
     site_url: str = ""
     email: str = ""
     api_token: str = ""
+    # Phase 7.7.11 — shared secret for the Jira webhook receiver. Site
+    # admin sets this when registering the webhook URL in Atlassian
+    # Cloud's Settings → System → Webhooks UI; Conductor compares
+    # against the ``?token=`` query string. Empty means the receiver
+    # endpoint will return 503 and reject all inbound traffic.
+    webhook_token: str = ""
 
 
 class TeamsSettings(BaseModel):
@@ -797,6 +804,9 @@ def load_config(
         site_url=_env("CONDUCTOR_ATLASSIAN_READONLY_SITE_URL", atl_ro_sec.get("site_url", "")),
         email=_env("CONDUCTOR_ATLASSIAN_READONLY_EMAIL", atl_ro_sec.get("email", "")),
         api_token=_env("CONDUCTOR_ATLASSIAN_READONLY_TOKEN", atl_ro_sec.get("api_token", "")),
+        webhook_token=_env(
+            "CONDUCTOR_JIRA_WEBHOOK_TOKEN", atl_ro_sec.get("webhook_token", "")
+        ),
     )
 
     teams_data = raw.get("teams", {})

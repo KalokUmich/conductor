@@ -278,6 +278,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ---- Jira Integration ----
     conductor_cfg = get_config()
+    # Phase 7.7.11 — expose the loaded config + jira_project_guide on
+    # app.state so the webhook router (which fires outside any user
+    # session) can reach the readonly client + secrets without
+    # re-loading them per request.
+    app.state.conductor_config = conductor_cfg
+    try:
+        import yaml as _yaml
+
+        from .workflow.loader import _find_config_dir
+        _guide_path = _find_config_dir() / "jira_project_guide.yaml"
+        if _guide_path.exists():
+            app.state.jira_project_guide = _yaml.safe_load(_guide_path.read_text("utf-8")) or {}
+        else:
+            app.state.jira_project_guide = {}
+    except Exception as _exc:
+        logger.warning("Failed to load jira_project_guide.yaml: %s", _exc)
+        app.state.jira_project_guide = {}
+
     if conductor_cfg.jira.enabled and conductor_cfg.jira_secrets.client_id:
         from .integrations.jira.models import JiraFieldOption
         from .integrations.jira.service import JiraOAuthService
@@ -540,6 +558,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     from .integrations.azure_devops.router import router as azure_devops_router
     from .integrations.confluence.router import router as confluence_router
     from .integrations.jira.router import router as jira_router
+    from .integrations.jira.webhook_router import router as jira_webhook_router
     from .integrations.teams.router import router as teams_router
     from .langextract.router import router as langextract_router
     from .policy.router import router as policy_router
@@ -568,6 +587,7 @@ def create_app(settings: AppSettings | None = None) -> FastAPI:
     app.include_router(langextract_router)
     app.include_router(brain_router)
     app.include_router(jira_router)
+    app.include_router(jira_webhook_router)
     app.include_router(confluence_router)
     app.include_router(azure_devops_router)
     app.include_router(teams_router)

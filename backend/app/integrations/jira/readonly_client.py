@@ -48,3 +48,28 @@ class JiraReadonlyClient:
             r = await c.get(url)
             r.raise_for_status()
             return r.json()
+
+    async def add_comment(self, key: str, body: str) -> dict[str, Any]:
+        """Post a comment on an issue using the service account.
+
+        ``body`` is plain text; it will be wrapped in a minimal ADF
+        document since Jira Cloud v3 expects ADF (not the legacy
+        wiki-markup string format that v2 accepted).
+        """
+        url = f"{self._site_url}/rest/api/3/issue/{key}/comment"
+        adf = {
+            "body": {
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": body}],
+                    }
+                ],
+            }
+        }
+        async with httpx.AsyncClient(auth=self._auth, timeout=self._timeout) as c:
+            r = await c.post(url, json=adf)
+            r.raise_for_status()
+            return r.json()
