@@ -1,4 +1,4 @@
-"""Unit tests for PR Brain v2's dispatch_subagent primitive.
+"""Unit tests for PR Brain v2's dispatch_verify primitive.
 
 Covers:
 - Pydantic schema validation (scope 1-5 files, exactly 3 checks)
@@ -7,7 +7,7 @@ Covers:
 - severity=null enforcement on findings the worker returns
 
 Does NOT run a real sub-agent (that requires a Bedrock call); uses a
-fake _dispatch_agent that returns canned JSON answers.
+fake _dispatch_explore that returns canned JSON answers.
 """
 
 from __future__ import annotations
@@ -19,16 +19,16 @@ import pytest
 from pydantic import ValidationError
 
 from app.agent_loop.brain import AgentToolExecutor, _parse_subagent_json
-from app.code_tools.schemas import DispatchSubagentParams, ToolResult
+from app.code_tools.schemas import DispatchVerifyParams, ToolResult
 
 # ---------------------------------------------------------------------------
 # Pydantic schema validation
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchSubagentParams:
+class TestDispatchVerifyParams:
     def test_minimum_valid_params(self):
-        p = DispatchSubagentParams(
+        p = DispatchVerifyParams(
             scope=[{"file": "x.py", "start": 1, "end": 50}],
             checks=["q1", "q2", "q3"],
             success_criteria="answer each check with evidence",
@@ -40,7 +40,7 @@ class TestDispatchSubagentParams:
 
     def test_five_file_scope_allowed(self):
         """Revised limit from v2 plan: 5 files (was 3)."""
-        p = DispatchSubagentParams(
+        p = DispatchVerifyParams(
             scope=[{"file": f"f{i}.py"} for i in range(5)],
             checks=["q1", "q2", "q3"],
             success_criteria="answer each",
@@ -49,7 +49,7 @@ class TestDispatchSubagentParams:
 
     def test_six_files_rejected(self):
         with pytest.raises(ValidationError):
-            DispatchSubagentParams(
+            DispatchVerifyParams(
                 scope=[{"file": f"f{i}.py"} for i in range(6)],
                 checks=["q1", "q2", "q3"],
                 success_criteria="answer each",
@@ -58,20 +58,20 @@ class TestDispatchSubagentParams:
     def test_exactly_three_checks_required(self):
         """2 or 4 checks must be rejected — Brain's plan must split."""
         with pytest.raises(ValidationError):
-            DispatchSubagentParams(
+            DispatchVerifyParams(
                 scope=[{"file": "x.py"}],
                 checks=["q1", "q2"],
                 success_criteria="answer each",
             )
         with pytest.raises(ValidationError):
-            DispatchSubagentParams(
+            DispatchVerifyParams(
                 scope=[{"file": "x.py"}],
                 checks=["q1", "q2", "q3", "q4"],
                 success_criteria="answer each",
             )
 
     def test_scope_line_range_optional(self):
-        p = DispatchSubagentParams(
+        p = DispatchVerifyParams(
             scope=[{"file": "whole_file.py"}],  # no start/end = whole file
             checks=["q1", "q2", "q3"],
             success_criteria="answer each",
@@ -141,9 +141,9 @@ Actually let me reconsider...
 
 
 class TestDepthWall:
-    """Depth 2 is a hard wall — sub-sub-agents cannot call dispatch_subagent.
+    """Depth 2 is a hard wall — sub-sub-agents cannot call dispatch_verify.
 
-    We exercise ``AgentToolExecutor._dispatch_subagent`` directly at each
+    We exercise ``AgentToolExecutor._dispatch_verify`` directly at each
     depth without a real sub-agent run (fake the inner dispatch to isolate
     the depth-check logic)."""
 
@@ -171,7 +171,7 @@ class TestDepthWall:
     @pytest.mark.asyncio
     async def test_depth_2_rejected(self):
         executor = self._make_executor(depth=2)
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "...",
@@ -183,7 +183,7 @@ class TestDepthWall:
     async def test_depth_3_rejected(self):
         """Even if somehow invoked at depth 3 (bug), the wall still holds."""
         executor = self._make_executor(depth=3)
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "...",
@@ -193,7 +193,7 @@ class TestDepthWall:
     @pytest.mark.asyncio
     async def test_scope_too_large_rejected(self):
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": f"f{i}.py"} for i in range(6)],  # 6 > 5
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "...",
@@ -204,7 +204,7 @@ class TestDepthWall:
     @pytest.mark.asyncio
     async def test_wrong_check_count_rejected(self):
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "checks": ["q1", "q2"],  # 2 != 3
             "success_criteria": "...",
@@ -216,7 +216,7 @@ class TestDepthWall:
     async def test_missing_template_reports_error(self):
         """If pr_subagent_checks agent isn't registered, a clear error."""
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "...",
@@ -251,7 +251,7 @@ class TestSeverityNullEnforcement:
             ),
         }
 
-        # Fake _dispatch_agent output: contains severity='critical' in findings.
+        # Fake _dispatch_explore output: contains severity='critical' in findings.
         fake_answer_with_severity = """```json
 {
   "checks": [{"id": "check_1", "verdict": "violated", "evidence": "line 42"}],
@@ -282,9 +282,9 @@ class TestSeverityNullEnforcement:
             ),
         )
 
-        async def _fake_dispatch_agent(params):
+        async def _fake_dispatch_explore(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": fake_answer_with_severity,
@@ -295,9 +295,9 @@ class TestSeverityNullEnforcement:
                 },
             )
 
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake_dispatch_agent)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake_dispatch_explore)
 
-        result = await executor._dispatch_subagent({
+        result = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "answer each",
@@ -316,7 +316,7 @@ class TestRoleModeSchema:
     """Role dispatch makes checks optional but requires role XOR checks."""
 
     def test_role_only_valid(self):
-        p = DispatchSubagentParams(
+        p = DispatchVerifyParams(
             scope=[{"file": "x.py"}],
             role="security",
             direction_hint="look for token leaks",
@@ -326,7 +326,7 @@ class TestRoleModeSchema:
         assert p.checks is None
 
     def test_role_with_checks_valid(self):
-        p = DispatchSubagentParams(
+        p = DispatchVerifyParams(
             scope=[{"file": "x.py"}],
             role="security",
             checks=["q1", "q2", "q3"],
@@ -337,14 +337,14 @@ class TestRoleModeSchema:
 
     def test_neither_rejected(self):
         with pytest.raises(ValidationError):
-            DispatchSubagentParams(
+            DispatchVerifyParams(
                 scope=[{"file": "x.py"}],
                 success_criteria="Return findings with evidence",
             )
 
     def test_wrong_check_count_with_role_rejected(self):
         with pytest.raises(ValidationError):
-            DispatchSubagentParams(
+            DispatchVerifyParams(
                 scope=[{"file": "x.py"}],
                 role="security",
                 checks=["q1", "q2"],  # 2 != 3
@@ -484,7 +484,7 @@ class TestComposeRoleSystemPrompt:
 
 
 # ---------------------------------------------------------------------------
-# Integration — dispatch_subagent in role mode with a fake _dispatch_agent
+# Integration — dispatch_verify in role mode with a fake _dispatch_explore
 # ---------------------------------------------------------------------------
 
 
@@ -512,15 +512,15 @@ class TestDispatchSubagentRoleMode:
 
     @pytest.mark.asyncio
     async def test_role_dispatch_uses_dynamic_mode(self, monkeypatch):
-        """role= should route through dynamic _dispatch_agent with perspective,
+        """role= should route through dynamic _dispatch_explore with perspective,
         not through template mode."""
         executor = self._make_executor()
         captured = {}
 
-        async def _fake_dispatch_agent(params):
+        async def _fake_dispatch_explore(params):
             captured.update(params)
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({
@@ -534,9 +534,9 @@ class TestDispatchSubagentRoleMode:
                 },
             )
 
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake_dispatch_agent)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake_dispatch_explore)
 
-        result = await executor._dispatch_subagent({
+        result = await executor._dispatch_verify({
             "scope": [{"file": "src/auth/oauth.py", "start": 100, "end": 150}],
             "role": "security",
             "direction_hint": "new PKCE support — look for token leaks",
@@ -559,7 +559,7 @@ class TestDispatchSubagentRoleMode:
     @pytest.mark.asyncio
     async def test_unknown_role_rejected(self):
         executor = self._make_executor()
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "role": "not_a_real_role",
             "success_criteria": "...",
@@ -570,7 +570,7 @@ class TestDispatchSubagentRoleMode:
     @pytest.mark.asyncio
     async def test_neither_role_nor_checks_rejected(self):
         executor = self._make_executor()
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "success_criteria": "...",
         })
@@ -619,7 +619,7 @@ class TestModelTierOverride:
         async def _fake(params):
             captured.update(params)
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
@@ -627,9 +627,9 @@ class TestModelTierOverride:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "src/auth/oauth.py"}],
             "role": "security",
             "direction_hint": "cross-file token lifecycle",
@@ -648,7 +648,7 @@ class TestModelTierOverride:
         async def _fake(params):
             captured.update(params)
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
@@ -656,9 +656,9 @@ class TestModelTierOverride:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "src/auth/oauth.py"}],
             "role": "security",
             "direction_hint": "normal review",
@@ -678,7 +678,7 @@ class TestModelTierOverride:
         async def _fake(params):
             captured.update(params)
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
@@ -686,9 +686,9 @@ class TestModelTierOverride:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "x.py"}],
             "role": "correctness",
             "direction_hint": "check invariants",
@@ -764,7 +764,7 @@ class TestPlanMemory:
 
         async def _fake(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"checks": [], "findings": [],
@@ -773,9 +773,9 @@ class TestPlanMemory:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "a.py", "start": 10, "end": 30}],
             "checks": ["q1", "q2", "q3"],
             "success_criteria": "answer each check with evidence",
@@ -794,7 +794,7 @@ class TestPlanMemory:
 
         async def _fake(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"checks": [], "findings": [],
@@ -803,10 +803,10 @@ class TestPlanMemory:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
         for i in range(2):
-            r = await executor._dispatch_subagent({
+            r = await executor._dispatch_verify({
                 "scope": [{"file": f"f{i}.py"}],
                 "checks": ["q1", "q2", "q3"],
                 "success_criteria": "answer each check with evidence",
@@ -820,7 +820,7 @@ class TestPlanMemory:
 
         async def _fake(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"checks": [], "findings": [],
@@ -829,10 +829,10 @@ class TestPlanMemory:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
         for i in range(3):
-            r = await executor._dispatch_subagent({
+            r = await executor._dispatch_verify({
                 "scope": [{"file": f"f{i}.py"}],
                 "checks": ["q1", "q2", "q3"],
                 "success_criteria": f"criteria-{i}-payload-meaningful",
@@ -851,7 +851,7 @@ class TestPlanMemory:
 
         async def _fake(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "ok", "findings": []}),
@@ -859,9 +859,9 @@ class TestPlanMemory:
                     "total_output_tokens": 50, "files_accessed": [],
                 },
             )
-        monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+        monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_subagent({
+        r = await executor._dispatch_verify({
             "scope": [{"file": "src/auth/oauth.py"}],
             "role": "security",
             "direction_hint": "token leaks in refresh flow",
@@ -885,7 +885,7 @@ class TestPlanMemory:
 
             async def _fake(params):
                 return ToolResult(
-                    tool_name="dispatch_agent",
+                    tool_name="dispatch_explore",
                     success=True,
                     data={
                         "answer": json.dumps({"checks": [], "findings": [],
@@ -894,9 +894,9 @@ class TestPlanMemory:
                         "total_output_tokens": 50, "files_accessed": [],
                     },
                 )
-            monkeypatch.setattr(executor, "_dispatch_agent", _fake)
+            monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-            r = await executor._dispatch_subagent({
+            r = await executor._dispatch_verify({
                 "scope": [{"file": "x.py"}],
                 "checks": ["q1", "q2", "q3"],
                 "success_criteria": "answer each check",

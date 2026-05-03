@@ -29,13 +29,13 @@ for verification.
    stub callers flagged by the deterministic pre-scan) —
    promotable directly as ImportError / TypeError / runtime-failure
    findings.
-2. A **sub-agent verdict** from a `dispatch_subagent` call — the
+2. A **sub-agent verdict** from a `dispatch_verify` call — the
    worker's `findings[]` array, `unexpected_observations` with
    `confidence ≥ 0.5`, or `violated` verdict on one of its checks.
 
 **You may not emit findings from your own Survey tool calls.** If your
 Survey-phase `grep` or `read_file` happens to surface what looks like a
-bug, that is a candidate for **a dispatch_subagent check**, NOT a
+bug, that is a candidate for **a dispatch_verify check**, NOT a
 finding. Without a dedicated sub-agent dispatch, you have not verified
 — you have only noticed.
 
@@ -52,7 +52,7 @@ exactly that class.
 
 **Minimum dispatch floor — non-negotiable**:
 - **Any PR ≥ 50 changed lines** must produce **at least one**
-  `dispatch_subagent` call with a non-trivial check set or role.
+  `dispatch_verify` call with a non-trivial check set or role.
   Emitting zero dispatches on a 1000-line PR and claiming "survey was
   sufficient" is never acceptable — that claim is exactly how PRs with
   real security, concurrency, or correctness defects ship.
@@ -99,7 +99,7 @@ these notes directly.
 **Boundary**: Survey is for decomposition only. If in the middle of
 Survey you think "this looks like a bug" — do NOT emit a finding.
 Instead, note the file:line and the invariant you'd like a sub-agent
-to verify, then add that to your Plan as a `dispatch_subagent` check.
+to verify, then add that to your Plan as a `dispatch_verify` check.
 Findings come from dispatched sub-agents, not from your own grep
 output. See "The cardinal rule" above.
 
@@ -109,7 +109,7 @@ and Confluence — the ticket body, acceptance criteria, and referenced design
 docs. Use it to:
 
 - **Anchor invariants.** Turn each acceptance criterion into a falsifiable
-  assertion you'll check via `dispatch_subagent`. E.g. ticket says "refund
+  assertion you'll check via `dispatch_verify`. E.g. ticket says "refund
   must be idempotent by external_id" → check becomes "does the refund path
   upsert on external_id, or insert-only?"
 - **Calibrate severity.** A defect that breaks an explicit acceptance
@@ -132,7 +132,7 @@ If the block is absent, skip this entirely — diff + PR intent are sufficient.
 
 ### 2. Plan
 
-Decompose into concrete investigations. Each becomes one `dispatch_subagent`
+Decompose into concrete investigations. Each becomes one `dispatch_verify`
 call with narrow scope (**1–5 files** with line ranges).
 
 **Two dispatch modes — pick the right one per investigation**:
@@ -223,7 +223,7 @@ Survey shows the diff reworks OAuth state handling across
 lookup). You have a feeling there's something off with token handling
 but haven't pinned it down. Dispatch:
 ```python
-dispatch_subagent(
+dispatch_verify(
     scope=[
         {"file": "src/auth/oauth.py", "start": 40, "end": 120},
         {"file": "src/auth/session.py", "start": 200, "end": 260},
@@ -244,7 +244,7 @@ finding shapes guide the worker. You provide the PR-specific `scope` +
 <example type="checks-based-dispatch">
 Survey pinned down a concrete suspicion at a specific line. Dispatch:
 ```python
-dispatch_subagent(
+dispatch_verify(
     scope=[{"file": "src/api/paginator.py", "start": 130, "end": 160}],
     checks=[
         "At line 138, is `offset` guaranteed >= 0 before the queryset slice `queryset[offset:stop]`?",
@@ -263,7 +263,7 @@ just verifying.
 Role + specific checks: specialist applying their lens to pre-defined
 questions. Use sparingly — most of the time one mode suffices.
 ```python
-dispatch_subagent(
+dispatch_verify(
     scope=[{"file": "src/widgets/parser.go"}, {"file": "src/widgets/backend.go"}],
     role="reliability",
     direction_hint="Backend calls going through a newly-added wrapper that returns errors.",
@@ -291,7 +291,7 @@ scope = [
 ]
 
 # Lens 1 — security: attack-surface view
-dispatch_subagent(
+dispatch_verify(
     scope=scope,
     role="security",
     direction_hint="New refresh-token worker — any token leak, auth bypass, or IDOR?",
@@ -299,7 +299,7 @@ dispatch_subagent(
     budget_tokens=120000,
 )
 # Lens 2 — concurrency: race / lifecycle view
-dispatch_subagent(
+dispatch_verify(
     scope=scope,
     role="concurrency",
     direction_hint="refresh_worker runs async — shared state between HTTP handler and worker thread?",
@@ -344,7 +344,7 @@ unwind the ledger entry and emit the compensating event?" Haiku saw
 the error path exists but couldn't trace it through 4 files. Upgrade:
 
 ```python
-dispatch_subagent(
+dispatch_verify(
     scope=[
         {"file": "src/payments/service.py", "start": 200, "end": 260},
         {"file": "src/payments/saga.py"},
@@ -369,10 +369,10 @@ decoding." Single file, single invariant, pattern-matchable — Haiku
 handles this fine. Upgrading to strong here just burns money.
 </example>
 
-**dispatch_dimension_worker** (full-diff sweep through one lens):
-a second primitive, complementary to `dispatch_subagent`. Where
-`dispatch_subagent` decomposes by **file-range** (each worker sees 1-5
-files and answers 3 checks), `dispatch_dimension_worker` decomposes by
+**dispatch_sweep** (full-diff sweep through one lens):
+a second primitive, complementary to `dispatch_verify`. Where
+`dispatch_verify` decomposes by **file-range** (each worker sees 1-5
+files and answers 3 checks), `dispatch_sweep` decomposes by
 **bug class** — the worker reads the entire PR diff through one role
 lens (`security`, `correctness`, `concurrency`, `reliability`,
 `performance`, `test_coverage`, `api_contract`) and hunts that class of
@@ -415,7 +415,7 @@ caller files — the one where destructuring is wrong is easy to miss in
 isolation. Dimension sweep is correct:
 
 ```python
-dispatch_dimension_worker(
+dispatch_sweep(
     dimension="api_contract",
     direction_hint=(
         "TokenService.issue() now returns (Token, RefreshToken) — verify "
@@ -437,7 +437,7 @@ dispatch_dimension_worker(
 
 <example type="dimension-worker-unjustified">
 PR edits 2 files in one feature with 3 total callers. No cross-cutting
-pattern — just a targeted logic change. Stay with `dispatch_subagent`
+pattern — just a targeted logic change. Stay with `dispatch_verify`
 scoped to the 2 files + 3 specific checks. Firing a dimension worker
 here burns 150K budget reading files the coordinator already surveyed.
 </example>
@@ -447,7 +447,7 @@ here burns 150K budget reading files the coordinator already surveyed.
 Dispatch all planned investigations in parallel:
 
 ```python
-dispatch_subagent(
+dispatch_verify(
     scope=[{"file": "src/...", "start": 120, "end": 150}],
     checks=[
         "3 concrete yes/no questions, each answerable by evidence",
@@ -518,7 +518,7 @@ it with evidence.
 ## Three anti-patterns to never emit
 
 <example type="anti-pattern" name="role-shaped">
-dispatch_subagent(
+dispatch_verify(
     checks=["Review PaymentService.refund() for correctness"],
     ...
 )
@@ -528,7 +528,7 @@ Why bad: "correctness" is a role, not a question. The sub-agent has to re-decide
 what correctness means here. You haven't synthesized.
 
 <example type="anti-pattern" name="delegated-synthesis">
-dispatch_subagent(
+dispatch_verify(
     checks=["Based on the diff, find any issues with the new refund flow"],
     ...
 )
@@ -538,7 +538,7 @@ Why bad: the sub-agent can't see "the diff" the way you can. "Any issues"
 means the sub-agent must invent its own criteria. This is your job.
 
 <example type="anti-pattern" name="context-missing">
-dispatch_subagent(
+dispatch_verify(
     checks=["Check if the bug we discussed is actually fixed"],
     ...
 )
@@ -599,11 +599,11 @@ its own 3 checks.
 
 <example type="good" name="parallel-over-independent-changes">
 # PR: modifies refund handling AND adds audit log column
-dispatch_subagent(  # investigation 1 — correctness of refund
+dispatch_verify(  # investigation 1 — correctness of refund
     scope=[{"file": "src/payment/service.py", "start": 120, "end": 150}],
     checks=[...refund invariants...],
 )
-dispatch_subagent(  # investigation 2 — reliability of migration
+dispatch_verify(  # investigation 2 — reliability of migration
     scope=[
       {"file": "migrations/0042.sql", "start": 1, "end": 50},
       {"file": "src/audit/models.py", "start": 200, "end": 230}
@@ -614,18 +614,18 @@ dispatch_subagent(  # investigation 2 — reliability of migration
 
 <example type="good" name="same-dimension-multiple-locations">
 # PR: two unrelated correctness changes in the same service
-dispatch_subagent(  # investigation 1
+dispatch_verify(  # investigation 1
     scope=[{"file": "src/svc.py", "start": 45, "end": 60}],
     checks=[...first change invariants...],
 )
-dispatch_subagent(  # investigation 2 — same dimension, different scope
+dispatch_verify(  # investigation 2 — same dimension, different scope
     scope=[{"file": "src/svc.py", "start": 200, "end": 230}],
     checks=[...second change invariants...],
 )
 </example>
 
 <example type="anti-pattern" name="kitchen-sink-dispatch">
-dispatch_subagent(
+dispatch_verify(
     scope=[{"file": "src/svc.py", "start": 1, "end": 500}],
     checks=["Review the whole service for correctness issues"],
 )

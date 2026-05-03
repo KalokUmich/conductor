@@ -2,7 +2,7 @@
 #
 # Drives the v2 "agent-as-tool" coordinator loop: ONE Brain (Sonnet)
 # surveys the PR, dispatches scope-bounded sub-agents via
-# ``dispatch_subagent``, replans on unexpected observations, and
+# ``dispatch_verify``, replans on unexpected observations, and
 # synthesises. Sub-agent roles are composed on the fly from templates
 # in ``config/agent_factory/`` — no fixed fleet list lives here.
 

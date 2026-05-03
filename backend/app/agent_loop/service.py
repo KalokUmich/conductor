@@ -1417,8 +1417,8 @@ class AgentLoopService:
                 "summary": result_summary,
             }
             # Enrich dispatch tool results with sub-agent metadata
-            if tc.name in ("dispatch_agent", "dispatch_swarm") and isinstance(tool_result.data, dict):
-                step_data["agent_name"] = tc.input.get("agent_name", "") or tc.input.get("swarm_name", "")
+            if tc.name == "dispatch_explore" and isinstance(tool_result.data, dict):
+                step_data["agent_name"] = tc.input.get("agent_name", "") or tc.input.get("template", "")
                 for key in (
                     "confidence",
                     "files_accessed",

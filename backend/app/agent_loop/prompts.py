@@ -305,7 +305,7 @@ def _build_budget_section(max_iterations: int) -> str:
 #      │  Budget: 400K tokens, 20 iterations, model: strong
 #
 #   3. Brain calls:
-#      │  dispatch_agent(
+#      │  dispatch_explore(
 #      │      query="Investigate silent failures in payment callbacks...",
 #      │      tools=["grep", "read_file", "get_callers", "git_blame", ...],
 #      │      skill="root_cause",
@@ -344,7 +344,7 @@ class SkillMeta:
             Prevents the most common mismatches. Include which skill to use
             instead (e.g. "that's root_cause — symptom-driven").
         tools: Recommended tool names for agents using this skill. Brain
-            passes these to dispatch_agent(tools=[...]). Names must match
+            passes these to dispatch_explore(tools=[...]). Names must match
             tool definitions in schemas.py.
         budget: Suggested token budget in raw count (e.g. 400_000 = 400K).
             Brain can override, but this is the default shown in the catalog.
@@ -366,7 +366,7 @@ class SkillMeta:
 
 # SKILL_METADATA — Brain-facing skill descriptions.
 #
-# Each key is a skill name that Brain can pass to dispatch_agent(skill="...").
+# Each key is a skill name that Brain can pass to dispatch_explore(skill="...").
 # The value is a SkillMeta that _build_skill_catalog() renders into Brain's
 # system prompt. Brain reads the "When to use" examples to match queries.
 #
@@ -1303,6 +1303,7 @@ _PR_BRAIN_COORDINATOR_SKILL = _load_skill("pr_brain_coordinator")
 _PR_SUBAGENT_CHECKS_SKILL = _load_skill("pr_subagent_checks")
 _PR_EXISTENCE_CHECK_SKILL = _load_skill("pr_existence_check")
 _PR_VERIFICATION_CHECK_SKILL = _load_skill("pr_verification_check")
+_DOMAIN_BRAIN_COORDINATOR_SKILL = _load_skill("domain_brain_coordinator")
 
 if _PR_BRAIN_COORDINATOR_SKILL:
     INVESTIGATION_SKILLS["pr_brain_coordinator"] = _PR_BRAIN_COORDINATOR_SKILL
@@ -1312,6 +1313,8 @@ if _PR_EXISTENCE_CHECK_SKILL:
     INVESTIGATION_SKILLS["pr_existence_check"] = _PR_EXISTENCE_CHECK_SKILL
 if _PR_VERIFICATION_CHECK_SKILL:
     INVESTIGATION_SKILLS["pr_verification_check"] = _PR_VERIFICATION_CHECK_SKILL
+if _DOMAIN_BRAIN_COORDINATOR_SKILL:
+    INVESTIGATION_SKILLS["domain_brain_coordinator"] = _DOMAIN_BRAIN_COORDINATOR_SKILL
 
 
 def build_sub_agent_system_prompt(
@@ -1786,36 +1789,38 @@ evidence. You never read code directly — your specialists do that.
 
 {template_catalog}
 
-## Available swarms
-
-{swarm_catalog}
-
 ## How to coordinate
 
 Read the query, detect the intent, then compose and dispatch the right agent:
 
 1. **Identify intent** — match the query against skill catalog "When to use" entries
 2. **Select skill + tools + budget** — use the recommended values from the skill entry
-3. **Compose agent** — dispatch_agent with tools=, skill=, model=, budget_tokens=
+3. **Compose or pick agent** — dispatch_explore in template mode (template=NAME) or \
+dynamic mode (tools=, skill=, model=, budget_tokens=)
 4. **Synthesize** — read findings and produce the final answer with evidence
 
 **Simple** (~80% of queries — single perspective is enough): \
 Compose one dynamic agent with the matching skill → dispatch → synthesize.
 
-**Complex** (~15% — needs depth or multiple perspectives sequentially): \
+**Complex** (~15% — needs depth, sequential refinement): \
 Dispatch agent → evaluate findings → if gaps remain, dispatch a second \
 agent with a different skill and include previous findings. Maximum 2-3 dispatches.
 
-**Swarm** (~5% — end-to-end journeys): \
-Before dispatching, decompose the user's question into 3-6 specific search \
-targets. Use dispatch_swarm("business_flow") — never just forward the query verbatim.
+**Domain / Business flow** (~5% — end-to-end journeys, "how does X work" \
+in domain terms, anything anchored on business processes): \
+Use `transfer_to_brain("domain")`. The Domain Brain self-surveys scope, \
+chooses DEPTH or BREADTH, dispatches workers from complementary angles \
+(implementation / usage / tests / docs), and synthesises with strict \
+preserve-specifics rules. One-way handoff. Trigger keywords: "how does X \
+work", "trace the X flow", "what happens after X", "the journey", "the \
+complete picture", "end-to-end".
 
 **PR Review** — use transfer_to_brain("pr_review"). One-way handoff to the \
 specialized PR Brain with pre-computed context, parallel agents, and arbitration.
 
-**Templates** — use dispatch_agent(template=...) ONLY for agents in the template \
-catalog (PR review swarm, business flow swarm, synthesis, arbitration). For all \
-other queries, compose agents dynamically.
+**Templates vs dynamic** — Template mode (`dispatch_explore(template=NAME)`) \
+uses a pre-tuned worker (curated tools, budget, skill). Use it when a \
+template fits. Otherwise compose dynamically with `tools=` + `skill=`.
 
 When handing off, always include the previous agent's key findings, \
 files already checked, and the new direction in the query.
@@ -1824,7 +1829,7 @@ files already checked, and the new direction in the query.
 
 Before your first dispatch, call create_plan to declare your approach. \
 This records your reasoning so the investigation is auditable. Include \
-which mode you chose (simple/complex/swarm/transfer), which agent(s), \
+which mode you chose (simple/complex/multi-perspective/transfer), which agent(s), \
 and WHY — what about the query led to this decision.
 
 create_plan and dispatch can be called in the same turn (parallel tool \
@@ -1845,14 +1850,24 @@ bypass at SecurityFilter:42", check that the agent actually read that \
 file and the evidence is consistent. Spot-check strengthens your \
 synthesis — don't just relay what agents reported.
 
+For **Multi-perspective** dispatches: your job is COMPLETENESS, not \
+compression. Include every distinct outcome the workers reported — \
+emails sent, async jobs queued (doc generation, voice messages), \
+audit log writes, role assignments (e.g. "senior underwriter"), state \
+transitions, decline reasons. Quote technical terms verbatim: write \
+"approval email" not "approval notification"; "doc generation" not \
+"loan papers"; "PCCI / Credit Agreement / AE" not "loan documents". \
+Don't paraphrase, don't pick favourites — if two workers each \
+mentioned 4 things, your answer covers all 8.
+
 {decision_examples}
 
 {qa_context}
 
 ## Budget
-You have {max_iterations} iterations. Each dispatch_agent or \
-dispatch_swarm call uses one iteration. Reserve 1-2 iterations \
-for synthesis. Agent depth limit is 2 levels \
+You have {max_iterations} iterations. Each dispatch_explore call uses \
+one iteration (parallel calls in the same turn count as one). \
+Reserve 1-2 iterations for synthesis. Agent depth limit is 2 levels \
 (you → agent → sub-agent max).
 """
 
@@ -1867,7 +1882,7 @@ Keywords "find" + "endpoint" → entry_point skill. Simple lookup, one agent.
 Use explorer model — no deep reasoning needed. Low budget (150K).
 </commentary>
 create_plan(mode="simple", reasoning="Single endpoint lookup — entry_point skill")
-dispatch_agent(query="Find the handler for /api/users — identify the controller \
+dispatch_explore(query="Find the handler for /api/users — identify the controller \
 class, method, and exact file:line",
   tools=["grep", "find_symbol", "read_file", "find_references", "list_endpoints"],
   skill="entry_point", budget_tokens=150000, max_iterations=12)
@@ -1877,18 +1892,15 @@ Result: Agent returns the endpoint location. Brain synthesizes. Done.
 <example>
 Query: "What happens when a loan application is declined?"
 <commentary>
-"What happens when" + single event → code_explanation skill, not business_flow.
-Business_flow swarm is for end-to-end multi-step journeys across multiple
-integration points. This traces one event's consequences — a single agent
-with code_explanation skill is sufficient.
+"What happens when X" with X = a business event (declined / approved / verified
+/ disbursed) is a domain-flow question — even though it sounds single-step,
+the answer requires enumerating triggers, state transitions, secondary
+effects (emails, audit logs, role assignments), and recovery paths. Brain
+self-synthesis consistently drops items here. Hand off to Domain Brain.
 </commentary>
-create_plan(mode="simple", reasoning="Single event trace — code_explanation skill")
-dispatch_agent(query="Trace what happens when a loan application is declined: \
-triggers, state transitions, actions taken, decline reasons, appeal process.",
-  tools=["grep", "read_file", "get_callers", "get_callees", "trace_variable", \
-"find_references", "module_summary"],
-  skill="code_explanation", budget_tokens=300000, max_iterations=18)
-Result: Agent traces the decline flow. Brain synthesizes. Done.
+create_plan(mode="transfer", reasoning="Business event consequences — Domain Brain")
+transfer_to_brain(brain_name="domain",
+  query="What happens when a loan application is declined?")
 </example>
 
 <example>
@@ -1919,20 +1931,17 @@ diff_spec="main...feature/payment-rework")
 <example>
 Query: "After Render approval, what steps must a customer complete to get their loan?"
 <commentary>
-"Complete journey from A to Z" → business_flow swarm. This is end-to-end with
-multiple integration points — needs parallel investigation from complementary
-perspectives (implementation + usage). Decompose into search targets first.
+End-to-end journey anchored on a business process → Domain Brain. Don't
+try to handle inline — Domain Brain self-surveys scope (reads CLAUDE.md
+for vocabulary, finds the domain model), chooses DEPTH or BREADTH,
+dispatches workers from complementary angles, and synthesises with
+preserve-specifics rules that prose-merge in General Brain consistently
+loses. One-way handoff.
 </commentary>
-create_plan(mode="swarm", reasoning="End-to-end customer journey — business_flow",
-  query_decomposition=["Render approval callback", "Post-approval state model",
-    "Gating steps (IDV, bank, mandate)", "Disbursement trigger"])
-dispatch_swarm("business_flow", "Trace the complete customer journey from \
-Render approval to disbursement.\\nSearch targets:\\n\
-1. Render callbacks/webhooks — find the approval callback handler\\n\
-2. Post-approval state model — domain classes with completion checklists\\n\
-3. Gating steps — IDV, bank account linking, direct debit mandate\\n\
-4. Disbursement trigger — final checks before money is released\\n\
-Focus on what the CUSTOMER must do, not internal system processes.")
+create_plan(mode="transfer", reasoning="Business flow journey — Domain Brain")
+# workspace_path is auto-injected from the request context — pass only the query.
+transfer_to_brain(brain_name="domain",
+  query="After Render approval, what steps must a customer complete to get their loan?")
 </example>
 
 <example>
@@ -1945,13 +1954,13 @@ agent with config_analysis skill.
 </commentary>
 create_plan(mode="complex", reasoning="Root cause may need config followup",
   fallback="If root cause agent cannot find retry config, dispatch config_analysis")
-Step 1: dispatch_agent(query="Investigate why payment callbacks from Clearer \
+Step 1: dispatch_explore(query="Investigate why payment callbacks from Clearer \
 fail silently. Check error handling, retry logic, catch blocks, systemic causes.",
   tools=["grep", "read_file", "get_callers", "trace_variable", "git_blame", \
 "git_show", "detect_patterns"],
   skill="root_cause", model="strong", budget_tokens=400000, max_iterations=20)
 Result: Agent finds empty catch block, notes gap: "retry config not found."
-Step 2: dispatch_agent(query="Find retry config for Clearer payment callbacks.\\n\
+Step 2: dispatch_explore(query="Find retry config for Clearer payment callbacks.\\n\
 Previous findings: empty catch at ClearerCallbackService:45.",
   tools=["grep", "read_file", "find_references", "trace_variable", "list_files"],
   skill="config_analysis", budget_tokens=150000, max_iterations=12)
@@ -1965,7 +1974,7 @@ Query: "What changed in the authentication module in the last 2 weeks?"
 one agent with git tools. Low budget.
 </commentary>
 create_plan(mode="simple", reasoning="Scoped recent-changes query")
-dispatch_agent(query="Show git changes to authentication-related files in \
+dispatch_explore(query="Show git changes to authentication-related files in \
 the last 14 days.",
   tools=["git_log", "git_diff", "git_diff_files", "git_blame", "git_show", \
 "read_file"],
@@ -1980,7 +1989,7 @@ Query: "If I rename UserService to AccountService, what breaks?"
 dependents, tests, and check for amplification risks (retry loops, queues).
 </commentary>
 create_plan(mode="simple", reasoning="Impact analysis of a single rename")
-dispatch_agent(query="Assess impact of renaming UserService to AccountService. \
+dispatch_explore(query="Assess impact of renaming UserService to AccountService. \
 Find all callers, imports, config refs, tests, and amplification risks.",
   tools=["find_references", "get_callers", "get_dependents", "find_tests", \
 "test_outline", "detect_patterns", "grep", "read_file"],
@@ -1996,7 +2005,7 @@ Use issue_tracking skill. Must investigate the bug first (gather evidence),
 then create ticket with code references.
 </commentary>
 create_plan(mode="simple", reasoning="Jira creation with code analysis")
-dispatch_agent(query="Investigate the auth token expiry bug, gather evidence \
+dispatch_explore(query="Investigate the auth token expiry bug, gather evidence \
 (affected files, root cause), then create a Jira ticket with code references.",
   tools=["grep", "read_file", "git_log", "git_diff", "find_references", \
 "jira_list_projects", "jira_search", "jira_create_issue"],
@@ -2013,7 +2022,7 @@ The agent runs all three phases in one dispatch: investigate the ticket,
 add TODO markers at change points, then append analysis to the ticket description.
 </commentary>
 create_plan(mode="simple", reasoning="Ticket consultation: investigate, mark code, update ticket")
-dispatch_agent(query="Fetch Jira ticket DEV-456 and run the full CONSULT pipeline: \
+dispatch_explore(query="Fetch Jira ticket DEV-456 and run the full CONSULT pipeline: \
 (1) investigate — read related code, map requirements to file:line locations, \
 estimate complexity. (2) mark — add TODO(DEV-456) markers at each change point \
 using file_edit. (3) update ticket — append the analysis (affected files, change \
@@ -2033,7 +2042,7 @@ Status search — list user's tickets grouped by priority. Lightweight query,
 one agent with jira_search. Medium budget for grouping and summary.
 </commentary>
 create_plan(mode="simple", reasoning="Jira status search with priority grouping")
-dispatch_agent(query="Search for all Jira tickets assigned to me that are not \
+dispatch_explore(query="Search for all Jira tickets assigned to me that are not \
 Done/Closed. Group the results by priority (Highest first) and suggest which \
 tickets to focus on.",
   tools=["jira_search", "jira_get_issue"],
@@ -2084,28 +2093,32 @@ web_extract
     # --- Skill catalog (dynamically generated from SKILL_METADATA) ---
     skill_catalog = _build_skill_catalog()
 
-    # --- Template catalog (only for swarms/synthesis/arbitration) ---
-    _JUDGE_NAMES = {"arbitrator", "review_synthesizer", "explore_synthesizer", "pr_arbitrator"}
+    # --- Template catalog ---
+    # Pre-tuned dispatchable agents the Brain can pick by name. PR-review
+    # workers and the legacy v1 judges are filtered out — only general
+    # exploration templates appear here so the coordinator doesn't try to
+    # dispatch a PR-only worker on a free-form query.
+    _HIDDEN_TEMPLATES = {
+        # Old v1 judges (kept for back-compat in registry but not user-callable)
+        "arbitrator", "review_synthesizer", "explore_synthesizer", "pr_arbitrator",
+        # PR Brain v2 internal workers — only PRBrainOrchestrator dispatches these
+        "pr_existence_check", "pr_subagent_checks",
+        "pr_verification_single", "pr_verification_batch",
+    }
     template_lines = []
     for name, config in sorted(agent_registry.items()):
-        if name in _JUDGE_NAMES:
+        if name in _HIDDEN_TEMPLATES:
             continue
         desc = getattr(config, "description", "") or getattr(config, "instructions", "")[:80]
         if desc:
             template_lines.append(f"- **{name}**: {desc}")
     template_catalog = (
-        "## Pre-defined templates (for swarms and complex workflows only)\n\n"
-        "Use dispatch_agent(template=...) for these. Do NOT compose dynamically.\n\n"
+        "## Pre-defined templates\n\n"
+        "Pre-tuned agents dispatched by name: `dispatch_explore(template=NAME, "
+        "query=...)`. Pick one when its description fits, or dispatch several "
+        "in parallel for multi-perspective questions.\n\n"
         + ("\n".join(template_lines) if template_lines else "(no templates configured)")
     )
-
-    # Build swarm catalog
-    swarm_lines = []
-    for name, config in sorted(swarm_registry.items()):
-        desc = getattr(config, "description", "")
-        agents = ", ".join(getattr(config, "agents", []))
-        swarm_lines.append(f"- {name}: {desc} [{agents}]")
-    swarm_catalog = "\n".join(swarm_lines) if swarm_lines else "(no swarms configured)"
 
     # Build Q&A context
     qa_context = ""
@@ -2115,11 +2128,15 @@ web_extract
             qa_lines.append(f"- {key}: {value}")
         qa_context = "\n".join(qa_lines)
 
+    # Note: swarm_registry is accepted for back-compat but no longer rendered.
+    # The Brain dispatches templates directly via dispatch_explore — the legacy
+    # dispatch_swarm tool was removed from BRAIN_TOOL_DEFINITIONS.
+    _ = swarm_registry
+
     return BRAIN_IDENTITY.format(
         tool_catalog=tool_catalog,
         skill_catalog=skill_catalog,
         template_catalog=template_catalog,
-        swarm_catalog=swarm_catalog,
         decision_examples=_BRAIN_EXAMPLES,
         qa_context=qa_context,
         max_iterations=max_iterations,

@@ -2,7 +2,7 @@
 
 Hosts the Brain orchestrator entry point used by the streaming context
 endpoint. Brain (strong model) decides which specialist sub-agents to
-dispatch via ``dispatch_agent`` / ``dispatch_swarm`` /
+dispatch via ``dispatch_explore`` / ``transfer_to_brain`` /
 ``transfer_to_brain``.
 """
 
@@ -82,7 +82,7 @@ class WorkflowEngine:
 
         Brain replaces the classifier + route pipeline. It uses LLM
         intelligence to understand queries, dispatch specialist agents
-        via ``dispatch_agent`` / ``dispatch_swarm`` tools, evaluate
+        via ``dispatch_explore`` / ``transfer_to_brain`` tools, evaluate
         findings, and synthesize comprehensive answers.
 
         Args:
@@ -269,6 +269,57 @@ class WorkflowEngine:
             finally:
                 # Phase 9.15 — release the session-scoped Fact Vault.
                 # No-op when the orchestrator doesn't own one (caller passed a vault).
+                orchestrator.cleanup()
+        elif brain_name == "domain":
+            # Domain Brain — coordinator self-surveys + dispatches workers
+            # for end-to-end / business-flow questions. See
+            # DomainBrainOrchestrator for the Phase 1 / 2 / 3 design.
+            from app.agent_loop.domain_brain import DomainBrainOrchestrator
+            from app.code_tools.executor import LocalToolExecutor
+
+            from .loader import load_agent_registry
+
+            # Domain Brain workspace_path: ALWAYS prefer the engine's own
+            # workspace context over what the LLM-emitted transfer call
+            # provided. Brains have been observed to pass placeholder strings
+            # ("/path/to/ws") or empty strings; trusting those leaves the
+            # downstream agent loop's _read_key_docs() walking from the
+            # filesystem root and crashing on /lost+found/README.md.
+            workspace_path = (
+                context.get("workspace_path")
+                or params.get("workspace_path")
+                or ""
+            )
+            query = (
+                params.get("query")
+                or context.get("query")
+                or context.get("query_text", "")
+            )
+            task_id = (
+                params.get("task_id")
+                or context.get("room_id")
+                or context.get("session_id")
+            )
+
+            orchestrator = DomainBrainOrchestrator(
+                provider=self._provider,
+                explorer_provider=self._explorer_provider,
+                workspace_path=workspace_path,
+                agent_registry=load_agent_registry(),
+                tool_executor=self._tool_executor or LocalToolExecutor(workspace_path),
+                query=query,
+                trace_writer=self._trace_writer,
+                event_sink=self._event_queue,
+                task_id=task_id,
+            )
+
+            try:
+                async for event in orchestrator.run_stream():
+                    await self._event_queue.put(event)
+            except Exception as exc:
+                logger.error("Domain Brain failed: %s", exc, exc_info=True)
+                await self._event_queue.put(WorkflowEvent("error", {"error": f"Domain Brain failed: {exc}"}))
+            finally:
                 orchestrator.cleanup()
         else:
             await self._event_queue.put(WorkflowEvent("error", {"error": f"Unknown specialized brain: {brain_name}"}))

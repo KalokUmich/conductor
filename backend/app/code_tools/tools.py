@@ -2217,7 +2217,13 @@ _CALL_NOISE = frozenset(
 # Graph helper
 # ---------------------------------------------------------------------------
 
-_GRAPH_TTL_SECONDS = 120  # rebuild graph after 2 minutes
+_GRAPH_TTL_SECONDS = int(os.environ.get("CONDUCTOR_GRAPH_TTL_S", "1800"))  # 30 min default
+# Bumped 120s → 1800s 2026-05-03: agent_quality eval re-scanned the same
+# workspace 4-5x per run because case durations (~120-200s) exceeded the old
+# TTL, costing 70+s per repeat scan on render. 30 min covers a typical eval
+# wall-time and any reasonable interactive session; users on long-running
+# Python processes can override via CONDUCTOR_GRAPH_TTL_S env var. The
+# explicit invalidate_graph_cache() API still works for forced refresh.
 
 _graph_cache: Dict[str, tuple] = {}  # workspace → (graph, monotonic_time)
 

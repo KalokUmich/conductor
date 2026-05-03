@@ -104,7 +104,7 @@ _SCHEMA = [
         -- PR Brain v2 P4: coordinator's Plan-phase decisions persisted
         -- per-dispatch. Injected back into tool results on the 3rd+
         -- dispatch so Brain's in-context plan history doesn't drift as
-        -- the review loop grows. Auto-populated by `_dispatch_subagent`.
+        -- the review loop grows. Auto-populated by `_dispatch_verify`.
         dispatch_index INTEGER NOT NULL,     -- 1-based per session
         mode           TEXT NOT NULL,        -- 'role' | 'checks' | 'combined'
         role           TEXT,                 -- factory role if role mode

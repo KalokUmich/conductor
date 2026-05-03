@@ -59,7 +59,6 @@ async def get_brain_swarms():
         load_agent_registry,
         load_brain_config,
         load_pr_brain_config,
-        load_swarm_registry,
     )
 
     brain_cfg = load_brain_config()
@@ -98,21 +97,11 @@ async def get_brain_swarms():
     except Exception as exc:
         logger.warning("Failed to load PR Brain config: %s", exc)
 
-    # Swarm presets (dispatch_swarm targets)
-    swarms = []
-    swarm_registry = load_swarm_registry()
-    for _, sc in swarm_registry.items():
-        swarm_agents = [_agent_info(n) for n in sc.agents]
-        swarms.append(
-            SpecializedBrainInfo(
-                name=sc.name,
-                description=sc.description,
-                type="swarm",
-                mode=sc.mode,
-                agents=swarm_agents,
-                trigger=f'dispatch_swarm("{sc.name}")',
-            )
-        )
+    # Swarm presets retired 2026-05-03 — Domain Brain replaces dispatch_swarm.
+    # Field kept on response for back-compat with the Extension's Agent Swarm
+    # tab (it iterates an empty list cleanly). Future: surface Domain + PR
+    # Brain workers under specialized_brains instead.
+    swarms: List[SpecializedBrainInfo] = []
 
     return BrainSwarmsResponse(
         brain_model=brain_cfg.model,

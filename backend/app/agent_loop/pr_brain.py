@@ -2,7 +2,7 @@
 
 Agent-as-tool design: ONE Brain (Sonnet) acts as the coordinator. It
 surveys the diff, plans investigations, dispatches scope-bounded
-workers (Haiku, via ``dispatch_subagent``), replans on surprises, and
+workers (Haiku, via ``dispatch_verify``), replans on surprises, and
 synthesises a final review. Mechanical safety nets run alongside the
 LLM loop — Phase 2 existence check plus P13 / P14 deterministic
 verifiers catch compilation-class and stub-call bug classes regardless
@@ -11,7 +11,7 @@ of LLM sampling.
 Flow:
   Phase 1: Pre-compute (parse diff, classify risk, prefetch diffs, impact graph)
   Phase 2: Existence check (LLM + P13 phantom-symbol scanners + P14 stub detector)
-  Phase 3: Coordinator dispatch loop (survey + dispatch_subagent + synthesise)
+  Phase 3: Coordinator dispatch loop (survey + dispatch_verify + synthesise)
   Phase 4: Post-process (missing-symbol injection, reflection, diff-scope filter)
   Phase 5: Merge recommendation (deterministic)
 """
@@ -419,7 +419,7 @@ def _detect_required_dispatches(
 # The previous detectors (Tier 1 path, Tier 2 content) FORCE a
 # role dispatch. Dimension triggers are SUGGESTIONS: a multi-caller
 # changed file is a natural candidate for cross-file sweep. The
-# coordinator decides whether to actually fire dispatch_dimension_worker
+# coordinator decides whether to actually fire dispatch_sweep
 # or stay with scoped dispatches — dimension is expensive (180K-ish),
 # so we don't make it mandatory.
 _DIMENSION_TRIGGER_MIN_CALLER_FILES = 3
@@ -778,7 +778,7 @@ class PRBrainOrchestrator:
         # A single Brain (Sonnet) drives the coordinator loop described in
         # config/skills/pr_brain_coordinator.md. Brain surveys the PR,
         # plans investigations, dispatches scope-bounded sub-agents via
-        # dispatch_subagent, replans on unexpected observations, and
+        # dispatch_verify, replans on unexpected observations, and
         # synthesises with unified severity classification.
         async for event in self._run_v2_coordinator(
             pr_context, risk_profile, file_diffs, impact_context,
@@ -805,7 +805,7 @@ class PRBrainOrchestrator:
         Brain (Sonnet) with:
           * system prompt = pr_brain_coordinator skill (the 5-phase loop +
             3-check contract + severity rubric)
-          * tools = read-only survey tools + ``dispatch_subagent`` (the
+          * tools = read-only survey tools + ``dispatch_verify`` (the
             v2 primitive that runs scope-bounded workers returning
             severity-null findings)
           * user message = diff + impact_context + risk profile
@@ -900,21 +900,21 @@ class PRBrainOrchestrator:
         )
 
         # Dispatch the Brain itself via dynamic-compose. It gets a tool pool
-        # including dispatch_subagent, read-only survey tools, and runs the
+        # including dispatch_verify, read-only survey tools, and runs the
         # 5-phase loop under the pr_brain_coordinator skill's direction.
         coordinator_tools = [
             "grep", "read_file", "find_symbol", "file_outline",
             "get_callers", "get_callees", "get_dependencies",
             "git_diff", "git_diff_files", "git_show", "git_log",
-            "dispatch_subagent",
-            "dispatch_dimension_worker",
+            "dispatch_verify",
+            "dispatch_sweep",
         ]
 
         coordinator_params = {
             "perspective": (
                 "You are the PR Brain coordinator. You survey the diff, "
                 "plan focused investigations, dispatch scope-bounded "
-                "sub-agents via dispatch_subagent, and synthesize the "
+                "sub-agents via dispatch_verify, and synthesize the "
                 "final review. You classify severity yourself using the "
                 "2-question rubric (provable? + blast radius?)."
             ),
@@ -934,7 +934,7 @@ class PRBrainOrchestrator:
         }
 
         coordinator_result = await executor.execute(
-            "dispatch_agent", coordinator_params,
+            "dispatch_explore", coordinator_params,
         )
 
         logger.info(
@@ -1292,7 +1292,7 @@ class PRBrainOrchestrator:
 
         try:
             result = await asyncio.wait_for(
-                executor.execute("dispatch_agent", params),
+                executor.execute("dispatch_explore", params),
                 timeout=float(_PHASE2_TIMEOUT_SECONDS),
             )
         except TimeoutError:
@@ -1530,7 +1530,7 @@ class PRBrainOrchestrator:
                 "invariants from the intent above. Each invariant should be "
                 "a falsifiable predicate of the shape 'After this PR, {X} "
                 "must hold at {location/type}'. These invariants drive your "
-                "dispatch_subagent check questions — every check should map "
+                "dispatch_verify check questions — every check should map "
                 "to one invariant. If an invariant cannot be checked from "
                 "the diff alone, grep / find_symbol first to find the "
                 "relevant code."
@@ -1671,7 +1671,7 @@ class PRBrainOrchestrator:
         # These surface changed files whose cross-file caller footprint is
         # large enough that file-range dispatch would split the pattern.
         # The coordinator decides whether to actually fire
-        # dispatch_dimension_worker; we just tell it "here's where
+        # dispatch_sweep; we just tell it "here's where
         # a cross-file sweep would pay off".
         dim_triggers = _detect_dimension_triggers(
             self._workspace_path, pr_context,
@@ -1685,7 +1685,7 @@ class PRBrainOrchestrator:
                 f"Phase 1 spotted {len(dim_triggers)} changed file(s) with "
                 f"a cross-file caller footprint that file-range dispatch "
                 f"would split up. These are CANDIDATES for "
-                f"`dispatch_dimension_worker` (not mandatory). "
+                f"`dispatch_sweep` (not mandatory). "
                 f"You may fire **up to {dim_cap} dimension worker(s)** "
                 f"for this PR — reserve them for cases where a pattern "
                 f"(new contract, signature change, shared middleware "
@@ -1760,7 +1760,7 @@ class PRBrainOrchestrator:
         lines.append(
             "Run your 5-phase coordinator loop (Survey → Plan → Execute → "
             "Replan → Synthesize). Use read-only tools for the Survey. "
-            "Dispatch scope-bounded investigations via dispatch_subagent "
+            "Dispatch scope-bounded investigations via dispatch_verify "
             f"(≤5 files per dispatch, ≤{dispatch_cap} total dispatches). "
             "Two dispatch modes available — pick per investigation: "
             "(a) `checks=[q1, q2, q3]` for localised suspicions where "

@@ -160,7 +160,7 @@ async def context_query_stream(
     """Run a query through the Brain orchestrator and stream results via SSE.
 
     The Brain (strong model) understands the query, dispatches specialist
-    sub-agents via ``dispatch_agent`` / ``dispatch_swarm`` / ``transfer_to_brain``,
+    sub-agents via ``dispatch_explore`` / ``transfer_to_brain`` / ``transfer_to_brain``,
     and synthesizes a final answer.
 
     Event types:
@@ -214,7 +214,7 @@ async def context_query_stream(
         yield f"event: start\ndata: {json.dumps({'query': query, 'room_id': req.room_id})}\n\n"
 
         # Use Brain orchestrator — it replaces the classifier + pipeline.
-        # Brain dispatches specialist agents via dispatch_agent/dispatch_swarm.
+        # Brain dispatches specialist agents via dispatch_explore / transfer_to_brain.
         from app.workflow.engine import WorkflowEngine
 
         engine = WorkflowEngine(

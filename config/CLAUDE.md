@@ -26,7 +26,7 @@ config/
 
 **Two agent folders, two semantics:**
 - `config/agents/*.md` — **active dispatchable agents**. Brain loads the whole .md as the worker's system prompt. Used by `pr_existence_check`, `pr_subagent_checks` (scoped checks mode), and the P11 verifiers.
-- `config/agent_factory/*.md` — **reference templates** the v2 coordinator studies to compose role-specialised worker prompts on the fly. Used by role-mode `dispatch_subagent(role=...)` and P12b `dispatch_dimension_worker(dimension=...)`. See `agent_factory/_README.md` for composition semantics.
+- `config/agent_factory/*.md` — **reference templates** the v2 coordinator studies to compose role-specialised worker prompts on the fly. Used by role-mode `dispatch_verify(role=...)` and P12b `dispatch_sweep(dimension=...)`. See `agent_factory/_README.md` for composition semantics.
 
 ## Directory responsibilities (cheat sheet)
 
@@ -36,7 +36,7 @@ Three folders hold "agent-related markdown" and they are NOT interchangeable. Kn
 |---|---|---|---|
 | `agents/` | **Pre-composed, reusable agent definitions.** Frontmatter (model, tools, limits, skill) + body (Layer 1 identity). Same file fires verbatim on every dispatch. | Adding a new dispatchable agent the Brain can address by `template=NAME` | `AgentLoopService` via `_agent_registry[template]` |
 | `skills/` | **Layer 3 skills** — reusable shared-knowledge blocks. Loaded on module import into `INVESTIGATION_SKILLS` dict. | Adding/editing the skill text of an existing agent, or a coordinator's meta-skill | `_load_skill(name)` in `agent_loop/prompts.py`; injected into Layer 3 when `skill_key` is set |
-| `agent_factory/` | **Role-reference templates** for v2 coordinator's on-the-fly worker composition. Lens / Concerns / Approach / Examples. NOT used as-is; always fused with PR-specific scope + direction_hint. | Adding a new review lens (e.g. "api_contract") or refining an existing lens's examples | `_load_role_template(role)` in `agent_loop/brain.py`; `_compose_role_system_prompt` fuses with PR context at `dispatch_subagent(role=...)` or `dispatch_dimension_worker(dimension=...)` time |
+| `agent_factory/` | **Role-reference templates** for v2 coordinator's on-the-fly worker composition. Lens / Concerns / Approach / Examples. NOT used as-is; always fused with PR-specific scope + direction_hint. | Adding a new review lens (e.g. "api_contract") or refining an existing lens's examples | `_load_role_template(role)` in `agent_loop/brain.py`; `_compose_role_system_prompt` fuses with PR context at `dispatch_verify(role=...)` or `dispatch_sweep(dimension=...)` time |
 
 **The decision tree:**
 - "I want to add a worker the Brain can dispatch via `template=...`" → `agents/`

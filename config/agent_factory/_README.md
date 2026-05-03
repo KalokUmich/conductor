@@ -63,7 +63,7 @@ severity_hint, suggested fix. These examples teach by shape.
   agents = "paste as prompt".
 - The factory can evolve independently — new roles, new examples, new
   investigation approaches — without touching any active agent config.
-- v1's fixed `dispatch_agent("role")` path was deleted in commit
+- v1's fixed `dispatch_explore("role")` path was deleted in commit
   `95f39d9`; the factory is the only place role lenses live now.
 
 ## How coordinator uses the factory
@@ -71,7 +71,7 @@ severity_hint, suggested fix. These examples teach by shape.
 At coordinator-prompt-assembly time:
 - A small "Available review roles" index is injected (just names +
   descriptions) so the coordinator knows what exists.
-- When the coordinator emits `dispatch_subagent(role="security", ...)`,
+- When the coordinator emits `dispatch_verify(role="security", ...)`,
   the dispatch handler loads `config/agent_factory/security.md`,
   extracts the 4 sections, and composes a bespoke system prompt that
   fuses the role lens with the PR-specific context (scope, direction

@@ -389,289 +389,16 @@ class CreatePlanParams(BaseModel):
     fallback: str = Field(default="", description="What to try if the primary approach finds insufficient evidence")
 
 
-class DispatchAgentParams(BaseModel):
-    query: str = Field(..., description="Focused question for the agent to investigate")
-
-    # Mode 1: Template (pre-defined agent from registry)
-    template: Optional[str] = Field(
-        default=None,
-        description="Pre-defined agent template name (e.g. 'correctness', "
-        "'explore_implementation'). Use for PR review and business flow swarm agents.",
-    )
-
-    # Mode 2: Dynamic composition (Brain assembles the agent)
-    tools: Optional[List[str]] = Field(
-        default=None,
-        description="Tools for this agent (e.g. ['grep', 'read_file', "
-        "'find_symbol']). Required when no template is specified.",
-    )
-    perspective: Optional[str] = Field(
-        default=None, description="1-3 sentences defining the agent's investigation focus and what to look for."
-    )
-    skill: Optional[str] = Field(
-        default=None,
-        description="Investigation skill key from the skill catalog "
-        "(e.g. 'entry_point', 'root_cause', 'architecture', 'impact', "
-        "'data_lineage', 'recent_changes', 'code_explanation', "
-        "'config_analysis', 'issue_tracking').",
-    )
-    model: str = Field(
-        default="explorer",
-        description="'explorer' (Haiku, default) or 'strong' (Sonnet, for complex reasoning like root cause analysis).",
-    )
-    budget_tokens: Optional[int] = Field(
-        default=None, ge=50000, le=800000, description="Token budget override. Defaults based on skill type."
-    )
-    max_iterations: Optional[int] = Field(
-        default=None, ge=5, le=30, description="Iteration limit override. Default: 20."
-    )
-
-    # Shared
-    budget_weight: float = Field(default=1.0, ge=0.3, le=2.0, description="Budget multiplier (1.0 = standard)")
-
-
-class DispatchSwarmParams(BaseModel):
-    swarm_name: str = Field(
-        ..., description="Swarm preset name (e.g. 'pr_review', 'business_flow'). Only use predefined swarms."
-    )
-    query: str = Field(..., description="Shared investigation query for all agents in the swarm")
-
-
-class DispatchSubagentScope(BaseModel):
-    """Single file slot in a dispatch_subagent scope."""
-
-    file: str = Field(..., description="Repo-relative path, e.g. 'src/auth/session.py'.")
-    start: Optional[int] = Field(
-        default=None, ge=1,
-        description="1-indexed first line of the scope. Omit to cover the whole file.",
-    )
-    end: Optional[int] = Field(
-        default=None, ge=1,
-        description="1-indexed last line (inclusive). Omit to cover until EOF.",
-    )
-
-
-class DispatchSubagentParams(BaseModel):
-    """PR Brain v2's core primitive — dispatch a scope-bounded sub-agent.
-
-    Two dispatch modes:
-
-    1. **Checks mode** (original): Brain has already localised a specific
-       suspicion and hands the worker 3 falsifiable yes/no questions. Best
-       when Survey found a concrete hotspot.
-       Required: ``checks`` (exactly 3 questions). ``role`` unset.
-
-    2. **Role mode** (new, P12): Brain has spotted a risk dimension but
-       hasn't localised the invariant yet, and wants a role-specialist to
-       do a scope-bounded deep-dive. Brain COMPOSES the sub-agent's system
-       prompt by referencing ``config/agent_factory/{role}.md`` (lens,
-       approach, finding-shape examples) and fusing in this PR's context.
-       Required: ``role`` (one of the factory roles). Optional:
-       ``direction_hint`` (1-2 sentences of what to investigate),
-       ``checks`` (if Brain wants the role to also answer 3 specific
-       questions — stronger dispatch).
-
-    Must provide EITHER ``checks`` OR ``role``.
-
-    The sub-agent returns verdicts (if checks) + findings with
-    ``severity: null`` (Brain classifies severity) + optional
-    unexpected_observations.
-    """
-
-    scope: List[DispatchSubagentScope] = Field(
-        ...,
-        min_length=1,
-        max_length=5,
-        description=(
-            "1-5 file slots defining what the sub-agent may examine. Each slot "
-            "is a file path with optional start/end line range. The sub-agent "
-            "stays inside this scope unless a check explicitly requires "
-            "cross-file verification (e.g. 'does symbol X exist elsewhere')."
-        ),
-    )
-    role: Optional[str] = Field(
-        default=None,
-        description=(
-            "Optional role reference from config/agent_factory/: 'security', "
-            "'correctness', 'concurrency', 'reliability', 'performance', or "
-            "'test_coverage'. When set, Brain composes the worker's system "
-            "prompt from (a) the role's Lens/Concerns/Approach/Examples in "
-            "the factory template and (b) this PR's scope + direction_hint "
-            "+ Brain's Survey notes. The factory file is a REFERENCE — Brain "
-            "does the composition, does not paste the template verbatim."
-        ),
-    )
-    direction_hint: Optional[str] = Field(
-        default=None,
-        max_length=500,
-        description=(
-            "1-2 sentences describing what to investigate, used with 'role'. "
-            "Brain emits this when it has identified a risk dimension but "
-            "not yet localised specific invariants. E.g. 'OAuth flow gained "
-            "PKCE support in this commit — look for token leaks, "
-            "state-mismatch bypass, or incomplete migration of existing "
-            "clients'. Less prescriptive than checks, more guided than "
-            "'review for security'."
-        ),
-    )
-    checks: Optional[List[str]] = Field(
-        default=None,
-        description=(
-            "Optional: exactly 3 falsifiable predicates about specific "
-            "locations. Each check must be answerable as confirmed | "
-            "violated | unclear with file:line evidence. Combine with "
-            "'role' for 'specialist + specific questions'. Leave None when "
-            "dispatching with role + direction_hint only. Role-shaped "
-            "tasks ('review for correctness') as checks are rejected — "
-            "give concrete invariant-at-location questions."
-        ),
-    )
-    success_criteria: str = Field(
-        ...,
-        min_length=10,
-        description=(
-            "What 'done' looks like for this investigation. E.g. 'Answer each "
-            "check with a verdict + file:line evidence, and flag any bug "
-            "whose presence would make the verdict violated'."
-        ),
-    )
-    budget_tokens: int = Field(
-        default=120_000, ge=40_000, le=400_000,
-        description="Token budget for this sub-agent. 80–150K typical.",
-    )
-    model_tier: str = Field(
-        default="explorer",
-        description=(
-            "'explorer' (Haiku, default for most investigations) or 'strong' "
-            "(Sonnet, for hard verification where evidence is ambiguous). "
-            "Brain's replan step may upgrade to 'strong' on a follow-up pass."
-        ),
-    )
-    may_subdispatch: bool = Field(
-        default=False,
-        description=(
-            "When True, the dispatched sub-agent may itself call "
-            "dispatch_subagent once (depth 2, hard wall). Use only when a "
-            "check genuinely requires subdividing (e.g. 'for each of the 3 "
-            "call sites of foo, verify the caller handles the new return'). "
-            "Most investigations should leave this False."
-        ),
-    )
-    context: Optional[str] = Field(
-        default=None,
-        description=(
-            "Optional 1-3 sentences of Brain-composed context the sub-agent "
-            "needs to interpret the task. E.g. 'This diff introduces a new "
-            "AssignmentSource dataclass used by Celery workers'. Do NOT put "
-            "the diff here — sub-agent gets the diff separately."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _require_checks_or_role(self) -> DispatchSubagentParams:
-        """Exactly-one-mode validator — must have at least one of {checks, role}."""
-        if not self.checks and not self.role:
-            raise ValueError(
-                "dispatch_subagent requires either 'checks' (3 specific "
-                "questions) or 'role' (factory reviewer, e.g. 'security'). "
-                "Got neither."
-            )
-        if self.checks is not None and len(self.checks) != 3:
-            raise ValueError(
-                f"When provided, 'checks' must have exactly 3 entries "
-                f"(got {len(self.checks)})."
-            )
-        return self
-
-
-class DispatchDimensionWorkerParams(BaseModel):
-    """PR Brain v2's dimension-sliced dispatch primitive (P12b).
-
-    Where ``dispatch_subagent`` decomposes a review by **file-range**
-    (each worker sees 1-5 scoped files), this decomposes by **bug class**:
-    the worker reads the *entire* PR diff through one lens (security,
-    correctness, concurrency, reliability, performance, api_contract,
-    test_coverage) and hunts that class of bug across every changed file.
-
-    Strong case: a changed function is called from ≥3 call sites or
-    ≥2 files. File-range dispatch gives each worker a narrow slice and
-    can miss the cross-file contract break (caller A handles the new
-    return shape, callers B and C don't). A dimension worker sees them
-    all in one pass.
-
-    Budget is higher than scoped dispatch (full diff + caller context in
-    context window). ``model_tier='explorer'`` by default; escalate to
-    ``'strong'`` only for genuinely cross-file invariant reasoning.
-
-    Cap (enforced by Brain meta-skill):
-      - PR < 5 files:   0 dimension workers (not worth the budget)
-      - PR 5-14 files:  up to 1
-      - PR ≥ 15 files:  up to 2
-    """
-
-    dimension: str = Field(
-        ...,
-        description=(
-            "Lane name — must be one of the agent_factory roles: "
-            "'security', 'correctness', 'concurrency', 'reliability', "
-            "'performance', 'test_coverage', 'api_contract'. Brain "
-            "composes the system prompt from the factory template fused "
-            "with 'the whole PR diff' context."
-        ),
-    )
-    direction_hint: Optional[str] = Field(
-        default=None,
-        max_length=500,
-        description=(
-            "1-2 sentences describing what to hunt across the diff. "
-            "E.g. 'OAuth flow added PKCE; verify every redirect/callback "
-            "path handles state-mismatch, and existing non-PKCE clients "
-            "still work'. More guided than the role alone, but less "
-            "prescriptive than a checks list — the whole point of "
-            "dimension-sliced dispatch is to let the lens find what "
-            "the coordinator didn't yet localise."
-        ),
-    )
-    triggering_symbols: Optional[List[str]] = Field(
-        default=None,
-        max_length=20,
-        description=(
-            "Optional list of changed function / method names whose "
-            "cross-file usage triggered this dispatch. Brain surfaces "
-            "these to the worker so 'callers of foo' is already a "
-            "concrete target instead of a general prowl. E.g. "
-            "['TokenService.issue', 'PaymentGateway.charge']."
-        ),
-    )
-    success_criteria: str = Field(
-        ...,
-        min_length=10,
-        description=(
-            "What 'done' looks like. E.g. 'For each changed function "
-            "with ≥3 callers, verify every caller handles the new "
-            "behaviour; flag the ones that don't with file:line "
-            "evidence'."
-        ),
-    )
-    budget_tokens: int = Field(
-        default=150_000, ge=80_000, le=200_000,
-        description=(
-            "Token budget. Dimension dispatch reads the full diff + "
-            "often traces callers across the repo, so budget is higher "
-            "than scoped dispatch. 150K default leaves ~50K headroom "
-            "in the explorer-tier context window for internal reasoning "
-            "+ cache. Bump to 180K only when diff itself is >40K tokens."
-        ),
-    )
-    model_tier: str = Field(
-        default="explorer",
-        description=(
-            "'explorer' (default — dimension work is cross-file pattern "
-            "matching, which the fast tier handles well) or 'strong' "
-            "(only when cross-file logical inference is required — e.g. "
-            "saga unwind, multi-step state machine invariant)."
-        ),
-    )
+# DispatchExploreParams / DispatchVerifyScope / DispatchVerifyParams / DispatchSweepParams
+# moved to backend/app/agent_loop/dispatch/{explore,verify,sweep}.py 2026-05-03.
+# Re-imported from there for back-compat with existing
+# from app.code_tools.schemas import Dispatch... callers.
+from app.agent_loop.dispatch import (  # noqa: E402
+    DispatchExploreParams,
+    DispatchVerifyParams,
+    DispatchVerifyScope,
+    DispatchSweepParams,
+)
 
 
 class TransferToBrainParams(BaseModel):
@@ -912,10 +639,9 @@ TOOL_PARAM_MODELS: Dict[str, type] = {
     # Interactive tools
     "ask_user": AskUserParams,
     # Brain orchestrator tools
-    "dispatch_agent": DispatchAgentParams,
-    "dispatch_swarm": DispatchSwarmParams,
-    "dispatch_subagent": DispatchSubagentParams,
-    "dispatch_dimension_worker": DispatchDimensionWorkerParams,
+    "dispatch_explore": DispatchExploreParams,
+    "dispatch_verify": DispatchVerifyParams,
+    "dispatch_sweep": DispatchSweepParams,
     "transfer_to_brain": TransferToBrainParams,
     "signal_blocker": SignalBlockerParams,
 }
@@ -1041,7 +767,7 @@ def filter_tools(names: List[str]) -> List[Dict[str, Any]]:
 
     Searches BOTH ``TOOL_DEFINITIONS`` (code tools) and
     ``BRAIN_TOOL_DEFINITIONS`` (Brain orchestration tools, e.g.
-    ``dispatch_subagent``). The v2 coordinator needs the Brain tools in
+    ``dispatch_verify``). The v2 coordinator needs the Brain tools in
     its tool pool so it can plan sub-agent dispatches.
     """
     name_set = set(names)
@@ -1823,13 +1549,13 @@ TOOL_METADATA: Dict[str, ToolMetadata] = {
         summary_template="update_notes topic={topic}: {_content_len} chars",
     ),
     # --- Brain orchestration (PR Brain v2) ---
-    "dispatch_subagent": ToolMetadata(
+    "dispatch_verify": ToolMetadata(
         is_read_only=False,  # dispatches compute, not stateless
         is_concurrent_safe=True,
         category="brain",
         summary_template="subagent checks={_checks_count} scope={_scope_files}",
     ),
-    "dispatch_dimension_worker": ToolMetadata(
+    "dispatch_sweep": ToolMetadata(
         is_read_only=False,
         is_concurrent_safe=True,
         category="brain",
@@ -1971,27 +1697,20 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "input_schema": CreatePlanParams.model_json_schema(),
     },
     {
-        "name": "dispatch_agent",
+        "name": "dispatch_explore",
         "description": (
-            "Dispatch an agent to investigate the codebase. Two modes:\n"
-            "1. Template mode: set template= to use a pre-defined agent "
-            "(for PR review swarm and business flow swarm agents only).\n"
+            "Dispatch a specialist agent to investigate the codebase. Two modes:\n"
+            "1. Template mode: set template= to use a pre-defined agent from "
+            "the template catalog (e.g. explore_implementation, explore_usage). "
+            "These are pre-tuned for specific perspectives — pick one or "
+            "dispatch several in PARALLEL (multiple tool calls in one turn) "
+            "when a query benefits from complementary lenses.\n"
             "2. Dynamic mode: set tools= and optionally perspective=, skill=, "
             "model=, budget_tokens= to compose an agent on the fly. "
             "Use the skill catalog and tool catalog in your system prompt "
             "to select the right combination."
         ),
-        "input_schema": DispatchAgentParams.model_json_schema(),
-    },
-    {
-        "name": "dispatch_swarm",
-        "description": (
-            "Dispatch a predefined group of parallel agents. Only use for "
-            "end-to-end business flow tracing: 'business_flow' (2-agent "
-            "flow tracing). For PR reviews use transfer_to_brain instead. "
-            "For all other tasks, use dispatch_agent."
-        ),
-        "input_schema": DispatchSwarmParams.model_json_schema(),
+        "input_schema": DispatchExploreParams.model_json_schema(),
     },
     {
         "name": "transfer_to_brain",
@@ -2005,7 +1724,7 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "input_schema": TransferToBrainParams.model_json_schema(),
     },
     {
-        "name": "dispatch_subagent",
+        "name": "dispatch_verify",
         "description": (
             "PR Brain v2's core primitive — dispatch a scope-bounded sub-agent "
             "with exactly 3 falsifiable checks. The sub-agent returns per-check "
@@ -2023,15 +1742,15 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "subdivision (e.g. 'for each of the 3 call sites, verify…'). "
             "Depth 2 is a hard wall — sub-sub-agents cannot dispatch further."
         ),
-        "input_schema": DispatchSubagentParams.model_json_schema(),
+        "input_schema": DispatchVerifyParams.model_json_schema(),
     },
     {
-        "name": "dispatch_dimension_worker",
+        "name": "dispatch_sweep",
         "description": (
             "PR Brain v2's dimension-sliced primitive (P12b). Dispatch a "
             "role-specialist worker that reads the ENTIRE PR diff through "
             "one lens and hunts its bug class across every changed file. "
-            "Complement to `dispatch_subagent` — use this when decomposition "
+            "Complement to `dispatch_verify` — use this when decomposition "
             "by file-range would split up a multi-site pattern.\n\n"
             "Use this when: a changed function has ≥3 callers or ≥2 distinct "
             "caller files, the PR introduces a new contract that multiple "
@@ -2047,7 +1766,7 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "dispatch cap — these investigations don't compete for the "
             "same pool because they answer a different kind of question."
         ),
-        "input_schema": DispatchDimensionWorkerParams.model_json_schema(),
+        "input_schema": DispatchSweepParams.model_json_schema(),
     },
 ]
 

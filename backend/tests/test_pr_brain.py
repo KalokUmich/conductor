@@ -108,7 +108,7 @@ def _make_finding(
 
 def _make_tool_result(agent_name: str, answer: str, tool_calls_made: int = 5) -> ToolResult:
     return ToolResult(
-        tool_name="dispatch_agent",
+        tool_name="dispatch_explore",
         success=True,
         data={
             "agent_name": agent_name,
@@ -1821,7 +1821,7 @@ class TestPhase2LangHints:
 
     def _capture_phase2_query(self, brain, ctx, file_diffs):
         """Drive _run_v2_phase2_existence far enough to capture the query
-        that gets passed to dispatch_agent, then short-circuit."""
+        that gets passed to dispatch_explore, then short-circuit."""
         captured = {}
 
         class _FakeExecutor:
@@ -1850,7 +1850,7 @@ class TestPhase2LangHints:
         captured = self._capture_phase2_query(
             brain, ctx, {"src/main/java/Foo.java": "@@ -1 +1 @@\n+class Foo {}\n"},
         )
-        assert captured["tool"] == "dispatch_agent"
+        assert captured["tool"] == "dispatch_explore"
         query = captured["params"]["query"]
         assert "Language-specific hints" in query
         assert "find_symbol" in query

@@ -104,8 +104,14 @@ def mock_provider():
 
 class TestBrainToolDefinitions:
     def test_brain_tools_include_dispatch(self):
-        assert any(t["name"] == "dispatch_agent" for t in BRAIN_TOOL_DEFINITIONS)
-        assert any(t["name"] == "dispatch_swarm" for t in BRAIN_TOOL_DEFINITIONS)
+        assert any(t["name"] == "dispatch_explore" for t in BRAIN_TOOL_DEFINITIONS)
+
+    def test_brain_tools_exclude_dispatch_swarm(self):
+        # dispatch_swarm was retired in favour of multi-perspective parallel
+        # template dispatch via dispatch_explore(template=...). The brain.py
+        # _dispatch_swarm() handler is kept for back-compat with legacy
+        # callers, but the Brain itself no longer sees the tool.
+        assert not any(t["name"] == "dispatch_swarm" for t in BRAIN_TOOL_DEFINITIONS)
 
     def test_brain_tools_exclude_code_tools(self):
         for t in BRAIN_TOOL_DEFINITIONS:
@@ -114,9 +120,9 @@ class TestBrainToolDefinitions:
     def test_get_brain_tool_definitions_includes_ask_user(self):
         full = get_brain_tool_definitions()
         names = [t["name"] for t in full]
-        assert "dispatch_agent" in names
-        assert "dispatch_swarm" in names
+        assert "dispatch_explore" in names
         assert "ask_user" in names
+        assert "dispatch_swarm" not in names
 
     def test_brain_tools_have_input_schema(self):
         for t in BRAIN_TOOL_DEFINITIONS:
@@ -270,7 +276,7 @@ class TestAgentToolExecutor:
             mock_provider,
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "template": "nonexistent",
                 "query": "test",
@@ -293,7 +299,7 @@ class TestAgentToolExecutor:
             max_depth=2,  # force depth error to avoid real agent run
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "agent_name": "explore_architecture",
                 "query": "test",
@@ -305,7 +311,7 @@ class TestAgentToolExecutor:
 
     @pytest.mark.asyncio
     async def test_dispatch_max_depth(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
-        """dispatch_agent at max depth returns error."""
+        """dispatch_explore at max depth returns error."""
         executor = self._make_executor(
             agent_registry,
             swarm_registry,
@@ -315,7 +321,7 @@ class TestAgentToolExecutor:
             max_depth=2,
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "template": "explore_architecture",
                 "query": "test",
@@ -328,7 +334,7 @@ class TestAgentToolExecutor:
     async def test_dispatch_requires_template_or_tools(
         self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
     ):
-        """dispatch_agent without template or tools returns error."""
+        """dispatch_explore without template or tools returns error."""
         executor = self._make_executor(
             agent_registry,
             swarm_registry,
@@ -336,7 +342,7 @@ class TestAgentToolExecutor:
             mock_provider,
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "query": "test",
             },
@@ -344,46 +350,10 @@ class TestAgentToolExecutor:
         assert not result.success
         assert "template" in result.error.lower() or "tools" in result.error.lower()
 
-    @pytest.mark.asyncio
-    async def test_dispatch_unknown_swarm(self, agent_registry, swarm_registry, mock_inner_executor, mock_provider):
-        """Dispatching unknown swarm returns error."""
-        executor = self._make_executor(
-            agent_registry,
-            swarm_registry,
-            mock_inner_executor,
-            mock_provider,
-        )
-        result = await executor.execute(
-            "dispatch_swarm",
-            {
-                "swarm_name": "nonexistent",
-                "query": "test",
-            },
-        )
-        assert not result.success
-        assert "Unknown swarm" in result.error
-
-    @pytest.mark.asyncio
-    async def test_dispatch_swarm_requires_preset(
-        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
-    ):
-        """Dispatching swarm without a valid preset name returns error."""
-        executor = self._make_executor(
-            agent_registry,
-            swarm_registry,
-            mock_inner_executor,
-            mock_provider,
-        )
-        result = await executor.execute(
-            "dispatch_swarm",
-            {
-                "swarm_name": "nonexistent_swarm",
-                "query": "test",
-            },
-        )
-        assert not result.success
-        assert "Unknown swarm" in result.error
-        assert "dispatch_agent" in result.error
+    # test_dispatch_unknown_swarm + test_dispatch_swarm_requires_preset
+    # were removed 2026-05-03 along with the dispatch_swarm primitive.
+    # Domain Brain (transfer_to_brain("domain")) now handles the
+    # multi-perspective use case the swarm path used to serve.
 
 
 # ---------------------------------------------------------------------------
@@ -396,14 +366,18 @@ class TestBrainPrompt:
         prompt = build_brain_prompt(agent_registry, swarm_registry)
         assert "explore_architecture" in prompt
         assert "explore_entry_point" in prompt
-        assert "test_swarm" in prompt
+        # Swarm catalog rendering retired — Brain dispatches templates directly
+        # via dispatch_explore. swarm_registry is still accepted for back-compat
+        # but no longer surfaces in the prompt.
 
     def test_build_prompt_includes_examples(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(agent_registry, swarm_registry)
         assert "<example>" in prompt
-        assert "dispatch_agent" in prompt
-        assert "dispatch_swarm" in prompt
+        assert "dispatch_explore" in prompt
         assert "ask_user" in prompt
+        # dispatch_swarm retired — multi-perspective is now parallel template dispatch
+        assert "dispatch_swarm" not in prompt
+        assert "Multi-perspective" in prompt or "multi-perspective" in prompt
 
     def test_build_prompt_includes_qa_cache(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(
@@ -420,8 +394,13 @@ class TestBrainPrompt:
 
     def test_build_prompt_token_budget(self, agent_registry, swarm_registry):
         prompt = build_brain_prompt(agent_registry, swarm_registry)
-        # Prompt includes tool catalog + skill catalog + examples (~4000 tokens / ~16000 chars)
-        assert len(prompt) < 18_000, f"Brain prompt too long: {len(prompt)} chars"
+        # Prompt includes tool catalog + skill catalog + examples (~4750 tokens
+        # / ~19500 chars). Budget grew when dispatch_swarm was retired in favour
+        # of multi-perspective parallel template dispatch — the new pattern
+        # needs explicit synthesis-quality rules (preserve technical terms,
+        # keep secondary outcomes) that the old swarm carried in its preset's
+        # synthesis_guide. Eval-validated: each block fixed a regression.
+        assert len(prompt) < 19_500, f"Brain prompt too long: {len(prompt)} chars"
 
 
 # ---------------------------------------------------------------------------
@@ -573,7 +552,7 @@ class TestSubAgentSystemPrompt:
 
 
 class TestQueryNotContaminatedByRole:
-    """Verify that dispatch_agent passes clean queries (no ## Your Role)."""
+    """Verify that dispatch_explore passes clean queries (no ## Your Role)."""
 
     @pytest.mark.asyncio
     async def test_dispatch_does_not_inject_role_in_query(
@@ -622,7 +601,7 @@ class TestQueryNotContaminatedByRole:
                 event_sink=asyncio.Queue(),
             )
             await executor.execute(
-                "dispatch_agent",
+                "dispatch_explore",
                 {
                     "agent_name": "explore_architecture",
                     "query": "How does auth work?",
@@ -643,7 +622,7 @@ class TestQueryNotContaminatedByRole:
         mock_inner_executor,
         mock_provider,
     ):
-        """dispatch_agent must pass agent_identity dict to AgentLoopService via config."""
+        """dispatch_explore must pass agent_identity dict to AgentLoopService via config."""
         captured_kwargs = {}
 
         original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
@@ -682,7 +661,7 @@ class TestQueryNotContaminatedByRole:
                 event_sink=asyncio.Queue(),
             )
             await executor.execute(
-                "dispatch_agent",
+                "dispatch_explore",
                 {
                     "agent_name": "explore_architecture",
                     "query": "How does auth work?",
@@ -712,16 +691,19 @@ class TestBrainConfigLoading:
         assert config.limits.total_session_tokens == 800_000
         assert "grep" in config.core_tools
 
-    def test_load_swarm_registry(self):
+    def test_load_swarm_registry_returns_empty(self):
+        # config/swarms/ deleted 2026-05-03 along with the dispatch_swarm
+        # primitive. Loader still callable for back-compat — returns {}.
         swarms = load_swarm_registry()
-        assert "business_flow" in swarms
-        assert swarms["business_flow"].mode == "parallel"
+        assert swarms == {}
 
     def test_load_agent_registry(self):
         agents = load_agent_registry()
         assert len(agents) > 0
-        # After v1 fleet removal, agent_registry holds only v2 / swarm agents.
-        assert "explore_implementation" in agents       # swarm (business flow)
+        # explore_implementation + explore_usage are kept as Domain Brain
+        # templates (used via dispatch_explore(template=...)).
+        assert "explore_implementation" in agents
+        assert "explore_usage" in agents
         assert "pr_existence_check" in agents           # v2 Phase 2 worker
 
 
@@ -878,7 +860,7 @@ class TestCreatePlan:
     async def test_dispatch_works_without_plan(
         self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
     ):
-        """Backward compat: dispatch_agent works without prior create_plan."""
+        """Backward compat: dispatch_explore works without prior create_plan."""
         executor = AgentToolExecutor(
             inner_executor=mock_inner_executor,
             agent_registry=agent_registry,
@@ -888,7 +870,7 @@ class TestCreatePlan:
             max_depth=0,  # force depth error to avoid needing real agent run
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "agent_name": "explore_architecture",
                 "query": "Map the architecture",
@@ -933,7 +915,7 @@ class TestCreatePlan:
 
 
 class TestDynamicAgentDispatch:
-    """Tests for dynamic agent composition (dispatch_agent without template)."""
+    """Tests for dynamic agent composition (dispatch_explore without template)."""
 
     @pytest.mark.asyncio
     async def test_dynamic_dispatch_builds_config(
@@ -949,7 +931,7 @@ class TestDynamicAgentDispatch:
             max_depth=0,  # force depth error
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "query": "Find the auth handler",
                 "tools": ["grep", "find_symbol", "read_file"],
@@ -979,7 +961,7 @@ class TestDynamicAgentDispatch:
             max_depth=0,
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "query": "Debug the crash",
                 "tools": ["grep", "read_file", "git_blame"],
@@ -1003,7 +985,7 @@ class TestDynamicAgentDispatch:
             max_depth=0,
         )
         result = await executor.execute(
-            "dispatch_agent",
+            "dispatch_explore",
             {
                 "query": "Find endpoint",
                 "tools": ["grep", "find_symbol"],

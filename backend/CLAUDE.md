@@ -8,7 +8,7 @@ backend/app/
 ├── config.py                # Settings + Secrets from YAML
 ├── agent_loop/              # Agentic code intelligence (LLM + tools)
 │   ├── service.py           # AgentLoopService — LLM loop, tool dispatch
-│   ├── brain.py             # AgentToolExecutor — dispatch_agent/dispatch_swarm/transfer_to_brain/dispatch_subagent/dispatch_dimension_worker
+│   ├── brain.py             # AgentToolExecutor — dispatch_explore/dispatch_swarm/transfer_to_brain/dispatch_verify/dispatch_sweep
 │   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline
 │   ├── forked.py            # Phase 9.16 fork_call primitive — cache-reuse verifier dispatch (bypasses AgentLoopService)
 │   ├── lifecycle.py         # Phase 9.17 hook registry — 4 extension points around the Brain pipeline
@@ -78,9 +78,9 @@ The **Brain** is an LLM orchestrator (strong model) that replaces the keyword cl
 It understands queries, dispatches specialist agents, evaluates findings, and synthesizes answers.
 
 ```
-Query → Brain (Sonnet, meta-tools: dispatch_agent, dispatch_swarm, transfer_to_brain, ask_user)
+Query → Brain (Sonnet, meta-tools: dispatch_explore, dispatch_swarm, transfer_to_brain, ask_user)
   → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel) | TRANSFER (specialized brain)
-  → dispatch_agent → AgentLoopService (Haiku, code tools, isolated context)
+  → dispatch_explore → AgentLoopService (Haiku, code tools, isolated context)
     → 4-layer prompt: L1 system (agent identity) + L2 tools + L3 skills (workspace) + L4 query
     → Tool execution (up to 20 iter / 420K tokens)
     → Evidence check (internal retry)
@@ -114,7 +114,7 @@ transfer_to_brain("pr_review") → PRBrainOrchestrator
            │   password ==, JWT literals, whitelist/allowlist, retry)
            └─ Tier 3 dimension-worker hints (files with ≥3 caller
                files or ≥5 calling symbols; coordinator decides
-               whether to fire dispatch_dimension_worker)
+               whether to fire dispatch_sweep)
   Phase 2: Existence check (v2u reorder — deterministic first, then LLM)
            ├─ P13 deterministic phantom-symbol scanners (Py / Go / Java)
            │   persist missing-symbol facts to the vault BEFORE dispatch
@@ -127,10 +127,10 @@ transfer_to_brain("pr_review") → PRBrainOrchestrator
   Phase 3: Coordinator loop (strong tier)
            ├─ Survey diff + impact graph + mandatory requirements
            ├─ Two dispatch primitives:
-           │   • dispatch_subagent — scoped to 1-5 files, 3 checks
+           │   • dispatch_verify — scoped to 1-5 files, 3 checks
            │     (role or checks mode; role composes from
            │     config/agent_factory/<role>.md)
-           │   • dispatch_dimension_worker (P12b) — full-diff sweep
+           │   • dispatch_sweep (P12b) — full-diff sweep
            │     through one lens; cap 0/1/2 by PR size
            ├─ P10 adaptive model_tier (explorer default, strong for
            │   hard cross-file logical inference)
@@ -149,7 +149,7 @@ transfer_to_brain("pr_review") → PRBrainOrchestrator
 
 Key designs:
 - **Role templates are reference, not paste-targets.** Brain composes each dispatched worker's system prompt from a role template (`config/agent_factory/<role>.md`) fused with PR-specific scope and direction_hint.
-- **Dimension vs scoped dispatch**: scoped (`dispatch_subagent`) decomposes by file-range, dimension (`dispatch_dimension_worker`) decomposes by bug class. Cross-file pattern (e.g. new contract on a function called from 3+ files) is dimension's case; localised invariant checks are scoped's.
+- **Dimension vs scoped dispatch**: scoped (`dispatch_verify`) decomposes by file-range, dimension (`dispatch_sweep`) decomposes by bug class. Cross-file pattern (e.g. new contract on a function called from 3+ files) is dimension's case; localised invariant checks are scoped's.
 
 **Configuration:**
 - `config/brains/default.yaml` — General Brain limits (iterations, budget, concurrency, timeout) + core_tools
@@ -165,7 +165,7 @@ Key designs:
 - **Code tools** (33, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`, **`search_facts`** (Phase 9.15), **`update_notes`** (Phase 9.9.3 — sub-agent scratch notes keyed by (agent, topic), survives context clearing).
 - **Jira tools** (5, `integrations/jira/tools.py`): `jira_search` (with convenience JQL: "my tickets", "my sprint", "blockers"), `jira_get_issue`, `jira_create_issue`, `jira_update_issue`, `jira_list_projects`.
 - **Browser tools** (6, `browser/tools.py`): `web_search`, `web_navigate`, `web_click`, `web_fill`, `web_screenshot`, `web_extract`.
-- **Brain orchestration tools** (6, `BRAIN_TOOL_DEFINITIONS`): `create_plan`, `dispatch_agent`, `dispatch_swarm`, **`dispatch_subagent`** (PR Brain v2 scoped primitive), **`dispatch_dimension_worker`** (P12b full-diff through one lens), `transfer_to_brain`. Only the coordinator sees these.
+- **Brain orchestration tools** (6, `BRAIN_TOOL_DEFINITIONS`): `create_plan`, `dispatch_explore`, `dispatch_swarm`, **`dispatch_verify`** (PR Brain v2 scoped primitive), **`dispatch_sweep`** (P12b full-diff through one lens), `transfer_to_brain`. Only the coordinator sees these.
 
 **Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 46 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
 
@@ -283,7 +283,7 @@ tests/                                          # 1655 tests total
 ├── test_code_review.py             # Shared-utility tests: diff_parser + risk_classifier + dedup + ranking + PRContext
 ├── test_shared.py                  # Shared code review helpers (evidence gate, parse_findings)
 ├── test_pr_brain.py                # PRBrainOrchestrator v2 pipeline (+ P13-Go/Java, P14, phase-2 hints)
-├── test_dispatch_subagent.py       # dispatch_subagent primitive + 7 factory role templates
+├── test_dispatch_verify.py       # dispatch_verify primitive + 7 factory role templates
 │   # Code tools
 ├── test_code_tools.py              # 139 tests — 43 tools + dispatcher + multi-language + grep enhancements + glob + ToolMetadata
 ├── test_compressed_tools.py        # 24 tests — compressed_view, trace_variable, detect_patterns

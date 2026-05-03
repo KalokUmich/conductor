@@ -101,7 +101,7 @@ class BrainExecutorConfig:
             of spawning another agent.
         max_concurrent: Maximum number of sub-agents that may run in
             parallel (enforced via an ``asyncio.Semaphore`` inside
-            ``_dispatch_swarm``).
+            the dispatch handlers).
         sub_agent_timeout: Seconds to wait for a single sub-agent
             before treating it as a timeout (partial success).
     """

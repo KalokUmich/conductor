@@ -125,17 +125,44 @@ def build_dependency_graph(
     DependencyGraph
     """
     ws = Path(workspace_path)
+    # Default exclude list — covers JS (node_modules / dist / build / .next /
+    # .nuxt / coverage), Python (venv / __pycache__ / .mypy_cache /
+    # .pytest_cache / .tox / .ruff_cache), Java/JVM (target / .gradle / out /
+    # bin / .m2 / classes), IDE (.idea / .vscode), and version control (.git).
+    # Compared with the prior list, target/.gradle/out/bin/.idea/.vscode/
+    # .next/.nuxt/coverage/.tox/.ruff_cache/.m2/classes were missing — those
+    # are why Java/JVM and front-end repos paid the full 270s walk cost on
+    # large workspaces (e.g. render's 8.5GB / 293K files).
     exclude = set(
         exclude_patterns
         or [
+            # JS / front-end
             "**/node_modules/**",
-            "**/.git/**",
-            "**/venv/**",
-            "**/__pycache__/**",
             "**/dist/**",
             "**/build/**",
+            "**/.next/**",
+            "**/.nuxt/**",
+            "**/coverage/**",
+            # Python
+            "**/venv/**",
+            "**/.venv/**",
+            "**/__pycache__/**",
             "**/.mypy_cache/**",
             "**/.pytest_cache/**",
+            "**/.tox/**",
+            "**/.ruff_cache/**",
+            # Java / JVM
+            "**/target/**",
+            "**/.gradle/**",
+            "**/out/**",
+            "**/bin/**",
+            "**/.m2/**",
+            "**/classes/**",
+            # IDE
+            "**/.idea/**",
+            "**/.vscode/**",
+            # VCS
+            "**/.git/**",
         ]
     )
 
@@ -223,66 +250,84 @@ def _scan_workspace(ws: Path, exclude: Set[str]) -> Dict[str, FileSymbols]:
     file_count = 0
     extracted_count = 0
 
-    for path in ws.rglob("*"):
-        if not path.is_file():
-            continue
-        file_count += 1
-        rel = str(path.relative_to(ws))
+    # Pre-compute the simple directory-name set from the exclude glob list so
+    # we can prune dirs in-place during os.walk. This avoids stat'ing the
+    # ~250K node_modules / .git / .gradle files in large repos (e.g. render's
+    # 8.5GB / 293K files paid 270s on the old ws.rglob walk because rglob
+    # walks every file before the per-file exclude check runs).
+    #
+    # Glob patterns of the shape ``**/<name>/**`` reduce to dir names; more
+    # specific globs (containing ``/`` after stripping wildcards) fall back
+    # to per-path matching below.
+    exclude_dir_names: Set[str] = set()
+    glob_patterns: List[str] = []
+    for pattern in exclude:
+        clean = pattern.strip("*/")
+        if clean and "/" not in clean:
+            exclude_dir_names.add(clean)
+        else:
+            glob_patterns.append(pattern)
 
-        # Check exclude patterns against relative path components.
-        # pathlib.Path.match("**/name/**") is unreliable in Python ≤ 3.12, so
-        # we strip the glob wildcards and check the parent directory names directly.
-        rel_parts = path.relative_to(ws).parts  # includes filename as last element
-        skip = False
-        for pattern in exclude:
-            clean = pattern.strip("*/")  # "**/node_modules/**" → "node_modules"
-            if "/" not in clean and clean:
-                # Simple directory name — check any parent component
-                if clean in rel_parts[:-1]:
-                    skip = True
-                    break
-            elif path.match(pattern):
-                skip = True
-                break
-        if skip:
-            continue
+    for dirpath, dirnames, filenames in os.walk(ws):
+        # Prune in-place — os.walk respects this and skips the subtree.
+        # This is the load-bearing line: it stops node_modules/.git/.gradle
+        # from being walked into at all.
+        dirnames[:] = [d for d in dirnames if d not in exclude_dir_names]
 
-        # Only process files with known language extensions
-        lang = detect_language(str(path))
-        if lang is None:
-            continue
+        for fn in filenames:
+            path = Path(dirpath) / fn
+            file_count += 1
+            rel_path = path.relative_to(ws)
+            rel = str(rel_path)
 
-        try:
-            source = path.read_bytes()
-        except OSError:
-            continue
+            # Per-path glob check for the small set of remaining patterns
+            # (e.g. specific file globs). Fast path: empty glob_patterns
+            # for the default exclude list, so this loop typically no-ops.
+            if glob_patterns:
+                skip = False
+                for pattern in glob_patterns:
+                    if path.match(pattern):
+                        skip = True
+                        break
+                if skip:
+                    continue
 
-        # Skip large files (>500KB) to avoid slowdowns
-        if len(source) > 500_000:
-            logger.debug("Skipping large file: %s (%d bytes)", rel, len(source))
-            continue
+            # Only process files with known language extensions
+            lang = detect_language(str(path))
+            if lang is None:
+                continue
 
-        t0 = _time.monotonic()
-        fsyms = extract_definitions(str(path), source)
-        extract_ms = int((_time.monotonic() - t0) * 1000)
+            try:
+                source = path.read_bytes()
+            except OSError:
+                continue
 
-        if slow_threshold_ms and extract_ms >= slow_threshold_ms:
-            logger.warning(
-                "slow tree-sitter parse: %s (%d bytes, %d ms)",
-                rel,
-                len(source),
-                extract_ms,
-            )
-            slow_files.append((extract_ms, rel, len(source)))
+            # Skip large files (>500KB) to avoid slowdowns
+            if len(source) > 500_000:
+                logger.debug("Skipping large file: %s (%d bytes)", rel, len(source))
+                continue
 
-        # Store with relative path
-        fsyms.file_path = rel
-        for d in fsyms.definitions:
-            d.file_path = rel
-        for r in fsyms.references:
-            r.file_path = rel
-        file_symbols[rel] = fsyms
-        extracted_count += 1
+            t0 = _time.monotonic()
+            fsyms = extract_definitions(str(path), source)
+            extract_ms = int((_time.monotonic() - t0) * 1000)
+
+            if slow_threshold_ms and extract_ms >= slow_threshold_ms:
+                logger.warning(
+                    "slow tree-sitter parse: %s (%d bytes, %d ms)",
+                    rel,
+                    len(source),
+                    extract_ms,
+                )
+                slow_files.append((extract_ms, rel, len(source)))
+
+            # Store with relative path
+            fsyms.file_path = rel
+            for d in fsyms.definitions:
+                d.file_path = rel
+            for r in fsyms.references:
+                r.file_path = rel
+            file_symbols[rel] = fsyms
+            extracted_count += 1
 
     total_ms = int((_time.monotonic() - scan_start) * 1000)
     logger.info(

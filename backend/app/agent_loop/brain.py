@@ -1,16 +1,18 @@
 """Brain orchestrator — AgentToolExecutor and budget management.
 
 The Brain is the central coordinator that dispatches specialist agents
-(agent-as-tool) and parallel swarms (subagent swarm). It wraps a real
-ToolExecutor and intercepts ``dispatch_agent`` / ``dispatch_swarm`` calls,
-running sub-agents in isolated contexts and returning condensed findings.
+(agent-as-tool). It wraps a real ToolExecutor and intercepts
+``dispatch_explore`` / ``transfer_to_brain`` / ``dispatch_verify`` /
+``dispatch_sweep`` calls, running sub-agents in isolated contexts and
+returning condensed findings.
 
 Design principles:
   - Only Brain talks to the user (via ask_user)
   - Sub-agents return condensed AgentFindings, not full traces
   - Recursive depth control: Brain(0) → agent(1) → sub-agent(2) max
   - Concurrency limited via semaphore (default: 3 concurrent sub-agents)
-  - Partial failure in swarms: succeeded agents' findings are still returned
+  - Multi-perspective work goes through transfer_to_brain("domain"); the
+    legacy dispatch_swarm primitive was removed 2026-05-03
 """
 
 from __future__ import annotations
@@ -218,7 +220,7 @@ def _compose_role_system_prompt(
         parts.append("")
         parts.append(
             "Brain set may_subdispatch=true. You may call "
-            "`dispatch_subagent` ONCE to delegate a narrower investigation. "
+            "`dispatch_verify` ONCE to delegate a narrower investigation. "
             "Sub-sub-agents cannot dispatch further."
         )
 
@@ -488,7 +490,7 @@ class BrainBudgetManager:
 
 
 class AgentToolExecutor(ToolExecutor):
-    """Tool executor that intercepts ``dispatch_agent`` and ``dispatch_swarm``.
+    """Tool executor that intercepts ``dispatch_explore`` and ``transfer_to_brain``.
 
     Used by both Brain (meta-tools + dispatch) and explorer agents
     (code tools + optional dispatch when depth < max).
@@ -550,19 +552,17 @@ class AgentToolExecutor(ToolExecutor):
         self._plan: Optional[Dict[str, Any]] = None
 
     async def execute(self, tool_name: str, params: Dict[str, Any]) -> ToolResult:
-        """Execute a tool. Intercepts create_plan, dispatch_agent, dispatch_swarm, transfer_to_brain, and dispatch_subagent."""
+        """Execute a tool. Intercepts create_plan, dispatch_explore, transfer_to_brain, and dispatch_verify."""
         if tool_name == "create_plan":
             return await self._create_plan(params)
-        elif tool_name == "dispatch_agent":
-            return await self._dispatch_agent(params)
-        elif tool_name == "dispatch_swarm":
-            return await self._dispatch_swarm(params)
+        elif tool_name == "dispatch_explore":
+            return await self._dispatch_explore(params)
         elif tool_name == "transfer_to_brain":
             return await self._transfer_to_brain(params)
-        elif tool_name == "dispatch_subagent":
-            return await self._dispatch_subagent(params)
-        elif tool_name == "dispatch_dimension_worker":
-            return await self._dispatch_dimension_worker(params)
+        elif tool_name == "dispatch_verify":
+            return await self._dispatch_verify(params)
+        elif tool_name == "dispatch_sweep":
+            return await self._dispatch_sweep(params)
         # All other tools (grep, read_file, ask_user, etc.) pass through
         return await self._inner.execute(tool_name, params)
 
@@ -604,7 +604,9 @@ class AgentToolExecutor(ToolExecutor):
     async def _transfer_to_brain(self, params: Dict[str, Any]) -> ToolResult:
         """Transfer control to a specialized Brain orchestrator (one-way handoff)."""
         brain_name = params.get("brain_name", "")
-        valid_brains = {"pr_review"}
+        # "domain" added 2026-05-03: handoff target for end-to-end / business-flow
+        # / "how does X work" queries. See DomainBrainOrchestrator.
+        valid_brains = {"pr_review", "domain"}
 
         if brain_name not in valid_brains:
             available = ", ".join(sorted(valid_brains))
@@ -640,7 +642,7 @@ class AgentToolExecutor(ToolExecutor):
         )
 
     # -----------------------------------------------------------------
-    # dispatch_agent — run one agent-as-tool
+    # dispatch_explore — run one agent-as-tool
     # -----------------------------------------------------------------
 
     def _build_dynamic_config(self, params: Dict[str, Any]) -> Any:
@@ -663,10 +665,10 @@ class AgentToolExecutor(ToolExecutor):
         )
 
     # -----------------------------------------------------------------
-    # dispatch_subagent — PR Brain v2's coordinator primitive
+    # dispatch_verify — PR Brain v2's coordinator primitive
     # -----------------------------------------------------------------
 
-    async def _dispatch_subagent(self, params: Dict[str, Any]) -> ToolResult:
+    async def _dispatch_verify(self, params: Dict[str, Any]) -> ToolResult:
         """Dispatch a scope-bounded sub-agent with exactly 3 falsifiable checks.
 
         The sub-agent uses the ``pr_subagent_checks`` template (see
@@ -686,10 +688,10 @@ class AgentToolExecutor(ToolExecutor):
         # sub-agent at depth 2 is never allowed to subdispatch.
         if self._current_depth >= 2:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
                 error=(
-                    "dispatch_subagent rejected: you are at recursion depth "
+                    "dispatch_verify rejected: you are at recursion depth "
                     f"{self._current_depth} (≥2 is the hard wall). Answer "
                     "the checks directly without further sub-dispatch."
                 ),
@@ -707,23 +709,23 @@ class AgentToolExecutor(ToolExecutor):
         # Validate the two dispatch modes: at least one of {checks, role}.
         if not checks and not role:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
                 error=(
-                    "dispatch_subagent requires either 'checks' (3 specific "
+                    "dispatch_verify requires either 'checks' (3 specific "
                     "questions) OR 'role' (factory reviewer e.g. 'security'). "
                     "Got neither."
                 ),
             )
         if checks and len(checks) != 3:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
-                error=f"dispatch_subagent requires exactly 3 checks when 'checks' is set (got {len(checks)}).",
+                error=f"dispatch_verify requires exactly 3 checks when 'checks' is set (got {len(checks)}).",
             )
         if role and role not in _VALID_FACTORY_ROLES:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
                 error=(
                     f"Unknown role '{role}'. Available roles in "
@@ -733,9 +735,9 @@ class AgentToolExecutor(ToolExecutor):
             )
         if not 1 <= len(scope) <= 5:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
-                error=f"dispatch_subagent scope must have 1-5 files (got {len(scope)}).",
+                error=f"dispatch_verify scope must have 1-5 files (got {len(scope)}).",
             )
 
         # Build scope block (shared by both modes).
@@ -757,7 +759,7 @@ class AgentToolExecutor(ToolExecutor):
             "combined" if (role and checks) else ("role" if role else "checks")
         )
         logger.info(
-            "[dispatch_subagent] mode=%s role=%s checks=%d scope_files=%d "
+            "[dispatch_verify] mode=%s role=%s checks=%d scope_files=%d "
             "direction_hint=%r depth=%d",
             mode_label,
             role or "-",
@@ -796,11 +798,11 @@ class AgentToolExecutor(ToolExecutor):
         if role:
             # Role mode: compose bespoke system prompt from factory +
             # PR-specific context, dispatch via dynamic-compose
-            # _dispatch_agent (not template mode).
+            # _dispatch_explore (not template mode).
             role_template = _load_role_template(role)
             if role_template is None:
                 return ToolResult(
-                    tool_name="dispatch_subagent",
+                    tool_name="dispatch_verify",
                     success=False,
                     error=(
                         f"Role '{role}' template not found at "
@@ -856,13 +858,13 @@ class AgentToolExecutor(ToolExecutor):
                 "budget_weight": 1.0,
                 "_subagent_kind": f"pr_role_{role}",
             }
-            result = await self._dispatch_agent(delegated_params)
+            result = await self._dispatch_explore(delegated_params)
         else:
             # Checks mode (original v2 behaviour): generic pr_subagent_checks.
             template = self._agent_registry.get("pr_subagent_checks")
             if template is None:
                 return ToolResult(
-                    tool_name="dispatch_subagent",
+                    tool_name="dispatch_verify",
                     success=False,
                     error=(
                         "Agent template 'pr_subagent_checks' missing from "
@@ -904,7 +906,7 @@ class AgentToolExecutor(ToolExecutor):
                     "## Sub-dispatch permitted (depth 2 hard wall)",
                     "",
                     "The Brain set `may_subdispatch=true`. If a check truly "
-                    "requires subdivision, you may call `dispatch_subagent` ONCE "
+                    "requires subdivision, you may call `dispatch_verify` ONCE "
                     "to delegate a narrower investigation. Its result must fold "
                     "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
                 ])
@@ -918,11 +920,11 @@ class AgentToolExecutor(ToolExecutor):
                 "budget_tokens": params.get("budget_tokens", 150_000),
                 "budget_weight": 1.0,
             }
-            result = await self._dispatch_agent(delegated_params)
+            result = await self._dispatch_explore(delegated_params)
 
         if not result.success:
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=False,
                 error=f"sub-agent dispatch failed: {result.error}",
             )
@@ -936,12 +938,12 @@ class AgentToolExecutor(ToolExecutor):
         # return the raw answer with a warning so the Brain can still act.
         if parsed is None:
             logger.warning(
-                "dispatch_subagent: worker did not emit parseable JSON. "
+                "dispatch_verify: worker did not emit parseable JSON. "
                 "Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
-                tool_name="dispatch_subagent",
+                tool_name="dispatch_verify",
                 success=True,
                 data={
                     "checks": [],
@@ -1004,21 +1006,21 @@ class AgentToolExecutor(ToolExecutor):
                 logger.debug("[P4] plan recap failed (non-fatal): %s", exc)
 
         return ToolResult(
-            tool_name="dispatch_subagent",
+            tool_name="dispatch_verify",
             success=True,
             data=parsed,
         )
 
-    async def _dispatch_dimension_worker(self, params: Dict[str, Any]) -> ToolResult:
+    async def _dispatch_sweep(self, params: Dict[str, Any]) -> ToolResult:
         """P12b — dispatch a worker that reads the entire diff through one
-        role lens (no file-range scope). Complement to dispatch_subagent.
+        role lens (no file-range scope). Complement to dispatch_verify.
 
         The worker gets the full PR diff + the role's lens + optional
         triggering_symbols. It hunts its bug class across every changed
         file — valuable when a pattern spans files that a file-range
         dispatch would split up.
 
-        Shares the plan_memory + recap infrastructure with _dispatch_subagent
+        Shares the plan_memory + recap infrastructure with _dispatch_verify
         so coordinator sees all dispatches (scoped and dimension) in the
         same recap stream.
         """
@@ -1029,10 +1031,10 @@ class AgentToolExecutor(ToolExecutor):
         # decide).
         if self._current_depth >= self._max_depth:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=(
-                    f"dispatch_dimension_worker rejected: you are at "
+                    f"dispatch_sweep rejected: you are at "
                     f"recursion depth {self._current_depth} (≥2 hard wall). "
                     "Only the coordinator dispatches dimension workers."
                 ),
@@ -1047,7 +1049,7 @@ class AgentToolExecutor(ToolExecutor):
 
         if dimension not in _VALID_FACTORY_ROLES:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=(
                     f"Unknown dimension '{dimension}'. Must be one of "
@@ -1056,16 +1058,16 @@ class AgentToolExecutor(ToolExecutor):
             )
         if not success_criteria or len(success_criteria) < 10:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=(
-                    "dispatch_dimension_worker requires success_criteria "
+                    "dispatch_sweep requires success_criteria "
                     "(≥10 chars) describing what 'done' looks like."
                 ),
             )
         if not 80_000 <= budget_tokens <= 200_000:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=(
                     f"budget_tokens must be in [80K, 200K] (got "
@@ -1075,7 +1077,7 @@ class AgentToolExecutor(ToolExecutor):
             )
 
         logger.info(
-            "[dispatch_dimension_worker] dimension=%s model=%s budget=%d "
+            "[dispatch_sweep] dimension=%s model=%s budget=%d "
             "symbols=%d direction_hint=%r depth=%d",
             dimension,
             model_tier,
@@ -1088,7 +1090,7 @@ class AgentToolExecutor(ToolExecutor):
         role_template = _load_role_template(dimension)
         if role_template is None:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=(
                     f"Dimension role '{dimension}' template missing at "
@@ -1185,11 +1187,11 @@ class AgentToolExecutor(ToolExecutor):
             "budget_weight": 1.0,
             "_subagent_kind": f"pr_dimension_{dimension}",
         }
-        result = await self._dispatch_agent(delegated_params)
+        result = await self._dispatch_explore(delegated_params)
 
         if not result.success:
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=False,
                 error=f"dimension worker dispatch failed: {result.error}",
             )
@@ -1200,12 +1202,12 @@ class AgentToolExecutor(ToolExecutor):
 
         if parsed is None:
             logger.warning(
-                "dispatch_dimension_worker: worker did not emit parseable "
+                "dispatch_sweep: worker did not emit parseable "
                 "JSON. Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
-                tool_name="dispatch_dimension_worker",
+                tool_name="dispatch_sweep",
                 success=True,
                 data={
                     "checks": [],
@@ -1239,12 +1241,12 @@ class AgentToolExecutor(ToolExecutor):
         parsed["_dimension"] = dimension
 
         return ToolResult(
-            tool_name="dispatch_dimension_worker",
+            tool_name="dispatch_sweep",
             success=True,
             data=parsed,
         )
 
-    async def _dispatch_agent(self, params: Dict[str, Any]) -> ToolResult:
+    async def _dispatch_explore(self, params: Dict[str, Any]) -> ToolResult:
         """Run a single specialist agent and return condensed findings.
 
         Supports two modes:
@@ -1259,7 +1261,7 @@ class AgentToolExecutor(ToolExecutor):
         # Depth check
         if self._current_depth >= self._max_depth:
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=False,
                 error=f"Max agent depth ({self._max_depth}) reached. "
                 f"Use your available code tools to investigate directly.",
@@ -1273,7 +1275,7 @@ class AgentToolExecutor(ToolExecutor):
             if agent_config is None:
                 available = ", ".join(sorted(self._agent_registry.keys()))
                 return ToolResult(
-                    tool_name="dispatch_agent",
+                    tool_name="dispatch_explore",
                     success=False,
                     error=f"Unknown agent template '{template}'. Available: {available}",
                 )
@@ -1286,7 +1288,7 @@ class AgentToolExecutor(ToolExecutor):
             resolved_model = params.get("model", "explorer")
         else:
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=False,
                 error="Either 'template' or 'tools' must be provided. "
                 "Use template= for pre-defined agents, or tools= to "
@@ -1451,8 +1453,22 @@ class AgentToolExecutor(ToolExecutor):
                         raw_steps = event.data.get("thinking_steps", [])
                         from .service import ThinkingStep
 
+                        # Field-by-field construction tolerates extra keys
+                        # (e.g. ``agent_name`` injected upstream when events
+                        # are forwarded to the event_sink at line 1442).
+                        # Bare ``ThinkingStep(**s)`` raised TypeError on
+                        # those extras and crashed the whole coordinator.
                         agent_result.thinking_steps = [
-                            ThinkingStep(**s) if isinstance(s, dict) else s for s in raw_steps
+                            ThinkingStep(
+                                kind=s.get("kind", ""),
+                                iteration=s.get("iteration", 0),
+                                text=s.get("text", ""),
+                                tool=s.get("tool", ""),
+                                params=s.get("params", {}),
+                                summary=s.get("summary", ""),
+                                success=s.get("success", True),
+                            ) if isinstance(s, dict) else s
+                            for s in raw_steps
                         ]
                         if event.kind == "context_chunk":
                             from .service import ContextChunk
@@ -1507,7 +1523,7 @@ class AgentToolExecutor(ToolExecutor):
             if result.budget_summary:
                 condensed["total_input_tokens"] = result.budget_summary.get("total_input_tokens", 0)
                 condensed["total_output_tokens"] = result.budget_summary.get("total_output_tokens", 0)
-            return ToolResult(tool_name="dispatch_agent", success=True, data=condensed)
+            return ToolResult(tool_name="dispatch_explore", success=True, data=condensed)
 
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
@@ -1527,7 +1543,7 @@ class AgentToolExecutor(ToolExecutor):
                     )
                 )
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,  # partial success — Brain can still use whatever was found
                 data={
                     "answer": "",
@@ -1558,107 +1574,14 @@ class AgentToolExecutor(ToolExecutor):
                     )
                 )
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=False,
                 error=f"Agent '{agent_name}' failed: {exc}",
             )
 
-    # -----------------------------------------------------------------
-    # dispatch_swarm — run multiple agents in parallel
-    # -----------------------------------------------------------------
-
-    async def _dispatch_swarm(self, params: Dict[str, Any]) -> ToolResult:
-        """Run a predefined group of agents in parallel."""
-        swarm_name = params.get("swarm_name", "")
-        query = params.get("query", "")
-
-        # Only predefined swarms allowed
-        preset = self._swarm_registry.get(swarm_name)
-        if preset is None:
-            available = ", ".join(sorted(self._swarm_registry.keys()))
-            return ToolResult(
-                tool_name="dispatch_swarm",
-                success=False,
-                error=f"Unknown swarm '{swarm_name}'. Available: {available}. "
-                f"For single-agent tasks, use dispatch_agent instead.",
-            )
-        agent_names = preset.agents
-        logger.info("[Brain] Dispatching swarm '%s' (%d agents): %s", swarm_name, len(agent_names), agent_names)
-
-        if not agent_names:
-            return ToolResult(
-                tool_name="dispatch_swarm",
-                success=False,
-                error="No agents specified for swarm dispatch.",
-            )
-
-        # Emit swarm dispatch event for UI
-        if self._event_sink:
-            from app.workflow.engine import WorkflowEvent
-
-            await self._event_sink.put(
-                WorkflowEvent(
-                    "swarm_dispatched",
-                    {
-                        "swarm_name": swarm_name or "custom",
-                        "agents": agent_names,
-                        "query": query,
-                    },
-                )
-            )
-
-        # Run agents in parallel with concurrency limit
-        semaphore = asyncio.Semaphore(self._max_concurrent)
-
-        async def run_one(name: str) -> Dict[str, Any]:
-            # Prepend agent's focus directive to differentiate exploration paths
-            agent_config = self._agent_registry.get(name)
-            agent_focus = getattr(agent_config, "focus", "") if agent_config else ""
-            agent_query = f"{agent_focus}\n\n{query}" if agent_focus else query
-            async with semaphore:
-                result = await self._dispatch_agent(
-                    {
-                        "agent_name": name,
-                        "query": agent_query,
-                    }
-                )
-                return {"agent": name, **(result.data if result.data else {"error": result.error})}
-
-        raw_results = await asyncio.gather(
-            *[run_one(name) for name in agent_names],
-            return_exceptions=True,
-        )
-
-        # Process results, handling partial failures
-        findings = []
-        for name, result in zip(agent_names, raw_results):
-            if isinstance(result, Exception):
-                logger.warning("[Brain] Swarm agent '%s' raised: %s", name, result)
-                findings.append(
-                    {
-                        "agent": name,
-                        "answer": "",
-                        "error": str(result),
-                        "confidence": "low",
-                    }
-                )
-            else:
-                findings.append(result)
-
-        # Budget exhaustion is not a real failure — agent still produced useful findings.
-        # Only count as failed if there's no answer at all.
-        succeeded = sum(1 for f in findings if f.get("answer"))
-        logger.info("[Brain] Swarm complete: %d/%d agents succeeded", succeeded, len(findings))
-
-        # Include synthesis guide so Brain knows how to combine findings
-        synthesis_guide = getattr(preset, "synthesis_guide", "") if preset else ""
-
-        return ToolResult(
-            tool_name="dispatch_swarm",
-            success=succeeded > 0,
-            data={
-                "agents": findings,
-                "swarm_name": swarm_name or "custom",
-                "synthesis_guide": synthesis_guide,
-            },
-        )
+    # _dispatch_swarm removed 2026-05-03 — Domain Brain
+    # (transfer_to_brain("domain")) replaces the legacy parallel-swarm path.
+    # dispatch_explore(template=...) now handles single-agent dispatch from
+    # General Brain, and Domain Brain handles multi-perspective exploration
+    # with self-survey + coverage check + synthesis. See
+    # config/brains/domain.yaml + config/skills/domain_brain_coordinator.md.

@@ -9,7 +9,7 @@ Covers:
 - AgentToolExecutor dispatch wiring + severity=null + dispatch tag
 
 Does NOT run a real sub-agent (that needs Bedrock); uses a fake
-_dispatch_agent returning canned JSON.
+_dispatch_explore returning canned JSON.
 """
 
 from __future__ import annotations
@@ -25,16 +25,16 @@ from app.agent_loop.pr_brain import (
     _detect_dimension_triggers,
     _dimension_dispatch_cap,
 )
-from app.code_tools.schemas import DispatchDimensionWorkerParams, ToolResult
+from app.code_tools.schemas import DispatchSweepParams, ToolResult
 
 # ---------------------------------------------------------------------------
 # Pydantic schema validation
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchDimensionWorkerParams:
+class TestDispatchSweepParams:
     def test_minimum_valid_params(self):
-        p = DispatchDimensionWorkerParams(
+        p = DispatchSweepParams(
             dimension="security",
             success_criteria="verify every caller respects the new contract",
         )
@@ -46,7 +46,7 @@ class TestDispatchDimensionWorkerParams:
 
     def test_budget_floor_enforced(self):
         with pytest.raises(ValidationError):
-            DispatchDimensionWorkerParams(
+            DispatchSweepParams(
                 dimension="security",
                 success_criteria="x" * 20,
                 budget_tokens=50_000,
@@ -54,7 +54,7 @@ class TestDispatchDimensionWorkerParams:
 
     def test_budget_ceiling_enforced(self):
         with pytest.raises(ValidationError):
-            DispatchDimensionWorkerParams(
+            DispatchSweepParams(
                 dimension="security",
                 success_criteria="x" * 20,
                 budget_tokens=250_000,
@@ -62,7 +62,7 @@ class TestDispatchDimensionWorkerParams:
 
     def test_success_criteria_min_length(self):
         with pytest.raises(ValidationError):
-            DispatchDimensionWorkerParams(
+            DispatchSweepParams(
                 dimension="security",
                 success_criteria="short",
             )
@@ -70,7 +70,7 @@ class TestDispatchDimensionWorkerParams:
     def test_triggering_symbols_cap(self):
         # max_length=20 on triggering_symbols
         with pytest.raises(ValidationError):
-            DispatchDimensionWorkerParams(
+            DispatchSweepParams(
                 dimension="security",
                 success_criteria="x" * 20,
                 triggering_symbols=[f"sym{i}" for i in range(21)],
@@ -78,7 +78,7 @@ class TestDispatchDimensionWorkerParams:
 
     def test_direction_hint_length_cap(self):
         with pytest.raises(ValidationError):
-            DispatchDimensionWorkerParams(
+            DispatchSweepParams(
                 dimension="security",
                 success_criteria="x" * 20,
                 direction_hint="x" * 501,
@@ -90,7 +90,7 @@ class TestDispatchDimensionWorkerParams:
             "reliability", "performance", "test_coverage",
             "api_contract",
         ]:
-            p = DispatchDimensionWorkerParams(
+            p = DispatchSweepParams(
                 dimension=dim,
                 success_criteria="x" * 20,
             )
@@ -298,7 +298,7 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_dimension_worker({
+        result = await executor._dispatch_sweep({
             "dimension": "nonsense",
             "success_criteria": "x" * 20,
         })
@@ -315,7 +315,7 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_dimension_worker({
+        result = await executor._dispatch_sweep({
             "dimension": "security",
             "success_criteria": "short",
         })
@@ -332,7 +332,7 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_dimension_worker({
+        result = await executor._dispatch_sweep({
             "dimension": "security",
             "success_criteria": "x" * 20,
             "budget_tokens": 50_000,
@@ -351,7 +351,7 @@ class TestDispatchDimensionWorkerExecutor:
             max_depth=2,
         )
         executor._current_depth = 2
-        result = await executor._dispatch_dimension_worker({
+        result = await executor._dispatch_sweep({
             "dimension": "security",
             "success_criteria": "x" * 20,
         })
@@ -360,7 +360,7 @@ class TestDispatchDimensionWorkerExecutor:
 
     @pytest.mark.asyncio
     async def test_happy_path_returns_parsed_findings(self, monkeypatch, tmp_path):
-        """Full-path dispatch with a fake _dispatch_agent returning JSON."""
+        """Full-path dispatch with a fake _dispatch_explore returning JSON."""
         inner = MagicMock()
         executor = AgentToolExecutor(
             inner_executor=inner,
@@ -386,9 +386,9 @@ class TestDispatchDimensionWorkerExecutor:
             "unexpected_observations": [],
         })
 
-        async def fake_dispatch_agent(params):
+        async def fake_dispatch_explore(params):
             return ToolResult(
-                tool_name="dispatch_agent",
+                tool_name="dispatch_explore",
                 success=True,
                 data={
                     "answer": canned_answer,
@@ -417,9 +417,9 @@ class TestDispatchDimensionWorkerExecutor:
             "app.agent_loop.brain._compose_role_system_prompt",
             lambda **kw: "composed perspective",
         )
-        monkeypatch.setattr(executor, "_dispatch_agent", fake_dispatch_agent)
+        monkeypatch.setattr(executor, "_dispatch_explore", fake_dispatch_explore)
 
-        result = await executor._dispatch_dimension_worker({
+        result = await executor._dispatch_sweep({
             "dimension": "api_contract",
             "direction_hint": "verify callers destructure tuple",
             "triggering_symbols": ["TokenService.issue"],
