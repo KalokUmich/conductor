@@ -8,7 +8,12 @@ backend/app/
 ├── config.py                # Settings + Secrets from YAML
 ├── agent_loop/              # Agentic code intelligence (LLM + tools)
 │   ├── service.py           # AgentLoopService — LLM loop, tool dispatch
-│   ├── brain.py             # AgentToolExecutor — dispatch_explore/dispatch_swarm/transfer_to_brain/dispatch_verify/dispatch_sweep
+│   ├── brain.py             # AgentToolExecutor — dispatch_explore/dispatch_verify/dispatch_sweep/transfer_to_brain
+│   ├── dispatch/            # Phase 9.19 — Pydantic param schemas + tool defs for the three dispatch primitives
+│   │   ├── explore.py       # DispatchExploreParams + DISPATCH_EXPLORE_TOOL_DEF (open-ended sub-agent investigation)
+│   │   ├── verify.py        # DispatchVerifyParams/Scope + DISPATCH_VERIFY_TOOL_DEF (scope-bounded structured checks)
+│   │   └── sweep.py         # DispatchSweepParams + DISPATCH_SWEEP_TOOL_DEF (full-diff one-lens cross-file scan)
+│   ├── domain_brain.py      # Phase 9.19 DomainBrainOrchestrator — coordinator self-survey + parallel dispatch + synthesis
 │   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline
 │   ├── forked.py            # Phase 9.16 fork_call primitive — cache-reuse verifier dispatch (bypasses AgentLoopService)
 │   ├── lifecycle.py         # Phase 9.17 hook registry — 4 extension points around the Brain pipeline
@@ -78,8 +83,8 @@ The **Brain** is an LLM orchestrator (strong model) that replaces the keyword cl
 It understands queries, dispatches specialist agents, evaluates findings, and synthesizes answers.
 
 ```
-Query → Brain (Sonnet, meta-tools: dispatch_explore, dispatch_swarm, transfer_to_brain, ask_user)
-  → Brain decides: SIMPLE (1 agent) | COMPLEX (handoff) | SWARM (parallel) | TRANSFER (specialized brain)
+Query → Brain (Sonnet, meta-tools: dispatch_explore, transfer_to_brain, ask_user)
+  → Brain decides: SIMPLE (1 agent) | COMPLEX (sequential handoff) | TRANSFER (specialized brain)
   → dispatch_explore → AgentLoopService (Haiku, code tools, isolated context)
     → 4-layer prompt: L1 system (agent identity) + L2 tools + L3 skills (workspace) + L4 query
     → Tool execution (up to 20 iter / 420K tokens)
@@ -96,11 +101,10 @@ Query → Brain (Sonnet, meta-tools: dispatch_explore, dispatch_swarm, transfer_
 
 **Context management:** Sub-agents clear old tool results after 3 turns to prevent context rot. Only the most recent 4 turn-pairs keep full tool output; older results are replaced with metadata-driven summaries (e.g., `grep 'auth' in src/: 12 matches`) via `ToolMetadata.summary_template` — falls back to first-line truncation if no template is available.
 
-**Four dispatch modes:**
-- **SIMPLE** (~80%): one agent, trust result, done
-- **COMPLEX** (~15%): agent → evaluate → handoff to different specialist with previous findings
-- **SWARM** (~5%): `dispatch_swarm("business_flow")` — predefined parallel presets. Brain must decompose queries into 3-6 search targets before dispatching.
-- **TRANSFER**: `transfer_to_brain("pr_review")` — one-way handoff to specialized Brain (PR reviews)
+**Three dispatch modes (`dispatch_swarm` retired Phase 9.19 — Domain Brain replaces it):**
+- **SIMPLE** (~80%): one `dispatch_explore` agent, trust result, done
+- **COMPLEX** (~15%): agent → evaluate → sequential handoff to different specialist with previous findings
+- **TRANSFER**: `transfer_to_brain("pr_review")` for PR reviews; `transfer_to_brain("domain")` for end-to-end / business-flow / "how does X work" queries — one-way handoff to specialised orchestrator
 
 **PR Brain v2** (`agent_loop/pr_brain.py`): Coordinator-worker orchestrator for PR reviews. Activated via `transfer_to_brain("pr_review")`. **Agent-as-tool** design — a single Brain (strong tier) surveys the PR, dispatches scope-bounded workers (explorer tier) via two primitives, replans on surprises, and synthesises:
 
@@ -151,13 +155,52 @@ Key designs:
 - **Role templates are reference, not paste-targets.** Brain composes each dispatched worker's system prompt from a role template (`config/agent_factory/<role>.md`) fused with PR-specific scope and direction_hint.
 - **Dimension vs scoped dispatch**: scoped (`dispatch_verify`) decomposes by file-range, dimension (`dispatch_sweep`) decomposes by bug class. Cross-file pattern (e.g. new contract on a function called from 3+ files) is dimension's case; localised invariant checks are scoped's.
 
+**Domain Brain** (Phase 9.19, `agent_loop/domain_brain.py`): Specialised orchestrator for business-flow / domain logic queries. Activated via `transfer_to_brain("domain")` from General Brain when the query asks about end-to-end journeys, "how does X work" in domain terms, or business processes. Replaces the legacy `dispatch_swarm("business_flow")` path that didn't survive the prior agent-as-tool refactor attempt.
+
+```
+transfer_to_brain("domain") → DomainBrainOrchestrator
+  Phase 1: Coordinator self-survey (MANDATORY before any worker dispatch)
+           ├─ read_file workspace-root CLAUDE.md / README.md
+           │   (project docs encode the team's vocabulary — bridges
+           │    user's generic terms to the codebase's specific terms)
+           ├─ list_files / module_summary on workspace root for layout
+           ├─ Anchor grep using the PROJECT's vocabulary (not user's)
+           └─ Confirm anchor (file_outline / read_file the candidate
+              Request/DTO/Entity class — composite gates, enums, etc.)
+  Phase 2: Dispatch Plan (DEPTH vs BREADTH vs HYBRID)
+           ├─ DEFAULT BREADTH: parallel dispatch_explore(template=
+           │   "explore_implementation") + dispatch_explore(template=
+           │   "explore_usage") in ONE turn
+           ├─ Workers anchored on the discovered domain class, NEVER
+           │   on the user's generic terms
+           └─ Workers asked to emit prose + JSON envelope (perspective,
+              domain_concepts, steps_or_outcomes, secondary_effects,
+              open_questions) so synthesis can enumerate without losing
+              fields
+  Phase 3: Coverage check + synthesis (default ONE round)
+           ├─ List 3-6 dimensions the question expects
+           ├─ For each dimension: covered ✓ / partial ⚠ / uncovered ❌
+           │   from worker findings
+           ├─ Re-dispatch ONLY if a load-bearing dimension is
+           │   uncovered (at most ONE follow-up worker)
+           └─ Synthesise per the 8 rules (preserve technical terms
+              verbatim; merge perspectives; fill gaps; cite file:line;
+              answer from user's perspective; anchor on domain model)
+              into the 4-section format (Flow Overview / Step-by-Step
+              Breakdown / Key Files / Gaps & Uncertainties)
+```
+
+Cache-friendly: same template + DIFFERENT query is encouraged (system prompt + tools = cache-stable prefix → 80%+ cache hit on second call). The wasteful case is identical inputs, not identical templates. Driving skill: `config/skills/domain_brain_coordinator.md`. Eval (5-case agent_quality, Sonnet+Haiku): 94-98% AVG with ~10pt run-to-run variance.
+
 **Configuration:**
 - `config/brains/default.yaml` — General Brain limits (iterations, budget, concurrency, timeout) + core_tools
 - `config/brains/pr_review.yaml` — PR Brain limits + post_processing settings
+- `config/brains/domain.yaml` — Domain Brain limits + coordinator's code-survey tool whitelist (Phase 9.19)
 - `config/agent_factory/*.md` — 7 role templates (security / correctness / concurrency / reliability / performance / test_coverage / api_contract)
-- `config/agents/*.md` — v2 worker agents (pr_existence_check, pr_subagent_checks, pr_verification_batch, pr_verification_single) + business-flow swarm agents
-- `config/skills/pr_brain_coordinator.md` — coordinator skill (dispatch rubric + severity + hard floors)
-- `config/swarms/*.yaml` — Swarm presets (agent group + parallel/sequential mode + synthesis_guide)
+- `config/agents/*.md` — v2 PR Brain workers (pr_existence_check, pr_subagent_checks, pr_verification_batch, pr_verification_single) + Domain Brain templates (explore_implementation, explore_usage)
+- `config/skills/pr_brain_coordinator.md` — PR Brain coordinator skill (dispatch rubric + severity + hard floors)
+- `config/skills/domain_brain_coordinator.md` — Domain Brain coordinator skill (mandatory Phase 1 + 8 synthesis rules + 4-section format + DEPTH/BREADTH rubric)
+- `config/swarms/` — **REMOVED Phase 9.19** — Domain Brain replaces the legacy swarm preset path
 
 **Interactive AI:** Brain can `ask_user` for clarification when queries have multiple valid directions. Q&A answers are cached in session and injected into Brain's prompt for reuse across sub-agents.
 
@@ -165,7 +208,7 @@ Key designs:
 - **Code tools** (33, `code_tools/tools.py`): `grep` (with output_mode, context_lines, case_insensitive, multiline, file_type), `read_file`, `list_files`, `glob`, `find_symbol`, `find_references`, `file_outline`, `get_dependencies`, `get_dependents`, `git_log`, `git_diff`, `git_diff_files`, `ast_search`, `get_callees`, `get_callers`, `git_blame`, `git_show`, `git_hotspots`, `find_tests`, `test_outline`, `trace_variable`, `compressed_view`, `module_summary`, `expand_symbol`, `detect_patterns`, `run_test`, `list_endpoints`, `extract_docstrings`, `db_schema`, `file_edit`, `file_write`, **`search_facts`** (Phase 9.15), **`update_notes`** (Phase 9.9.3 — sub-agent scratch notes keyed by (agent, topic), survives context clearing).
 - **Jira tools** (5, `integrations/jira/tools.py`): `jira_search` (with convenience JQL: "my tickets", "my sprint", "blockers"), `jira_get_issue`, `jira_create_issue`, `jira_update_issue`, `jira_list_projects`.
 - **Browser tools** (6, `browser/tools.py`): `web_search`, `web_navigate`, `web_click`, `web_fill`, `web_screenshot`, `web_extract`.
-- **Brain orchestration tools** (6, `BRAIN_TOOL_DEFINITIONS`): `create_plan`, `dispatch_explore`, `dispatch_swarm`, **`dispatch_verify`** (PR Brain v2 scoped primitive), **`dispatch_sweep`** (P12b full-diff through one lens), `transfer_to_brain`. Only the coordinator sees these.
+- **Brain orchestration tools** (5, `BRAIN_TOOL_DEFINITIONS`, schemas in `agent_loop/dispatch/`): `create_plan`, **`dispatch_explore`** (open-ended sub-agent investigation, prose return — both General Brain and Domain Brain coordinator use this), **`dispatch_verify`** (PR Brain v2 scoped primitive — 1-5 files + 3 falsifiable checks → JSON), **`dispatch_sweep`** (P12b full-diff through one lens — JSON), `transfer_to_brain`. Only coordinators see these. The legacy `dispatch_swarm` was retired Phase 9.19 in favour of Domain Brain handoff.
 
 **Tool metadata** (`code_tools/schemas.py`): `ToolMetadata` dataclass with `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 46 tools. Used by `_clear_old_tool_results()` for readable context compaction summaries.
 
@@ -181,7 +224,9 @@ Key designs:
 
 Tools also accessible via `python -m app.code_tools <tool> <workspace> '<json_params>'` (used by extension local mode).
 
-**Brain Swarms API** (`/api/brain/swarms`): `GET` returns the agent + swarm composition (handoff targets reachable via `transfer_to_brain` / `dispatch_swarm`). Used by the Agent Swarm UI tab in the extension.
+**Brain Swarms API** (`/api/brain/swarms`): `GET` returns the agent + specialised-brain composition (handoff targets reachable via `transfer_to_brain`). The `swarms` field is preserved as an empty list for back-compat with the Extension's Agent Swarm UI tab — the legacy `dispatch_swarm` path was retired Phase 9.19.
+
+**Workspace scan pruning** (Phase 9.18.1, `app/repo_graph/graph.py`): `_scan_workspace` swapped from `ws.rglob("*")` (walked all 293K files in render workspace before filtering) to `os.walk` with in-place `dirnames[:]` pruning so excluded subtrees are never descended into. Render workspace: 293K files / 270s → 10K files / 18s (96.5% file reduction, 14.5x faster). Extended exclude list now covers JVM (`target/`, `.gradle/`, `out/`, `bin/`, `.m2/`, `classes/`), front-end (`.next/`, `.nuxt/`, `coverage/`), and Python (`.tox/`, `.ruff_cache/`, `.venv/`) outputs that were previously walked. Graph cache TTL also bumped 120s → 1800s with `CONDUCTOR_GRAPH_TTL_S` env override so consecutive eval cases on the same workspace re-use the cached graph instead of repaying the scan cost.
 
 ## Code Review Pipeline
 

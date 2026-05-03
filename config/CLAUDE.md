@@ -8,24 +8,28 @@ config/
 ├── conductor.secrets.yaml   # Secrets (gitignored)
 ├── brains/                  # All Brain configs (general + specialised)
 │   ├── default.yaml         # General-purpose Brain (code exploration, Q&A) — limits, core_tools, model
-│   └── pr_review.yaml       # PR Brain v2 config (budget_weights, post_processing)
+│   ├── pr_review.yaml       # PR Brain v2 config (budget_weights, post_processing)
+│   └── domain.yaml          # Domain Brain config (Phase 9.19 — coordinator's code-survey tool whitelist)
 ├── agents/                  # Active dispatchable agents (Brain loads the whole file as system prompt)
 │   ├── pr_existence_check.md      # Phase 2 LLM worker (signature-level checks post v2u)
 │   ├── pr_subagent_checks.md      # PR Brain v2 worker — 3 falsifiable checks
 │   ├── pr_verification_single.md  # P11 single-finding verifier (explorer tier)
 │   ├── pr_verification_batch.md   # P11 batch verifier (strong tier, N≥3 findings)
-│   └── explore_*.md               # Business-flow swarm explorers
+│   └── explore_{implementation,usage}.md  # Domain Brain templates (dispatched via dispatch_explore(template=...))
 ├── agent_factory/           # Role TEMPLATES for PR Brain v2's dimension/role dispatch
 │   └── {security,correctness,concurrency,reliability,performance,test_coverage,api_contract}.md
 │                           # Brain reads + composes into per-dispatch system prompt; not pasted verbatim
-├── swarms/                  # Swarm presets (agent group + parallel/sequential)
-│   └── business_flow.yaml   # Business flow tracing swarm
-├── skills/                  # Layer 3 skill markdown (pr_brain_coordinator + 3 worker skills)
+├── skills/                  # Layer 3 skill markdown
+│   ├── pr_brain_coordinator.md    # PR Brain v2 coordinator skill
+│   ├── domain_brain_coordinator.md # Domain Brain coordinator skill (Phase 9.19)
+│   └── ...                  # 3 PR worker skills + business_flow legacy skill
 └── prompt-library/          # prompts.chat CSV (1500+ role prompts, `make update-prompt-library`)
 ```
 
+**`config/swarms/` REMOVED Phase 9.19** — the legacy `dispatch_swarm` path is replaced by Domain Brain (`transfer_to_brain("domain")`). `load_swarm_registry()` is kept (returns `{}`) for back-compat with any caller still wiring the param.
+
 **Two agent folders, two semantics:**
-- `config/agents/*.md` — **active dispatchable agents**. Brain loads the whole .md as the worker's system prompt. Used by `pr_existence_check`, `pr_subagent_checks` (scoped checks mode), and the P11 verifiers.
+- `config/agents/*.md` — **active dispatchable agents**. Brain loads the whole .md as the worker's system prompt. Used by `pr_existence_check`, `pr_subagent_checks` (scoped checks mode), the P11 verifiers, and the Domain Brain templates `explore_implementation` / `explore_usage`.
 - `config/agent_factory/*.md` — **reference templates** the v2 coordinator studies to compose role-specialised worker prompts on the fly. Used by role-mode `dispatch_verify(role=...)` and P12b `dispatch_sweep(dimension=...)`. See `agent_factory/_README.md` for composition semantics.
 
 ## Directory responsibilities (cheat sheet)
@@ -42,7 +46,9 @@ Three folders hold "agent-related markdown" and they are NOT interchangeable. Kn
 - "I want to add a worker the Brain can dispatch via `template=...`" → `agents/`
 - "I want to edit WHAT an existing worker knows / how it behaves" → `skills/` (skill text) — usually NOT the agent file
 - "I want to teach the v2 coordinator a new review lens it can compose on the fly" → `agent_factory/`
-- "I want to change the orchestration loop (how the coordinator surveys / plans / synthesizes)" → `skills/pr_brain_coordinator.md`
+- "I want to change the PR Brain coordinator's orchestration loop" → `skills/pr_brain_coordinator.md`
+- "I want to change the Domain Brain coordinator's orchestration loop" → `skills/domain_brain_coordinator.md`
+- "I want to add a new specialised brain (transfer_to_brain target)" → write `brains/<name>.yaml` + `skills/<name>_brain_coordinator.md` + new orchestrator class + register skill in `INVESTIGATION_SKILLS` + add `<name>` to `valid_brains` in `brain.py:_transfer_to_brain` + add branch in `engine.py:_run_specialized_brain`
 
 **Cross-reference:**
 - Each `agents/<X>.md` frontmatter declares `skill: <Y>` which looks up `skills/<Y>.md`

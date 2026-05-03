@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-04-05
+Last updated: 2026-05-03
 
 ## Current State
 
@@ -1641,6 +1641,102 @@ Scope of the hardening:
 
 **Dependency**: 9.15 (skip list lives in Fact Vault). Step 1 shipped Sprint 16. The tree-sitter/grammar bump is the highest-risk remaining subitem and should ship on its own PR with parity + eval numbers in the description.
 
+### 9.18.1 Workspace scan walker pruning (COMPLETE — 2026-05-03)
+
+**Followup to 9.18.** Even with subprocess-isolated parsing and per-file timeout, the workspace **walker** itself was wasteful: `_scan_workspace` used `ws.rglob("*")` which recursively walked the ENTIRE tree first, then per-file filtered against the exclude list. On the render workspace (8.5GB / 293K files, ~90% under `node_modules/`), that meant 293K `Path.is_file()` + `Path.relative_to(ws).parts` calls before any meaningful filtering. Wall-clock cost: ~270s per scan.
+
+Fix: rewrote `_scan_workspace` to use `os.walk` with in-place `dirnames[:]` pruning so excluded subtrees are never descended into:
+
+```python
+for dirpath, dirnames, filenames in os.walk(ws):
+    dirnames[:] = [d for d in dirnames if d not in exclude_dir_names]
+    for fn in filenames:
+        # ... per-file work
+```
+
+Also extended the exclude list with JVM (`target/`, `.gradle/`, `out/`, `bin/`, `.m2/`, `classes/`), front-end (`.next/`, `.nuxt/`, `coverage/`), and Python (`.tox/`, `.ruff_cache/`, `.venv/`) outputs — categories the prior list missed.
+
+**Render scan: 293K files / 270s → 10K files / 18s (96.5% file reduction, 14.5x faster).**
+
+Also bumped graph cache TTL: `_GRAPH_TTL_SECONDS` 120s → 1800s (with `CONDUCTOR_GRAPH_TTL_S` env override) so consecutive eval cases on the same workspace re-use the cached graph instead of repaying the scan cost — agent_quality eval used to re-scan render 4× per run because case durations exceeded the old TTL; now scanned once.
+
+- [x] `_scan_workspace`: `ws.rglob("*")` → `os.walk` with dirname pruning
+- [x] Extended exclude list (JVM + front-end + Python categories)
+- [x] Graph cache TTL 120s → 1800s + env override
+- [x] All 70 `test_repo_graph` tests pass; eval workspaces (abound-server + render) scan correctly
+
+### 9.19 Domain Brain — Specialised Orchestrator for Business Flow Queries (COMPLETE — 2026-05-03)
+
+**Thesis**: General Brain shouldn't host business-flow / "how does X work" / domain-logic investigations inline. Brain self-synthesis from prose worker output systematically loses ~5-7 pp of detail (peripheral terms like "approval email", role names like "senior underwriter", enumerated lists like "income verification / classification") because Sonnet compresses peripheral items in summarisation. Solution: hand off to a specialised **Domain Brain** (mirroring the PR Brain v2 pattern), driven by a coordinator skill with mandatory Phase 1 self-survey + parallel template dispatch + coverage check + structured synthesis.
+
+**Architecture (`backend/app/agent_loop/domain_brain.py`):**
+
+```
+transfer_to_brain("domain") → DomainBrainOrchestrator
+  Phase 1: Coordinator Self-Survey (MANDATORY before any worker dispatch)
+           ├─ 1.1 read_file workspace-root CLAUDE.md / README.md
+           │      (project docs encode the team's vocabulary — bridge from
+           │       user's generic terms to codebase's specific terms)
+           ├─ 1.2 list_files / module_summary on workspace root
+           ├─ 1.3 grep using the PROJECT's vocabulary (not the user's)
+           └─ 1.4 file_outline / read_file the candidate domain class to confirm
+                  composite gates, enums, status fields
+  Phase 2: Dispatch Plan
+           ├─ DEFAULT BREADTH: parallel dispatch_explore(template=
+           │   "explore_implementation") + dispatch_explore(template=
+           │   "explore_usage") in ONE turn
+           ├─ Workers anchored on the discovered domain class
+           └─ Workers asked to emit prose + JSON envelope so synthesis
+              enumerates without losing fields
+  Phase 3: Coverage check + synthesis (default ONE round)
+           ├─ List 3-6 dimensions the question expects
+           ├─ Per dimension: covered ✓ / partial ⚠ / uncovered ❌
+           ├─ Re-dispatch ONLY if a load-bearing dimension is uncovered
+           │   (at most ONE follow-up worker)
+           └─ Synthesise per the 8 rules → 4-section format
+              (Flow Overview / Step-by-Step Breakdown / Key Files / Gaps)
+```
+
+**Two load-bearing fixes that were learned the hard way:**
+
+1. **Skill must be registered in `INVESTIGATION_SKILLS` dict.** Loading a `.md` file via `_load_skill()` is not enough — the result has to be put into `INVESTIGATION_SKILLS[name] = text` for `build_sub_agent_system_prompt(skill_key=...)` to find it. The Domain Brain skill silently failed (sub-agent prompt only 1276 chars instead of 14478) until added to the explicit registration list in `prompts.py:~1305`. Symptom: coordinator skipped Phase 1 entirely and lost domain-model anchoring → 50% on the worst case.
+
+2. **Phase 1 must be MANDATORY in skill text, not soft-recommended.** "You should consider reading project docs first" gets Sonnet to skip it and dispatch dynamic workers that miss the anchor. The fix: hard rule + worked-example + counter-example baked into the coordinator skill.
+
+**Eval (5-case agent_quality, Brain mode, Sonnet+Haiku) results:**
+
+| Run | AVG | Total time | Notes |
+|---|---:|---:|---|
+| Pre-baseline (old `dispatch_swarm`) | 95.0% | 640s | reference |
+| Domain Brain after all fixes | **94-98%** | 651-829s | run-to-run variance ~10pt |
+
+Cases that consistently hit 100%: `render_credit_decision`, `render_decline_flow`, `render_idv_process`, `render_open_banking`. The one case below baseline (`abound_render_approval`, 90% vs baseline 95%) loses one secondary `doc_generation` pattern within variance range.
+
+**Dispatch primitive rename + folder reorg (companion change):**
+
+- `dispatch_agent` → `dispatch_explore` (open prose investigation)
+- `dispatch_subagent` → `dispatch_verify` (scope + 3 falsifiable checks JSON)
+- `dispatch_dimension_worker` → `dispatch_sweep` (full-diff one-lens hunt)
+- Param schemas + tool defs moved into `backend/app/agent_loop/dispatch/{explore,verify,sweep}.py` (handlers stay in `brain.py` due to 12+ `AgentToolExecutor` state field couplings)
+
+**Legacy retired:**
+
+- `_dispatch_swarm` handler + `DispatchSwarmParams` deleted
+- `config/swarms/business_flow.yaml` + `config/agents/explore_synthesizer.md` deleted
+- `load_swarm_registry()` kept (returns `{}`) for back-compat
+- General Brain example for "what happens when X is declined" updated to route via `transfer_to_brain("domain")` instead of inline `mode=simple`
+
+**Files:**
+- New: `config/brains/domain.yaml`, `config/skills/domain_brain_coordinator.md`, `backend/app/agent_loop/domain_brain.py`, `backend/app/agent_loop/dispatch/{__init__,explore,verify,sweep}.py`, `backend/tests/test_domain_brain.py`
+- Modified: `engine.py:_run_specialized_brain` (domain branch), `brain.py:_transfer_to_brain` (`valid_brains` adds "domain"), `prompts.py` (skill registration + handoff example), `schemas.py` (re-export from `dispatch/`), `repo_graph/graph.py` (Phase 9.18.1 walker), `code_tools/tools.py` (cache TTL)
+- Deleted: 4 legacy files (swarm yaml, synthesizer agent, 2 renamed test files)
+
+Net diff: -1447 lines. 406 targeted tests pass. Single commit `77497d1`. Mirrored to `abound-server/conductor/sync-7.8.6-and-7.7.11` as `f622914fc`.
+
+**Deferred follow-ups:**
+- Dispatch handler folder reorg (pull `_dispatch_explore` / `_dispatch_verify` / `_dispatch_sweep` out of `AgentToolExecutor` into the `dispatch/` package as standalone functions taking the executor as arg) — needs handler refactor to break the 12-field state coupling
+- Phase 9 frontier work (extended thinking on coordinator turns, streaming sub-agent reactivity, MCP integration) — see `feedback_general_brain_synthesis` memory for the audit notes
+
 ### Reference Study Process
 For each sub-phase:
 1. **Read** the reference files listed above (deep study, not skim)
@@ -1927,6 +2023,8 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 9.16: Forked Agent Pattern (P11 verifier cache reuse)** | **✅ Complete** | **Sprint 18** |
 | **Phase 9.17: Brain Lifecycle Hooks (4 extension points)** | **✅ Complete** | **Sprint 18** |
 | **Phase 11.3: Type Checking (mypy strict-audit baseline)** | **✅ Complete** | **Sprint 18** |
+| **Phase 9.18.1: Workspace scan walker pruning (`os.walk` + extended exclude list, 14.5x faster on render)** | **✅ Complete** | **Sprint 19** |
+| **Phase 9.19: Domain Brain orchestrator + dispatch primitive rename + `dispatch_swarm` retired** | **✅ Complete** | **Sprint 19** |
 | **Phase 11.9: Lab Notebook System (experimental notes + regression history)** | **🟡 Planned** | **TBD** |
 | Phase 10: Companion & Developer Experience | 🟡 Planned | — |
 | Phase 11: Engineering Infrastructure | 🟡 Planned | — |
