@@ -212,6 +212,87 @@ change to worker behavior must be made/verified in both paths.
 
 ---
 
+## 5.5 Tools as a remote-execution proxy — why swapping the engine doesn't break local mode
+
+**The single most valuable abstraction in our architecture: the agent engine
+never touches files. Tools do.** The engine only ever *calls a tool*; where
+that tool runs and whose disk it reads is the tool's concern, not the engine's.
+This decouples the agent engine (in-house **or** Claude Code) from where the
+code physically lives (backend disk **or** the user's machine).
+
+### 5.5.1 The mechanism is unchanged — only the caller's name changes
+
+Today (in-house loop, local mode):
+```
+backend agent → "read file X" → RemoteToolExecutor → WebSocket →
+  extension runs the TS tool on the USER's machine → result back to agent
+```
+
+With a Claude Code (SDK) worker, local mode:
+```
+Claude Code (backend) calls mcp__conductor__read_file
+  → our @tool handler (backend) — this IS the WebSocket bridge
+    → WebSocket → extension runs TS tool on user's machine → result
+  → handler returns to Claude Code
+```
+
+The `@tool` handler simply *is* today's `RemoteToolExecutor` in a new wrapper.
+**Claude Code neither knows nor needs to know the file lives on the user's
+machine.** So local "explain this code" works fine under a Claude Code worker —
+the earlier worry that "the backend Claude Code can't see local files" was a
+non-issue: it never needed to see them, it calls a tool.
+
+### 5.5.2 The one hard rule this creates
+
+The bridge trick works for **our MCP tools** (their handlers can be redirected
+over WebSocket). It does **not** work for Claude Code's **built-in** tools
+(`Read` / `Grep` / `Bash`) — those execute in the SDK's own process and read
+the **backend** disk; they cannot be redirected to the user's machine.
+
+→ **Rule: in local mode, do not enable Claude Code's built-in tools. Use only
+our MCP tools (which proxy over WebSocket).** This splits the worker tool
+strategy by path:
+
+| Path | Where code lives | Claude Code built-in tools? | Tool strategy |
+|---|---|---|---|
+| **PR review** (backend Model A worktree) | backend disk | ✅ yes — free Read/Grep/Bash + auto-loads CLAUDE.md | **C**: built-ins + our unique MCP tools (search_facts, compressed_view, …) |
+| **Local interactive** ("explain this code") | user's machine | ❌ no — would read the wrong disk | **B**: 100% our MCP tools (WebSocket-proxied) |
+
+### 5.5.3 Why local mode (strategy B) is not a loss
+
+In local mode Claude Code contributes only **loop + strong model + harness**;
+tools are 100% ours. That's fine:
+- Our 46 TS tools are parity-tested and high quality (rg-based grep,
+  tree-sitter AST) — not worse than the built-ins.
+- CLAUDE.md auto-loading is unavailable on the backend in local mode anyway, but
+  we already inject project docs via the 4-layer prompt's `project_docs` — the
+  guideline channel exists regardless.
+
+So local mode becomes: **"Claude Code's brain (loop + model) driving our hands
+(46 proxied tools)."** Fully self-consistent.
+
+### 5.5.4 Honest residual risk (spike-measurable, not a blocker)
+
+Claude Code's model has the strongest "muscle memory" for its **own** built-in
+tools (it's trained heavily on Read/Grep/Bash). When local mode forces it onto
+custom MCP tools (`mcp__conductor__read_file`, …), it will still use them, but
+fluency *may* be marginally lower than with native tools. Likely small (our tool
+names/semantics are conventional), but **measure it in the spike**: compare
+exploration quality of local mode (all-MCP) vs PR-review path (built-ins
+allowed) on the same eval cases, confirm the gap is acceptable.
+
+### 5.5.5 Consequence for the plan
+
+- The local interactive path needs **no special handling** and must **not** be
+  dropped — it runs on the same SDK-worker mechanism, just with tool strategy B
+  instead of C.
+- Our WebSocket proxy + local TS tools are **not** in competition with adopting
+  Claude Code workers — they are the **prerequisite** that makes local mode work
+  under the new engine. "Keep local TS tools" and "adopt Claude Code workers"
+  are complementary, not either/or.
+
+---
+
 ## 6. Risks & open technical questions (de-risk before committing)
 
 - **R1 — Fact Vault at the tool boundary.** Caching is at the tool-call layer
@@ -246,6 +327,10 @@ Prove the three seams; any one failing changes the plan:
 3. **SDK worker model-switch + result mapping** — one query on Haiku-Bedrock,
    one on Sonnet-Bedrock, both returning a Pydantic-validated `AgentFindings`
    that `condense_result()` accepts unchanged. (return contract)
+4. **Local-mode all-MCP exploration quality** — run a Claude Code worker with
+   built-ins disabled, all tools proxied over WebSocket; compare exploration
+   quality vs the PR-review path (built-ins allowed) on the same eval cases.
+   Confirm the native-tool-fluency gap (§5.5.4) is acceptable. (R7)
 
 Acceptance: a Claude worker dispatched via `brain.py:1323` runs on the SDK,
 uses only our tools, hits the vault, and the coordinator can't tell the
