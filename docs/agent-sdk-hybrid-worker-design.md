@@ -293,6 +293,78 @@ allowed) on the same eval cases, confirm the gap is acceptable.
 
 ---
 
+## 5.6 Harness prompt engineering — what we inherit vs. what stays our job
+
+A common (and load-bearing) question: *"Claude Code's harness prompt
+engineering is clearly very tuned — does the SDK give us that, or do we
+re-implement it?"* The trap is treating "harness prompt engineering" as one
+blob. It's **three layers** with **completely different ownership**. Two are
+free; one is permanently ours.
+
+| Layer | What it is | SDK gives us? |
+|---|---|---|
+| **① Engine-internal prompting** | How the loop orchestrates tool use, how tool results are formatted, error rendering, thinking blocks, parallel read-only tool execution, user/assistant scaffolding | ✅ **Inherited automatically, inseparable** — it's engine behavior, not a prompt file. Using the SDK = you have it, identical to the CLI. |
+| **② Claude Code's flagship system prompt + built-in tool descriptions** | The heavily-tuned agent persona / coding guidelines / response style, and the precision-engineered descriptions for Read / Grep / Bash etc. | ✅ **Available, but opt-in via one switch** (see below). |
+| **③ Our own tool descriptions + agent identities/roles** | The `@tool` descriptions for our 46 tools; our agent roles (pr_security, correctness, …); our 4-layer prompt | ❌ **Always ours. This is our IP — the SDK can't and shouldn't do it for us.** |
+
+**The reframe:** what you actually envy about Claude Code's harness is mostly
+**layer ①** (loop behavior) and **layer ②** (the tuned system prompt). Both are
+**inherited, not re-implemented**. So "can the SDK do Claude Code's prompt
+engineering?" → you don't implement it, you *inherit* it. The funds you save by
+adopting the SDK are exactly this catch-up work. Layer ③ was always your job and
+you're already doing it to Anthropic's own best-practice spec (CLAUDE.md's
+4-layer rule, 3-4-sentence tool descriptions).
+
+### 5.6.1 Layer ② is a one-line opt-in (the pleasant surprise)
+
+The SDK's **default** system prompt is minimal (just enough to call tools). To
+inherit Claude Code's full, tuned system prompt — and *append* your own on top
+rather than replace it:
+
+```python
+ClaudeAgentOptions(
+    system_prompt={
+        "type": "preset",
+        "preset": "claude_code",        # inherit Anthropic's tuned agent prompt
+        "append": "<our domain role / 4-layer identity goes here>",
+    }
+)
+```
+
+- `preset: "claude_code"` → inherit the flagship agent prompt.
+- `append` → **stack our role on top of Anthropic's tuned base** (not replace).
+  Net effect: "Anthropic's tuned agent persona + our domain specialization."
+- Built-in tools (Read/Grep/Bash), when enabled, carry their tuned descriptions
+  for free.
+- `exclude_dynamic_sections: True` (Python ≥0.1.58) moves per-session context
+  (cwd/git/OS) into the first user message so the system prompt stays
+  cache-stable across workers — relevant for our prompt-cache economics.
+
+### 5.6.2 The honest reverse caveat — what is NOT inherited
+
+Two things the SDK does **not** do automatically happen to be things our
+in-house engine already does and our domain pipeline needs:
+
+1. **Context compaction.** Our "clear old tool results after 3 turns"
+   (`service.py:366`) is **not** auto-done by the SDK — it keeps full history.
+   To replicate, implement it via a `PostToolUse` hook or session management.
+2. **Mid-loop system-reminder injection.** The SDK injects only the initial
+   system prompt; it does not push mid-conversation reminders. If a worker
+   relies on that, re-add it via hooks.
+
+Consistent with the whole design: **generic behavior is inherited; our
+domain-specific control (compaction policy, reminders) must be re-attached via
+the SDK's hook system.**
+
+### 5.6.3 Tool-affinity caveat (ties to R7)
+
+The model has training affinity for the **built-in** tool names (Read/Grep/Bash)
+that custom `mcp__conductor__*` tools do **not** get. Custom tools compete on
+**description quality alone** — which raises the stakes on layer ③ and is
+exactly why R7 (local-mode all-MCP exploration quality) must be measured.
+
+---
+
 ## 6. Risks & open technical questions (de-risk before committing)
 
 - **R1 — Fact Vault at the tool boundary.** Caching is at the tool-call layer
