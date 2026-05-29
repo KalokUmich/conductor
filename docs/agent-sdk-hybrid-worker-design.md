@@ -468,6 +468,20 @@ With the SDK:
 - ⚠️ Caveat: SDK OTEL **traces are beta** (span names may change); content
   (prompts/tool IO) is off unless opted in (`OTEL_LOG_*`).
 
+**DECIDED (2026-05-29):** Retire Langfuse entirely — switch to SDK-native OTEL.
+This also lets us **drop Langfuse's self-hosted database**:
+- Delete the `@observe` / `track_generation` wiring in `workflow/observability.py`
+  and the `langfuse.*` config flags + secrets (`config.py`, `conductor.*.yaml`).
+- Remove the Langfuse DB plumbing: the `langfuse` database creation in
+  `docker/init-db.sql`, the `make langfuse-up` target, and any Langfuse compose
+  service. (Langfuse managed its own Prisma tables in a separate DB — gone.)
+- **Do NOT lose the telemetry** — instead of an external Langfuse DB, **add our
+  own tables to the existing Conductor Postgres** (see §5.7.4): per-iteration
+  token usage incl. cache tokens, and structured COT/thinking + transcript. OTEL
+  export (`CLAUDE_CODE_ENABLE_TELEMETRY=1` + OTLP) covers real-time
+  metrics/traces to whatever collector we choose; Postgres covers queryable
+  historical audit. Net: one fewer database, one fewer external dependency.
+
 ### 5.7.6 Refactor sequencing (safe → risky)
 
 1. **Config cleanup** — drop non-Claude models/providers/secrets/env (zero
@@ -584,6 +598,106 @@ degrade to empty string (`forked.py:99`). If Anthropic/Bedrock has a
 single-region blip mid-task, there's no automatic re-route. This is
 independent of the SDK question and could be done on either architecture; the
 cleanest insertion is `resolver.get_or_create_provider()` (`resolver.py:354`).
+
+---
+
+## 11. Execution plan — three workstreams + how to run a multi-hour build
+
+> DECIDED (2026-05-29): proceed with Bedrock-only + Claude-only + SDK (D1=go,
+> D5=maximal cleanup, D6=retire Langfuse incl. its DB). The three workstreams
+> below are the committed work. "All prompts → Claude-adapted" implies the
+> explorer tier goes Claude — own that with the team.
+
+### 11.1 Task A — Rewrite all prompts for Claude (high-effort, highest-value)
+
+**Goal:** every prompt (Brain coordinator, agent_factory roles, sub-agent
+4-layer, skills) restructured for Claude + the SDK preset model. This is the
+"big effort" task and it gates Task B's quality.
+
+Scope & approach:
+- Adopt `system_prompt={"preset":"claude_code","append": <our role>}` (§5.6) so
+  Anthropic's tuned base carries the generic agent behavior; our files keep only
+  **domain identity** (layer ③). Strip from our prompts whatever the preset now
+  provides (generic tool-use etiquette, response-format boilerplate).
+- Re-audit against CLAUDE.md's own rules: 4-layer separation, 3-4-sentence tool
+  descriptions (what/when/when-not/what-it-doesn't-return), examples-over-rules,
+  right altitude, positive framing. Many prompts predate the SDK and over-specify.
+- Tool descriptions for our MCP `@tool`s matter MORE now (no built-in training
+  affinity, R7) — invest here.
+- Inventory first: `prompts.py` (~95KB), `config/agents/*.md`,
+  `config/agent_factory/*.md`, `config/skills/*.md`, `config/brains/*.yaml`.
+
+**Definition of done:** every prompt file reviewed + rewritten; no prompt
+duplicates what the `claude_code` preset provides; eval (Task B) shows no
+regression attributable to prompt changes.
+
+### 11.2 Task B — Code review is the flagship: full eval gate, iterate to win
+
+**Hard rule:** code review (PR Brain v2) must pass the **full eval suite** after
+the migration. If it doesn't, **keep optimizing until results are clearly good
+again** — do not ship a regressed flagship.
+
+Gate:
+- Baselines: `eval/code_review/run.py` (12 planted-bug cases) +
+  `eval/agent_quality/run_bedrock.py --brain`. Record pre-migration scores as the
+  bar to beat (recall 35% / precision 20% / severity 15% / location 10% /
+  recommendation 10% / context 10%).
+- After each workstream chunk, re-run. Migration is "done" for code review only
+  when scores **meet or exceed** the pre-migration baseline, ideally exceed
+  (the whole premise is Claude's harness + tuned prompts should help).
+- Loop: eval → inspect misses → adjust prompts/dispatch/verifier → re-eval.
+  Repeat until clearly better. This is the stop condition, not a fixed iteration
+  count.
+
+### 11.3 Task C — Orchestrate the build as a long-running, supervised effort
+
+This is large; it warrants a Claude-driven workflow/goal run. **But "run
+autonomously for hours" needs guardrails — here is how to do it safely, not
+blindly.**
+
+**Phase ordering (dependency-correct, safe→risky — mirrors §5.7.6 + tasks):**
+1. **DB migration** — add Liquibase changesets for the new tables (per-iteration
+   token usage incl. cache tokens; structured COT/thinking + transcript).
+   Remove Langfuse DB plumbing (`docker/init-db.sql` langfuse DB,
+   `make langfuse-up`, compose service). *Reversible; no agent behavior change.*
+2. **Config + provider dead-code cleanup** (§5.7.1) — Bedrock+Claude only. Run
+   `make test` after; this is mostly deletion with strong test coverage.
+3. **Observability swap** — delete `@observe`/`track_generation`; wire OTEL +
+   the new Postgres tables.
+4. **SDK worker spike** (§7) — prove the 4 seams BEFORE the full build. Gate.
+5. **SDK worker build** — `SdkWorkerRunner` behind `brain.py:1323`.
+6. **Task A prompt rewrite** — interleave with eval.
+7. **Task B eval gate** — iterate to win.
+
+**How to actually run it for hours (mechanics + honesty):**
+- Use a **workflow** (deterministic multi-agent orchestration) for the
+  fan-out-able parts: e.g. "rewrite N prompt files" (one agent per file, parallel
+  + a consistency critic), "trim test files", "audit each provider-coupling
+  site." These are ideal — many independent units, each verifiable.
+- Use a **`/loop` or scheduled run** for the eval-iterate cycle (Task B): run
+  eval → if below bar, spawn a fix agent → re-run, on an interval, until the bar
+  is met. The stop condition is the eval score, not a timer.
+- **Honesty about autonomy:** the irreversible/structural steps (DB migration,
+  deleting provider code, the `brain.py:1323` integration) should be
+  **checkpointed, not fully unattended** — each behind its own commit on a branch
+  + `make test` gate, with a human (you) reviewing the diff before the next
+  structural step. A multi-hour run is safe for: prompt rewrites (reversible
+  text), test trimming (tests catch regressions), eval iteration (read-only +
+  prompt edits). It is NOT safe to let an agent delete ~6,700 LOC and rewire the
+  execution layer with zero checkpoints. Encode that as: workflow does the
+  fan-out work + opens commits; structural deletions land behind a test gate; you
+  review at phase boundaries.
+- **Branch + commit discipline:** one branch per phase, `make test` (1655 tests)
+  + `make test-parity` must pass before merging a phase. Code-review eval is the
+  extra gate for anything touching PR Brain.
+- **Resumability:** a workflow run can pause/resume; structural phases are
+  ordered so a failure stops before the risky next step rather than mid-rewire.
+
+**What I (Claude) will do when you say go:** author the actual workflow
+script(s) — one per fan-out phase — with per-unit verification and a critic
+pass, plus the eval-loop driver for Task B. Each script is reviewable before it
+runs. I will NOT kick off a hours-long unattended destructive run without that
+checkpoint structure in place.
 
 ---
 
