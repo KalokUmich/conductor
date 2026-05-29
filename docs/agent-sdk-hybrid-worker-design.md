@@ -365,6 +365,133 @@ exactly why R7 (local-mode all-MCP exploration quality) must be measured.
 
 ---
 
+## 5.7 Full-codebase refactor ledger — going Bedrock-only + Claude-only + SDK
+
+> Source: a full read-only sweep of the repo (2026-05-29) covering the tool set,
+> the multi-vendor coupling, the observability/token/COT stack, and verified SDK
+> capabilities. This section answers: *if we abandon multi-vendor and commit to
+> Bedrock+Claude+SDK, what changes?*
+
+**Headline:** this is a **net ~5,200 LOC reduction** (≈6,700 deleted, ≈500
+refactored, ≈1,000 new). A large fraction of our "multi-vendor abstraction" is
+really **non-Claude compatibility patching** that simply evaporates.
+
+### 5.7.1 Provider layer — mostly deletion
+
+| Component | File | Action | Why |
+|---|---|---|---|
+| OpenAI provider | `ai_provider/openai_provider.py` (~430) | **DELETE** | OpenAI/Alibaba/Moonshot all routed through it |
+| Two-stage summary | `ai_provider/pipeline.py` + `prompts.py` (~800) | **DELETE** | Summarization becomes a Brain/agent job |
+| Tool-repair pipeline | `claude_bedrock.py:152–432` (`_repair_tool_calls`, `_parse_malformed_name`, `_extract_kv_pairs`, `_extract_xml_tool_calls`, `_extract_tool_calls_from_text`) (~500) | **DELETE** | These exist to fix **non-Claude** Bedrock models' malformed tool calls. Claude-only → dead. |
+| Schema sanitization | `claude_bedrock.py:41–93` (`_sanitize_schema`/`_sanitize_property`) | **DELETE/keep-tiny** | SDK handles schema natively |
+| Converse call surface | `claude_bedrock.py` (`client.converse(...)`) | **DELETE** | SDK uses native Anthropic-on-Bedrock, not Converse |
+| Resolver | `resolver.py` 5-ProviderType enum, health checks, `enable_thinking`, per-vendor `_create_provider` | **SIMPLIFY** | Collapses to Bedrock(+optional Anthropic-direct fallback) |
+| Config | `conductor.settings.yaml` 19 models/5 providers; `config.py` OpenAI/Alibaba/Moonshot SecretsConfig + env vars | **SIMPLIFY** | → 4 models / 2 providers; delete 3 secrets classes + ~5 env vars |
+| langextract | `langextract/provider.py` multi-vendor Bedrock routing (qwen/llama/mistral/nova/deepseek regex) | **SIMPLIFY** | Claude-on-Bedrock only |
+| Tests | `test_bedrock_tool_repair.py` (945, **DELETE**), `test_ai_provider.py` (~70% del), `test_langextract.py` (~70% del) | **DELETE/REWRITE** | ~2,900 test LOC gone |
+
+**Kept (reframed):** `base.py` TokenUsage/ToolCall (reused for observability),
+`prompt_builder.py` (template util, no API call), `claude_direct.py` (optional
+Anthropic-direct failover only).
+
+### 5.7.2 Tool set — 51 tools, only 6 overlap, none trivially deletable
+
+Sweep count: **6 DUPLICATE / 15 UNIQUE-AST / 30 UNIQUE-DOMAIN** (51 total).
+
+- **6 DUPLICATE** (`grep`, `read_file`, `file_edit`, `file_write`, `run_test`,
+  `web_search`) — Claude Code has built-ins. On the **PR-review/backend** path we
+  *can* use built-ins; but the **TS versions must stay for local mode** (built-ins
+  read backend disk only — see §5.5). So these are **"built-in on backend, keep
+  TS for local"**, not "delete".
+- **15 UNIQUE-AST** (`find_symbol`, `find_references`, `file_outline`,
+  `get_callers`, `get_callees`, `get_dependencies`, `get_dependents`,
+  `trace_variable`, `compressed_view`, `expand_symbol`, `ast_search`,
+  `detect_patterns`, `module_summary`, `test_outline`, `git_hotspots`) — **no SDK
+  equivalent; this is the differentiation.** Keep as MCP, both Py + TS.
+- **30 UNIQUE-DOMAIN** (Jira×5, browser×6, Brain dispatch×5+, Fact Vault
+  `search_facts`/`update_notes`, git×5, `list_endpoints`, `extract_docstrings`,
+  `db_schema`, `find_tests`, `ask_user`, `signal_blocker`) — **no SDK
+  equivalent.** Keep as MCP (backend).
+
+**Conclusion on "some tools duplicate Claude's":** true but only 6, and the
+local-mode constraint means the win is "stop maintaining the *backend Python*
+version of those 6," not "delete the tool." Real tool-set simplification is
+modest; the AST + domain tools are exactly our moat.
+
+### 5.7.3 Caching — Fact Vault stays; it composes with SDK prompt caching
+
+- **Keep** `scratchpad/` Fact Vault (per-session SQLite, range-intersection
+  dedup, negative cache). SDK has **no equivalent** — it's domain optimization.
+- It lives at the **tool-call layer** (`CachedToolExecutor`), so SDK workers keep
+  hits **iff** every `@tool` handler routes through it (R1).
+- **Two different cache layers, complementary:** SDK **prompt caching**
+  (`cache_read/cache_write` tokens) caches *prompt tokens*; Fact Vault caches
+  *tool results*. They stack. The manual cache-prefix trick in `fork_call`
+  (`build_pr_context_prefix`) can be partly handed to SDK-native prompt caching,
+  simplifying it.
+
+### 5.7.4 Token + COT tracking — SDK is an upgrade, Postgres stays for audit
+
+Current state (verified):
+- COT today is **reconstructed** — `ThinkingStep` built from tool calls + the
+  LLM's text truncated to 500–1000 chars (`service.py`, `trace.py`). Not real
+  model reasoning.
+- Token usage normalized into `TokenUsage` (`base.py`); per-session totals in
+  Postgres `session_traces` (`db/models.py:66–84`,
+  `database/changelog/changes/001-initial-schema.sql:14–31`); per-iteration in
+  `trace_json`. **Cache tokens go only to Langfuse, never persisted.**
+
+With the SDK:
+- **Real COT** — enable `thinking`; `AssistantMessage.content` carries structured
+  `ThinkingBlock` (full reasoning + signature). Upgrade over our reconstruction.
+- **Full structured transcript** — every assistant turn / tool_use / tool_result
+  as typed objects, directly persistable.
+- **Better usage** — `message.usage` (input/output/cache_read/cache_creation) +
+  `ResultMessage.model_usage` (per-model). Lets us finally persist cache tokens.
+- **Still our job** — cross-session cumulative totals + queryable historical
+  audit. So: **keep the Postgres `session_traces` table**, but (a) swap the COT
+  field from reconstruction → SDK `ThinkingBlock`, (b) start persisting cache
+  tokens. `total_cost_usd` from the SDK is a local estimate (drifts) — for real
+  billing use Anthropic's Usage & Cost API, not the SDK number.
+
+### 5.7.5 Langfuse — replaceable by SDK-native OTEL, not by the SDK itself
+
+- Today: Langfuse default **off** (`config.py` `enabled: false`), wired via
+  `workflow/observability.py` `@observe` + `track_generation`. It and SessionTrace
+  **already overlap** on token tracking.
+- SDK/Claude Code has **native OpenTelemetry export**
+  (`CLAUDE_CODE_ENABLE_TELEMETRY=1` + `OTEL_*` exporters): tokens, cost, latency,
+  tool spans, `session.id`. Langfuse can **ingest OTLP**.
+- → **We can retire our hand-wired `@observe`/`track_generation` and emit OTEL
+  instead.** Whether to keep a Langfuse UI on the OTLP stream is a *separate*
+  choice (LLM trace visualization still has value; not required).
+- ⚠️ Caveat: SDK OTEL **traces are beta** (span names may change); content
+  (prompts/tool IO) is off unless opted in (`OTEL_LOG_*`).
+
+### 5.7.6 Refactor sequencing (safe → risky)
+
+1. **Config cleanup** — drop non-Claude models/providers/secrets/env (zero
+   behavior change for Claude path).
+2. **Provider dead-code removal** — delete OpenAI provider, tool-repair, schema
+   sanitization, `enable_thinking`; simplify resolver.
+3. **Feature deprecation** — delete two-stage summary pipeline + `/ai/summarize`.
+4. **SDK integration (needs spike first)** — `SdkWorkerRunner` behind
+   `brain.py:1323`; route `@tool` through `CachedToolExecutor`.
+5. **Observability swap** — SDK `ThinkingBlock` → Postgres COT; enable OTEL;
+   retire `@observe` wiring.
+6. **Test rewrite** — delete `test_bedrock_tool_repair.py`, trim
+   `test_ai_provider.py` / `test_langextract.py`; add SDK-worker tests.
+
+### 5.7.7 What this section does NOT recommend
+
+This ledger describes the *Bedrock-only + Claude-only* end state **if** decision
+D1 (and the explorer-tier-goes-Claude call) is taken. It is the maximal-cleanup
+scenario. If the team keeps non-Claude explorers, the hybrid (§5) still holds but
+most of §5.7.1's deletions do **not** apply — the provider layer stays. **Don't
+execute 5.7.1 until the explorer-tier decision is settled.**
+
+---
+
 ## 6. Risks & open technical questions (de-risk before committing)
 
 - **R1 — Fact Vault at the tool boundary.** Caching is at the tool-call layer
@@ -386,6 +513,14 @@ exactly why R7 (local-mode all-MCP exploration quality) must be measured.
   observability for SDK workers. Decide: replicate, or accept reduced trace.
 - **R6 — Two-path drift.** The permanent cost. Mitigate by keeping the SDK path
   thin and pushing shared logic into the 5 contracts above.
+- **R7 — Native-tool fluency in local mode.** Model has affinity for built-in
+  tool names; custom MCP tools compete on description alone. Measure (§5.5.4).
+- **R8 — Cache-token persistence gap.** Today cache tokens reach only Langfuse,
+  never Postgres (§5.7.4). The SDK exposes them per message — persist on migration
+  so we don't keep losing cache-efficiency history.
+- **R9 — SDK OTEL traces are beta.** Span names/attributes may change; content is
+  opt-in. Pin the beta flag and re-check on SDK upgrades before relying on it to
+  replace Langfuse wiring (§5.7.5).
 
 ---
 
@@ -431,6 +566,14 @@ difference from an `AgentLoopService` worker.
   or accept reduced tracing for SDK workers initially?
 - **D4 — Which dispatch first**: `dispatch_explore` (simplest) vs the verifier
   path (already `fork_call`, arguably the SDK's sweet spot)?
+- **D5 — Maximal cleanup or not** (gated on the explorer-tier-goes-Claude call):
+  if yes, execute the §5.7 ledger (~5,200 LOC net deletion: drop OpenAI provider,
+  tool-repair, Converse, summary pipeline, trim config/tests). If explorers stay
+  multi-vendor, keep the provider layer and only add the SDK path.
+- **D6 — Observability target**: retire hand-wired Langfuse `@observe` in favor
+  of SDK-native OTEL (§5.7.5)? Keep a Langfuse UI on the OTLP stream or not? And
+  persist cache tokens + swap COT to SDK `ThinkingBlock` in `session_traces`
+  (§5.7.4)?
 
 ## 10. Adjacent finding (not part of this design, but real)
 
