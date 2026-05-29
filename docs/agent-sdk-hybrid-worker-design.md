@@ -701,6 +701,116 @@ checkpoint structure in place.
 
 ---
 
+## 12. Branch-discipline execution protocol (how to actually run the refactor)
+
+> DECIDED (2026-05-29): execute the refactor as a sequence of small, independently
+> tested steps under a parent branch, with one short-lived child branch per step.
+> No step is "done" until its tests pass and it is merged back. This makes the
+> checkpoint structure (§11.3) a mechanical rule, not a matter of discipline.
+
+### 12.1 The loop (repeat per step)
+
+```
+parent branch: refactor/agent-sdk-migration   (cut once, from main at the
+                                                start; accumulates all steps)
+
+for each step S in the plan (§12.3):
+  1. git checkout refactor/agent-sdk-migration
+  2. git checkout -b refactor/step-NN-<slug>        # child branch off parent
+  3. make the change for step S ONLY (keep it small + single-purpose)
+  4. write/extend tests for S (see §12.2 — what each kind of step must test)
+  5. run the gate:  make test  &&  make test-parity  &&  make lint-check
+        - for prompt/Brain/PR steps ALSO run the eval gate (§12.2)
+  6. if gate fails → fix on the child branch, re-run, until green
+  7. commit on the child branch (one coherent commit, descriptive message)
+  8. merge child → parent:
+        git checkout refactor/agent-sdk-migration
+        git merge --no-ff refactor/step-NN-<slug>
+        git branch -d refactor/step-NN-<slug>
+  9. go to next step
+```
+
+Rules:
+- **One step = one child branch = one purpose.** If a step grows, split it.
+- **Never merge a red step.** The parent branch is always green.
+- `--no-ff` so each step is a visible, revertible merge commit on the parent.
+- Parent merges to `main` only at the very end (or at safe milestones), after a
+  full `make test` + code-review eval on the parent.
+
+### 12.2 What each kind of step MUST test (the gate)
+
+| Step touches… | Required gate before merge |
+|---|---|
+| Config / provider deletion | `make test` (1655) + `make test-parity` + `make lint-check` + `make typecheck-strict` |
+| **Any prompt** (prompts.py, agents, agent_factory, skills) | the standard gate **PLUS** code-review eval (`eval/code_review/run.py --brain`) **PLUS** agent-quality eval (`eval/agent_quality/run_bedrock.py --brain`) — prompt changes can silently regress quality, so eval is mandatory, not optional |
+| **Brain / dispatch / pr_brain** | standard gate **PLUS** the **PR review path** end-to-end **PLUS** **tool functionality** — i.e. run `make test` (covers tool parity + PR Brain tests) and the code-review eval. A Brain change that leaves tools or PR review broken does NOT pass. |
+| SDK worker / executor wiring | standard gate **PLUS** the spike-derived checks (§7): Fact Vault hit, WebSocket tool proxy, return-contract mapping |
+| Observability / DB tables | `make test` + a Liquibase up/rollback check (`make db-update` / `make db-rollback-one`) |
+
+**Explicit per user:** for any step that changes a **prompt or the Brain**, the
+gate must also exercise **PR review and tool functionality** — never merge a
+Brain/prompt change on unit tests alone.
+
+### 12.3 Step plan (dependency-ordered; each is one child branch)
+
+Ordered safe→risky so a failure stops before the next, riskier step. Steps 1–3
+are reversible/low-risk; 4 is a gate; 5+ are structural.
+
+- **Step 01 — DB tables + Langfuse DB removal.** Add Liquibase changesets for the
+  new telemetry tables (per-iteration usage incl. cache tokens; structured COT /
+  transcript). Remove the `langfuse` DB from `docker/init-db.sql`, `make
+  langfuse-up`, compose service. Gate: DB up/rollback + `make test`.
+- **Step 02 — Config collapse to Bedrock+Claude.** Trim `conductor.settings.yaml`
+  to 4 Claude models / 2 providers; delete OpenAI/Alibaba/Moonshot secrets
+  classes + env vars in `config.py`. Gate: standard.
+- **Step 03 — Provider dead-code removal.** Delete `openai_provider.py`,
+  tool-repair + schema-sanitization in `claude_bedrock.py`, `enable_thinking`;
+  simplify `resolver.py`. Delete `test_bedrock_tool_repair.py`; trim
+  `test_ai_provider.py`. Gate: standard.
+- **Step 04 — Observability swap.** Delete `@observe`/`track_generation`; wire
+  OTEL + write the new Postgres tables from §step-01. Gate: standard + telemetry
+  smoke test.
+- **Step 05 — SDK worker spike (GATE, may stay on a child branch longer).** Prove
+  the 4 seams (§7) on a child branch. Only merge once all four pass. If any
+  fails, STOP and revisit the design before structural integration.
+- **Step 06 — SDK worker integration.** `SdkWorkerRunner` behind
+  `brain.py:1323`; route `@tool` through `CachedToolExecutor`. Gate: standard +
+  PR review e2e + tool functionality + code-review eval (Brain change).
+- **Step 07..N — Prompt rewrite, one file/group per child branch.** Each prompt
+  step gets its own child branch and the FULL prompt gate (§12.2: eval + PR +
+  tools). Keep them small so a regression is bisectable to one prompt.
+- **Step (final) — Code-review eval gate (Task B).** On the parent branch, run the
+  full eval; iterate (more child branches) until scores meet/exceed the
+  pre-migration baseline. Only then consider merging parent → main.
+
+### 12.4 Capturing the baseline FIRST (before Step 01)
+
+Before any change, on `main`, record the bar to beat so regressions are
+detectable:
+```
+# on main, pre-refactor
+python eval/code_review/run.py --brain            > baseline_code_review.txt
+python eval/agent_quality/run_bedrock.py --brain  > baseline_agent_quality.txt
+make test                                          # confirm 1655 green starting point
+```
+Commit these baseline files on the parent branch as the reference. Task B's stop
+condition is "meet or exceed these."
+
+### 12.5 Multi-hour / multi-machine notes
+
+- The protocol is **machine-independent**: it's just git + make. Resuming on a new
+  computer = `git fetch` + `git checkout refactor/agent-sdk-migration` and
+  continue at the next unstarted step. (Push the parent branch so any machine can
+  pick it up — see push note at the end of this doc.)
+- Steps 01–04 and 07..N are safe to drive with a **workflow / `/loop`** (fan-out
+  for prompt files; eval-iterate loop for Task B) BECAUSE the per-step gate +
+  merge-only-when-green rule contains the blast radius.
+- Steps 05–06 (structural execution-layer rewire) should be **human-reviewed at
+  the merge boundary** even if an agent drafts them — review the diff before
+  `git merge` into the parent.
+
+---
+
 ## Appendix A — Key file:line index (commit 77497d1)
 
 | What | Location |
