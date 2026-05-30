@@ -996,7 +996,7 @@ class PRBrainOrchestrator:
 
         # Phase 9.17 lifecycle hook — synthesis finished, precision
         # filter has run, findings + final synthesis text are ready.
-        # Consumers: telemetry / Langfuse export / extract reusable
+        # Consumers: telemetry export / extract reusable
         # learnings → memory consolidation (future Phase 9.15
         # long-term extension) / metrics aggregation.
         fire_hook(

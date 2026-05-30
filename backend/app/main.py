@@ -213,19 +213,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.trace.backend,
     )
 
-    # ---- Langfuse Observability ----
-    from .workflow.observability import init_langfuse
-
-    langfuse_ok = init_langfuse(settings)
-    if langfuse_ok:
-        import os
-
-        logger.info(
-            "Langfuse observability: enabled (host=%s)", os.environ.get("LANGFUSE_HOST", settings.langfuse.host)
-        )
-    else:
-        logger.info("Langfuse observability: disabled")
-
     # ---- Ngrok tunnel ----
     # Read ngrok config from raw YAML (not modelled in AppSettings).
     # Required for VS Code Remote-WSL: the webview runs in the Windows
@@ -428,9 +415,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # ---- Shutdown ----
     stop_ngrok()
-    from .workflow.observability import flush as langfuse_flush
-
-    langfuse_flush()
     # Flush chat persistence buffers before shutdown
     if chat_persistence:
         await chat_persistence.flush_all()
