@@ -1,11 +1,11 @@
-# Conductor ECS Deployment — Backend + Langfuse + Liquibase
+# Conductor ECS Deployment — Backend + Liquibase
 # ==========================================================
 # Connects to external AWS managed services:
-#   - RDS PostgreSQL (two databases: conductor + langfuse)
+#   - RDS PostgreSQL (conductor database)
 #   - ElastiCache Redis
 #
 # Prerequisites:
-#   1. RDS instance with two databases created:
+#   1. RDS instance with the conductor database created:
 #      ./scripts/init-cloud-db.sh --host <rds-host> --admin-user postgres ...
 #   2. ElastiCache Redis cluster running
 #   3. Fill in docker/ecs.env with credentials
@@ -15,8 +15,7 @@
 #
 # Startup order:
 #   1. liquibase-init — runs schema migrations against RDS, then exits
-#   2. langfuse       — starts after liquibase-init (auto-creates its own tables)
-#   3. backend        — starts after liquibase-init succeeds
+#   2. backend        — starts after liquibase-init succeeds
 
 services:
   # ---------- Schema migration (runs once, then exits) ----------
@@ -60,28 +59,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  # ---------- Langfuse ----------
-  langfuse:
-    image: langfuse/langfuse:2
-    restart: unless-stopped
-    depends_on:
-      liquibase-init:
-        condition: service_completed_successfully
-    environment:
-      DATABASE_URL: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${RDS_HOST}:${RDS_PORT:-5432}/langfuse"
-      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
-      NEXTAUTH_URL: ${LANGFUSE_URL:-http://localhost:3001}
-      SALT: ${LANGFUSE_SALT}
-      TELEMETRY_ENABLED: "false"
-      HOSTNAME: "0.0.0.0"
-    ports:
-      - "3001:3000"
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/api/public/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 volumes:
   conductor-uploads:

@@ -52,3 +52,4 @@ playwright>=1.40
 ruff>=0.11.0
 black>=25.1.0
 mypy>=1.14.0
+pytest-timeout

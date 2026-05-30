@@ -1,9 +1,7 @@
-# Conductor App Tier — Backend + Langfuse
+# Conductor App Tier — Backend
 # =========================================
 # Requires data tier to be running first:
 #   docker compose -f docker/docker-compose.data.yaml up -d
-#
-# Both backend and langfuse connect to the shared Postgres in the data tier.
 #
 # Usage:
 #   docker compose -f docker/docker-compose.app.yaml up -d
@@ -23,8 +21,6 @@ services:
       REDIS_URL: "redis://conductor-redis:6379/0"
       BACKEND_HOST: "0.0.0.0"
       BACKEND_PORT: "8000"
-      # Langfuse SDK: use Docker network name (localhost won't work inside container)
-      LANGFUSE_HOST: "http://conductor-langfuse:3000"
     ports:
       - "8000:8000"
     volumes:
@@ -38,36 +34,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-
-  langfuse:
-    image: langfuse/langfuse:2
-    container_name: conductor-langfuse
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@conductor-postgres:5432/langfuse
-      NEXTAUTH_SECRET: conductor-langfuse-dev-secret
-      NEXTAUTH_URL: http://localhost:3001
-      SALT: conductor-langfuse-dev-salt
-      TELEMETRY_ENABLED: "false"
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@conductor.dev}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Conductor Admin}
-      LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-conductor}
-      LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-conductor-org}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Conductor}
-      LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-conductor-project}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-Conductor}
-      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-pk-lf-conductor-dev}
-      LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-sk-lf-conductor-dev}
-    ports:
-      - "3001:3000"
-    networks:
-      - conductor
-    healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://$(hostname):3000/api/public/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
 networks:
   conductor:

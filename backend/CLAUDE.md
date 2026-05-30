@@ -288,8 +288,6 @@ make db-status      # show pending changesets (dry run)
 make db-rollback-one  # rollback last changeset
 ```
 
-- `docker/init-db.sql` creates the `langfuse` database on first Docker start
-- Langfuse manages its own tables internally (Prisma migrations)
 - New changelog files go in `database/changelog/changes/` (formatted SQL)
 - **Liquibase connection**: URL, username, and password are passed as `--url`, `--username`, `--password` CLI args in the Makefile (not in `liquibase.properties`). This is required because Java cannot parse bash `${VAR:-default}` syntax in JDBC URLs — use plain `${VAR}` or CLI args only.
 
