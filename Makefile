@@ -7,6 +7,11 @@ VENV_DIR := .venv
 PYTHON := $(CURDIR)/$(VENV_DIR)/bin/python
 PIP := $(CURDIR)/$(VENV_DIR)/bin/pip
 PYTEST := $(CURDIR)/$(VENV_DIR)/bin/pytest
+
+# Claude Code CLI — runtime dependency of claude-agent-sdk (the SDK drives the
+# CLI as a subprocess). Pinned here once; used by both `make setup-claude-cli`
+# (dev/venv host) and backend/Dockerfile (ECS image) so behavior is identical.
+CLAUDE_CLI_VERSION := 2.1.158
 UVICORN := $(PYTHON) -m uvicorn
 LIQUIBASE_IMAGE := liquibase/liquibase:4.29
 LIQUIBASE := docker run --rm --network conductor-net \
@@ -33,10 +38,10 @@ all: setup
 # ===========================
 # Setup
 # ===========================
-.PHONY: setup setup-backend setup-extension venv ensure-backend-deps install browser-install
+.PHONY: setup setup-backend setup-extension setup-claude-cli venv ensure-backend-deps install browser-install
 
 ## Create venv and install all dependencies
-setup: venv setup-backend setup-extension
+setup: venv setup-backend setup-claude-cli setup-extension
 	@echo "Setup complete!"
 
 ## Setup backend (venv + dependencies)
@@ -44,6 +49,18 @@ setup-backend: venv
 	@echo "Installing backend dependencies..."
 	$(PYTHON) -m pip install -r backend/requirements.txt
 	@echo "Backend setup complete!"
+
+## Install the Claude Code CLI (runtime dep of claude-agent-sdk) on the host.
+## Needed when running the Python backend directly on the host (not in Docker) —
+## the SDK spawns `claude` as a subprocess. Same pinned version as the image.
+setup-claude-cli:
+	@echo "Installing Claude Code CLI @ $(CLAUDE_CLI_VERSION)..."
+	@if command -v npm >/dev/null 2>&1; then \
+		npm install -g @anthropic-ai/claude-code@$(CLAUDE_CLI_VERSION); \
+		claude --version || echo "WARN: 'claude' not on PATH after install — check your npm global bin is on PATH"; \
+	else \
+		echo "WARN: npm not found — install Node.js, then re-run 'make setup-claude-cli'"; \
+	fi
 
 ## Setup extension (npm install)
 setup-extension:
