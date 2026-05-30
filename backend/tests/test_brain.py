@@ -640,6 +640,91 @@ class TestQueryNotContaminatedByRole:
             assert "Map the architecture." in system_prompt  # agent instructions (Layer 1 body)
 
 
+class TestSdkDispatchRoutingAndTelemetry:
+    """Step 06c engine discriminator + Step 06d task telemetry, at the dispatch seam."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_routes_to_inhouse_not_sdk(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
+        """An agent holding a dispatch_* tool is a coordinator → in-house loop, NOT SDK
+        (so it keeps its orchestration tools and can fan out to SDK leaf workers)."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "dispatch_explore"]
+        _FakeSdkRunner.last = {"init": None, "run": None}
+
+        async def empty_stream(*a, **kw):
+            from app.agent_loop.service import AgentEvent
+
+            yield AgentEvent(
+                kind="done",
+                data={"answer": "x", "tool_calls_made": 1, "iterations": 1, "duration_ms": 0, "thinking_steps": []},
+            )
+
+        with (
+            patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner),
+            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
+        ):
+            mock_stream.side_effect = empty_stream
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "How does auth work?"},
+            )
+
+            assert mock_stream.called, "coordinator must run on the in-house AgentLoopService loop"
+            assert _FakeSdkRunner.last["run"] is None, "coordinator must NOT use the SDK worker"
+
+    @pytest.mark.asyncio
+    async def test_leaf_dispatch_records_task_telemetry(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider, monkeypatch
+    ):
+        """A leaf dispatch records start + complete with the right kind/engine + ids."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "find_symbol"]
+        starts: list = []
+        completes: list = []
+
+        async def cap_start(**kw):
+            starts.append(kw)
+
+        async def cap_complete(**kw):
+            completes.append(kw)
+
+        # Patch the names bound in brain's namespace (it imports them at module load).
+        monkeypatch.setattr("app.agent_loop.brain.record_start", cap_start)
+        monkeypatch.setattr("app.agent_loop.brain.record_complete", cap_complete)
+
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "How does auth work?"},
+            )
+
+        assert len(starts) == 1 and len(completes) == 1
+        s = starts[0]
+        assert s["kind"] == "sub_agent" and s["engine"] == "sdk"
+        assert s["agent_name"] == "explore_architecture"
+        assert s["task_id"] and s["root_task_id"]
+        assert s["parent_task_id"] is None  # top-level executor → no parent
+        c = completes[0]
+        assert c["task_id"] == s["task_id"]  # same node started + completed
+        assert c["status"] == "done"
+
+
 # ---------------------------------------------------------------------------
 # Config Loading
 # ---------------------------------------------------------------------------
