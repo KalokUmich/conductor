@@ -1,11 +1,11 @@
 """AI Provider module for LLM integrations.
 
-This module provides a unified interface for AI providers with three
-implementations: ClaudeDirectProvider, ClaudeBedrockProvider, and OpenAIProvider.
+This module provides a unified interface for AI providers with two
+implementations: ClaudeDirectProvider and ClaudeBedrockProvider.
 
 Usage:
     from app.ai_provider import (
-        AIProvider, ClaudeDirectProvider, ClaudeBedrockProvider, OpenAIProvider,
+        AIProvider, ClaudeDirectProvider, ClaudeBedrockProvider,
         ChatMessage, DecisionSummary
     )
 
@@ -18,9 +18,6 @@ Usage:
         aws_secret_access_key="..."
     )
 
-    # Using OpenAI API
-    openai_provider = OpenAIProvider(api_key="sk-...")
-
     # All implement the same interface
     if provider.health_check():
         messages = [ChatMessage(role="host", text="Hello", timestamp=1234567890)]
@@ -30,7 +27,6 @@ Usage:
 from .base import AIProvider, ChatMessage, DecisionSummary
 from .claude_bedrock import ClaudeBedrockProvider
 from .claude_direct import ClaudeDirectProvider
-from .openai_provider import OpenAIProvider
 from .prompts import STRUCTURED_SUMMARY_PROMPT, format_conversation, get_summary_prompt
 from .wrapper import (
     AIProviderError,
@@ -52,7 +48,6 @@ __all__ = [
     "ClaudeDirectProvider",
     "DecisionSummary",
     "JSONParseError",
-    "OpenAIProvider",
     "ProviderCallError",
     "ProviderNotAvailableError",
     "call_code_prompt",

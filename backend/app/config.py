@@ -16,10 +16,6 @@ Environment variable overrides:
     CONDUCTOR_AWS_SESSION_TOKEN      → ai_providers.aws_bedrock.session_token
     CONDUCTOR_AWS_REGION             → ai_providers.aws_bedrock.region
     CONDUCTOR_ANTHROPIC_API_KEY      → ai_providers.anthropic.api_key
-    CONDUCTOR_OPENAI_API_KEY         → ai_providers.openai.api_key
-    CONDUCTOR_ALIBABA_API_KEY        → ai_providers.alibaba.api_key
-    CONDUCTOR_ALIBABA_BASE_URL       → ai_providers.alibaba.base_url
-    CONDUCTOR_MOONSHOT_API_KEY       → ai_providers.moonshot.api_key
     CONDUCTOR_POSTGRES_USER          → postgres.user
     CONDUCTOR_POSTGRES_PASSWORD      → postgres.password
     CONDUCTOR_JIRA_CLIENT_ID         → jira.client_id
@@ -62,11 +58,6 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_AWS_SECRET_ACCESS_KEY": ("ai_providers", "aws_bedrock", "secret_access_key"),
     "CONDUCTOR_AWS_SESSION_TOKEN": ("ai_providers", "aws_bedrock", "session_token"),
     "CONDUCTOR_AWS_REGION": ("ai_providers", "aws_bedrock", "region"),
-    "CONDUCTOR_OPENAI_API_KEY": ("ai_providers", "openai", "api_key"),
-    "CONDUCTOR_ALIBABA_API_KEY": ("ai_providers", "alibaba", "api_key"),
-    "CONDUCTOR_ALIBABA_BASE_URL": ("ai_providers", "alibaba", "base_url"),
-    "CONDUCTOR_MOONSHOT_API_KEY": ("ai_providers", "moonshot", "api_key"),
-    "CONDUCTOR_MOONSHOT_BASE_URL": ("ai_providers", "moonshot", "base_url"),
     "CONDUCTOR_JIRA_CLIENT_ID": ("jira", "client_id"),
     "CONDUCTOR_JIRA_CLIENT_SECRET": ("jira", "client_secret"),
     "CONDUCTOR_ATLASSIAN_READONLY_EMAIL": ("atlassian_readonly", "email"),
@@ -426,43 +417,11 @@ class AWSBedrockSecretsConfig(BaseModel):
     region: str = "us-east-1"
 
 
-class OpenAISecretsConfig(BaseModel):
-    """OpenAI API credentials."""
-
-    api_key: str = ""
-    organization: Optional[str] = None
-
-
-class AlibabaSecretsConfig(BaseModel):
-    """Alibaba Cloud DashScope API credentials.
-
-    Uses an OpenAI-compatible endpoint at DashScope.
-    Get your API key from: https://dashscope.console.aliyun.com/
-    """
-
-    api_key: str = ""
-    base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-
-
-class MoonshotSecretsConfig(BaseModel):
-    """Moonshot AI (Kimi) API credentials.
-
-    Uses an OpenAI-compatible endpoint.
-    Get your API key from: https://platform.moonshot.ai/
-    """
-
-    api_key: str = ""
-    base_url: str = "https://api.moonshot.ai/v1"
-
-
 class AIProvidersSecretsConfig(BaseModel):
     """Credentials for all AI providers."""
 
     anthropic: AnthropicSecretsConfig = Field(default_factory=AnthropicSecretsConfig)
     aws_bedrock: AWSBedrockSecretsConfig = Field(default_factory=AWSBedrockSecretsConfig)
-    openai: OpenAISecretsConfig = Field(default_factory=OpenAISecretsConfig)
-    alibaba: AlibabaSecretsConfig = Field(default_factory=AlibabaSecretsConfig)
-    moonshot: MoonshotSecretsConfig = Field(default_factory=MoonshotSecretsConfig)
 
 
 class AIProviderSettingsConfig(BaseModel):
@@ -470,9 +429,6 @@ class AIProviderSettingsConfig(BaseModel):
 
     anthropic_enabled: bool = False
     aws_bedrock_enabled: bool = False
-    openai_enabled: bool = False
-    alibaba_enabled: bool = False
-    moonshot_enabled: bool = False
 
 
 class AIModelConfig(BaseModel):
@@ -843,17 +799,11 @@ def load_config(
     ai_provider_settings_cfg = AIProviderSettingsConfig(
         anthropic_enabled=aps_data.get("anthropic_enabled", False),
         aws_bedrock_enabled=aps_data.get("aws_bedrock_enabled", False),
-        openai_enabled=aps_data.get("openai_enabled", False),
-        alibaba_enabled=aps_data.get("alibaba_enabled", False),
-        moonshot_enabled=aps_data.get("moonshot_enabled", False),
     )
 
     ap_sec = secrets_raw.get("ai_providers", {})
     anth_sec = ap_sec.get("anthropic", {})
     bdr_sec = ap_sec.get("aws_bedrock", {})
-    oai_sec = ap_sec.get("openai", {})
-    ali_sec = ap_sec.get("alibaba", {})
-    moon_sec = ap_sec.get("moonshot", {})
     ai_providers_cfg = AIProvidersSecretsConfig(
         anthropic=AnthropicSecretsConfig(
             api_key=_env("CONDUCTOR_ANTHROPIC_API_KEY", anth_sec.get("api_key", "")),
@@ -863,21 +813,6 @@ def load_config(
             secret_access_key=_env("CONDUCTOR_AWS_SECRET_ACCESS_KEY", bdr_sec.get("secret_access_key", "")),
             session_token=_env("CONDUCTOR_AWS_SESSION_TOKEN", bdr_sec.get("session_token") or ""),
             region=_env("CONDUCTOR_AWS_REGION", bdr_sec.get("region", "us-east-1")),
-        ),
-        openai=OpenAISecretsConfig(
-            api_key=_env("CONDUCTOR_OPENAI_API_KEY", oai_sec.get("api_key", "")),
-            organization=oai_sec.get("organization"),
-        ),
-        alibaba=AlibabaSecretsConfig(
-            api_key=_env("CONDUCTOR_ALIBABA_API_KEY", ali_sec.get("api_key", "")),
-            base_url=_env(
-                "CONDUCTOR_ALIBABA_BASE_URL",
-                ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-            ),
-        ),
-        moonshot=MoonshotSecretsConfig(
-            api_key=_env("CONDUCTOR_MOONSHOT_API_KEY", moon_sec.get("api_key", "")),
-            base_url=_env("CONDUCTOR_MOONSHOT_BASE_URL", moon_sec.get("base_url", "https://api.moonshot.ai/v1")),
         ),
     )
 

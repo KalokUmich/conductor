@@ -13,7 +13,6 @@ from app.agent_loop.prompts import build_system_prompt, scan_workspace_layout
 from app.agent_loop.service import AgentLoopService
 from app.ai_provider.base import AIProvider, ToolCall, ToolUseResponse
 from app.ai_provider.claude_direct import _converse_to_anthropic
-from app.ai_provider.openai_provider import _converse_to_openai
 from app.code_tools.tools import invalidate_graph_cache
 
 # ---------------------------------------------------------------------------
@@ -677,111 +676,6 @@ class TestConverseToAnthropic:
         assert result[2]["content"][0]["type"] == "tool_result"
 
 
-class TestConverseToOpenAI:
-    """Test Bedrock Converse → OpenAI Chat Completions format conversion."""
-
-    def test_plain_user_message(self):
-        msgs = [{"role": "user", "content": [{"text": "Hello"}]}]
-        result = _converse_to_openai(msgs)
-        assert result == [{"role": "user", "content": "Hello"}]
-
-    def test_string_content_passthrough(self):
-        msgs = [{"role": "user", "content": "Hello"}]
-        result = _converse_to_openai(msgs)
-        assert result == [{"role": "user", "content": "Hello"}]
-
-    def test_assistant_with_tool_calls(self):
-        msgs = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"text": "Let me search."},
-                    {"toolUse": {"toolUseId": "tc1", "name": "grep", "input": {"pattern": "auth"}}},
-                ],
-            }
-        ]
-        result = _converse_to_openai(msgs)
-        assert len(result) == 1
-        msg = result[0]
-        assert msg["role"] == "assistant"
-        assert msg["content"] == "Let me search."
-        assert len(msg["tool_calls"]) == 1
-        tc = msg["tool_calls"][0]
-        assert tc["id"] == "tc1"
-        assert tc["type"] == "function"
-        assert tc["function"]["name"] == "grep"
-        assert json.loads(tc["function"]["arguments"]) == {"pattern": "auth"}
-
-    def test_assistant_no_text_with_tool_calls(self):
-        msgs = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"toolUse": {"toolUseId": "tc1", "name": "grep", "input": {"pattern": "x"}}},
-                ],
-            }
-        ]
-        result = _converse_to_openai(msgs)
-        assert result[0]["content"] is None
-        assert len(result[0]["tool_calls"]) == 1
-
-    def test_tool_results_become_separate_messages(self):
-        msgs = [
-            {
-                "role": "user",
-                "content": [
-                    {"toolResult": {"toolUseId": "tc1", "content": [{"text": "result1"}]}},
-                    {"toolResult": {"toolUseId": "tc2", "content": [{"text": "result2"}]}},
-                ],
-            }
-        ]
-        result = _converse_to_openai(msgs)
-        assert len(result) == 2
-        assert result[0] == {"role": "tool", "tool_call_id": "tc1", "content": "result1"}
-        assert result[1] == {"role": "tool", "tool_call_id": "tc2", "content": "result2"}
-
-    def test_multiple_tool_calls_in_one_assistant_message(self):
-        msgs = [
-            {
-                "role": "assistant",
-                "content": [
-                    {"toolUse": {"toolUseId": "tc1", "name": "grep", "input": {"pattern": "a"}}},
-                    {"toolUse": {"toolUseId": "tc2", "name": "list_files", "input": {"directory": "."}}},
-                ],
-            }
-        ]
-        result = _converse_to_openai(msgs)
-        assert len(result) == 1
-        assert len(result[0]["tool_calls"]) == 2
-
-    def test_full_conversation_round_trip(self):
-        """Simulate a full agent loop conversation."""
-        msgs = [
-            {"role": "user", "content": [{"text": "How does auth work?"}]},
-            {
-                "role": "assistant",
-                "content": [
-                    {"text": "Searching..."},
-                    {"toolUse": {"toolUseId": "tc1", "name": "grep", "input": {"pattern": "auth"}}},
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {"toolResult": {"toolUseId": "tc1", "content": [{"text": "found it"}]}},
-                ],
-            },
-        ]
-        result = _converse_to_openai(msgs)
-        assert len(result) == 3
-        # User message → plain content
-        assert result[0] == {"role": "user", "content": "How does auth work?"}
-        # Assistant → tool_calls
-        assert result[1]["role"] == "assistant"
-        assert result[1]["tool_calls"][0]["function"]["name"] == "grep"
-        # Tool result → role: tool
-        assert result[2]["role"] == "tool"
-        assert result[2]["tool_call_id"] == "tc1"
 
 
 # ---------------------------------------------------------------------------
