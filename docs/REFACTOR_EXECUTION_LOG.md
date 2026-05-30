@@ -95,4 +95,16 @@ One session burned ~100 turns spinning empty `echo collect-*` commands (misread 
 2. **No blind polling / no echo-spin.** Tool results are not lost; if one looks empty, make ONE call and inspect — never loop to "flush".
 3. **Small batch → verify → next.** Run a targeted check after each edit (compile/import/the one relevant test), not a blind full-suite run.
 4. **Record progress here at every step boundary** and checkpoint with the user on scope changes / before any merge.
+
+### Follow-up — tool-test fixture unification (2026-05-30, on `refactor/step-02-provider-collapse`)
+User asked to fix the test deadlocks *properly* and to run tool tests against a small dedicated fixture repo, not the live source tree.
+
+- **Root cause of the deadlock(s):** `test_local_tools_parity` ran whole-workspace tools against a real tree (repo root → 9.3 GB `eval/repos` scan-bomb; tree-sitter `parse_pool` deadlock). The later `test_chat` WebSocket "deadlock" was a knock-on of the poisoned process, not a second bug — both were one root cause.
+- **A dedicated fixture already existed:** `tests/fixtures/parity_repo` (Python `app/` + TS `src/`), used by `test_tool_parity_ast/deep/subprocess`. It just (a) wasn't used by `test_local_tools_parity`, and (b) had no `.git` so git tools couldn't be tested.
+- **Two commits:**
+  - `40fbad4` — stop-gap: point `test_local_tools_parity` workspace at `backend/` (kills the hang). Superseded by ↓.
+  - (this work) — `git_parity_repo` session fixture in `conftest.py` (copies parity_repo → tmp + `git init` + 2 deterministic commits, hermetic git env); `test_local_tools_parity` repointed at it (23 tests, symbols remapped to fixture; git tools now exercise real history for the first time); `test_tool_parity` multi-language files (Java/Go/Rust) sourced from the shared fixture instead of inline (single source of truth) while its Python/TS/dataflow probes stay inline (they encode `MyService`/`process_loan` symbols that deliberately conflict with parity_repo's `OrderService`); fixture junk removed + `tests/fixtures/parity_repo/.gitignore` added.
+  - `ast/deep/subprocess` left as-is (already on the fixture; their assertions are Python-vs-TS relative comparisons, so adding multi-lang files outside `app/` doesn't perturb them — confirmed by re-run).
+- **Verified:** test_local_tools_parity 23/0 (deterministic ×3); test_tool_parity 68 passed; ast+deep+subprocess 102 passed (regression guard); **full backend suite 1993 passed / 6 deselected / 0 fail / 0 timeout** in ~50s, reproduced.
+
 - Next: user reviews diff → merge `refactor/step-02-provider-collapse` → parent (`--no-ff`); then Step 04 (observability swap).

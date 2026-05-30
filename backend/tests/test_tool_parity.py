@@ -193,123 +193,23 @@ def workspace(tmp_path: Path) -> Path:
     """)
     )
 
-    # Java files
-    (tmp_path / "src" / "main" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(
-        textwrap.dedent("""\
-        package com.example;
-
-        public class AuthService {
-            public boolean authenticate(String user, String pass) {
-                return user != null && pass != null;
-            }
-        }
-    """)
-    )
-    (tmp_path / "src" / "test" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(
-        textwrap.dedent("""\
-        package com.example;
-
-        import org.junit.jupiter.api.Test;
-        import org.junit.jupiter.params.ParameterizedTest;
-        import static org.junit.jupiter.api.Assertions.*;
-        import static org.mockito.Mockito.*;
-
-        public class AuthServiceTest {
-
-            @Test
-            public void testAuthenticate() {
-                AuthService svc = new AuthService();
-                assertTrue(svc.authenticate("admin", "pass"));
-            }
-
-            @ParameterizedTest
-            public void testAuthenticateNull() {
-                AuthService svc = new AuthService();
-                assertFalse(svc.authenticate(null, "pass"));
-            }
-
-            @Test
-            public void testWithMock() {
-                AuthService svc = mock(AuthService.class);
-                when(svc.authenticate("a", "b")).thenReturn(true);
-                verify(svc).authenticate("a", "b");
-            }
-        }
-    """)
-    )
-
-    # Go files
-    (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "calc.go").write_text(
-        textwrap.dedent("""\
-        package calc
-
-        func Add(a, b int) int {
-            return a + b
-        }
-    """)
-    )
-    (tmp_path / "pkg" / "calc_test.go").write_text(
-        textwrap.dedent("""\
-        package calc
-
-        import (
-            "testing"
-            "github.com/stretchr/testify/assert"
-        )
-
-        func TestAdd(t *testing.T) {
-            result := Add(2, 3)
-            assert.Equal(t, 5, result)
-        }
-
-        func TestAddNegative(t *testing.T) {
-            t.Run("negative numbers", func(t *testing.T) {
-                result := Add(-1, -2)
-                t.Fatal("should not reach here")
-            })
-        }
-
-        func BenchmarkAdd(b *testing.B) {
-            for i := 0; i < b.N; i++ {
-                Add(1, 2)
-            }
-        }
-    """)
-    )
-
-    # Rust files
-    (tmp_path / "rust_src").mkdir()
-    (tmp_path / "rust_src" / "lib.rs").write_text(
-        textwrap.dedent("""\
-        pub fn multiply(a: i32, b: i32) -> i32 {
-            a * b
-        }
-    """)
-    )
-    (tmp_path / "rust_src" / "lib_test.rs").write_text(
-        textwrap.dedent("""\
-        use super::*;
-
-        #[test]
-        fn test_multiply() {
-            assert_eq!(multiply(3, 4), 12);
-        }
-
-        #[test]
-        fn test_multiply_zero() {
-            let result = multiply(0, 5);
-            assert_eq!(result, 0);
-        }
-
-        #[tokio::test]
-        async fn test_async_multiply() {
-            assert!(multiply(2, 3) > 0);
-        }
-    """)
-    )
+    # Multi-language files (Java / Go / Rust) are sourced from the shared
+    # tests/fixtures/parity_repo so there is a single source of truth for
+    # multi-language test_outline coverage. The Python/TS/dataflow probes above
+    # stay inline because they encode workspace-specific symbols (MyService,
+    # process_loan dataflow) that deliberately differ from parity_repo.
+    _fixture = Path(__file__).parent.parent.parent / "tests" / "fixtures" / "parity_repo"
+    for rel in (
+        "src/main/java/AuthService.java",
+        "src/test/java/AuthServiceTest.java",
+        "pkg/calc.go",
+        "pkg/calc_test.go",
+        "rust_src/lib.rs",
+        "rust_src/lib_test.rs",
+    ):
+        dest = tmp_path / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text((_fixture / rel).read_text())
 
     # node_modules (should be excluded)
     (tmp_path / "node_modules").mkdir()
