@@ -17,8 +17,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.code_tools.tools import execute_tool
 
-# Use the conductor project as the test workspace
-WORKSPACE = str(Path(__file__).parent.parent.parent.resolve())
+# Use the backend/ subtree as the test workspace.
+# NOT the repo root: the root contains eval/code_review/repos (~9.3 GB, 600k+
+# vendored files incl. 120k TSX) which makes whole-workspace tools like
+# find_symbol / get_callers scan-bomb — tree-sitter parsing every large TSX
+# until the per-file 60s timeout accumulates past pytest's limit and the run
+# hangs. backend/ is a self-contained Python tree (still a valid git workdir
+# for the git_* tools) and keeps these parity checks fast and deterministic.
+WORKSPACE = str(Path(__file__).parent.parent.resolve())
 
 
 def _run(tool: str, **params) -> Dict[str, Any]:
@@ -28,13 +34,13 @@ def _run(tool: str, **params) -> Dict[str, Any]:
 
 class TestFileOperations:
     def test_read_file(self):
-        r = _run("read_file", path="backend/app/config.py", start_line=1, end_line=10)
+        r = _run("read_file", path="app/config.py", start_line=1, end_line=10)
         assert r["success"]
         assert "content" in r["data"]
         assert r["data"]["total_lines"] > 100
 
     def test_list_files(self):
-        r = _run("list_files", directory="backend/app/db", max_depth=1)
+        r = _run("list_files", directory="app/db", max_depth=1)
         assert r["success"]
         # list_files returns a list of dicts
         data = r["data"]
@@ -58,7 +64,7 @@ class TestSymbolTools:
         assert r["success"]
 
     def test_file_outline(self):
-        r = _run("file_outline", path="backend/app/code_tools/executor.py")
+        r = _run("file_outline", path="app/code_tools/executor.py")
         assert r["success"]
         data = r["data"]
         symbols = data if isinstance(data, list) else data.get("symbols", [])
@@ -67,22 +73,22 @@ class TestSymbolTools:
         assert "ToolExecutor" in joined or "Executor" in joined
 
     def test_find_references(self):
-        r = _run("find_references", symbol_name="execute_tool", file="backend/app/code_tools/tools.py")
+        r = _run("find_references", symbol_name="execute_tool", file="app/code_tools/tools.py")
         assert r["success"]
 
     def test_compressed_view(self):
-        r = _run("compressed_view", file_path="backend/app/code_tools/executor.py")
+        r = _run("compressed_view", file_path="app/code_tools/executor.py")
         assert r["success"]
         data = r["data"]
         text = str(data)
         assert "ToolExecutor" in text
 
     def test_module_summary(self):
-        r = _run("module_summary", module_path="backend/app/code_tools")
+        r = _run("module_summary", module_path="app/code_tools")
         assert r["success"]
 
     def test_expand_symbol(self):
-        r = _run("expand_symbol", symbol_name="LocalToolExecutor", file_path="backend/app/code_tools/executor.py")
+        r = _run("expand_symbol", symbol_name="LocalToolExecutor", file_path="app/code_tools/executor.py")
         assert r["success"]
         text = str(r["data"])
         assert "LocalToolExecutor" in text
@@ -105,7 +111,7 @@ class TestGitTools:
         assert r["success"]
 
     def test_git_blame(self):
-        r = _run("git_blame", file="backend/app/config.py")
+        r = _run("git_blame", file="app/config.py")
         assert r["success"]
 
     def test_git_show(self):
@@ -115,7 +121,7 @@ class TestGitTools:
 
 class TestCodeNavigation:
     def test_get_callees(self):
-        r = _run("get_callees", function_name="execute_tool", file="backend/app/code_tools/tools.py")
+        r = _run("get_callees", function_name="execute_tool", file="app/code_tools/tools.py")
         assert r["success"]
 
     def test_get_callers(self):
@@ -123,15 +129,15 @@ class TestCodeNavigation:
         assert r["success"]
 
     def test_get_dependencies(self):
-        r = _run("get_dependencies", file_path="backend/app/code_tools/executor.py")
+        r = _run("get_dependencies", file_path="app/code_tools/executor.py")
         assert r["success"]
 
     def test_get_dependents(self):
-        r = _run("get_dependents", file_path="backend/app/code_tools/executor.py")
+        r = _run("get_dependents", file_path="app/code_tools/executor.py")
         assert r["success"]
 
     def test_trace_variable(self):
-        r = _run("trace_variable", variable_name="tool_name", file="backend/app/code_tools/tools.py")
+        r = _run("trace_variable", variable_name="tool_name", file="app/code_tools/tools.py")
         assert r["success"]
 
 
@@ -141,13 +147,13 @@ class TestTestTools:
         assert r["success"]
 
     def test_test_outline(self):
-        r = _run("test_outline", path="backend/tests/test_db.py")
+        r = _run("test_outline", path="tests/test_db.py")
         assert r["success"]
 
 
 class TestPatternDetection:
     def test_detect_patterns(self):
-        r = _run("detect_patterns", path="backend/app/code_tools/executor.py")
+        r = _run("detect_patterns", path="app/code_tools/executor.py")
         assert r["success"]
 
     @pytest.mark.skipif(os.system("which ast-grep > /dev/null 2>&1") != 0, reason="ast-grep not installed")
