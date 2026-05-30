@@ -2031,6 +2031,52 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
 | **Phase 13: AI Summary → Action Pipeline** | **🔴 Next Up** | **Sprint 15–16** |
 
+## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (PLANNED)
+
+**Status**: Planned. Builds on the agent-SDK worker migration (Steps 01–06, tracked in `docs/REFACTOR_EXECUTION_LOG.md`) and the SDK capability research recorded there (2026-05-30). **Prerequisite**: Step 06 (SDK leaf-worker loop) merged + eval-gated.
+
+**Goal**: Evolve Conductor's backend from "a PR-review tool with a hand-rolled classifier Brain" into an **AI-native team backend** — a long-lived assistant that understands the codebase, drives Jira / GitLab / Azure / Figma, joins & summarises meetings, scans new code nightly to update docs, and (eventually) evaluates work and opens its own bug-fix PRs, tailored per team member. The structural enabler is a clean 3-tier split that puts each responsibility where it belongs (SDK vs Python), navigable by a new engineer in an afternoon.
+
+### Target architecture — 3 tiers
+
+```
+Tier 1 — Concierge (SDK-native)                 ← thin router + generalist + integrations
+  ├─ Skills (SKILL.md): how-to-classify, how-to-use-{jira,gitlab,azure,figma}, how-to-summarise-meeting
+  ├─ MCP integrations:  jira_*, gitlab_*, azure_*, figma_*, calendar_*, kb_*
+  └─ MCP dispatch tools: review_pr(), investigate_domain(), scan_codebase(), summarise_meeting() …
+        │   heavy workflows are TOOLS, NOT SDK subagents → sidesteps the no-nesting limit
+        ▼
+Tier 2 — Capability workflows (Python orchestrators)            ← the moat
+  PR Brain v2 · Domain Brain · nightly doc-scan · meeting-summary · work-eval · auto-bugfix
+  (multi-phase · Fact Vault · budget arbitration · replan · deterministic post-passes)
+  Invokable BOTH by Tier 1 (fuzzy human intent) AND by schedulers/webhooks (known intent)
+        │   each workflow runs its OWN SDK session for its leaves
+        ▼
+Tier 3 — Leaf workers (SdkWorkerRunner, Step 06)   ← code investigation; Fact Vault preserved
+```
+
+### Why this split (SDK capability research, 2026-05-30)
+- **SDK excels at**: intent→tool/skill selection (it *is* a router), MCP-tool orchestration, conversation, progressive-disclosure Skills, per-subagent model/tools. → **Tier 1 belongs on the SDK.**
+- **SDK cannot**: nest subagents; share a cross-agent cache; do cross-agent budget arbitration / replan loops / multi-phase orchestration. → **Tier 2 stays Python.** Exposing Tier-2 workflows as MCP **tools** (not SDK subagents) is the key move — it lets Tier 1 call them while each workflow keeps its own nested SDK leaves + Fact Vault.
+- **Leaf workers**: our `SdkWorkerRunner` (Step 06) beats native SDK subagents because it routes tools through our in-process MCP server → preserves Fact Vault dedup + per-worker usage. → **Tier 3 = the Step 06 engine.**
+
+### Work items
+1. **Skills migration** — convert `config/skills/*.md` (domain_brain_coordinator, pr_brain_coordinator, investigation patterns, `code_review_pr`) into SDK `SKILL.md` packages; load via `setting_sources`; attach per-worker via `AgentDefinition.skills=`. Win: progressive disclosure shrinks worker prefixes → better prompt-cache economics. Rewrite the 4-layer prompts into Claude-native form in the same pass.
+2. **Concierge (Tier 1)** — SDK agent with a cheap (Haiku-tier) router; today's `transfer_to_brain("pr_review"/"domain")` evolves into MCP dispatch tools `review_pr()` / `investigate_domain()`. **Deterministic fast-paths**: explicit `/pr` and all cron/webhook triggers BYPASS the LLM router (known intent → call the workflow directly); LLM classification is the fallback for ambiguous natural language only.
+3. **Integration MCP backbone** — wrap Jira (readonly client + 3LO), GitLab, Azure DevOps, Figma (official MCP), calendar/meetings as MCP servers shared by Tier 1 + Tier 2.
+4. **Autonomous capability workflows** — nightly code-scan → doc update; meeting join → summary; work evaluation; auto bug-fix PR. Each is a Tier-2 workflow triggered by a scheduler/webhook (not the router).
+5. **Per-member personal assistant** — member profile + working style in the Team Knowledge Base (Phase 12, pgvector); Concierge injects member context to tailor suggestions.
+
+### Eval & quality gates
+- **Routing accuracy is a first-class eval** (labeled queries → expected destination); gate it like code_review. (Wrong-mode routing wastes tokens — this has always been critical.)
+- Each Tier-2 workflow keeps its existing eval (code_review composite/catch, agent_quality).
+
+### Engineering discipline (onboarding)
+The refactor MUST leave code + layout **clean enough for a new engineer to map in an afternoon**: one directory per tier, MCP integrations isolated, Skills as discoverable `SKILL.md` packages, a top-of-tree architecture doc, and **no dead code from the pre-SDK era**.
+
+### Sequencing (agreed 2026-05-30)
+① Finish Step 06 eval gate (code_review re-run) → ② Skills + prompt refactor to Claude-native form + test green → ③ build Concierge / Tier-1 + MCP backbone → ④ migrate/author autonomous workflows → ⑤ personal-assistant layer (with Phase 12 KB). **Incremental**: stand the Concierge up *beside* the current Brain, route a subset of intents, eval routing accuracy vs the current classifier, then widen.
+
 ## Architecture Decision Log
 
 ### ADR-001: Model A over Model B for initial workspace
