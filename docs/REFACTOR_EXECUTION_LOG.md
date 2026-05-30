@@ -56,7 +56,7 @@ after they confirm. The token is SSO-temporary (`ASIA…`) and expires in hours.
 | — | Baseline capture | (on main) | yes | ✅ done — `premigration_20260529` |
 | — | Scaffolding (cred gate + this log + parent branch) | parent | no | ✅ done |
 | 01 | DB telemetry tables + remove Langfuse DB plumbing | `refactor/step-01-db-langfuse` | no | ✅ done (backend 1265 passed; Liquibase up/rollback ✓) |
-| 02+03 | Config collapse + provider dead-code removal (merged — coupled) | `refactor/step-02-provider-collapse` | no | ✅ done — full backend **1993 passed / 6 deselected / 0 timeout** (after follow-up suite-hang fix (this commit)); typecheck-strict + test-parity green; lint-neutral. Awaiting merge OK. |
+| 02+03 | Config collapse + provider dead-code removal (merged — coupled) | `refactor/step-02-provider-collapse` | no | ✅ **MERGED → parent** (merge commit `7b8c6a5`, child deleted). full backend **1993 passed / 6 deselected / 0 timeout**; typecheck-strict + test-parity green; lint-neutral. Includes follow-up tool-test fixture unification (git_parity_repo + multi-lang share). |
 | 04 | Observability swap — delete `@observe`/`track_generation`; wire OTEL + new tables | `refactor/step-04-otel` | smoke | ⬜ pending |
 | 05 | **SDK worker spike (GATE)** — prove 4 seams (§7) | `refactor/step-05-spike` | yes | ⬜ pending |
 | 06 | SDK worker integration behind `brain.py:1323` | `refactor/step-06-sdk-worker` | yes | ⬜ pending |
@@ -107,4 +107,5 @@ User asked to fix the test deadlocks *properly* and to run tool tests against a 
   - `ast/deep/subprocess` left as-is (already on the fixture; their assertions are Python-vs-TS relative comparisons, so adding multi-lang files outside `app/` doesn't perturb them — confirmed by re-run).
 - **Verified:** test_local_tools_parity 23/0 (deterministic ×3); test_tool_parity 68 passed; ast+deep+subprocess 102 passed (regression guard); **full backend suite 1993 passed / 6 deselected / 0 fail / 0 timeout** in ~50s, reproduced.
 
-- Next: user reviews diff → merge `refactor/step-02-provider-collapse` → parent (`--no-ff`); then Step 04 (observability swap).
+- 2026-05-30 — **Step 02+03 merged → parent** (`7b8c6a5`, `--no-ff`, child branch deleted). 5 commits folded: provider collapse + 3 tool-test fixture commits. Full suite 1993 green.
+- Next: Step 04 (observability swap — delete `@observe`/`track_generation`, wire OTEL + new telemetry tables).
