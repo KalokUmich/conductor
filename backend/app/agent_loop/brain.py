@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.code_tools.executor import ToolExecutor
-from app.code_tools.schemas import ToolResult
+from app.code_tools.schemas import WORKER_MCP_TOOLS, ToolResult
 
 from .config import BrainExecutorConfig
 
@@ -1323,9 +1323,9 @@ class AgentToolExecutor(ToolExecutor):
         # Select provider based on resolved model
         provider = self._strong_provider if resolved_model == "strong" else self._agent_provider
 
-        # Allocate budget — respect agent's own budget_tokens as cap
-        from .budget import BudgetConfig  # lazy: avoids circular import (brain ↔ budget)
-
+        # Allocate from the Brain's shared pool (cross-agent fairness). The SDK
+        # worker bounds its own loop by max_turns, so this value is for accounting
+        # only — actual spend is reported back after the run (see below).
         if self._budget_manager:
             pool_tokens = await self._budget_manager.allocate(agent_name, weight)
             agent_cap = agent_config.limits.budget_tokens
@@ -1365,121 +1365,65 @@ class AgentToolExecutor(ToolExecutor):
         # Sub-agents can signal Brain for direction mid-execution
         agent_tool_names.append("signal_blocker")
 
-        # Build and run sub-agent (4-layer prompt architecture)
-        from .config import AgentLoopConfig
-        from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
+        # ---- SDK worker (Step 06c) -------------------------------------------
+        # The dispatched sub-agent loop runs on the Claude Agent SDK (replacing
+        # AgentLoopService for the leaf worker). We keep the orchestration moat:
+        # the shared 4-layer system prompt, our vault-aware MCP tools (behind the
+        # SAME CachedToolExecutor → Fact Vault dedup survives across parallel
+        # sub-agents), the post-call evidence gate, and the llm_semaphore. The
+        # SDK/CLI owns the iterate→LLM→exec-tools loop + context compaction.
+        from .prompts import build_sub_agent_system_prompt  # lazy: circular import (brain ↔ prompts)
+        from .sdk_worker import SdkWorkerRunner  # lazy: defers claude_agent_sdk import
 
-        svc = AgentLoopService(
-            provider=provider,
-            config=AgentLoopConfig(
-                max_iterations=agent_config.limits.max_iterations,
-                max_evidence_retries=1,
-                budget_config=BudgetConfig(max_input_tokens=budget_tokens),
-                is_sub_agent=True,
-                perspective=agent_config.instructions,
-                forced_tools=agent_tool_names,
-                agent_identity={
-                    "name": agent_config.name,
-                    "description": getattr(agent_config, "description", "") or "",
-                    "instructions": agent_config.instructions,
-                    "skill": getattr(agent_config, "skill", "") or "",
-                },
-                forced_skill=getattr(agent_config, "skill", "") or "",
-            ),
-            tool_executor=sub_executor,
-            trace_writer=self._trace_writer,
+        logger.debug(
+            "[Brain] '%s' SDK worker: budget pool=%d tokens (loop bounded by max_turns=%d)",
+            agent_name,
+            budget_tokens,
+            agent_config.limits.max_iterations,
+        )
+
+        # Leaf worker → vault-aware MCP tools only (scoped to this agent's declared
+        # tools ∩ WORKER_MCP_TOOLS). signal_blocker was an uplink the in-house
+        # run_stream loop intercepted; the SDK loop has no such hook, so we drop it
+        # (the coordinator answered "use best judgment" ~always anyway).
+        worker_tool_names = sorted((set(agent_tool_names) & WORKER_MCP_TOOLS) - {"signal_blocker"})
+
+        # Layer 1 (identity) + Layer 3 (skills); Layer 2 (tools) is the MCP schemas,
+        # Layer 4 (query) is the user_message below.
+        system_prompt = build_sub_agent_system_prompt(
+            agent_name=agent_config.name,
+            agent_description=getattr(agent_config, "description", "") or "",
+            agent_instructions=agent_config.instructions,
+            workspace_path=self._workspace_path,
+            max_iterations=agent_config.limits.max_iterations,
+            code_context=self._code_context,
+            skill_key=getattr(agent_config, "skill", "") or None,
+            has_signal_blocker=False,
+        )
+
+        # tier → Bedrock model id for the CLI (CLAUDE_CODE_USE_BEDROCK path)
+        worker_model = getattr(provider, "model_name", None) or getattr(provider, "model_id", "") or ""
+
+        runner = SdkWorkerRunner(
+            model=worker_model,
+            tool_executor=sub_executor,  # delegates code tools → self._inner (vault)
+            tool_names=worker_tool_names,
+            max_turns=agent_config.limits.max_iterations,
+            max_evidence_retries=1,
+            temperature=agent_config.limits.temperature,
             llm_semaphore=self._llm_semaphore,
         )
-        # Per-agent overrides from template
-        if agent_config.limits.temperature is not None:
-            svc._temperature = agent_config.limits.temperature
-        if hasattr(agent_config, "quality"):
-            svc._quality_config = agent_config.quality
-
-        # 4-layer: query stays clean — agent identity is in system prompt (Layer 1),
-        # not in the user message (Layer 4).
 
         start = time.monotonic()
         try:
-            # Stream events to event_sink for real-time UI updates
-            if self._event_sink:
-                result = None
-                from .service import AgentResult  # lazy: avoids circular import (brain ↔ service)
-
-                agent_result = AgentResult()
-                async for event in svc.run_stream(
-                    query=query,
-                    workspace_path=self._workspace_path,
-                    code_context=self._code_context,
-                ):
-                    # Handle signal_blocker: respond from Brain's Q&A cache or with guidance
-                    if event.kind == "signal_blocker":
-                        from .signal_blocker import respond_to_signal
-
-                        sig_session = event.data.get("session_id", "")
-                        sig_reason = event.data.get("reason", "")
-                        sig_options = event.data.get("options", [])
-                        # Check Q&A cache first
-                        response = None
-                        for key, val in self._qa_cache.items():
-                            if key.lower() in sig_reason.lower():
-                                response = val
-                                break
-                        if not response and sig_options:
-                            response = f"Choose the first option: {sig_options[0]}"
-                        elif not response:
-                            response = "Continue with your best judgment based on the evidence."
-                        respond_to_signal(sig_session, response)
-                        logger.info(
-                            "[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50]
-                        )
-                        continue  # don't forward signal_blocker to UI
-
-                    # Forward agent events with agent_name tag
-                    await self._event_sink.put(
-                        __import__("app.workflow.engine", fromlist=["WorkflowEvent"]).WorkflowEvent(
-                            event.kind,
-                            {"agent_name": agent_name, **event.data},
-                        )
-                    )
-                    if event.kind in ("done", "error"):
-                        agent_result.answer = event.data.get("answer", "")
-                        agent_result.tool_calls_made = event.data.get("tool_calls_made", 0)
-                        agent_result.iterations = event.data.get("iterations", 0)
-                        agent_result.duration_ms = event.data.get("duration_ms", 0)
-                        agent_result.budget_summary = event.data.get("budget_summary")
-                        agent_result.error = event.data.get("error")
-                        # Collect thinking steps
-                        raw_steps = event.data.get("thinking_steps", [])
-                        from .service import ThinkingStep
-
-                        # Field-by-field construction tolerates extra keys
-                        # (e.g. ``agent_name`` injected upstream when events
-                        # are forwarded to the event_sink at line 1442).
-                        # Bare ``ThinkingStep(**s)`` raised TypeError on
-                        # those extras and crashed the whole coordinator.
-                        agent_result.thinking_steps = [
-                            ThinkingStep(
-                                kind=s.get("kind", ""),
-                                iteration=s.get("iteration", 0),
-                                text=s.get("text", ""),
-                                tool=s.get("tool", ""),
-                                params=s.get("params", {}),
-                                summary=s.get("summary", ""),
-                                success=s.get("success", True),
-                            ) if isinstance(s, dict) else s
-                            for s in raw_steps
-                        ]
-                        if event.kind == "context_chunk":
-                            from .service import ContextChunk
-
-                            agent_result.context_chunks.append(ContextChunk(**event.data))
-                result = agent_result
-            else:
-                result = await asyncio.wait_for(
-                    svc.run(query=query, workspace_path=self._workspace_path, code_context=self._code_context),
-                    timeout=self._sub_agent_timeout,
-                )
+            # The SDK/CLI owns the loop; we await the whole run under a wall-clock
+            # timeout (max_turns bounds iterations; this bounds total time). Live
+            # per-tool UI streaming is dropped on the SDK path — the coordinator
+            # still emits agent_dispatched (above) and agent_complete (below).
+            result = await asyncio.wait_for(
+                runner.run(system_prompt=system_prompt, user_message=query),
+                timeout=self._sub_agent_timeout,
+            )
 
             elapsed = (time.monotonic() - start) * 1000
 
