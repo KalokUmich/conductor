@@ -2071,6 +2071,10 @@ Tier 3 — Leaf workers (SdkWorkerRunner, Step 06)   ← code investigation; Fac
    - **Migration discipline:** do NOT retire a working API client until its MCP equivalent is proven on the **headless/cron** path. The win is real but partial — MCP shrinks the agent-tool layer, not the integration backbone.
 4. **Autonomous capability workflows** — nightly code-scan → doc update; meeting join → summary; work evaluation; auto bug-fix PR. Each is a Tier-2 workflow triggered by a scheduler/webhook (not the router).
 5. **Per-member personal assistant** — member profile + working style in the Team Knowledge Base (Phase 12, pgvector); Concierge injects member context to tailor suggestions.
+6. **Context-enriched PR review (ticket → design).** Upgrade Phase 7.8.6's deterministic ticket/Confluence pre-fetch into *agentic* context-gathering via the MCP backbone, so the AI reviews against **intent**, not just the diff:
+   - **Ticket (have the seed, make it richer):** keep the *primary* linked-ticket pre-fetch deterministic + cache-stable (the anchor — acceptance criteria → review invariants; criterion break = critical; catch intent-drift). Add MCP so the coordinator can *optionally pull more on demand*: parent/epic, linked tickets, related Confluence spec.
+   - **Figma = new review dimension (gated):** when the PR touches UI **and** the ticket references a design, fetch the Figma frame (`get_design_context`/`get_screenshot`) and check the implementation matches design intent. Gate on UI-relevance — Figma screenshots are costly multimodal tokens, so do NOT fetch on every PR.
+   - **Flow:** `diff + ticket(criteria) + design(Figma)` → review against intent. **Headless** (ADO webhook-triggered) → rides on the self-hosted token-auth MCP servers from #3.
 
 ### Eval & quality gates
 - **Routing accuracy is a first-class eval** (labeled queries → expected destination); gate it like code_review. (Wrong-mode routing wastes tokens — this has always been critical.)
