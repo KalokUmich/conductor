@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +28,7 @@ from app.code_tools.executor import ToolExecutor
 from app.code_tools.schemas import WORKER_MCP_TOOLS, ToolResult
 
 from .config import BrainExecutorConfig
+from .task_telemetry import record_complete, record_start
 
 logger = logging.getLogger(__name__)
 
@@ -520,6 +522,8 @@ class AgentToolExecutor(ToolExecutor):
         budget_manager: Optional[BrainBudgetManager] = None,
         qa_cache: Optional[Dict[str, str]] = None,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
+        task_id: Optional[str] = None,
+        root_task_id: Optional[str] = None,
         # Legacy individual params — kept for backward compatibility.
         # When ``config`` is provided these are ignored.
         workspace_path: str = "",
@@ -539,6 +543,9 @@ class AgentToolExecutor(ToolExecutor):
         self._budget_manager = budget_manager
         self._qa_cache = qa_cache or {}
         self._llm_semaphore = llm_semaphore
+        # Telemetry (06d): this executor's own task id + the tree root it anchors.
+        self._task_id = task_id
+        self._root_task_id = root_task_id
 
         # Build config from individual params when not supplied directly
         if config is None:
@@ -1344,6 +1351,13 @@ class AgentToolExecutor(ToolExecutor):
             budget_tokens = agent_config.limits.budget_tokens
 
         # Build sub-executor (recursive: depth + 1)
+        # Telemetry (06d): each dispatch is one task node. Self-seed a tree root if
+        # this executor wasn't threaded one, mint this child's id, and pass our ids
+        # down so the child's own dispatches link as its descendants.
+        if self._root_task_id is None:
+            self._root_task_id = uuid.uuid4().hex
+        child_task_id = uuid.uuid4().hex
+
         sub_executor = AgentToolExecutor(
             inner_executor=self._inner,
             agent_registry=self._agent_registry,
@@ -1361,6 +1375,8 @@ class AgentToolExecutor(ToolExecutor):
             event_sink=self._event_sink,
             budget_manager=self._budget_manager,
             qa_cache=self._qa_cache,
+            task_id=child_task_id,
+            root_task_id=self._root_task_id,
         )
         # Propagate code_context to sub-executors
         sub_executor._code_context = self._code_context
@@ -1382,6 +1398,19 @@ class AgentToolExecutor(ToolExecutor):
         # (code tools only) → Claude Agent SDK. Both return an AgentResult-shaped
         # object that the shared post-processing below consumes unchanged.
         is_orchestrator = bool(set(agent_tool_names) & _ORCHESTRATION_TOOLS)
+
+        # Telemetry: record this task as running before dispatch (no-op without a DB).
+        await record_start(
+            task_id=child_task_id,
+            parent_task_id=self._task_id,
+            root_task_id=self._root_task_id,
+            kind="coordinator" if is_orchestrator else "sub_agent",
+            agent_name=agent_name,
+            query=query,
+            depth=self._current_depth + 1,
+            engine="in_house" if is_orchestrator else "sdk",
+            model=resolved_model,
+        )
 
         start = time.monotonic()
         try:
@@ -1448,11 +1477,21 @@ class AgentToolExecutor(ToolExecutor):
             if result.budget_summary:
                 condensed["total_input_tokens"] = result.budget_summary.get("total_input_tokens", 0)
                 condensed["total_output_tokens"] = result.budget_summary.get("total_output_tokens", 0)
+            await record_complete(
+                task_id=child_task_id,
+                status="done" if (result.answer and result.answer.strip()) else ("error" if result.error else "done"),
+                budget_summary=result.budget_summary,
+                tool_calls=result.tool_calls_made,
+                iterations=result.iterations,
+                duration_ms=elapsed,
+                error=result.error,
+            )
             return ToolResult(tool_name="dispatch_explore", success=True, data=condensed)
 
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("[Brain] Agent '%s' timed out after %.0fms", agent_name, elapsed)
+            await record_complete(task_id=child_task_id, status="timeout", duration_ms=elapsed, error="Agent timed out")
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
 
@@ -1484,6 +1523,7 @@ class AgentToolExecutor(ToolExecutor):
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000
             logger.error("[Brain] Agent '%s' failed: %s", agent_name, exc)
+            await record_complete(task_id=child_task_id, status="error", duration_ms=elapsed, error=str(exc))
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
 

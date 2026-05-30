@@ -107,6 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Initialize singleton services with DB engine ----
     if app.state.db_engine:
         try:
+            from .agent_loop.task_telemetry import TaskTelemetryService
             from .audit.service import AuditLogService
             from .files.service import FileStorageService
             from .todos.service import TODOService
@@ -114,11 +115,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             TODOService.get_instance(engine=app.state.db_engine)
             AuditLogService.get_instance(engine=app.state.db_engine)
             FileStorageService.get_instance(engine=app.state.db_engine)
+            TaskTelemetryService.get_instance(engine=app.state.db_engine)
 
             from .auth.user_service import UserService
 
             UserService.init(app.state.db_engine)
-            logger.info("Singleton services initialized: TODOService, AuditLogService, FileStorageService, UserService")
+            logger.info(
+                "Singleton services initialized: TODOService, AuditLogService, "
+                "FileStorageService, TaskTelemetryService, UserService"
+            )
         except Exception as exc:
             logger.error("Failed to initialize singleton services: %s — DB-backed endpoints will return 503", exc)
             app.state.db_engine = None  # mark as unusable so routers return 503
