@@ -1,0 +1,7 @@
+# Keep the parity fixture a clean source tree.
+# Tool runs (symbol index, parse cache) and Python bytecode must never be
+# committed here — tests build a throwaway git copy of this dir.
+__pycache__/
+*.pyc
+.conductor/
+.git/
