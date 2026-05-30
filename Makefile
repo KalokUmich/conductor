@@ -21,7 +21,6 @@ LIQUIBASE := docker run --rm --network conductor-net \
 # Docker compose files
 DATA_COMPOSE := docker/docker-compose.data.yaml
 APP_COMPOSE := docker/docker-compose.app.yaml
-LANGFUSE_COMPOSE := docker/docker-compose.langfuse.yaml
 
 # WebSocket Configuration
 WS_PING_INTERVAL := 20.0
@@ -352,16 +351,16 @@ data-logs:
 	docker compose -f $(DATA_COMPOSE) logs -f
 
 # ===========================
-# App Tier (Backend + Langfuse)
+# App Tier (Backend)
 # ===========================
 .PHONY: app-up app-rebuild app-restart app-down app-logs
 
-## Start backend + Langfuse containers (builds backend image if missing)
+## Start backend container (builds backend image if missing)
 app-up:
-	@echo "Starting app tier (Backend + Langfuse)..."
+	@echo "Starting app tier (Backend)..."
 	docker compose -f $(APP_COMPOSE) up -d --build
 	@docker image prune -f --filter "label=com.docker.compose.project=docker" >/dev/null 2>&1 || true
-	@echo "App tier starting. Backend: localhost:8000, Langfuse: localhost:3001"
+	@echo "App tier starting. Backend: localhost:8000"
 
 ## Rebuild and restart a single app service (usage: make app-rebuild SVC=backend)
 app-rebuild:
@@ -406,8 +405,8 @@ docker-down: app-down data-down
 ## Stop all containers and remove all conductor-related images
 docker-clean: docker-down
 	@echo "Removing conductor containers and images..."
-	-docker rm -f conductor-backend conductor-postgres conductor-redis conductor-langfuse 2>/dev/null
-	-docker rmi conductor/backend:latest postgres:16-alpine redis:7-alpine langfuse/langfuse:2 2>/dev/null
+	-docker rm -f conductor-backend conductor-postgres conductor-redis 2>/dev/null
+	-docker rmi conductor/backend:latest postgres:16-alpine redis:7-alpine 2>/dev/null
 	-docker image prune -f --filter "label=com.docker.compose.project=docker" 2>/dev/null
 	@echo "Docker clean complete."
 
@@ -432,29 +431,6 @@ db-rollback-one:
 	@echo "Rolling back last changeset..."
 	$(LIQUIBASE) rollback-count 1
 	@echo "Rollback complete."
-
-# ===========================
-# Langfuse (Observability)
-# ===========================
-.PHONY: langfuse-up langfuse-down langfuse-logs
-
-## Start Langfuse (requires data tier for shared Postgres)
-langfuse-up: data-up
-	@echo "Starting Langfuse on http://localhost:3001 ..."
-	docker compose -f $(LANGFUSE_COMPOSE) up -d
-	@echo "Langfuse is starting. User/org/project auto-provisioned on first run."
-	@echo "  Login: admin@conductor.dev / conductor"
-	@echo "  API keys: pk-lf-conductor-dev / sk-lf-conductor-dev"
-
-## Stop Langfuse stack
-langfuse-down:
-	@echo "Stopping Langfuse..."
-	docker compose -f $(LANGFUSE_COMPOSE) down
-	@echo "Langfuse stopped."
-
-## View Langfuse logs
-langfuse-logs:
-	docker compose -f $(LANGFUSE_COMPOSE) logs -f langfuse
 
 # ===========================
 # Lint & Format
@@ -564,7 +540,7 @@ help:
 	@echo "  make data-logs          View data tier logs"
 	@echo ""
 	@echo "Docker (App Tier):"
-	@echo "  make app-up             Start Backend + Langfuse"
+	@echo "  make app-up             Start Backend"
 	@echo "  make app-rebuild SVC=x  Rebuild and restart a single service"
 	@echo "  make app-restart        Restart backend (config/secrets reload)"
 	@echo "  make app-down           Stop app tier"
@@ -579,11 +555,6 @@ help:
 	@echo "  make db-update          Apply pending Liquibase changesets"
 	@echo "  make db-status          Show pending changesets (dry run)"
 	@echo "  make db-rollback-one    Rollback last changeset"
-	@echo ""
-	@echo "Langfuse:"
-	@echo "  make langfuse-up        Start Langfuse (Docker)"
-	@echo "  make langfuse-down      Stop Langfuse"
-	@echo "  make langfuse-logs      View Langfuse logs"
 	@echo ""
 	@echo "Lint & Format:"
 	@echo "  make lint               Lint backend Python (ruff, auto-fix)"

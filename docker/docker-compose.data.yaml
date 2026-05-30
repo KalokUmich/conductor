@@ -1,8 +1,6 @@
 # Conductor Data Tier — Postgres + Redis
 # ========================================
-# Postgres hosts two databases:
-#   - conductor  (backend OLTP data)
-#   - langfuse   (Langfuse observability)
+# Postgres hosts the conductor database (backend OLTP data).
 #
 # Can be replaced with AWS RDS + ElastiCache in production.
 #
@@ -20,7 +18,6 @@ services:
       - conductor
     volumes:
       - conductor-pg-data:/var/lib/postgresql/data
-      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
     ports:
       - "5432:5432"
     healthcheck:

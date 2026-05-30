@@ -55,7 +55,7 @@ after they confirm. The token is SSO-temporary (`ASIA…`) and expires in hours.
 |---|---|---|---|---|
 | — | Baseline capture | (on main) | yes | ✅ done — `premigration_20260529` |
 | — | Scaffolding (cred gate + this log + parent branch) | parent | no | ✅ done |
-| 01 | DB telemetry tables + remove Langfuse DB plumbing | `refactor/step-01-db-langfuse` | no | ⬜ pending |
+| 01 | DB telemetry tables + remove Langfuse DB plumbing | `refactor/step-01-db-langfuse` | no | ✅ done (backend 1265 passed; Liquibase up/rollback ✓) |
 | 02 | Config collapse → Bedrock+Claude (4 models / 2 providers) | `refactor/step-02-config` | no | ⬜ pending |
 | 03 | Provider dead-code removal (OpenAI provider, tool-repair, schema-sanitize, enable_thinking; simplify resolver) | `refactor/step-03-provider` | no | ⬜ pending |
 | 04 | Observability swap — delete `@observe`/`track_generation`; wire OTEL + new tables | `refactor/step-04-otel` | smoke | ⬜ pending |
@@ -72,4 +72,7 @@ D1=go · D5=maximal cleanup (explorer tier goes Claude) · D6=retire Langfuse in
 
 ## Session journal
 
-- 2026-05-30 — parent branch cut; cred gate built; **cred check FAILED (SSO token expired)** → awaiting user refresh before any Bedrock-gated step. Reversible non-Bedrock steps (01–03) may proceed once design approved.
+- 2026-05-30 — parent branch cut; cred gate built; **cred check FAILED (SSO token expired)** → user refreshed (fixed a missing closing-quote on session_token), creds green.
+- 2026-05-30 — **Step 01 done.** Added `005-telemetry.sql` (iteration_token_usage + agent_transcript); removed all Langfuse DB/infra (init-db.sql, langfuse compose, Makefile targets, env vars). Gate: backend pytest **1265 passed / 21 skipped / 0 fail** (incl. tool-parity) + Liquibase up/rollback clean.
+  - **GOTCHA logged:** `make test` hung ~7h on `test_local_tools_parity::test_get_dependencies` — a tree-sitter forkserver (`app.repo_graph.parser`) deadlock on WSL2 (`Dl` uninterruptible state), unrelated to the change. Root cause of the *silent* hang: `pytest-timeout` was not installed in the venv. **Fix: added `pytest-timeout` to `backend/requirements.txt`; always run pytest with `--timeout=180 --timeout-method=thread` + a shell `timeout` backstop.** Extension/webview JS suites skipped for Step 01 (zero TS changes).
+- Next: Step 02 (config collapse → Bedrock+Claude). Recon done (provider/config coupling inventory).
