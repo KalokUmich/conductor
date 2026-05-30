@@ -2031,6 +2031,74 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
 | **Phase 13: AI Summary → Action Pipeline** | **🔴 Next Up** | **Sprint 15–16** |
 
+## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (PLANNED)
+
+**Status**: Planned. Builds on the agent-SDK worker migration (Steps 01–06, tracked in `docs/REFACTOR_EXECUTION_LOG.md`) and the SDK capability research recorded there (2026-05-30). **Prerequisite**: Step 06 (SDK leaf-worker loop) merged + eval-gated.
+
+**Goal**: Evolve Conductor's backend from "a PR-review tool with a hand-rolled classifier Brain" into an **AI-native team backend** — a long-lived assistant that understands the codebase, drives Jira / GitLab / Azure / Figma, joins & summarises meetings, scans new code nightly to update docs, and (eventually) evaluates work and opens its own bug-fix PRs, tailored per team member. The structural enabler is a clean 3-tier split that puts each responsibility where it belongs (SDK vs Python), navigable by a new engineer in an afternoon.
+
+### Target architecture — 3 tiers
+
+```
+Tier 1 — Concierge (SDK-native)                 ← thin router + generalist + integrations
+  ├─ Skills (SKILL.md): how-to-classify, how-to-use-{jira,gitlab,azure,figma}, how-to-summarise-meeting
+  ├─ MCP integrations:  jira_*, gitlab_*, azure_*, figma_*, calendar_*, kb_*
+  └─ MCP dispatch tools: review_pr(), investigate_domain(), scan_codebase(), summarise_meeting() …
+        │   heavy workflows are TOOLS, NOT SDK subagents → sidesteps the no-nesting limit
+        ▼
+Tier 2 — Capability workflows (Python orchestrators)            ← the moat
+  PR Brain v2 · Domain Brain · nightly doc-scan · meeting-summary · work-eval · auto-bugfix
+  (multi-phase · Fact Vault · budget arbitration · replan · deterministic post-passes)
+  Invokable BOTH by Tier 1 (fuzzy human intent) AND by schedulers/webhooks (known intent)
+        │   each workflow runs its OWN SDK session for its leaves
+        ▼
+Tier 3 — Leaf workers (SdkWorkerRunner, Step 06)   ← code investigation; Fact Vault preserved
+```
+
+### Why this split (SDK capability research, 2026-05-30)
+- **SDK excels at**: intent→tool/skill selection (it *is* a router), MCP-tool orchestration, conversation, progressive-disclosure Skills, per-subagent model/tools. → **Tier 1 belongs on the SDK.**
+- **SDK cannot**: nest subagents; share a cross-agent cache; do cross-agent budget arbitration / replan loops / multi-phase orchestration. → **Tier 2 stays Python.** Exposing Tier-2 workflows as MCP **tools** (not SDK subagents) is the key move — it lets Tier 1 call them while each workflow keeps its own nested SDK leaves + Fact Vault.
+- **Leaf workers**: our `SdkWorkerRunner` (Step 06) beats native SDK subagents because it routes tools through our in-process MCP server → preserves Fact Vault dedup + per-worker usage. → **Tier 3 = the Step 06 engine.**
+
+### Work items
+1. **Skills migration + 4-layer→SDK prompt remap.** Today (Step 06) the worker prompt is the *blunt parity mapping*: `build_sub_agent_system_prompt` collapses L1 (identity) + L3 (guidelines + workspace context) into one **full-replace** `system_prompt` string (L2 tools and L4 query are already separate). Refactor it to use ALL of the SDK's layers (design decided 2026-05-30):
+
+   | Our 4-layer | → SDK primitive |
+   |---|---|
+   | **L1 Identity** (role/perspective, short) | `system_prompt = {preset: "claude_code", append: <role delta>}` — keep Claude Code's tuned code-agent harness/fluency; append only our role identity (NOT a full-replace string) |
+   | **L3 Skills/Guidelines** (investigation patterns, **severity rubric**, risk signals) | `SKILL.md` packages (progressive disclosure; attach per-agent via `AgentDefinition.skills=`) — convert `config/skills/*.md` (domain_brain_coordinator, pr_brain_coordinator, investigation patterns, `code_review_pr`) |
+   | **L3 Workspace context** (layout, project docs, risk) | mostly **drop** — Claude Code does workspace recon + reads `CLAUDE.md` natively via `setting_sources`; inject only the non-derivable delta |
+   | **L2 Tools** | MCP schemas (already separate, unchanged) |
+   | **L4 Task** | `user_message` = clean query **+ this-dispatch scope / checks / direction_hint** (dynamic per-dispatch instructions live here, not in identity) |
+
+   - **Wins**: progressive disclosure shrinks worker prefixes (better prompt-cache); the `claude_code` preset is a cache-stable prefix; loading a crisp severity Skill (instead of burying the rubric in a long system string) + gaining native code-agent fluency may *also* help the severity-calibration gap found in the Step-06c sentry eval (see Execution Log 2026-05-30: SDK under-grades critical/security findings).
+   - **⚠️ Role-separation eval gate (must-test)**: full-replace was originally chosen to protect role distinctness (CLAUDE.md principle #8 — putting shared *strategy* in individual L1 identities once caused a 60%→25% eval regression). The `claude_code` preset is generic *harness*, not a competing *role*, so append *should* preserve distinctness — but this is a **must-eval** change, not a free swap.
+   - **⚠️ Read-only drift**: the preset is tuned for interactive/*acting* coding (edit, run); our leaves are **read-only investigators** → append explicit "investigate, don't act" framing and watch for edit-drift in eval.
+   - Pairs with "+ test until green": do NOT ship the remap without re-running agent_quality + code_review against `baselines/premigration_20260529`.
+2. **Concierge (Tier 1)** — SDK agent with a cheap (Haiku-tier) router; today's `transfer_to_brain("pr_review"/"domain")` evolves into MCP dispatch tools `review_pr()` / `investigate_domain()`. **Deterministic fast-paths**: explicit `/pr` and all cron/webhook triggers BYPASS the LLM router (known intent → call the workflow directly); LLM classification is the fallback for ambiguous natural language only.
+3. **Integration MCP backbone (tool-surface → MCP; integration core stays Python).** Split the existing integrations. **MCP replaces only the agent-facing read/query verbs**, not the backend plumbing.
+   - **Keep (backend integration core, irreplaceable by MCP):** OAuth/3LO token store, webhook receivers (ADO/Jira), platform-shaped comment-posting, the readonly **enrichment/shaping** (regex ticket keys from branch/title → fetch → flatten ADF/storage-XHTML to markdown-lite → splice into the cache-stable prefix), size-gates, scheduling. MCP is a tool-call protocol — it is not a webhook receiver, OAuth broker, comment-poster, or formatter.
+   - **⚠️ Headless-auth constraint (decisive):** the backend runs headless on ECS + cron/webhook, so we MUST use **self-hosted, token-authenticated MCP servers** — NOT hosted interactive-OAuth servers (those can't authenticate in a nightly job; the SDK warns interactively-authed MCP servers are absent in headless/cron runs).
+   - **Adopt as MCP (self-hosted, service-account token):** **Jira / Confluence** — Atlassian **Cloud API token** (email+token Basic auth, the same credential our Phase 7.8.6 readonly client uses; Data Center/Server has true **PATs**) → headless-safe; **GitLab** — **PAT** → headless-safe; **Figma** — official MCP (design-read is pure tool-call).
+   - **Stays bespoke (not a tool-call surface):** **Microsoft Teams** (Graph API + bot framework, Phase 7.5); **Azure DevOps** webhook + comment-posting + `translate_pr_summary` + size-gates (backend — only its *reads* could move to MCP).
+   - **Migration discipline:** do NOT retire a working API client until its MCP equivalent is proven on the **headless/cron** path. The win is real but partial — MCP shrinks the agent-tool layer, not the integration backbone.
+4. **Autonomous capability workflows** — nightly code-scan → doc update; meeting join → summary; work evaluation; auto bug-fix PR. Each is a Tier-2 workflow triggered by a scheduler/webhook (not the router).
+5. **Per-member personal assistant** — member profile + working style in the Team Knowledge Base (Phase 12, pgvector); Concierge injects member context to tailor suggestions.
+6. **Context-enriched PR review (ticket → design).** Upgrade Phase 7.8.6's deterministic ticket/Confluence pre-fetch into *agentic* context-gathering via the MCP backbone, so the AI reviews against **intent**, not just the diff:
+   - **Ticket (have the seed, make it richer):** keep the *primary* linked-ticket pre-fetch deterministic + cache-stable (the anchor — acceptance criteria → review invariants; criterion break = critical; catch intent-drift). Add MCP so the coordinator can *optionally pull more on demand*: parent/epic, linked tickets, related Confluence spec.
+   - **Figma = new review dimension (gated):** when the PR touches UI **and** the ticket references a design, fetch the Figma frame (`get_design_context`/`get_screenshot`) and check the implementation matches design intent. Gate on UI-relevance — Figma screenshots are costly multimodal tokens, so do NOT fetch on every PR.
+   - **Flow:** `diff + ticket(criteria) + design(Figma)` → review against intent. **Headless** (ADO webhook-triggered) → rides on the self-hosted token-auth MCP servers from #3.
+
+### Eval & quality gates
+- **Routing accuracy is a first-class eval** (labeled queries → expected destination); gate it like code_review. (Wrong-mode routing wastes tokens — this has always been critical.)
+- Each Tier-2 workflow keeps its existing eval (code_review composite/catch, agent_quality).
+
+### Engineering discipline (onboarding)
+The refactor MUST leave code + layout **clean enough for a new engineer to map in an afternoon**: one directory per tier, MCP integrations isolated, Skills as discoverable `SKILL.md` packages, a top-of-tree architecture doc, and **no dead code from the pre-SDK era**.
+
+### Sequencing (agreed 2026-05-30)
+① Finish Step 06 eval gate (code_review re-run) → ② Skills + prompt refactor to Claude-native form + test green → ③ build Concierge / Tier-1 + MCP backbone → ④ migrate/author autonomous workflows → ⑤ personal-assistant layer (with Phase 12 KB). **Incremental**: stand the Concierge up *beside* the current Brain, route a subset of intents, eval routing accuracy vs the current classifier, then widen.
+
 ## Architecture Decision Log
 
 ### ADR-001: Model A over Model B for initial workspace

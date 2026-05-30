@@ -551,6 +551,25 @@ class TestSubAgentSystemPrompt:
         assert identity_pos < workspace_pos
 
 
+class _FakeSdkRunner:
+    """Captures constructor + run() kwargs and returns a canned SdkAgentResult.
+
+    Step 06c: dispatch_explore now drives the worker via SdkWorkerRunner, so the
+    4-layer prompt lands in run()'s ``system_prompt`` (identity in Layer 1) and the
+    user's query stays clean in ``user_message`` (Layer 4)."""
+
+    last: dict = {}
+
+    def __init__(self, **kwargs):
+        _FakeSdkRunner.last = {"init": kwargs, "run": None}
+
+    async def run(self, *, system_prompt, user_message):
+        from app.agent_loop.sdk_worker import SdkAgentResult
+
+        _FakeSdkRunner.last["run"] = {"system_prompt": system_prompt, "user_message": user_message}
+        return SdkAgentResult(answer="test", tool_calls_made=0, iterations=0)
+
+
 class TestQueryNotContaminatedByRole:
     """Verify that dispatch_explore passes clean queries (no ## Your Role)."""
 
@@ -562,36 +581,8 @@ class TestQueryNotContaminatedByRole:
         mock_inner_executor,
         mock_provider,
     ):
-        """The query passed to AgentLoopService must NOT contain agent instructions."""
-        captured_kwargs = {}
-
-        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
-
-        def capture_init(self, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            original_init(self, *args, **kwargs)
-
-        with (
-            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
-            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
-        ):
-
-            async def empty_stream(*a, **kw):
-                from app.agent_loop.service import AgentEvent
-
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "answer": "test",
-                        "tool_calls_made": 0,
-                        "iterations": 0,
-                        "duration_ms": 0,
-                        "thinking_steps": [],
-                    },
-                )
-
-            mock_stream.side_effect = empty_stream
-
+        """The user_message handed to the SDK worker must NOT carry agent instructions."""
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
             executor = AgentToolExecutor(
                 inner_executor=mock_inner_executor,
                 agent_registry=agent_registry,
@@ -608,11 +599,12 @@ class TestQueryNotContaminatedByRole:
                 },
             )
 
-            # Verify the query passed to run_stream is clean
-            call_args = mock_stream.call_args
-            query_arg = call_args[1].get("query", call_args[0][0] if call_args[0] else "")
-            assert "## Your Role" not in query_arg
-            assert "Map the architecture" not in query_arg  # agent instructions
+            run_kwargs = _FakeSdkRunner.last["run"]
+            assert run_kwargs is not None, "SdkWorkerRunner.run must be invoked"
+            user_message = run_kwargs["user_message"]
+            assert user_message == "How does auth work?"
+            assert "## Your Role" not in user_message
+            assert "Map the architecture" not in user_message  # agent instructions
 
     @pytest.mark.asyncio
     async def test_dispatch_passes_agent_identity(
@@ -622,36 +614,8 @@ class TestQueryNotContaminatedByRole:
         mock_inner_executor,
         mock_provider,
     ):
-        """dispatch_explore must pass agent_identity dict to AgentLoopService via config."""
-        captured_kwargs = {}
-
-        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
-
-        def capture_init(self, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            original_init(self, *args, **kwargs)
-
-        with (
-            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
-            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
-        ):
-
-            async def empty_stream(*a, **kw):
-                from app.agent_loop.service import AgentEvent
-
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "answer": "test",
-                        "tool_calls_made": 0,
-                        "iterations": 0,
-                        "duration_ms": 0,
-                        "thinking_steps": [],
-                    },
-                )
-
-            mock_stream.side_effect = empty_stream
-
+        """dispatch_explore must bake the agent identity into the worker's system_prompt."""
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
             executor = AgentToolExecutor(
                 inner_executor=mock_inner_executor,
                 agent_registry=agent_registry,
@@ -668,14 +632,12 @@ class TestQueryNotContaminatedByRole:
                 },
             )
 
-            # Verify agent_identity was passed via AgentLoopConfig
-            loop_config = captured_kwargs.get("config")
-            assert loop_config is not None, "AgentLoopService must receive an AgentLoopConfig"
-            identity = loop_config.agent_identity
-            assert identity is not None
-            assert identity["name"] == "explore_architecture"
-            assert identity["description"] == "Maps module structure"
-            assert identity["instructions"] == "Map the architecture."
+            run_kwargs = _FakeSdkRunner.last["run"]
+            assert run_kwargs is not None, "SdkWorkerRunner.run must be invoked"
+            # Identity lives in the 4-layer system prompt (Layer 1), not the query.
+            system_prompt = run_kwargs["system_prompt"]
+            assert "explore_architecture" in system_prompt
+            assert "Map the architecture." in system_prompt  # agent instructions (Layer 1 body)
 
 
 # ---------------------------------------------------------------------------

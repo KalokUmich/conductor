@@ -12,7 +12,12 @@ import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
 from app.agent_loop import sdk_worker
-from app.agent_loop.sdk_worker import SdkWorkerRunner, _merge_budget, _usage_to_budget_summary
+from app.agent_loop.sdk_worker import (
+    SdkWorkerRunner,
+    _merge_budget,
+    _sanitize_for_cli,
+    _usage_to_budget_summary,
+)
 from app.code_tools.schemas import ToolResult
 
 
@@ -96,6 +101,40 @@ def test_usage_to_budget_summary_keys():
 def test_usage_to_budget_summary_handles_none():
     bs = _usage_to_budget_summary(None, 0)
     assert bs["total_input_tokens"] == 0 and bs["total_output_tokens"] == 0
+
+
+def test_sanitize_strips_nul_and_control_bytes():
+    # UTF-16-LE doc read as text → NUL between ASCII chars; strip leaves letters.
+    utf16ish = "F\x00i\x00n\x00t\x00e\x00r\x00n"
+    assert _sanitize_for_cli(utf16ish) == "Fintern"
+    # keep tab/newline/CR, drop other C0
+    assert _sanitize_for_cli("a\tb\nc\rd\x07e\x1be") == "a\tb\nc\rdee"
+    assert _sanitize_for_cli("") == ""
+
+
+@pytest.mark.asyncio
+async def test_run_sanitizes_prompt_before_spawn(monkeypatch):
+    """A NUL in the system prompt must not reach the SDK (would abort os.exec)."""
+    ex = _FakeExecutor()
+    captured = {}
+
+    def fake_query(*, prompt, options):
+        captured["prompt"] = prompt
+        captured["system_prompt"] = getattr(options, "system_prompt", None)
+
+        async def _gen():
+            yield _assistant(TextBlock(text="ok"))
+            yield _result()
+
+        return _gen()
+
+    monkeypatch.setattr(sdk_worker, "query", fake_query)
+    monkeypatch.setattr(sdk_worker, "bedrock_env", lambda: {})
+    await _runner(ex, max_evidence_retries=0).run(
+        system_prompt="Doc:\x00 F\x00i\x00n", user_message="q\x00uery"
+    )
+    assert "\x00" not in captured["system_prompt"]
+    assert "\x00" not in captured["prompt"]
 
 
 def test_merge_budget_sums():
