@@ -1787,3 +1787,123 @@ def get_brain_tool_definitions() -> List[Dict[str, Any]]:
     """Return Brain tool definitions + ask_user for Brain's tool list."""
     ask_user_def = next(t for t in TOOL_DEFINITIONS if t["name"] == "ask_user")
     return BRAIN_TOOL_DEFINITIONS + [ask_user_def]
+
+
+# ---------------------------------------------------------------------------
+# Tool name → Pydantic param model (agent-SDK migration, Step 06a)
+# ---------------------------------------------------------------------------
+# The Claude Agent SDK builds each MCP `@tool` from a JSON Schema. We feed it
+# the per-tool Pydantic `model_json_schema()` so worker tool calls validate
+# first-try (the Step-05 spike used a generic `{"params": dict}` schema and the
+# model sometimes mis-shaped args). This dict is the single source of truth for
+# that mapping; `test_sdk_tools.py` guards that every name here matches the
+# `input_schema` already declared in TOOL_DEFINITIONS / BRAIN_TOOL_DEFINITIONS.
+TOOL_PARAM_MODELS: Dict[str, type[BaseModel]] = {
+    # Code search & navigation
+    "grep": GrepParams,
+    "read_file": ReadFileParams,
+    "list_files": ListFilesParams,
+    "glob": GlobParams,
+    "find_symbol": FindSymbolParams,
+    "find_references": FindReferencesParams,
+    "file_outline": FileOutlineParams,
+    "get_dependencies": GetDependenciesParams,
+    "get_dependents": GetDependentsParams,
+    "ast_search": AstSearchParams,
+    "get_callees": GetCalleesParams,
+    "get_callers": GetCallersParams,
+    "trace_variable": TraceVariableParams,
+    "compressed_view": CompressedViewParams,
+    "module_summary": ModuleSummaryParams,
+    "expand_symbol": ExpandSymbolParams,
+    "detect_patterns": DetectPatternsParams,
+    "list_endpoints": ListEndpointsParams,
+    "extract_docstrings": ExtractDocstringsParams,
+    "db_schema": DbSchemaParams,
+    # Git (read-only history/inspection)
+    "git_log": GitLogParams,
+    "git_diff": GitDiffParams,
+    "git_diff_files": GitDiffFilesParams,
+    "git_blame": GitBlameParams,
+    "git_show": GitShowParams,
+    "git_hotspots": GitHotspotsParams,
+    # Tests
+    "find_tests": FindTestsParams,
+    "test_outline": TestOutlineParams,
+    "run_test": RunTestParams,
+    # File edit
+    "file_edit": FileEditParams,
+    "file_write": FileWriteParams,
+    # Fact Vault / notes
+    "search_facts": SearchFactsParams,
+    "update_notes": UpdateNotesParams,
+    # Jira
+    "jira_search": JiraSearchParams,
+    "jira_get_issue": JiraGetIssueParams,
+    "jira_create_issue": JiraCreateIssueParams,
+    "jira_update_issue": JiraUpdateIssueParams,
+    "jira_list_projects": JiraListProjectsParams,
+    # Browser
+    "web_search": WebSearchParams,
+    "web_navigate": WebNavigateParams,
+    "web_click": WebClickParams,
+    "web_fill": WebFillParams,
+    "web_screenshot": WebScreenshotParams,
+    "web_extract": WebExtractParams,
+    # Interactive / sub-agent uplink
+    "ask_user": AskUserParams,
+    "signal_blocker": SignalBlockerParams,
+    # Brain orchestration (coordinator-only; never given to a worker)
+    "create_plan": CreatePlanParams,
+    "dispatch_explore": DispatchExploreParams,
+    "dispatch_verify": DispatchVerifyParams,
+    "dispatch_sweep": DispatchSweepParams,
+    "transfer_to_brain": TransferToBrainParams,
+}
+
+
+# ---------------------------------------------------------------------------
+# Worker tool routing for the SDK sub-agent (Step 06)
+# ---------------------------------------------------------------------------
+# A worker running on the Claude Agent SDK gets two kinds of tools:
+#
+#   1. SDK BUILT-INS (run in the CLI subprocess) — for generic shell/VCS work
+#      we don't need to instrument. `git_*` is covered by the built-in `Bash`
+#      (e.g. `git log`/`git blame`), so we DON'T re-expose our git_* MCP tools
+#      to workers; that's less surface to maintain.
+#
+#   2. OUR MCP @tools (run in-process, behind CachedToolExecutor → Fact Vault).
+#      These are Claude's *supplement*: capabilities the built-ins lack (AST /
+#      symbol-graph, Fact Vault, Jira, pattern/endpoint/docstring/db inspection)
+#      PLUS the vault-aware file read/search family (read_file/grep/list_files/
+#      glob) — KEPT as MCP rather than using built-in Read/Grep so multi-agent
+#      runs still hit the Fact Vault (built-ins would bypass it, costing 20–40%
+#      token dedup in parallel PR review).
+#
+# Orchestration tools (create_plan/dispatch_*/transfer_to_brain) are NEVER given
+# to a worker — they belong to the coordinator.
+
+# Built-ins we rely on instead of maintaining our own duplicate MCP tool.
+WORKER_BUILTIN_TOOLS: frozenset[str] = frozenset({"Bash"})  # covers git_*, run-cmd
+
+# Our MCP tools a dispatched worker may use (vault-aware file family + genuine
+# additions). Excludes git_* (→ built-in Bash), browser/jira are opt-in per
+# agent via its .md tool list, and all orchestration tools.
+WORKER_MCP_TOOLS: frozenset[str] = frozenset({
+    # vault-aware file read/search (kept as MCP to preserve Fact Vault dedup)
+    "read_file", "grep", "list_files", "glob",
+    # AST / symbol graph (no built-in equivalent)
+    "find_symbol", "find_references", "file_outline", "get_dependencies",
+    "get_dependents", "ast_search", "get_callees", "get_callers",
+    "trace_variable", "compressed_view", "module_summary", "expand_symbol",
+    # code inspection
+    "detect_patterns", "list_endpoints", "extract_docstrings", "db_schema",
+    # tests
+    "find_tests", "test_outline", "run_test",
+    # file edit (vault-aware)
+    "file_edit", "file_write",
+    # Fact Vault / notes
+    "search_facts", "update_notes",
+    # sub-agent uplink to the coordinator
+    "signal_blocker",
+})

@@ -17,7 +17,6 @@ import asyncio
 import json
 
 from app.agent_loop.brain import condense_result
-
 from spikes.sdk_worker.runner import HAIKU, SONNET, make_cached_executor, run_sdk_worker
 
 SYSTEM = (
