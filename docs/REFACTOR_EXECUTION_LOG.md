@@ -58,7 +58,7 @@ after they confirm. The token is SSO-temporary (`ASIA…`) and expires in hours.
 | 01 | DB telemetry tables + remove Langfuse DB plumbing | `refactor/step-01-db-langfuse` | no | ✅ done (backend 1265 passed; Liquibase up/rollback ✓) |
 | 02+03 | Config collapse + provider dead-code removal (merged — coupled) | `refactor/step-02-provider-collapse` | no | ✅ **MERGED → parent** (merge commit `7b8c6a5`, child deleted). full backend **1993 passed / 6 deselected / 0 timeout**; typecheck-strict + test-parity green; lint-neutral. Includes follow-up tool-test fixture unification (git_parity_repo + multi-lang share). |
 | 04 | Observability swap — delete `@observe`/`track_generation` + all Langfuse wiring (OTEL deferred to Step 06) | `refactor/step-04-otel` | smoke | ✅ done — full backend **1993 passed / 0 fail / 0 timeout**; typecheck-strict clean; lint-neutral (11 pre-existing). |
-| 05 | **SDK worker spike (GATE)** — prove 4 seams (§7) | `refactor/step-05-spike` | yes | ⬜ pending |
+| 05 | **SDK worker spike (GATE)** — prove 4 seams (§7) | `refactor/step-05-spike` | yes | ✅ **MERGED → parent** (`07da0f5`, child deleted). GATE verdict GO; all 4 seams pass; + CLI packaging (build-verified) + SDK-only pivot (§4bis). |
 | 06 | SDK worker integration behind `brain.py:1323` | `refactor/step-06-sdk-worker` | yes | ⬜ pending |
 | 07..N | Prompt rewrite for Claude+preset (one file/group per child) | `refactor/step-NN-prompt-*` | yes | ⬜ pending |
 | final | Code-review eval gate (Task B) — iterate to ≥ bar | parent | yes | ⬜ pending |
