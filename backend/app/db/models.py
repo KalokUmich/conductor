@@ -83,6 +83,41 @@ class SessionTraceRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class TaskRecord(Base):
+    """One node in the Brain orchestration task tree (Step 06d).
+
+    The root coordinator and each dispatched sub-agent get a row, linked via
+    ``parent_task_id`` / ``root_task_id``, with a per-task token-usage rollup.
+    CoT tree = recursive query on ``parent_task_id``. Closes the per-worker
+    cost-recording gap (SDK leaf usage came back via ResultMessage.usage but
+    was never persisted before).
+    """
+
+    __tablename__ = "task"
+
+    task_id: Mapped[str] = mapped_column(String, primary_key=True)
+    parent_task_id: Mapped[str | None] = mapped_column(String, ForeignKey("task.task_id"), nullable=True)
+    root_task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String, nullable=False)  # root | coordinator | sub_agent
+    agent_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    engine: Mapped[str | None] = mapped_column(String, nullable=True)  # in_house | sdk
+    model: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="running")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_creation_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class AuditLog(Base):
     """Audit trail for changeset apply operations."""
 
