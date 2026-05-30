@@ -59,7 +59,12 @@ after they confirm. The token is SSO-temporary (`ASIA…`) and expires in hours.
 | 02+03 | Config collapse + provider dead-code removal (merged — coupled) | `refactor/step-02-provider-collapse` | no | ✅ **MERGED → parent** (merge commit `7b8c6a5`, child deleted). full backend **1993 passed / 6 deselected / 0 timeout**; typecheck-strict + test-parity green; lint-neutral. Includes follow-up tool-test fixture unification (git_parity_repo + multi-lang share). |
 | 04 | Observability swap — delete `@observe`/`track_generation` + all Langfuse wiring (OTEL deferred to Step 06) | `refactor/step-04-otel` | smoke | ✅ done — full backend **1993 passed / 0 fail / 0 timeout**; typecheck-strict clean; lint-neutral (11 pre-existing). |
 | 05 | **SDK worker spike (GATE)** — prove 4 seams (§7) | `refactor/step-05-spike` | yes | ✅ **MERGED → parent** (`07da0f5`, child deleted). GATE verdict GO; all 4 seams pass; + CLI packaging (build-verified) + SDK-only pivot (§4bis). |
-| 06 | SDK worker integration behind `brain.py:1323` | `refactor/step-06-sdk-worker` | yes | ⬜ pending |
+| 06a | Typed tool registry (`TOOL_PARAM_MODELS`) + `sdk_tools.py` MCP server builder | `refactor/step-06a-sdk-tools` | no | ✅ **MERGED → parent** (`de3349a`). 13 tests (`test_sdk_tools.py`); typed `@tool` schemas from Pydantic models; `WORKER_MCP_TOOLS`/`WORKER_BUILTIN_TOOLS` sets. |
+| 06b | `SdkWorkerRunner` (production engine) + post-call evidence gate | `refactor/step-06b-sdk-worker` | no | ✅ **done** (`54e22b5`, on branch — not yet merged). 10 tests (`test_sdk_worker.py`, mock `query()`); AgentResult-shaped shim; usage→budget mapping; semaphore. lint 11-baseline; typecheck-strict clean. |
+| 06c | Wire `SdkWorkerRunner` into `brain._dispatch_explore` (the seam) | `refactor/step-06c-wire` | yes | ⬜ pending — irreversible seam, eval-gated |
+| 06d | Hierarchical task observability (`006-task-hierarchy.sql` + ORM + id threading + `TaskTelemetryService`) | `refactor/step-06d-task-telemetry` | no | ⬜ pending |
+| 06e | Test migration (~138 tests — swap `AgentLoopService` mocks, delete obsolete loop tests) | `refactor/step-06e-tests` | yes | ⬜ pending |
+| 06 final | Bedrock-gated eval (code-review composite ≥0.923 + greptile catch ≥80%; agent_quality 94–98%) — GO/NO-GO | parent | yes | ⬜ pending |
 | 07..N | Prompt rewrite for Claude+preset (one file/group per child) | `refactor/step-NN-prompt-*` | yes | ⬜ pending |
 | final | Code-review eval gate (Task B) — iterate to ≥ bar | parent | yes | ⬜ pending |
 
