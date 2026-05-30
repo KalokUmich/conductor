@@ -29,6 +29,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -56,6 +57,19 @@ from .sdk_tools import (
 logger = logging.getLogger(__name__)
 
 _QUALIFIED_PREFIX = f"mcp__{MCP_SERVER_NAME}__"
+
+# C0 control bytes except tab/newline/carriage-return. The SDK hands prompts to
+# the CLI as subprocess args; a NUL (e.g. a UTF-16 project doc read as text leaves
+# \x00 between ASCII chars) makes os.exec raise "embedded null byte" at spawn. The
+# old HTTP/Bedrock provider path tolerated these in the JSON body.
+_CTRL_BYTES_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+def _sanitize_for_cli(text: str) -> str:
+    """Strip NUL + other C0 control bytes so the prompt is safe as a subprocess arg."""
+    if not text:
+        return text
+    return _CTRL_BYTES_RE.sub("", text)
 
 
 @dataclass
@@ -177,6 +191,9 @@ class SdkWorkerRunner:
     # --- one SDK pass ------------------------------------------------------
     async def _run_once(self, system_prompt: str, user_message: str) -> SdkAgentResult:
         t0 = time.time()
+        # Prompts become subprocess args — strip control bytes that would abort spawn.
+        system_prompt = _sanitize_for_cli(system_prompt)
+        user_message = _sanitize_for_cli(user_message)
         opts = self._build_options(system_prompt)
 
         answer_parts: List[str] = []
