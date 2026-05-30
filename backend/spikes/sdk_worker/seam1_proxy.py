@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 
-from spikes.sdk_worker.runner import PARITY_REPO, make_cached_executor
+from spikes.sdk_worker.runner import make_cached_executor
 
 # Cases against the parity fixture (small, deterministic).
 CASES = [

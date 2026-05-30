@@ -14,7 +14,6 @@ runner skeleton carried into Step 06.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -24,12 +23,7 @@ from typing import Any, Dict, List, Optional
 # Make `app` importable when run as a module from backend/.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
-from app.code_tools.executor import LocalToolExecutor  # noqa: E402
-from app.config import load_config  # noqa: E402
-from app.scratchpad.executor import CachedToolExecutor  # noqa: E402
-from app.scratchpad.store import FactStore  # noqa: E402
-
-from claude_agent_sdk import (  # noqa: E402
+from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
@@ -39,6 +33,11 @@ from claude_agent_sdk import (  # noqa: E402
     query,
     tool,
 )
+
+from app.code_tools.executor import LocalToolExecutor
+from app.config import load_config
+from app.scratchpad.executor import CachedToolExecutor
+from app.scratchpad.store import FactStore
 
 # Bedrock model ids (from config/conductor.settings.yaml).
 HAIKU = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
