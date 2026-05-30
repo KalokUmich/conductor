@@ -57,7 +57,7 @@ after they confirm. The token is SSO-temporary (`ASIA…`) and expires in hours.
 | — | Scaffolding (cred gate + this log + parent branch) | parent | no | ✅ done |
 | 01 | DB telemetry tables + remove Langfuse DB plumbing | `refactor/step-01-db-langfuse` | no | ✅ done (backend 1265 passed; Liquibase up/rollback ✓) |
 | 02+03 | Config collapse + provider dead-code removal (merged — coupled) | `refactor/step-02-provider-collapse` | no | ✅ **MERGED → parent** (merge commit `7b8c6a5`, child deleted). full backend **1993 passed / 6 deselected / 0 timeout**; typecheck-strict + test-parity green; lint-neutral. Includes follow-up tool-test fixture unification (git_parity_repo + multi-lang share). |
-| 04 | Observability swap — delete `@observe`/`track_generation`; wire OTEL + new tables | `refactor/step-04-otel` | smoke | ⬜ pending |
+| 04 | Observability swap — delete `@observe`/`track_generation` + all Langfuse wiring (OTEL deferred to Step 06) | `refactor/step-04-otel` | smoke | ✅ done — full backend **1993 passed / 0 fail / 0 timeout**; typecheck-strict clean; lint-neutral (11 pre-existing). |
 | 05 | **SDK worker spike (GATE)** — prove 4 seams (§7) | `refactor/step-05-spike` | yes | ⬜ pending |
 | 06 | SDK worker integration behind `brain.py:1323` | `refactor/step-06-sdk-worker` | yes | ⬜ pending |
 | 07..N | Prompt rewrite for Claude+preset (one file/group per child) | `refactor/step-NN-prompt-*` | yes | ⬜ pending |
@@ -108,4 +108,7 @@ User asked to fix the test deadlocks *properly* and to run tool tests against a 
 - **Verified:** test_local_tools_parity 23/0 (deterministic ×3); test_tool_parity 68 passed; ast+deep+subprocess 102 passed (regression guard); **full backend suite 1993 passed / 6 deselected / 0 fail / 0 timeout** in ~50s, reproduced.
 
 - 2026-05-30 — **Step 02+03 merged → parent** (`7b8c6a5`, `--no-ff`, child branch deleted). 5 commits folded: provider collapse + 3 tool-test fixture commits. Full suite 1993 green.
-- Next: Step 04 (observability swap — delete `@observe`/`track_generation`, wire OTEL + new telemetry tables).
+- 2026-05-30 — **Step 04 done** (`refactor/step-04-otel`). Deleted `workflow/observability.py` (the whole Langfuse `@observe`/`track_generation`/`init_langfuse`/`flush` module) + its 2 decorators & track_generation call in `agent_loop/service.py` + startup/shutdown wiring in `main.py`; removed `LangfuseSettings`/`LangfuseSecrets` + fields + `LANGFUSE_*` env-map + docstring in `config.py`; dropped `langfuse` dep in `requirements.txt`; removed `langfuse:` blocks from committed `conductor.settings.yaml` + `conductor.secrets.yaml`; scrubbed stale Langfuse comments. Telemetry NOT lost — Step 01's Postgres tables (`iteration_token_usage`, `agent_transcript`) + SessionTrace already capture tokens/COT.
+  - **Scope note (honest deviation from the doc title):** OTEL emission is **deferred to Step 06**, not wired here. OTEL is entirely absent today and the design ties it to the SDK worker (`CLAUDE_CODE_ENABLE_TELEMETRY` on the SDK path), which doesn't exist until Step 05/06. Wiring dead OTEL now would add untested code with no consumer. Step 04 = clean removal only.
+  - **User action needed:** `config/conductor.secrets.local.yaml` (gitignored, user-owned) still has a `langfuse:` block at ~line 36 — harmless (no longer read), but you may want to delete it. I did not touch your local creds file.
+- Next: Step 05 — SDK worker spike (GATE, Bedrock test; prove 4 seams per design §7).

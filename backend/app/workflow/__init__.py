@@ -5,5 +5,4 @@ Modules:
   loader.py            — Load agent / brain / swarm configs from disk
   engine.py            — WorkflowEngine: hosts the Brain orchestrator entry point
   router.py            — FastAPI endpoints for the Agent Swarm UI tab (/api/brain/*)
-  observability.py     — Langfuse @observe decorator (no-op when disabled)
 """

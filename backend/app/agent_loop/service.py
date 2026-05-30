@@ -32,7 +32,6 @@ from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools, format_tool_s
 
 if TYPE_CHECKING:
     from app.code_tools.schemas import ToolResult
-from app.workflow.observability import observe
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
 from .config import AgentLoopConfig
@@ -181,7 +180,6 @@ class AgentLoopService:
         self._quality_config = None  # set per-agent via brain dispatch
         self._forced_skill = config.forced_skill  # investigation skill override (Layer 3 skill)
 
-    @observe(name="agent_loop")
     async def run(
         self,
         query: str,
@@ -227,7 +225,6 @@ class AgentLoopService:
                     result.error = event.data.get("error")
         return result
 
-    @observe(name="agent_loop_stream")
     async def run_stream(
         self,
         query: str,
@@ -415,19 +412,6 @@ class AgentLoopService:
                 input_tokens=response.usage.input_tokens if response.usage else 0,
                 output_tokens=response.usage.output_tokens if response.usage else 0,
             )
-
-            # Record generation to Langfuse (model name + token usage)
-            if response.usage:
-                from app.workflow.observability import track_generation
-
-                track_generation(
-                    name=f"llm_iter_{iteration + 1}",
-                    model=self._provider.model_name,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
-                    cache_read_input_tokens=response.usage.cache_read_input_tokens,
-                    cache_write_input_tokens=response.usage.cache_write_input_tokens,
-                )
 
             # Build iteration trace
             iter_trace = IterationTrace(

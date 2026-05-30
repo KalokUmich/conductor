@@ -691,7 +691,7 @@ class FactStore:
     # --- inspection --------------------------------------------------------
 
     def stats(self) -> Dict[str, int]:
-        """Counts by table for the INDEX dump and Langfuse export."""
+        """Counts by table for the INDEX dump and telemetry export."""
         c = self._conn()
         return {
             "facts": c.execute("SELECT COUNT(*) FROM facts").fetchone()[0],

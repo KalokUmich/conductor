@@ -27,9 +27,6 @@ Environment variable overrides:
     CONDUCTOR_GOOGLE_CLIENT_ID       → google_sso.client_id
     CONDUCTOR_GOOGLE_CLIENT_SECRET   → google_sso.client_secret
     CONDUCTOR_NGROK_AUTHTOKEN        → ngrok.authtoken
-    LANGFUSE_PUBLIC_KEY              → langfuse.public_key  (Langfuse SDK convention)
-    LANGFUSE_SECRET_KEY              → langfuse.secret_key
-    LANGFUSE_HOST                    → langfuse.host
 """
 
 from __future__ import annotations
@@ -73,8 +70,6 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_GOOGLE_CLIENT_ID": ("google_sso", "client_id"),
     "CONDUCTOR_GOOGLE_CLIENT_SECRET": ("google_sso", "client_secret"),
     "CONDUCTOR_NGROK_AUTHTOKEN": ("ngrok", "authtoken"),
-    "LANGFUSE_PUBLIC_KEY": ("langfuse", "public_key"),
-    "LANGFUSE_SECRET_KEY": ("langfuse", "secret_key"),
 }
 
 
@@ -202,19 +197,11 @@ class JWTSecrets(BaseModel):
     algorithm: str = "HS256"
 
 
-class LangfuseSecrets(BaseModel):
-    """Langfuse API keys (from conductor.secrets.yaml)."""
-
-    public_key: str = ""
-    secret_key: str = ""
-
-
 class Secrets(BaseModel):
     database: DatabaseSecrets = Field(default_factory=DatabaseSecrets)
     postgres: PostgresSecrets = Field(default_factory=PostgresSecrets)
     redis: RedisSecrets = Field(default_factory=RedisSecrets)
     jwt: JWTSecrets = Field(default_factory=JWTSecrets)
-    langfuse: LangfuseSecrets = Field(default_factory=LangfuseSecrets)
 
 
 # ---------------------------------------------------------------------------
@@ -312,17 +299,6 @@ class TraceSettings(BaseModel):
     database_url: str = ""  # e.g. "sqlite:///traces.db" or "postgresql://..."
 
 
-class LangfuseSettings(BaseModel):
-    """Configuration for Langfuse observability integration.
-
-    Self-hosted via docker/docker-compose.langfuse.yaml.
-    When disabled, @observe decorators are no-ops (zero overhead).
-    """
-
-    enabled: bool = False
-    host: str = "http://localhost:3001"
-
-
 class CodeSearchSettings(BaseModel):
     """Configuration for code search and repo graph features."""
 
@@ -341,7 +317,6 @@ class AppSettings(BaseModel):
     git_workspace: GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
     code_search: CodeSearchSettings = Field(default_factory=CodeSearchSettings)
     trace: TraceSettings = Field(default_factory=TraceSettings)
-    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     secrets: Secrets = Field(default_factory=Secrets)
 
     def build_postgres_url(self) -> str:

@@ -210,19 +210,6 @@ trace:
   local_path: ".conductor/session_traces"   # fallback when database is unavailable
 
 # =============================================================================
-# Langfuse Observability
-# =============================================================================
-# Self-hosted Langfuse via: make langfuse-up  (http://localhost:3001)
-# User/org/project are auto-provisioned on first startup (see docker/.env).
-# Dev defaults — add these to conductor.secrets.yaml:
-#   langfuse:
-#     public_key: "pk-lf-conductor-dev"
-#     secret_key: "sk-lf-conductor-dev"
-langfuse:
-  enabled: true
-  host: "http://localhost:3001"
-
-# =============================================================================
 # Jira Integration
 # =============================================================================
 # Atlassian OAuth 2.0 (3LO) for Jira Cloud.
