@@ -2099,6 +2099,15 @@ The refactor MUST leave code + layout **clean enough for a new engineer to map i
 ### Sequencing (agreed 2026-05-30)
 ① Finish Step 06 eval gate (code_review re-run) → ② Skills + prompt refactor to Claude-native form + test green → ③ build Concierge / Tier-1 + MCP backbone → ④ migrate/author autonomous workflows → ⑤ personal-assistant layer (with Phase 12 KB). **Incremental**: stand the Concierge up *beside* the current Brain, route a subset of intents, eval routing accuracy vs the current classifier, then widen.
 
+### Status (2026-05-31 — first slice shipped)
+- **Foundation (the 2h-hang fix):** SSO auto-refresh (boto3 profile, ~8h/login) + `scripts/guarded_run.sh` (timeout + auth/stall kill) — merged. Long Bedrock runs are now reliable.
+- **Model:** Opus 4.8 registered + A/B'd vs Sonnet on the sentry suite → **Opus REJECTED** (composite 0.676 vs 0.812, severity 0.40 vs 0.56, recall 0.63 vs 0.97; **2.2× cost**). **Default stays Sonnet 4.6.** The severity hypothesis was refuted → it's a prompt problem, not a model one.
+- **Severity (the measured defect) — FIXED:** `pr_brain_coordinator.md` rubric rewritten as examples (security-control removal / acceptance-criterion break = `critical` unmissable; conservation scoped to speculative findings). Eval-gated: **severity +0.10 (0.562→0.662), composite 0.812→0.831** — merged.
+- **Anthropic-compliance:** re-audited the live prompts → already compliant (forceful language on hard constraints is correct per #6). No churn.
+- **#1 core (preset+append) — REFUTED:** `system_prompt={preset:claude_code, append:role}` *dilutes* the severity rubric (−0.179) for net-worse composite → **full-replace kept** (branch `refactor/step-14-4-preset` parked). The Claude Code *harness* (loop/fluency, already used) helps; its *persona* doesn't. SKILL.md progressive-disclosure deferred (same dilution caution — it's a cache-economics optimization, not a quality lever).
+- **Still planned (this phase):** Concierge / Tier-1 router (#2), MCP integration backbone (#3), context-enriched PR review (#6), autonomous workflows (#4), per-member assistant (#5).
+- Detail: `docs/PHASE14_{SCORE_DIAGNOSIS,PROMPT_AUDIT,AB_RESULT}.md` + `docs/REFACTOR_EXECUTION_LOG.md` (Phase 14 section).
+
 ## Architecture Decision Log
 
 ### ADR-001: Model A over Model B for initial workspace
