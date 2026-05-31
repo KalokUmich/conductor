@@ -109,11 +109,14 @@ def bedrock_env() -> Dict[str, Optional[str]]:
     * **Deployed — IAM role** — none of the above → Bedrock via the ambient role
       (ECS task role / instance profile) through the default credential chain.
 
-    The SDK merges this dict over ``os.environ`` for the CLI subprocess (a ``None``
-    value REMOVES that key, any string SETS it — see the SDK subprocess transport).
-    So we must clear the key vars to ``None`` (NOT ``""``) in bearer/profile/role mode:
-    an empty-string ``AWS_ACCESS_KEY_ID`` would shadow the token/profile/role and poison
-    the credential chain.
+    Cleared keys are set to ``None`` (NOT ``""``): an empty-string ``AWS_ACCESS_KEY_ID``
+    would shadow the token/profile/role and poison the credential chain. ``None`` is a
+    sentinel meaning "the caller must DROP this key" — the SDK (0.2.87) merges this dict
+    over ``os.environ`` (subprocess_cli.py:430-436) but does NOT treat ``None`` as removal;
+    a ``None`` value reaches ``subprocess.Popen`` and crashes ``os.fsencode``. So the SDK
+    caller (``_build_options``) strips ``None`` entries before constructing
+    ``ClaudeAgentOptions``. Dropping (rather than emitting ``""``) leaves the inherited
+    ``os.environ`` clean, which is what unsets the var for the subprocess.
     """
     cfg = load_config()
     b = cfg.ai_providers.aws_bedrock
@@ -209,9 +212,19 @@ class SdkWorkerRunner:
     # --- SDK options -------------------------------------------------------
     def _build_options(self, system_prompt: str) -> ClaudeAgentOptions:
         server = build_worker_mcp_server(self._executor, self._tool_names)
+        # Strip None-valued keys. The SDK (0.2.87) MERGES options.env over
+        # os.environ (subprocess_cli.py:430-436) and does NOT honor None as
+        # "unset" — a None value reaches subprocess.Popen → os.fsencode(None)
+        # → TypeError, surfaced as "Failed to start Claude Code: expected str,
+        # bytes or os.PathLike object, not NoneType". bedrock_env clears SigV4
+        # keys to None in bearer/profile/role mode, so we must drop them here.
+        # Dropping (not "") is correct: the SDK inherits os.environ, so as long
+        # as the parent process carries no conflicting AWS_* the credential
+        # chain stays clean (true for `make run-backend` and the container).
+        env = {k: v for k, v in bedrock_env().items() if v is not None}
         opts = ClaudeAgentOptions(
             model=self._model,
-            env=bedrock_env(),
+            env=env,
             mcp_servers={MCP_SERVER_NAME: server},
             allowed_tools=qualified_tool_names(self._tool_names),
             system_prompt=system_prompt,
