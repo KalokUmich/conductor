@@ -289,6 +289,18 @@ postdeploy-check: ensure-extension-deps
 	@echo "[ok] Post-deploy check passed — tools work with downloaded grammars"
 
 # ===========================
+# Diagnostics
+# ===========================
+##@ Diagnostics
+.PHONY: bedrock-check
+
+## Fast Bedrock reachability check (direct Converse, ~1s, never hangs)
+## Run before eval / SDK tests — surfaces expired tokens instantly instead of
+## letting the CLI path hang. Override model with BEDROCK_CHECK_MODEL=<id>.
+bedrock-check: ensure-backend-deps
+	@cd backend && $(PYTHON) scripts/bedrock_check.py
+
+# ===========================
 # Build / Compile
 # ===========================
 ##@ Build / Compile
