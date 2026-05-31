@@ -117,6 +117,7 @@ class ClaudeBedrockProvider(AIProvider):
         aws_session_token: Optional[str] = None,
         region_name: Optional[str] = None,
         model_id: Optional[str] = None,
+        aws_profile: Optional[str] = None,
     ) -> None:
         """Initialize the Claude Bedrock provider.
 
@@ -126,12 +127,16 @@ class ClaudeBedrockProvider(AIProvider):
             aws_session_token: Optional AWS session token for temporary credentials.
             region_name: AWS region for Bedrock. Defaults to us-east-1.
             model_id: Bedrock model ID. Defaults to Claude 3 Sonnet.
+            aws_profile: AWS named profile (SSO). When set and static keys are absent,
+                the client is built from this profile so boto3 AUTO-REFRESHES the role
+                credentials from the cached SSO login (no hourly token pasting).
         """
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
         self.aws_session_token = aws_session_token
         self.region_name = region_name or self.DEFAULT_REGION
         self.model_id = model_id or self.DEFAULT_MODEL_ID
+        self.aws_profile = aws_profile
         self._client: Optional[object] = None
 
     @property
@@ -152,24 +157,30 @@ class ClaudeBedrockProvider(AIProvider):
                 import boto3
                 from botocore.config import Config as BotoConfig
 
-                kwargs = {"region_name": self.region_name}
-                if self.aws_access_key_id and self.aws_secret_access_key:
-                    kwargs["aws_access_key_id"] = self.aws_access_key_id
-                    kwargs["aws_secret_access_key"] = self.aws_secret_access_key
-                if self.aws_session_token:
-                    kwargs["aws_session_token"] = self.aws_session_token
-
-                # Use adaptive retry mode with limited attempts.  The default
-                # "legacy" mode silently retries throttled requests up to 5×
-                # with exponential backoff (30s+), making multi-agent reviews
-                # appear to hang.  Adaptive mode respects Bedrock's rate-limit
-                # headers and fails fast when the limit is exceeded.
-                kwargs["config"] = BotoConfig(
+                # Adaptive retry, limited attempts. The default "legacy" mode silently
+                # retries throttled requests up to 5× with long backoff, making
+                # multi-agent reviews appear to hang; adaptive fails fast on rate limits.
+                boto_config = BotoConfig(
                     retries={"mode": "adaptive", "max_attempts": 3},
                     read_timeout=120,
                     connect_timeout=10,
                 )
-                self._client = boto3.client("bedrock-runtime", **kwargs)
+                have_static = bool(self.aws_access_key_id and self.aws_secret_access_key)
+                if self.aws_profile and not have_static:
+                    # SSO named profile → boto3's SSO provider resolves the role creds
+                    # and AUTO-REFRESHES them from the cached login (no hourly pasting).
+                    session = boto3.Session(profile_name=self.aws_profile)
+                    self._client = session.client(
+                        "bedrock-runtime", region_name=self.region_name, config=boto_config
+                    )
+                else:
+                    kwargs = {"region_name": self.region_name, "config": boto_config}
+                    if have_static:
+                        kwargs["aws_access_key_id"] = self.aws_access_key_id
+                        kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+                        if self.aws_session_token:
+                            kwargs["aws_session_token"] = self.aws_session_token
+                    self._client = boto3.client("bedrock-runtime", **kwargs)
             except ImportError as exc:
                 raise ImportError(
                     "boto3 package is required for ClaudeBedrockProvider. Install it with: pip install boto3"
