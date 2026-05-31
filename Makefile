@@ -27,17 +27,25 @@ LIQUIBASE := docker run --rm --network conductor-net \
 DATA_COMPOSE := docker/docker-compose.data.yaml
 APP_COMPOSE := docker/docker-compose.app.yaml
 
+# Default service for single-service app-tier targets (override: make app-rebuild SVC=foo)
+SVC ?= backend
+
 # WebSocket Configuration
 WS_PING_INTERVAL := 20.0
 WS_PING_TIMEOUT := 20.0
 WS_OPTIONS := --ws-ping-interval $(WS_PING_INTERVAL) --ws-ping-timeout $(WS_PING_TIMEOUT)
 
-# Default target
+# Bare `make` shows help instead of silently running a heavy full setup.
+.DEFAULT_GOAL := help
+
+# Explicit full-setup target (was the old default)
+.PHONY: all
 all: setup
 
 # ===========================
 # Setup
 # ===========================
+##@ Setup
 .PHONY: setup setup-backend setup-extension setup-claude-cli venv ensure-backend-deps install browser-install
 
 ## Create venv and install all dependencies
@@ -48,6 +56,7 @@ setup: venv setup-backend setup-claude-cli setup-extension
 setup-backend: venv
 	@echo "Installing backend dependencies..."
 	$(PYTHON) -m pip install -r backend/requirements.txt
+	@touch $(VENV_DIR)/.backend-deps-stamp
 	@echo "Backend setup complete!"
 
 ## Install the Claude Code CLI (runtime dep of claude-agent-sdk) on the host.
@@ -74,7 +83,7 @@ browser-install: venv
 	$(PYTHON) -m playwright install chromium
 	@echo "Playwright Chromium installed!"
 
-## Create Python virtual environment if it doesn't exist
+# (internal) Create Python virtual environment if it doesn't exist
 venv:
 	@if [ ! -d "$(VENV_DIR)" ]; then \
 		echo "Creating virtual environment..."; \
@@ -102,18 +111,22 @@ venv:
 		echo "Virtual environment recreated at $(VENV_DIR)"; \
 	fi
 
-## Ensure backend dependencies are installed in the venv
+# (internal) Ensure backend dependencies are installed and in sync with requirements.txt.
+# Reinstalls when core imports are missing OR requirements.txt is newer than
+# the install stamp (mirrors ensure-extension-deps' lockfile-staleness check).
 ensure-backend-deps: venv
-	@if ! "$(PYTHON)" -c "import fastapi, pytest, uvicorn" >/dev/null 2>&1; then \
-		echo "Backend dependencies missing -- installing..."; \
+	@if ! "$(PYTHON)" -c "import fastapi, pytest, uvicorn" >/dev/null 2>&1 \
+	   || [ backend/requirements.txt -nt $(VENV_DIR)/.backend-deps-stamp ]; then \
+		echo "Backend dependencies missing or stale -- installing..."; \
 		$(PYTHON) -m pip install -r backend/requirements.txt; \
+		touch $(VENV_DIR)/.backend-deps-stamp; \
 		echo "Backend dependencies ready"; \
 	fi
 
-## Ensure extension dependencies are installed and in sync with the lockfile.
-## Triggers `npm install` (which fires the postinstall hook → grammar download
-## + SHA verification) when node_modules is missing or package-lock.json is
-## newer than node_modules. No-op on a normal incremental build.
+# (internal) Ensure extension dependencies are installed and in sync with the lockfile.
+# Triggers `npm install` (which fires the postinstall hook → grammar download
+# + SHA verification) when node_modules is missing or package-lock.json is
+# newer than node_modules. No-op on a normal incremental build.
 ensure-extension-deps:
 	@if [ ! -d extension/node_modules ] || [ extension/package-lock.json -nt extension/node_modules ]; then \
 		echo "Extension dependencies missing or stale -- running npm install..."; \
@@ -127,6 +140,7 @@ install: setup
 # ===========================
 # Run Servers
 # ===========================
+##@ Run Servers
 .PHONY: run-backend run-backend-prod run-backend-port
 
 ## Start backend server (development mode with auto-reload)
@@ -150,6 +164,7 @@ run-backend-port: ensure-backend-deps
 # ===========================
 # Testing
 # ===========================
+##@ Testing
 .PHONY: test test-backend test-extension test-webview test-frontend test-parity integration-test postdeploy-check
 
 ## Run all tests (backend + extension + webview + parity)
@@ -180,11 +195,12 @@ integration-test: ensure-backend-deps
 	@echo "Running backend integration tests (requires API credentials)..."
 	cd backend && $(PYTHON) -m pytest tests/ -v -s -m integration
 
-## PR Brain regression harness — runs requests + greptile-sentry +
-## greptile-grafana + greptile-keycloak **sequentially** (one suite at
-## a time) under the current coordinator config, logs each suite's
-## summary to /tmp/brain-regression-<suite>-<tag>.log, and prints a
-## consolidated composite + Judge table on completion.
+## Run all 4 PR Brain eval suites serially + print consolidated composite table
+##
+## Runs requests + greptile-sentry + greptile-grafana + greptile-keycloak
+## **sequentially** (one suite at a time) under the current coordinator
+## config, logs each suite's summary to /tmp/brain-regression-<suite>-<tag>.log,
+## and prints a consolidated composite + Judge table on completion.
 ##
 ## Usage:
 ##   make eval-brain-regression TAG=v2k
@@ -249,10 +265,12 @@ test-parity: ensure-backend-deps ensure-extension-deps
 	cd backend && $(PYTHON) -m pytest tests/test_tool_parity_subprocess.py tests/test_tool_parity_deep.py tests/test_tool_parity_ast.py -v
 	@echo "All parity checks passed."
 
-## Release gate: simulate a fresh deploy by deleting all wasm grammars,
-## re-downloading them from GitHub (the same path that runs in production
-## via npm postinstall), then running the full test suite to verify the
-## downloaded grammars produce working AST tools.
+## Release gate — re-download wasm grammars from scratch, then run full test suite
+##
+## Simulates a fresh deploy by deleting all wasm grammars, re-downloading them
+## from GitHub (the same path that runs in production via npm postinstall),
+## then running the full test suite to verify the downloaded grammars produce
+## working AST tools.
 ##
 ## NOT part of `make test` — requires network, ~8MB download, slower.
 ## Run before release. CI should run this on a release branch.
@@ -273,13 +291,14 @@ postdeploy-check: ensure-extension-deps
 # ===========================
 # Build / Compile
 # ===========================
+##@ Build / Compile
 .PHONY: compile compile-all compile-ts compile-webview compile-css package package-teams-bot update-contracts update-prompt-library
 
 ## Compile extension (TypeScript + React WebView + Tailwind CSS)
 compile: compile-all
 	@echo "Extension compiled!"
 
-## Compile all (TS + WebView + CSS via npm run compile)
+# (internal) Compile all (TS + WebView + CSS via npm run compile)
 compile-all: ensure-extension-deps
 	@echo "Compiling extension (TS + React WebView + CSS)..."
 	cd extension && npm run compile
@@ -349,13 +368,14 @@ update-prompt-library:
 # ===========================
 # Data Tier (Postgres + Redis)
 # ===========================
+##@ Docker — Data Tier
 .PHONY: data-up data-down data-logs
 
-## Start Postgres + Redis containers
+## Start Postgres + Redis containers (blocks until both healthchecks pass)
 data-up:
 	@echo "Starting data tier (Postgres + Redis)..."
-	docker compose -f $(DATA_COMPOSE) up -d
-	@echo "Data tier starting. Postgres: localhost:5432, Redis: localhost:6379"
+	docker compose -f $(DATA_COMPOSE) up -d --wait
+	@echo "Data tier healthy. Postgres: localhost:5432, Redis: localhost:6379"
 
 ## Stop data tier
 data-down:
@@ -370,6 +390,7 @@ data-logs:
 # ===========================
 # App Tier (Backend)
 # ===========================
+##@ Docker — App Tier
 .PHONY: app-up app-rebuild app-restart app-down app-logs
 
 ## Start backend container (builds backend image if missing)
@@ -405,12 +426,11 @@ app-logs:
 # ===========================
 # Full Stack Docker
 # ===========================
+##@ Docker — Full Stack
 .PHONY: docker-up docker-down docker-clean
 
 ## Start full stack (data tier, schema, then app tier)
 docker-up: data-up
-	@echo "Waiting for data tier to be healthy..."
-	@sleep 3
 	@$(MAKE) db-update
 	@$(MAKE) app-up
 	@echo "Full stack started!"
@@ -430,6 +450,7 @@ docker-clean: docker-down
 # ===========================
 # Database Schema (Liquibase)
 # ===========================
+##@ Database
 .PHONY: db-update db-status db-rollback-one
 
 ## Apply pending Liquibase changesets
@@ -452,6 +473,7 @@ db-rollback-one:
 # ===========================
 # Lint & Format
 # ===========================
+##@ Lint, Format & Types
 .PHONY: lint format lint-check
 
 ## Lint backend Python code (auto-fix)
@@ -501,83 +523,43 @@ typecheck:
 # ===========================
 # Clean
 # ===========================
-.PHONY: clean
+##@ Clean & Help
+.PHONY: clean clean-all
 
-## Clean all generated files
+## Clean build artifacts + caches (keeps venv + node_modules)
 clean:
-	@echo "Cleaning..."
-	rm -rf $(VENV_DIR)
-	rm -rf backend/__pycache__ backend/**/__pycache__
-	rm -rf backend/.pytest_cache
+	@echo "Cleaning caches and build artifacts..."
+	find backend -type d -name __pycache__ -prune -exec rm -rf {} +
+	rm -rf backend/.pytest_cache backend/.mypy_cache backend/.ruff_cache backend/htmlcov
 	rm -f backend/*.duckdb backend/*.duckdb.wal
 	rm -rf extension/out
+	@echo "Clean complete! (run 'make clean-all' to also remove venv + node_modules)"
+
+## Deep clean: everything above PLUS venv and node_modules (forces a fresh setup)
+clean-all: clean
+	@echo "Removing virtual environment and node_modules..."
+	rm -rf $(VENV_DIR)
 	rm -rf extension/node_modules
-	@echo "Clean complete!"
+	@echo "Deep clean complete! Run 'make setup' to reinstall."
 
 # ===========================
 # Help
 # ===========================
 .PHONY: help
 
-## Show this help message
+## Show this help message (auto-generated from '##' comments above each target)
 help:
 	@echo "Conductor Project - Available Commands"
 	@echo "======================================="
-	@echo ""
-	@echo "Setup:"
-	@echo "  make setup              Create venv and install all dependencies"
-	@echo "  make setup-backend      Setup backend only (venv + pip install)"
-	@echo "  make setup-extension    Setup extension only (npm install)"
-	@echo "  make browser-install    Install Playwright Chromium for web browsing tools"
-	@echo ""
-	@echo "Run Servers:"
-	@echo "  make run-backend        Start backend (dev mode, auto-reload)"
-	@echo "  make run-backend-prod   Start backend (production, 4 workers)"
-	@echo "  make run-backend-port PORT=8001  Start on custom port"
-	@echo ""
-	@echo "Testing:"
-	@echo "  make test               Run all tests (backend + extension + webview + parity)"
-	@echo "  make test-backend       Run backend unit tests"
-	@echo "  make test-extension     Run extension service tests (node:test)"
-	@echo "  make test-webview       Run React WebView tests (vitest)"
-	@echo "  make test-frontend      Run all frontend tests (extension + webview)"
-	@echo "  make test-parity        Validate Python<>TS tool parity"
-	@echo "  make integration-test   Run integration tests (needs API keys)"
-	@echo ""
-	@echo "Build:"
-	@echo "  make compile            Compile extension (TypeScript + CSS)"
-	@echo "  make package            Package extension as .vsix"
-	@echo "  make package-teams-bot TEAMS_TUNNEL_HOST=<host>  Package Teams bot app (.zip)"
-	@echo "  make update-contracts   Regenerate tool contracts from Python schemas"
-	@echo "  make update-prompt-library  Download latest prompts.chat CSV"
-	@echo ""
-	@echo "Docker (Data Tier):"
-	@echo "  make data-up            Start Postgres + Redis"
-	@echo "  make data-down          Stop data tier"
-	@echo "  make data-logs          View data tier logs"
-	@echo ""
-	@echo "Docker (App Tier):"
-	@echo "  make app-up             Start Backend"
-	@echo "  make app-rebuild SVC=x  Rebuild and restart a single service"
-	@echo "  make app-restart        Restart backend (config/secrets reload)"
-	@echo "  make app-down           Stop app tier"
-	@echo "  make app-logs           View app tier logs"
-	@echo ""
-	@echo "Docker (Full Stack):"
-	@echo "  make docker-up          Start everything (data + schema + app)"
-	@echo "  make docker-down        Stop everything"
-	@echo "  make docker-clean       Stop + remove conductor images"
-	@echo ""
-	@echo "Database:"
-	@echo "  make db-update          Apply pending Liquibase changesets"
-	@echo "  make db-status          Show pending changesets (dry run)"
-	@echo "  make db-rollback-one    Rollback last changeset"
-	@echo ""
-	@echo "Lint & Format:"
-	@echo "  make lint               Lint backend Python (ruff, auto-fix)"
-	@echo "  make format             Format backend Python (black + ruff format)"
-	@echo "  make lint-check         Lint + format check only (CI mode, no changes)"
-	@echo ""
-	@echo "Other:"
-	@echo "  make clean              Remove all generated files"
-	@echo "  make help               Show this help message"
+	@awk ' \
+		/^$$/ { doc="" } \
+		/^##@ / { printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next } \
+		/^## / { if (doc == "") doc=substr($$0, 4) } \
+		/^[a-zA-Z0-9_-]+:/ { \
+			if (doc != "") { \
+				name=$$0; sub(/:.*/, "", name); \
+				printf "  \033[36m%-22s\033[0m %s\n", name, doc; \
+				doc=""; \
+			} \
+		} \
+	' $(MAKEFILE_LIST)
