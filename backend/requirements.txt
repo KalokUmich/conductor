@@ -47,8 +47,6 @@ ast-grep-cli
 # Google's LLM-powered extraction with custom Claude/Bedrock provider
 langextract
 
-openai>=1.0.0
-
 # --- Playwright (Browser Automation) ---
 # Headless browser for web browsing, form filling, screenshots
 # After install: playwright install chromium
