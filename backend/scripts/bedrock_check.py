@@ -32,13 +32,15 @@ _DEFAULT_MODEL = "eu.anthropic.claude-sonnet-4-6"
 
 
 def _auth_mode(env: dict) -> str:
-    if "AWS_BEARER_TOKEN_BEDROCK" in env:
+    # bedrock_env sets cleared keys to None (to UNSET them for the subprocess),
+    # so test truthiness, not membership.
+    if env.get("AWS_BEARER_TOKEN_BEDROCK"):
         return "bearer token (long-lived Bedrock API key)"
-    if "AWS_ACCESS_KEY_ID" in env:
+    if env.get("AWS_ACCESS_KEY_ID"):
         return "static keys" + (
             " + session token (TEMPORARY — expires)" if env.get("AWS_SESSION_TOKEN") else ""
         )
-    if "AWS_PROFILE" in env:
+    if env.get("AWS_PROFILE"):
         return f"SSO profile ({env['AWS_PROFILE']}, auto-refresh)"
     return "IAM role / default chain (deployed mode)"
 
@@ -57,8 +59,10 @@ def main() -> int:
             os.environ[key] = val
 
     region = env.get("AWS_REGION") or "eu-west-2"
+    # Truthiness, not membership — bedrock_env sets cleared keys to None to UNSET
+    # them, so `"AWS_ACCESS_KEY_ID" in env` is True even in profile/role mode.
     has_creds = any(
-        k in env for k in ("AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_PROFILE")
+        env.get(k) for k in ("AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_PROFILE")
     )
 
     model = os.environ.get("BEDROCK_CHECK_MODEL")
