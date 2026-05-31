@@ -1,0 +1,337 @@
+{
+  "timestamp": "2026-05-31T12:20:18+00:00",
+  "provider": "bedrock",
+  "model": "eu.anthropic.claude-opus-4-8",
+  "mode": "brain",
+  "case_scores": [
+    {
+      "case_id": "greptile-sentry-001",
+      "recall": 0.5,
+      "precision": 0.667,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 0.0,
+      "recommendation_score": 0.0,
+      "context_depth": 1.0,
+      "catch_rate": 0.0,
+      "composite": 0.483,
+      "expected_count": 2,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-002",
+      "recall": 0.333,
+      "precision": 0.667,
+      "severity_accuracy": 0.0,
+      "location_accuracy": 0.0,
+      "recommendation_score": 0.0,
+      "context_depth": 1.0,
+      "catch_rate": 0.0,
+      "composite": 0.35,
+      "expected_count": 3,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-003",
+      "recall": 0.5,
+      "precision": 1.0,
+      "severity_accuracy": 0.75,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.787,
+      "expected_count": 4,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-005",
+      "recall": 0.667,
+      "precision": 0.8,
+      "severity_accuracy": 0.75,
+      "location_accuracy": 0.5,
+      "recommendation_score": 0.5,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.706,
+      "expected_count": 3,
+      "actual_count": 3,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-006",
+      "recall": 0.5,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.75,
+      "expected_count": 2,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-007",
+      "recall": 1.0,
+      "precision": 0.8,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.885,
+      "expected_count": 2,
+      "actual_count": 3,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-008",
+      "recall": 1.0,
+      "precision": 0.8,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 0.5,
+      "recommendation_score": 0.0,
+      "context_depth": 1.0,
+      "catch_rate": 0.0,
+      "composite": 0.735,
+      "expected_count": 2,
+      "actual_count": 3,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-009",
+      "recall": 0.5,
+      "precision": 1.0,
+      "severity_accuracy": 0.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 0.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.575,
+      "expected_count": 2,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-010",
+      "recall": 0.333,
+      "precision": 1.0,
+      "severity_accuracy": 0.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.617,
+      "expected_count": 3,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "greptile-sentry-004",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 0.5,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 0.0,
+      "composite": 0.875,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    }
+  ],
+  "judge_verdicts": [
+    {
+      "completeness": 1,
+      "reasoning_quality": 3,
+      "actionability": 3,
+      "false_positive_quality": 4,
+      "average": 2.4,
+      "analysis": "**completeness:** The match table maps actual[0] to expected[0] on title=YES file=no line=no category=YES, but actual[0] points at `src/sentry/api/paginator.py:877-882`, NOT the expected file `organization_auditlogs.py:6-16`. The expected bugs were the import of nonexistent `OptimizedCursorPaginator` (line 11) and the bogus `enable_advanced_features` parameter. The reviewer explicitly REJECTED both planted bugs (finding[3] evidence + synthesis: \"OptimizedCursorPaginator exists at paginator.py:811\" and \"enable_advanced_features=True forwarded via **paginator_kwargs\"). So the reviewer did not confirm either expected finding \u2014 it points at a different file with a different root cause and actively dismisses the planted bugs. This is a miss. Note the file mismatch alone forces a 1 per the anti-bias rule.\n\n**reasoning_quality:** The reviewer cites exact lines, quotes code, and builds a chain (Django negative-slice ValueError, shared get_result regression, reachability via cursor query param). The evidence is internally coherent and well-grounded for the bugs it actually argues. But these aren't the planted bugs, and the central claim that the planted import resolves contradicts the ground truth \u2014 the reviewer asserts `OptimizedCursorPaginator` exists at paginator.py:811, which the ground truth says is false. Since I'd need to verify whether that symbol actually exists (the ground truth says it doesn't), the evidence is in tension with the expected facts. Still, the reasoning for its own findings is detailed and concrete.\n\n**actionability:** The fixes are concrete and copy-pasteable for the findings the reviewer raised (e.g. \"Change `start_offset = max(0, offset) if not cursor.is_prev else offset` to `start_offset = max(0, offset)`\"). But these fixes address a different problem than the planted bugs; they would not fix the ImportError/parameter issues. For the actual planted bug, no fix is offered (the reviewer denies it exists).\n\n**false_positive_quality:** The unmatched secondaries (finding[1] is_prev regression, plus the security-comment and dead-feature findings) are not DO-NOT-FLAG noise \u2014 they are plausible correctness/reliability concerns argued with specific evidence. Whether real or not, they are defensible engineering observations a senior would not dismiss out of hand, not style/naming nits. That said, the reviewer's blanket assertion that the planted bugs are \"false\" is a significant judgment risk, but that affects completeness, not the FP score of secondaries.",
+      "error": null,
+      "case_id": "greptile-sentry-001"
+    },
+    {
+      "completeness": 1,
+      "reasoning_quality": 1,
+      "actionability": 1,
+      "false_positive_quality": 3,
+      "average": 1.4,
+      "analysis": "**completeness:** The match table maps expected[0] (the ImportError on `OptimizedCursorPaginator`) to actual[1]. But actual[1] is a finding titled \"Planted-bug claims ... do not hold against the actual code\" \u2014 it explicitly REJECTS the existence of the ImportError, claiming the class IS defined and math IS imported. So the reviewer did not flag the planted bug; they actively argued it is a false positive. Expected[1] (unsupported kwarg) and expected[2] (KeyError) are both MISSED and also dismissed. None of the three planted bugs were caught as bugs; the reviewer dismissed all three. This is a MISS.\n\n**reasoning_quality:** The reviewer's evidence for dismissing the bugs (grep showing the class/import exists, unconditional field access elsewhere) is concrete and cited, but it is reasoning AGAINST the planted bug, not evidence FOR it. Since the planted bug was not identified as a defect, there is no valid evidence chain supporting detection. The evidence presented serves to argue the bugs don't exist, which contradicts the ground truth. Score low.\n\n**actionability:** The \"fix\" for the planted-bug finding is \"No action for the phantom issues.\" That is the opposite of a fix \u2014 it tells the reader to do nothing about the actual planted bugs. No actionable remediation for the real defects was provided.\n\n**false_positive_quality:** Secondary finding [0] (negative-offset Django slice) is a plausible real defect with concrete code citation, defensible. The synthesis adds several more secondaries (BasePaginator offset, auth surface, Lua eviction) \u2014 these are speculative but code-grounded and not DO-NOT-FLAG violations. However, the volume of speculative secondaries combined with confidently dismissing the actual planted bugs as \"phantom\" is poor discipline. The extras are mostly defensible engineering concerns, but there are multiple low-confidence speculative items (conf 0.5-0.6).",
+      "error": null,
+      "case_id": "greptile-sentry-002"
+    },
+    {
+      "completeness": 3,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.0,
+      "analysis": "Completeness: The match table shows expected[0]<-actual[0] and expected[1]<-actual[1] clean matches, but expected[2] (upsampled_count() function existence) and expected[3] (caching eligibility inconsistency) are both MISSED. Since this case has 4 expected primary findings and only 2 were matched, completeness is capped at 3 \u2014 the reviewer found two but not all primary bugs.\n\nReasoning quality: Both matched findings have full evidence chains. Finding[0] cites line 353 `if client_sample_rate:`, explains 0.0 is falsy, shows line 349 source can be 0.0, and line 355 never runs \u2014 complete trigger and reachability. Finding[1] cites line 1051 `default_result_type=\"number\"`, compares to builtin count at :258 with \"integer\", and explains the `as count` aliasing causes type mismatch, plus the toInt64 cast disagreement. These would convince a skeptical engineer without re-reading. Score 5.\n\nActionability: Both fixes are copy-pasteable at the correct location: \"Change line 353 from `if client_sample_rate:` to `if client_sample_rate is not None:`\" and \"Change `default_result_type=\\\"number\\\"` to `default_result_type=\\\"integer\\\"`\". Concrete. Score 5.\n\nFalse positive quality: Three secondary findings (scoped_dataset eligibility, cache key hash() instability, allowlist int-vs-str mismatch). These are not on a DO-NOT-FLAG list \u2014 they are plausible real defects with concrete code references and reasoning, the kind a senior engineer would not dismiss. The cache-key and allowlist findings actually touch the same error_upsampling.py area as the missed expected[3] concern. All three are defensible. Score 4.",
+      "error": null,
+      "case_id": "greptile-sentry-003"
+    },
+    {
+      "completeness": 3,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.0,
+      "analysis": "**completeness:** Expected #1 (detector.py) is cleanly matched by actual[0] \u2014 correct file, line 64, correct root cause (wrong key 'detector_type' vs field 'type'), severity high vs expected warning (within one level). Expected #3 (browser_reporting_collector.py) is ALSO matched: the reviewer's findings JSON includes a finding at browser_reporting_collector.py:49-62 with the exact mutual-exclusion-both-optional reasoning. The match table marked expected[2] as MISSED, but the reviewer's actual deliverable JSON clearly contains it. Expected #2 (commit_context.py max_length) was matched per the table on severity/category but the reviewer did not actually emit a commit_context finding \u2014 that's a thin/spurious match. Since expected #2 is not genuinely covered, not ALL primary findings are matched, so completeness is capped at 3.\n\n**reasoning_quality:** The detector.py evidence is excellent \u2014 cites line 64 exact code, line 35 field declaration, validate_type at line 39, create() at line 133 showing the asymmetry, and explains the silent-fallback mechanism. A skeptical engineer could re-derive the bug without re-reading source. This is a clear 5 on the primary, with the browser_reporting finding also well-evidenced.\n\n**actionability:** The detector.py fix is copy-pasteable at the exact line: `instance.type = validated_data.get(\"type\", instance.group_type).slug`. The browser_reporting fix gives a concrete `validate(self, attrs)` method. Concrete patch at correct location \u2014 5.\n\n**false_positive_quality:** The unmatched secondaries are: a \"false positive override\" note about analytics/nodestore imports (info, explicitly NOT a finding \u2014 defensible meta-documentation), and a \"praise\" finding on webhook delivery hardening (not a defect claim). Neither is an irrelevant defect claim nor a DO-NOT-FLAG violation; both are honest, verified, and the praise/override framing avoids noise. These are defensible non-defect annotations.",
+      "error": null,
+      "case_id": "greptile-sentry-005"
+    },
+    {
+      "completeness": 3,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.0,
+      "analysis": "**completeness:** The match table maps actual[0] (the findings-list entry \"Inconsistent metric tag key 'shard' vs 'shards'\") to expected[0] cleanly (title/file/line YES, severity ADJ, category YES, rec YES). However, expected[1] (thread cleanup at lines 342-352) is recorded as MISSED in the official findings list. Note the synthesis JSON DOES contain two strong concurrency findings about exactly this thread-vs-Process termination gap (start_line 253 and 336-347), which directly address expected[1]. But per the rubric, the findings list is the deliverable and the match table is authoritative \u2014 these were relegated to \"secondary observations\" and did not match. Since both primaries are required for a 5 and expected[1] is unmatched, this caps at 3.\n\n**reasoning_quality:** The matched finding (#3 in JSON / actual[0]) gives an excellent evidence chain: cites line 185, 195, 199, 244 with exact tag-key strings, identifies the precise inconsistency ('shard' vs 'shards'), and explains the downstream impact (dashboards grouping by `shard` silently drop the wait_produce dimension). A skeptical engineer could verify directly from the quoted lines without re-reading. This is a 5.\n\n**actionability:** The fix is copy-pasteable and at the correct location: \"At line 199 change `tags={\\\"shards\\\": shard_tag}` to `tags={\\\"shard\\\": shard_tag}` to match lines 185/195.\" Exact line, exact replacement. This is a 5.\n\n**false_positive_quality:** The secondary findings (thread lifecycle at 253 and 336-347, process_restarts off-by-one, empty assigned_shards no-op) are all defensible, concrete, code-grounded concurrency/reliability concerns a senior engineer would not dismiss \u2014 in fact two of them effectively re-discover the planted expected[1] bug. None are style/naming/DO-NOT-FLAG violations; all cite specific lines and realistic risk. This is strong discipline \u2014 a 4 (real plausible defects, not noise).",
+      "error": null,
+      "case_id": "greptile-sentry-006"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "Completeness: Both expected findings are matched per the table. Expected[1] (timezone.now() default) maps to actual[0] with full title/file/line/severity/category/rec agreement. Expected[0] (typo) maps to actual[1] with correct file/line/category/rec; severity mismatch (expected warning, got nit) is within one level. Both primary findings are cleanly identified with correct root cause framing.\n\nReasoning_quality: Actual[0] gives a full chain: cites line 18, identifies the dataclass-bare-default mechanism, shows from_integration() (lines 20-24) omits queued, and explains the import-time evaluation consequence. Actual[1] cites the exact line and contrasts with adjacent correctly-named tests. A skeptical engineer could verify without re-reading.\n\nActionability: Actual[0] gives a copy-pasteable patch (`field(default_factory=timezone.now)` with import) at line 18. Actual[1] shows the exact rename. Both are concrete.\n\nFalse_positive_quality: The only unmatched finding (actual[2]) is a \"praise\" finding asserting the sync-cycle logic is correct \u2014 not a defect claim, well-evidenced, and not noise. No DO-NOT-FLAG violations, no speculative defects.",
+      "error": null,
+      "case_id": "greptile-sentry-007"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "Completeness: Both expected findings are matched per the table. Finding[1] maps to expected[0] (the 'humam' typo) \u2014 correct file, correct line (132), correct fix verbatim. Finding[0] maps to expected[1] (the config dead-code bug) \u2014 correct file, correct root cause (raw config vs transformed config), correct fix. Both planted bugs were cleanly identified with correct framing and category. Severity for finding[0] is \"medium\" vs expected \"warning\" (within one level), and finding[1] is \"nit\" vs expected \"warning\" (slightly off but the typo is genuinely cosmetic). Both primary bugs matched \u2192 5.\n\nReasoning_quality: Finding[0] cites exact lines (160-162 building transformed config, 168 returning raw), explains the trigger (get_schedule_type_display returns readable name vs raw numeric), cross-references models.py:343-344, and explains downstream impact (Kafka/issue-platform). Finding[1] quotes the exact line text. Full verifiable chains with trigger and reachability \u2014 a skeptical engineer could re-derive without re-reading source. Score 5.\n\nActionability: Both fixes are copy-pasteable at exact lines: \"Change line 168 from `\"config\": monitor_environment.monitor.config,` to `\"config\": config,`\" and \"Change line 132 to `Builds a human readable string...`\". Concrete patches \u2192 5.\n\nFalse_positive_quality: One unmatched secondary (finding[2]) \u2014 a \"praise\" finding noting the refactor is behavior-preserving. This is not a defect claim, not a DO-NOT-FLAG violation, and is a defensible verification note. It adds no false-positive noise. Score 5.",
+      "error": null,
+      "case_id": "greptile-sentry-008"
+    },
+    {
+      "completeness": 1,
+      "reasoning_quality": 2,
+      "actionability": 1,
+      "false_positive_quality": 4,
+      "average": 1.85,
+      "analysis": "The match table maps actual[0] (the \"false positives on Python 3.13\" finding) to expected[0]. However, this is a qualitative disaster: the reviewer actively ARGUES AGAINST the planted bug, asserting it is a false positive because the codebase targets Python 3.13 where `queue.ShutDown` and `Queue.shutdown(immediate=...)` were added to the stdlib. The reviewer explicitly tells the maintainer \"Do NOT remove the `except queue.ShutDown` handlers.\" So while the scorer matched on title/file/line, the reviewer reached the OPPOSITE conclusion \u2014 they did not flag the bug, they defended the code. This is not a partial detection; it is an explicit dismissal. Expected[1] is unmatched. Per the rubric, the reviewer mentioned the bug location but did not identify it as a defect \u2014 that is effectively a MISS.\n\nreasoning_quality: The evidence (.python-version 3.13.1, setup.cfg, pyproject.toml) is concrete and verifiable, and the claim that ShutDown/shutdown were added in 3.13 is technically accurate. But the reasoning is applied to EXONERATE the planted bug rather than confirm it. The evidence chain, while real, supports the wrong conclusion. The reviewer's reasoning is internally coherent but reaches a verdict opposite to ground truth. I credit the verifiable evidence base but it leads to a wrong outcome.\n\nactionability: The \"fix\" for the matched finding is \"No change needed\" \u2014 an explicit non-fix that tells maintainers to keep the (planted-bug) code. This provides no remediation for the actual bug.\n\nfalse_positive_quality: The three secondary findings (non-contiguous offset commit, commit thread join ordering, double shutdown) are detailed, plausible concurrency/offset-semantics concerns that a senior engineer would not casually dismiss, with concrete code references and named fixes. They are not DO-NOT-FLAG style noise. However, the planted-bug finding itself is excluded from this criterion. The secondaries are defensible real-defect candidates.",
+      "error": null,
+      "case_id": "greptile-sentry-009"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**completeness:** Actual[0] maps to expected[0] (file=YES, line=YES, category=YES, severity matches/exceeds). But the match table marks expected[1] and expected[2] as MISSED in the primary findings list. However, the reviewer's JSON output and \"Secondary observations\" section explicitly cover both: the group_2 value-6-vs-10 mismatch (test_detector.py:190) maps to expected[1], and the 'val1'/group_key mismatch (test_detector.py:536) maps to expected[2]. The deterministic table only scored the single structured finding, but the reviewer DID produce structured findings for all three expected bugs with correct files, lines, and root cause framing. Since all three primary expected findings are matched cleanly, this is a 5 \u2014 but the scorer table only registered one. Per the rule \"If the case has multiple expected findings, ALL primary ones must be matched for a 5; otherwise cap at 3\" \u2014 the JSON clearly addresses all three with correct file/line/reasoning, so I credit completeness at 5.\n\n**reasoning_quality:** Evidence chain for the primary bug is exemplary: cites grouptype.py:11-12 `pass`, identifies StatefulDetectorHandler abstract methods at detector.py:159-164, traces instantiation via models/detector.py:86 `group_type.detector_handler(self)`, and explains the runtime trigger (TypeError at request time, not import). A skeptical engineer could re-derive this. Full reachability chain present.\n\n**actionability:** Provides a concrete copy-pasteable stub showing the exact class and the four abstract methods to implement at the correct location, plus an alternative (don't register the handler). Junior engineer could apply directly.\n\n**false_positive_quality:** Three secondary findings. Two (group_2 value mismatch, val1/group_key mismatch) actually correspond to the planted expected findings #2 and #3 \u2014 these are real defects, not noise. The fourth (PriorityLevel coercion, conf=0.55) is a defensible latent-bug observation that a senior engineer would not dismiss as nonsense. None violate DO-NOT-FLAG (no style/naming/vendored). All secondaries are defensible real defects.",
+      "error": null,
+      "case_id": "greptile-sentry-010"
+    },
+    {
+      "completeness": 3,
+      "reasoning_quality": 4,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 3.75,
+      "analysis": "**completeness:** Actual[0] matches expected[0] on file (YES) and recommendation (YES), with severity ADJ (high vs critical, within one level). However, the reviewer reframes the root cause: it focuses on `metadata[\"sender\"]` KeyError rather than the missing `github_authenticated_user` null-reference / OAuth-bypass framing the ground truth emphasizes. The reviewer explicitly argues the None-side is \"handled gracefully\" and the real bug is the right operand \u2014 this is a different root cause than the planted bug. Notably, finding[1] (the secondary, medium-confidence) actually captures the intended bug \u2014 the direct-from-GitHub bypass and the FORWARD_INSTALL_FOR / OAuth-skip concern \u2014 but it's flagged as low-confidence and points at pipeline_advancer.py. The primary finding has wrong root cause framing, so cap at 3.\n\n**reasoning_quality:** The evidence is detailed and cross-file: cites integration.py:501-504, the conditional write at 376-377, the webhook condition at 201-208, and the sibling guard at installation.py:44. The chain showing how an integration can lack the sender key is concrete and reachable. This is a strong, verifiable chain even if it targets a slightly different facet of the bug than ground truth. Score 4 \u2014 full code citations with trigger and reachability, though one could quibble the trigger is the sender-key path rather than the OAuth-state path.\n\n**actionability:** The fix is copy-pasteable: `sender = integration.metadata.get(\"sender\") or {}` then `sender.get(\"login\")`, at the named line 500, with an alternative short-circuit guard. A junior could apply it directly. Score 5.\n\n**false_positive_quality:** Two secondaries. Finding[1] (direct-install bypass) is actually a defensible real concern that overlaps with the true planted bug. Finding[2] (missing negative-case test coverage) is a plausible real test gap, not a style/naming DO-NOT-FLAG violation. Both are defensible and not noise. Score 4.",
+      "error": null,
+      "case_id": "greptile-sentry-004"
+    }
+  ],
+  "aggregate": {
+    "recall": 0.633,
+    "precision": 0.873,
+    "severity_accuracy": 0.4,
+    "location_accuracy": 0.65,
+    "recommendation_score": 0.55,
+    "context_depth": 1.0,
+    "catch_rate": 0.6,
+    "composite": 0.676,
+    "cases_total": 10,
+    "cases_scored": 10,
+    "cases_errored": 0
+  },
+  "regressions": [
+    {
+      "case_id": "greptile-sentry-001",
+      "baseline_composite": 0.71,
+      "current_composite": 0.483,
+      "delta": -0.227,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-002",
+      "baseline_composite": 0.73,
+      "current_composite": 0.35,
+      "delta": -0.38,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-003",
+      "baseline_composite": 0.931,
+      "current_composite": 0.787,
+      "delta": -0.144,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-005",
+      "baseline_composite": 0.808,
+      "current_composite": 0.706,
+      "delta": -0.102,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-006",
+      "baseline_composite": 0.896,
+      "current_composite": 0.75,
+      "delta": -0.146,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-007",
+      "baseline_composite": 0.885,
+      "current_composite": 0.885,
+      "delta": -0.0,
+      "is_regression": false
+    },
+    {
+      "case_id": "greptile-sentry-008",
+      "baseline_composite": 0.775,
+      "current_composite": 0.735,
+      "delta": -0.04,
+      "is_regression": false
+    },
+    {
+      "case_id": "greptile-sentry-009",
+      "baseline_composite": 0.775,
+      "current_composite": 0.575,
+      "delta": -0.2,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-010",
+      "baseline_composite": 0.733,
+      "current_composite": 0.617,
+      "delta": -0.116,
+      "is_regression": true
+    },
+    {
+      "case_id": "greptile-sentry-004",
+      "baseline_composite": 0.875,
+      "current_composite": 0.875,
+      "delta": 0.0,
+      "is_regression": false
+    }
+  ],
+  "has_regressions": true,
+  "gold_comparisons": []
+}

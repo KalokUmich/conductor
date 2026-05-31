@@ -24,9 +24,10 @@ import sys
 # --- Bedrock eu-west-2 prices, $ per 1M tokens: (input, output, cache_read, cache_write) ---
 # VERIFY against current AWS pricing before quoting externally. Standard Anthropic tiers:
 PRICES = {
+    # (input, output, cache_read, cache_write_5m) per 1M tokens — Anthropic list prices.
     "haiku": (1.00, 5.00, 0.10, 1.25),
     "sonnet": (3.00, 15.00, 0.30, 3.75),
-    "opus": (15.00, 75.00, 1.50, 18.75),
+    "opus": (5.00, 25.00, 0.50, 6.25),  # Opus 4.8 (was wrongly Opus-3 $15/$75)
 }
 BASE = os.path.join(os.path.dirname(__file__), "baselines")
 
