@@ -243,6 +243,20 @@ class SdkWorkerRunner:
             logger.warning("SdkWorkerRunner query failed: %s", exc)
             error = f"{type(exc).__name__}: {exc}"
 
+        # Per-worker usage line (Step 14.0) — makes SDK leaf cost observable; the A/B
+        # harness greps this alongside the coordinator's "converse DONE" lines.
+        _u = usage or {}
+        logger.info(
+            "[sdk_worker usage] model=%s in=%s out=%s cache_read=%s cache_creation=%s tools=%d iters=%d",
+            self._model,
+            _u.get("input_tokens", 0),
+            _u.get("output_tokens", 0),
+            _u.get("cache_read_input_tokens", 0),
+            _u.get("cache_creation_input_tokens", 0),
+            tool_calls,
+            iterations,
+        )
+
         return SdkAgentResult(
             answer="\n".join(answer_parts).strip(),
             thinking_steps=thinking_steps,
