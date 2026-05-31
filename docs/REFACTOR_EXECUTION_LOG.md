@@ -170,3 +170,52 @@ User asked to fix the test deadlocks *properly* and to run tool tests against a 
   - `test_brain` 68 + `test_agent_loop` 47 green.
   - **DEFERRED (needs Bedrock):** an SDK-leaf e2e `@integration` test — the existing integration tests cover the in-house/AgentLoopService path, which is still live for coordinators.
 - **NEXT:** merge 06e → parent; **Step 06 (SDK worker migration) then COMPLETE.** Future work tracked in ROADMAP **Phase 14** (Skills + Concierge) + the 06c eval follow-ups (severity-rubric calibration + grafana finding-level dig).
+
+---
+
+## Phase 14 — first slice (2026-05-31)
+
+**Foundation first (the 2-hour-hang fix):**
+- **14F-auth — SSO auto-refresh (merged `964b626`/`0407076`/`6113494`).** Root cause of the 2h hang:
+  app used pasted static 1h SSO temp creds; on expiry boto3 + the SDK CLI **hung on `ExpiredToken`**
+  with no wall-clock cap. Fix: `aws_bedrock.profile` (config) + `ClaudeBedrockProvider.aws_profile` →
+  `boto3.Session(profile)` auto-refreshes role creds from the cached SSO login (~8h); `scripts/sso_creds.sh`
+  sets up the profile (writes gitignored `config/conductor.local.env`, never touches secrets.local.yaml);
+  eval runners + `check_creds.sh` prefer the profile. Verified: account 533267248474 / `central-sandbox-admin`
+  via profile `sandbox-render-a`, `DeferredRefreshableCredentials`, **auth held `auth_err=0` across every
+  ~44–58min eval.** One `aws sso login --sso-session fintern --use-device-code` lasts ~8h. (WSL2 needs
+  `--use-device-code` / copy-URL — no local browser.)
+- **14F-guard — `scripts/guarded_run.sh` (merged `60cf7e9`).** Wall-clock `timeout` + 20s auth-detect +
+  15min stall-detect → kills fast (auth caught in ~2s, fault-tested). All Bedrock runs go through it.
+- **Lesson:** memory `feedback_eval_run_timeouts` (timeout-wrap + size to the run, not arbitrarily short).
+
+**Phase 14 work (all on Sonnet brain + Haiku leaves; eval = sentry suite, high run-to-run variance):**
+- **14.0 (merged `f23b91e`/`510e95b`)** — Opus 4.8 registered (`eu.anthropic.claude-opus-4-8`, verified
+  reachable); A/B harness (`run_ab_severity.sh` + `ab_report.py`, cost via corrected Opus-4.8 prices
+  $5/$25/$0.50/$6.25); `sdk_worker` leaf-usage INFO log; `run.py --verbose`→INFO so cost is captured.
+- **14.1 (merged `40f6749`)** — `PHASE14_SCORE_DIAGNOSIS.md` (severity = the one systematic regression;
+  grafana-004 = variance) + `PHASE14_PROMPT_AUDIT.md`.
+- **14.A model A/B (merged `890692d`) — Opus 4.8 REJECTED.** Sonnet vs Opus 4.8 on 10 sentry cases:
+  composite 0.812 vs 0.676, severity 0.562 vs 0.400, recall 0.967 vs 0.633; cost $4.91 vs $10.72 (2.2×).
+  **Opus worse AND costlier; severity hypothesis refuted → severity is a PROMPT problem.** Keep Sonnet.
+- **14.2 severity rubric (merged `08e7ef6`) — THE WIN.** Rewrote `pr_brain_coordinator.md` severity tiers
+  as examples: security-control removal / acceptance-criterion break = `critical` unmissable; sentry-004
+  "scope gap" as a worked anti-pattern; conservation scoped to speculative findings. **Gate: severity
+  0.562→0.662 (+0.10), composite 0.812→0.831, catch 0.60→0.70** (above the entire prior Sonnet range →
+  real signal). Precision −0.07 (expected, less conservative).
+- **14.3 Anthropic-compliance (merged `8ab2912`) — no churn.** Re-verified the audit's remaining
+  candidates against the live file: negative-framing contrast + forceful language on hard constraints are
+  *correct* (principle #6); the one real win (severity) shipped in 14.2. No prompt edits (avoid #8-scar
+  regression on already-compliant prompts validated against noisy evals).
+- **14.4 preset+append (branch `refactor/step-14-4-preset`, PARKED — NOT merged).** Probed
+  `system_prompt={preset:claude_code, append:<role>}` vs full-replace. **Refuted:** detection ↑ (catch
+  0.70→0.80, recall→1.0, precision +0.03) but **severity 0.662→0.483 (−0.179, undid 14.2)**, composite
+  −0.016; read-only drift = 0. The Claude Code persona **dilutes our role-specialized severity rubric** →
+  **keep full-replace.** Memory `feedback_sdk_full_replace_prompt`. (The harness — loop/fluency — is what
+  helps and we already use it; the persona isn't worth adopting. SKILL.md remap deferred, same caution.)
+- **14.5** — this wrap-up + ROADMAP update.
+
+**Phase 14 net:** model decision made (stay Sonnet; Opus 4.8 registered for ad-hoc), the measured defect
+fixed (severity +0.10), prompts confirmed Anthropic-compliant, preset-persona refuted (full-replace kept),
+and the credential/hang foundation permanently fixed. **Deferred (own initiative, ROADMAP Phase 14):** the
+SDK Concierge / 3-tier + MCP integration backbone + SKILL.md progressive-disclosure (cache economics).
