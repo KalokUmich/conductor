@@ -84,16 +84,22 @@ Key settings in `conductor.settings.yaml`:
 - `ai_models[].explorer: true` — mark model as sub-agent capable
 
 **Bedrock auth — two deployment modes** (same resolution in `claude_bedrock._get_client` and
-`sdk_worker.bedrock_env`; mode is inferred from which creds are present):
-- **Local** — a local secret or an SSO **profile** with auto-refresh, for a long-lived token to
-  test model performance. Set `CONDUCTOR_AWS_PROFILE=<profile>` (boto3 + the CLI's AWS SDK
-  auto-refresh role creds from the cached SSO login — one `aws sso login` per ~8h, no hourly
-  pasting), or supply static `CONDUCTOR_AWS_ACCESS_KEY_ID` / `CONDUCTOR_AWS_SECRET_ACCESS_KEY`.
-- **Deployed** — no static keys and no profile → Bedrock is reached via the ambient **IAM role**
+`sdk_worker.bedrock_env`; mode is inferred from which creds are present, priority
+**bearer > static keys > profile > IAM role**):
+- **Local** — pick whichever is simplest for a long-lived token to test model performance:
+  - **Bedrock API key** (recommended for local): `CONDUCTOR_AWS_BEARER_TOKEN=<key>` →
+    exported as `AWS_BEARER_TOKEN_BEDROCK`; a single long-lived bearer token, no SSO login /
+    profile / refresh. ⚠️ it's a long-lived secret — keep it in a sandbox account, gitignored,
+    with a narrow `bedrock:InvokeModel` IAM policy.
+  - **SSO profile**: `CONDUCTOR_AWS_PROFILE=<profile>` (boto3 + the CLI's AWS SDK auto-refresh
+    role creds from the cached SSO login — one `aws sso login` per ~8h, no hourly pasting).
+  - **Static keys**: `CONDUCTOR_AWS_ACCESS_KEY_ID` / `CONDUCTOR_AWS_SECRET_ACCESS_KEY`.
+- **Deployed** — none of the above → Bedrock is reached via the ambient **IAM role**
   (ECS task role / instance profile) through the default credential chain.
 
 Environment variables override secrets for cloud deployment (`CONDUCTOR_*` prefix):
 ```bash
+CONDUCTOR_AWS_BEARER_TOKEN=...        # Bedrock — local Bedrock API key (bearer); highest priority
 CONDUCTOR_AWS_PROFILE=...             # Bedrock — local SSO profile (auto-refresh); omit in deployed/role mode
 CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock — static creds (alternative to profile)
 CONDUCTOR_AWS_SECRET_ACCESS_KEY=...

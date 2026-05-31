@@ -56,6 +56,7 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_AWS_SESSION_TOKEN": ("ai_providers", "aws_bedrock", "session_token"),
     "CONDUCTOR_AWS_REGION": ("ai_providers", "aws_bedrock", "region"),
     "CONDUCTOR_AWS_PROFILE": ("ai_providers", "aws_bedrock", "profile"),
+    "CONDUCTOR_AWS_BEARER_TOKEN": ("ai_providers", "aws_bedrock", "bearer_token"),
     "CONDUCTOR_JIRA_CLIENT_ID": ("jira", "client_id"),
     "CONDUCTOR_JIRA_CLIENT_SECRET": ("jira", "client_secret"),
     "CONDUCTOR_ATLASSIAN_READONLY_EMAIL": ("atlassian_readonly", "email"),
@@ -394,6 +395,10 @@ class AWSBedrockSecretsConfig(BaseModel):
     # AWS named profile (SSO). When set (and static keys empty), boto3 resolves +
     # AUTO-REFRESHES the role creds from the cached SSO login — no hourly pasting.
     profile: Optional[str] = None
+    # Amazon Bedrock API key (bearer token → AWS_BEARER_TOKEN_BEDROCK). Highest-priority
+    # LOCAL-mode option: a single long-lived token, no SSO login / profile / refresh.
+    # botocore (coordinator) auto-resolves it from env; bedrock_env passes it to the CLI.
+    bearer_token: Optional[str] = None
 
 
 class AIProvidersSecretsConfig(BaseModel):
@@ -793,6 +798,7 @@ def load_config(
             session_token=_env("CONDUCTOR_AWS_SESSION_TOKEN", bdr_sec.get("session_token") or ""),
             region=_env("CONDUCTOR_AWS_REGION", bdr_sec.get("region", "us-east-1")),
             profile=(_env("CONDUCTOR_AWS_PROFILE", bdr_sec.get("profile") or "") or None),
+            bearer_token=(_env("CONDUCTOR_AWS_BEARER_TOKEN", bdr_sec.get("bearer_token") or "") or None),
         ),
     )
 

@@ -94,23 +94,25 @@ class SdkAgentResult:
 def bedrock_env() -> Dict[str, Optional[str]]:
     """Env the spawned Claude Code CLI reads to target Bedrock (Claude-only).
 
-    Two deployment modes, inferred from which creds the config carries — kept in
-    lock-step with ``ClaudeBedrockProvider._get_client`` so the SDK leaf worker and
-    the in-house coordinator authenticate the same way:
+    Modes, inferred from which creds the config carries — kept in lock-step with
+    ``ClaudeBedrockProvider._get_client`` so the SDK leaf worker and the in-house
+    coordinator authenticate the same way. Priority: **bearer > static > profile > role**.
 
-    * **Local** — static keys (explicit / CI temp creds) OR an SSO **profile**
-      (``CONDUCTOR_AWS_PROFILE``). With a profile we set ``AWS_PROFILE`` and let the
-      CLI's AWS SDK resolve + AUTO-REFRESH the role creds from the cached SSO login
-      (one ``aws sso login`` per ~8h, no hourly pasting → a long-lived token for
-      model-perf testing).
-    * **Deployed** — neither static keys nor a profile → Bedrock is reached via the
-      ambient **IAM role** (ECS task role / instance profile) through the default
-      credential chain.
+    * **Local — Bedrock API key** (``CONDUCTOR_AWS_BEARER_TOKEN`` →
+      ``AWS_BEARER_TOKEN_BEDROCK``). A single long-lived bearer token, no SSO login /
+      profile / refresh — the simplest long-lived token for model-perf testing. We
+      clear the SigV4 key vars so botocore/CLI use the token, not stale keys.
+    * **Local — static keys** (explicit / CI temp creds).
+    * **Local — SSO profile** (``CONDUCTOR_AWS_PROFILE``). We set ``AWS_PROFILE`` and let
+      the CLI's AWS SDK resolve + AUTO-REFRESH the role creds from the cached SSO login
+      (one ``aws sso login`` per ~8h, no hourly pasting).
+    * **Deployed — IAM role** — none of the above → Bedrock via the ambient role
+      (ECS task role / instance profile) through the default credential chain.
 
     The SDK merges this dict over ``os.environ`` for the CLI subprocess (a ``None``
     value REMOVES that key, any string SETS it — see the SDK subprocess transport).
-    So we must clear the key vars to ``None`` (NOT ``""``) in profile/role mode:
-    an empty-string ``AWS_ACCESS_KEY_ID`` would shadow the profile/role and poison
+    So we must clear the key vars to ``None`` (NOT ``""``) in bearer/profile/role mode:
+    an empty-string ``AWS_ACCESS_KEY_ID`` would shadow the token/profile/role and poison
     the credential chain.
     """
     cfg = load_config()
@@ -121,7 +123,12 @@ def bedrock_env() -> Dict[str, Optional[str]]:
         "AWS_DEFAULT_REGION": b.region,
     }
     have_static = bool((b.access_key_id or "").strip() and (b.secret_access_key or "").strip())
-    if have_static:  # local mode — explicit / CI temp creds
+    if getattr(b, "bearer_token", None):  # local mode — Bedrock API key (bearer token)
+        env["AWS_BEARER_TOKEN_BEDROCK"] = b.bearer_token
+        env["AWS_ACCESS_KEY_ID"] = None
+        env["AWS_SECRET_ACCESS_KEY"] = None
+        env["AWS_SESSION_TOKEN"] = None
+    elif have_static:  # local mode — explicit / CI temp creds
         env["AWS_ACCESS_KEY_ID"] = b.access_key_id
         env["AWS_SECRET_ACCESS_KEY"] = b.secret_access_key
         # None unsets any stale session token inherited from the parent env.

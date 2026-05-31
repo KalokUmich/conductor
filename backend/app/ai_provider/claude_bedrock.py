@@ -23,6 +23,7 @@ Usage:
 import copy
 import json
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from .base import AIProvider, ChatMessage, DecisionSummary, TokenUsage, ToolCall, ToolUseResponse
@@ -118,6 +119,7 @@ class ClaudeBedrockProvider(AIProvider):
         region_name: Optional[str] = None,
         model_id: Optional[str] = None,
         aws_profile: Optional[str] = None,
+        aws_bearer_token: Optional[str] = None,
     ) -> None:
         """Initialize the Claude Bedrock provider.
 
@@ -130,6 +132,9 @@ class ClaudeBedrockProvider(AIProvider):
             aws_profile: AWS named profile (SSO). When set and static keys are absent,
                 the client is built from this profile so boto3 AUTO-REFRESHES the role
                 credentials from the cached SSO login (no hourly token pasting).
+            aws_bearer_token: Amazon Bedrock API key (bearer token). Highest-priority
+                local-mode option: exported as AWS_BEARER_TOKEN_BEDROCK so botocore uses
+                bearer auth instead of SigV4 — a single long-lived token, no SSO/profile.
         """
         self.aws_access_key_id = aws_access_key_id
         self.aws_secret_access_key = aws_secret_access_key
@@ -137,6 +142,7 @@ class ClaudeBedrockProvider(AIProvider):
         self.region_name = region_name or self.DEFAULT_REGION
         self.model_id = model_id or self.DEFAULT_MODEL_ID
         self.aws_profile = aws_profile
+        self.aws_bearer_token = aws_bearer_token
         self._client: Optional[object] = None
 
     @property
@@ -166,7 +172,16 @@ class ClaudeBedrockProvider(AIProvider):
                     connect_timeout=10,
                 )
                 have_static = bool(self.aws_access_key_id and self.aws_secret_access_key)
-                if self.aws_profile and not have_static:
+                # Priority mirrors sdk_worker.bedrock_env: bearer > static > profile > role.
+                if self.aws_bearer_token:
+                    # Amazon Bedrock API key → botocore reads AWS_BEARER_TOKEN_BEDROCK from
+                    # the env and uses bearer auth (httpBearerAuth) instead of SigV4. Build
+                    # the client with no explicit SigV4 creds so the token path is taken.
+                    os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.aws_bearer_token
+                    self._client = boto3.client(
+                        "bedrock-runtime", region_name=self.region_name, config=boto_config
+                    )
+                elif self.aws_profile and not have_static:
                     # SSO named profile → boto3's SSO provider resolves the role creds
                     # and AUTO-REFRESHES them from the cached login (no hourly pasting).
                     session = boto3.Session(profile_name=self.aws_profile)

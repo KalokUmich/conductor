@@ -124,9 +124,13 @@ chosen per-agent by a discriminator in `brain._dispatch_explore`:
   `condense_result` consumes unchanged. `prompts` become CLI subprocess args, so a `_sanitize_for_cli`
   pass strips C0/NUL bytes (a UTF-16 doc read as text would otherwise abort `os.exec`).
 - **Bedrock creds — two modes** (same resolution in `claude_bedrock._get_client` and
-  `sdk_worker.bedrock_env`, inferred from which creds are present): **local** = static keys OR an SSO
-  **profile** (`CONDUCTOR_AWS_PROFILE`) with boto3/CLI auto-refresh (long-lived token for model-perf
-  testing); **deployed** = neither → the ambient **IAM role** via the default credential chain.
+  `sdk_worker.bedrock_env`, inferred from which creds are present; priority
+  **bearer > static > profile > role**): **local** = a Bedrock API key
+  (`CONDUCTOR_AWS_BEARER_TOKEN` → `AWS_BEARER_TOKEN_BEDROCK`, a single long-lived bearer token — the
+  simplest for model-perf testing) OR static keys OR an SSO **profile** (`CONDUCTOR_AWS_PROFILE`,
+  boto3/CLI auto-refresh); **deployed** = none of those → the ambient **IAM role** via the default
+  credential chain. Bearer/profile/role clear the SigV4 key vars to `None` (not `""`) so they aren't
+  shadowed.
 
 **PR Brain v2** (`agent_loop/pr_brain.py`): Coordinator-worker orchestrator for PR reviews. Activated via `transfer_to_brain("pr_review")`. **Agent-as-tool** design — a single Brain (strong tier) surveys the PR, dispatches scope-bounded workers (explorer tier) via two primitives, replans on surprises, and synthesises:
 

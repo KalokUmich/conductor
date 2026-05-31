@@ -169,6 +169,7 @@ class ProviderResolver:
                     region_name=cfg.region,
                     model_id=model_name,
                     aws_profile=getattr(cfg, "profile", None),
+                    aws_bearer_token=getattr(cfg, "bearer_token", None),
                 )
             else:
                 logger.warning(f"Unknown provider type: {provider_type}")

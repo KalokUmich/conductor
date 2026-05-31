@@ -157,9 +157,29 @@ def _fake_bedrock_cfg(monkeypatch, **bedrock):
         session_token=bedrock.get("session_token", ""),
         region=bedrock.get("region", "eu-west-2"),
         profile=bedrock.get("profile"),
+        bearer_token=bedrock.get("bearer_token"),
     )
     cfg = types.SimpleNamespace(ai_providers=types.SimpleNamespace(aws_bedrock=b))
     monkeypatch.setattr(sdk_worker, "load_config", lambda: cfg)
+
+
+def test_bedrock_env_bearer_mode_sets_token_and_clears_keys(monkeypatch):
+    """Local mode via Bedrock API key → AWS_BEARER_TOKEN_BEDROCK set; SigV4 key vars
+    cleared to None. Bearer takes priority even when static keys are also present."""
+    _fake_bedrock_cfg(
+        monkeypatch,
+        bearer_token="bedrock-api-key-xyz",
+        access_key_id="AKIA1",
+        secret_access_key="sek1",
+        profile="bedrock-sso",
+    )
+    env = bedrock_env()
+    assert env["AWS_BEARER_TOKEN_BEDROCK"] == "bedrock-api-key-xyz"
+    assert env["AWS_ACCESS_KEY_ID"] is None
+    assert env["AWS_SECRET_ACCESS_KEY"] is None
+    assert env["AWS_SESSION_TOKEN"] is None
+    assert "AWS_PROFILE" not in env
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
 
 
 def test_bedrock_env_static_mode_passes_keys(monkeypatch):
