@@ -91,19 +91,50 @@ class SdkAgentResult:
     files_accessed: List[str] = field(default_factory=list)
 
 
-def bedrock_env() -> Dict[str, str]:
-    """Env the spawned Claude Code CLI reads to target Bedrock (Claude-only)."""
+def bedrock_env() -> Dict[str, Optional[str]]:
+    """Env the spawned Claude Code CLI reads to target Bedrock (Claude-only).
+
+    Two deployment modes, inferred from which creds the config carries — kept in
+    lock-step with ``ClaudeBedrockProvider._get_client`` so the SDK leaf worker and
+    the in-house coordinator authenticate the same way:
+
+    * **Local** — static keys (explicit / CI temp creds) OR an SSO **profile**
+      (``CONDUCTOR_AWS_PROFILE``). With a profile we set ``AWS_PROFILE`` and let the
+      CLI's AWS SDK resolve + AUTO-REFRESH the role creds from the cached SSO login
+      (one ``aws sso login`` per ~8h, no hourly pasting → a long-lived token for
+      model-perf testing).
+    * **Deployed** — neither static keys nor a profile → Bedrock is reached via the
+      ambient **IAM role** (ECS task role / instance profile) through the default
+      credential chain.
+
+    The SDK merges this dict over ``os.environ`` for the CLI subprocess (a ``None``
+    value REMOVES that key, any string SETS it — see the SDK subprocess transport).
+    So we must clear the key vars to ``None`` (NOT ``""``) in profile/role mode:
+    an empty-string ``AWS_ACCESS_KEY_ID`` would shadow the profile/role and poison
+    the credential chain.
+    """
     cfg = load_config()
-    bedrock = cfg.ai_providers.aws_bedrock
-    env = {
+    b = cfg.ai_providers.aws_bedrock
+    env: Dict[str, Optional[str]] = {
         "CLAUDE_CODE_USE_BEDROCK": "1",
-        "AWS_ACCESS_KEY_ID": bedrock.access_key_id,
-        "AWS_SECRET_ACCESS_KEY": bedrock.secret_access_key,
-        "AWS_REGION": bedrock.region,
-        "AWS_DEFAULT_REGION": bedrock.region,
+        "AWS_REGION": b.region,
+        "AWS_DEFAULT_REGION": b.region,
     }
-    if bedrock.session_token:
-        env["AWS_SESSION_TOKEN"] = bedrock.session_token
+    have_static = bool((b.access_key_id or "").strip() and (b.secret_access_key or "").strip())
+    if have_static:  # local mode — explicit / CI temp creds
+        env["AWS_ACCESS_KEY_ID"] = b.access_key_id
+        env["AWS_SECRET_ACCESS_KEY"] = b.secret_access_key
+        # None unsets any stale session token inherited from the parent env.
+        env["AWS_SESSION_TOKEN"] = b.session_token or None
+    elif getattr(b, "profile", None):  # local mode — SSO profile (CLI auto-refreshes)
+        env["AWS_PROFILE"] = b.profile
+        env["AWS_ACCESS_KEY_ID"] = None
+        env["AWS_SECRET_ACCESS_KEY"] = None
+        env["AWS_SESSION_TOKEN"] = None
+    else:  # deployed mode — ambient IAM role via the default credential chain
+        env["AWS_ACCESS_KEY_ID"] = None
+        env["AWS_SECRET_ACCESS_KEY"] = None
+        env["AWS_SESSION_TOKEN"] = None
     return env
 
 

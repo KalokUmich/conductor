@@ -7,6 +7,7 @@ test the runner's mapping/evidence-gate/budget logic deterministically.
 from __future__ import annotations
 
 import asyncio
+import types
 
 import pytest
 from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
@@ -17,6 +18,7 @@ from app.agent_loop.sdk_worker import (
     _merge_budget,
     _sanitize_for_cli,
     _usage_to_budget_summary,
+    bedrock_env,
 )
 from app.code_tools.schemas import ToolResult
 
@@ -143,6 +145,66 @@ def test_merge_budget_sums():
         {"total_input_tokens": 5, "total_output_tokens": 3},
     )
     assert m["total_input_tokens"] == 15 and m["total_output_tokens"] == 5
+
+
+# ---------------------------------------------------------------------------
+# bedrock_env — two deployment modes (creds the CLI subprocess inherits)
+# ---------------------------------------------------------------------------
+def _fake_bedrock_cfg(monkeypatch, **bedrock):
+    b = types.SimpleNamespace(
+        access_key_id=bedrock.get("access_key_id", ""),
+        secret_access_key=bedrock.get("secret_access_key", ""),
+        session_token=bedrock.get("session_token", ""),
+        region=bedrock.get("region", "eu-west-2"),
+        profile=bedrock.get("profile"),
+    )
+    cfg = types.SimpleNamespace(ai_providers=types.SimpleNamespace(aws_bedrock=b))
+    monkeypatch.setattr(sdk_worker, "load_config", lambda: cfg)
+
+
+def test_bedrock_env_static_mode_passes_keys(monkeypatch):
+    """Local mode with explicit/CI temp creds → static keys + session token flow through."""
+    _fake_bedrock_cfg(monkeypatch, access_key_id="AKIA1", secret_access_key="sek1", session_token="tok1")
+    env = bedrock_env()
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert env["AWS_ACCESS_KEY_ID"] == "AKIA1"
+    assert env["AWS_SECRET_ACCESS_KEY"] == "sek1"
+    assert env["AWS_SESSION_TOKEN"] == "tok1"
+    assert env["AWS_REGION"] == "eu-west-2" and env["AWS_DEFAULT_REGION"] == "eu-west-2"
+    assert "AWS_PROFILE" not in env
+
+
+def test_bedrock_env_profile_mode_sets_profile_and_clears_keys(monkeypatch):
+    """Local mode via SSO profile → AWS_PROFILE set; key vars cleared to None (NOT "")
+    so the profile/role isn't shadowed when the SDK merges over os.environ."""
+    _fake_bedrock_cfg(monkeypatch, profile="bedrock-sso")
+    env = bedrock_env()
+    assert env["AWS_PROFILE"] == "bedrock-sso"
+    assert env["AWS_ACCESS_KEY_ID"] is None
+    assert env["AWS_SECRET_ACCESS_KEY"] is None
+    assert env["AWS_SESSION_TOKEN"] is None
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+
+
+def test_bedrock_env_role_mode_clears_everything(monkeypatch):
+    """Deployed mode — no static keys, no profile → ambient IAM role via default chain.
+    No AWS_PROFILE; key vars cleared to None so stale parent-env keys can't poison it."""
+    _fake_bedrock_cfg(monkeypatch)
+    env = bedrock_env()
+    assert "AWS_PROFILE" not in env
+    assert env["AWS_ACCESS_KEY_ID"] is None
+    assert env["AWS_SECRET_ACCESS_KEY"] is None
+    assert env["AWS_SESSION_TOKEN"] is None
+    assert env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert env["AWS_REGION"] == "eu-west-2"
+
+
+def test_bedrock_env_static_without_session_token_clears_it(monkeypatch):
+    """Static keys but no session token → AWS_SESSION_TOKEN is None (unsets stale inherited)."""
+    _fake_bedrock_cfg(monkeypatch, access_key_id="AKIA1", secret_access_key="sek1")
+    env = bedrock_env()
+    assert env["AWS_ACCESS_KEY_ID"] == "AKIA1"
+    assert env["AWS_SESSION_TOKEN"] is None
 
 
 # ---------------------------------------------------------------------------
