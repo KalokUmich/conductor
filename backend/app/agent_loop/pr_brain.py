@@ -1198,6 +1198,36 @@ class PRBrainOrchestrator:
                     name = found["name"]
                     if name in p13_handled_names:
                         return
+                    # Cross-check the symbol index before declaring a phantom.
+                    # P13's per-language scanners only see the diff's `+` lines
+                    # plus a same-package grep, so a reference to a symbol
+                    # DEFINED elsewhere (e.g. a pre-existing same-file
+                    # `static final` constant referenced as `CONST.method()`,
+                    # which P13's Java pattern mistakes for a class) gets
+                    # false-flagged. find_symbol queries the whole tree-sitter
+                    # index (now incl. constants/fields), so a hit means the
+                    # symbol really exists -> suppress. Best-effort: any error
+                    # falls through to the original flag-it behaviour.
+                    try:
+                        from app.code_tools.tools import find_symbol as _find_symbol
+
+                        _fs = _find_symbol(self._workspace_path, name)
+                        if _fs.success and _fs.data:
+                            logger.info(
+                                "[PR Brain v2] P13 phantom '%s' suppressed — "
+                                "find_symbol found %d definition(s)",
+                                name,
+                                len(_fs.data),
+                            )
+                            p13_handled_names.add(name)
+                            return
+                    except Exception as exc:
+                        logger.debug(
+                            "[PR Brain v2] P13 find_symbol cross-check failed "
+                            "for %s (proceeding to flag): %s",
+                            name,
+                            exc,
+                        )
                     try:
                         store.put_existence(
                             symbol_name=name,
@@ -3324,10 +3354,22 @@ def _java_class_defined_in_package(
     if not candidate_files:
         return True  # fail-safe when no peer resolves on disk
 
+    esc = re.escape(name)
+    # POSIX ERE (grep -E): inside [...] the \w/\s escapes are LITERAL, so use
+    # [[:space:]] etc. Two declaration shapes:
+    #   1. type decl — class/interface/enum/record/@interface Name
+    #   2. field/constant decl — <modifier> ... NAME = ...  (e.g.
+    #      `private static final Set<String> BRITISH_OR_IRISH_NATIONALITIES =`)
+    # Shape 2 is the degraded-index backstop: P13's Java ref pattern mistakes
+    # `CONST.method()` for a class, so without it a same-package constant gets
+    # false-flagged as a phantom when find_symbol's index is unavailable. The
+    # leading modifier keyword + trailing `=` keep it to declarations, not uses.
     pattern = (
-        rf"^\s*(public\s+|private\s+|protected\s+)?"
-        rf"(abstract\s+|final\s+|static\s+|sealed\s+)*"
-        rf"(class|interface|enum|record|@interface)\s+{re.escape(name)}\b"
+        rf"^[[:space:]]*(public[[:space:]]+|private[[:space:]]+|protected[[:space:]]+)?"
+        rf"(abstract[[:space:]]+|final[[:space:]]+|static[[:space:]]+|sealed[[:space:]]+)*"
+        rf"(class|interface|enum|record|@interface)[[:space:]]+{esc}([[:space:]]|<|\{{|$)"
+        rf"|^[[:space:]]*(public|private|protected|static|final|volatile|transient)[[:space:]].*"
+        rf"[[:space:]]{esc}[[:space:]]*="
     )
     try:
         r = subprocess.run(

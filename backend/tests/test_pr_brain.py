@@ -1139,6 +1139,40 @@ class TestScanNewJavaReferencesForMissing:
         ev = next(f for f in found if f["name"] == "PhantomHelper")["evidence"]
         assert "cannot find symbol" in ev
 
+    def test_same_file_constant_not_flagged(self, tmp_path):
+        """Regression (PR 14420): a reference to a pre-existing same-file
+        `static final` constant via `CONST.method()` must NOT be flagged.
+
+        P13's Java ref pattern matches `FOO.contains(` and assumes FOO is a
+        class; the widened same-package grep now also recognises the constant's
+        field declaration, so it isn't reported as a phantom.
+        """
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/VisaCheck.java",
+            "package com.foo;\n"
+            "import java.util.Set;\n"
+            "public class VisaCheck {\n"
+            "  private static final Set<String> BRITISH_OR_IRISH_NATIONALITIES = "
+            'Set.of("GB", "IE");\n'
+            "  boolean isBritishOrIrish(String n) {\n"
+            "    return BRITISH_OR_IRISH_NATIONALITIES.contains(n);\n"
+            "  }\n"
+            "}\n",
+        )
+        diff = self._diff(
+            "src/main/java/com/foo/VisaCheck.java",
+            ["    return BRITISH_OR_IRISH_NATIONALITIES.contains(n);"],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path), {"src/main/java/com/foo/VisaCheck.java": diff},
+        )
+        names = [f["name"] for f in found]
+        assert "BRITISH_OR_IRISH_NATIONALITIES" not in names
+
     def test_imported_class_not_flagged(self, tmp_path):
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
