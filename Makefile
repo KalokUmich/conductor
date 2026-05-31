@@ -292,13 +292,19 @@ postdeploy-check: ensure-extension-deps
 # Diagnostics
 # ===========================
 ##@ Diagnostics
-.PHONY: bedrock-check
+.PHONY: bedrock-check bedrock-check-docker
 
 ## Fast Bedrock reachability check (direct Converse, ~1s, never hangs)
 ## Run before eval / SDK tests — surfaces expired tokens instantly instead of
 ## letting the CLI path hang. Override model with BEDROCK_CHECK_MODEL=<id>.
 bedrock-check: ensure-backend-deps
 	@cd backend && $(PYTHON) scripts/bedrock_check.py
+
+## Same Bedrock reachability check, but INSIDE the running backend container.
+## Validates the container resolves local creds (SSO profile via the ~/.aws
+## mount, or a bearer token from secrets). Needs `make app-up` running first.
+bedrock-check-docker:
+	docker exec -w /app conductor-backend python scripts/bedrock_check.py
 
 # ===========================
 # Build / Compile

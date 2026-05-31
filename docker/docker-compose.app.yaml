@@ -27,6 +27,13 @@ services:
       - ../config:/app/config:ro
       - conductor-uploads:/app/uploads
       - conductor-workspaces:/app/workspaces
+      # Local Bedrock via SSO profile: mount the host's AWS dir (read-only) so
+      # boto3 + the claude CLI resolve `profile: sandbox-render-a` from the
+      # cached SSO login. Container runs as root → /root/.aws. Refresh on the
+      # HOST with `aws sso login --profile <p>` (~8h); the container reads the
+      # refreshed cache through this mount. Harmless if ~/.aws is absent.
+      # (Not needed for bearer-token mode — that's self-contained in secrets.)
+      - ${HOME}/.aws:/root/.aws:ro
     networks:
       - conductor
     healthcheck:
