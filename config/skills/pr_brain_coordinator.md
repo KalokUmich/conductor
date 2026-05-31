@@ -636,61 +636,67 @@ correctness issues" across a large file will either pattern-match
 shallowly or burn its entire budget wandering — both produce weak
 findings.
 
-## Severity rubric — reserve the strong labels
+## Severity rubric — reserve the strong labels, but NEVER under-grade a security break
 
-Severity is a **signal to the reader about how loud to be**. Over-labelling
-`critical` on every finding makes the review feel like noise; under-labelling
-a genuine outage risk buries it. The rubric below is conservative: when in
-doubt, drop one tier.
+Severity is a **signal to the reader about how loud to be**. Over-labelling `critical`
+makes the review noise; **under-labelling a security break or a broken acceptance criterion
+buries the one finding that matters.** Calibration cuts BOTH ways, and in practice the more
+expensive failure is *under-grading* a real break — not just inflating nits.
 
 **`critical`** — reserved for:
-- Authentication / authorization bypass
-- Secret leakage (tokens, keys, PII) to logs, client, or third parties
-- Public-API contract break (response shape change, status code flip)
-- Data corruption in production storage (dropped columns, bad migration,
-  concurrent writes clobbering each other)
-- Complete loss of availability on a critical path
+- Authentication / authorization bypass.
+- **Removal or weakening of an existing security control** — deleting or skipping an auth /
+  permission check, signature or credential-stripping, input validation, CSRF/SSRF guard, or
+  rate limit. This is `critical` *even without a demonstrated exploit*: the control existed for
+  a reason, and removing it is itself the defect. **Do NOT reframe a security bypass as a
+  "scope gap", "edge case", or "minor refactor" — grade what it is.**
+- **Any defect that breaks an explicit acceptance criterion** — `critical` regardless of how
+  rare the path looks (see "Calibrate severity").
+- Secret leakage (tokens, keys, PII) to logs, client, or third parties.
+- Public-API contract break (response shape change, status-code flip).
+- Data corruption in production storage (dropped columns, bad migration, concurrent clobber).
+- Complete loss of availability on a critical path.
 
 **`high`** — reserved for:
-- Always-reachable runtime crashes on typical inputs (`ImportError`,
-  `NameError`, `TypeError`, unhandled `KeyError`/`AttributeError`)
-- Wrong results for common inputs (off-by-one in user-facing pagination,
-  flipped boolean, wrong timezone, missing validation that lets bad data
-  through)
-- Concurrency bugs with a concrete race window (not theoretical)
+- Always-reachable runtime crashes on typical inputs (`ImportError`, `NameError`, `TypeError`,
+  unhandled `KeyError`/`AttributeError`).
+- Wrong results for common inputs (off-by-one in pagination, flipped boolean, wrong timezone,
+  missing validation that lets bad data through).
+- Concurrency bugs with a concrete race window (not theoretical).
 
-**`medium`** — the default for a real bug that isn't in the two tiers above.
-Includes: edge-case crashes, performance regressions with no immediate
-user impact, minor wrong-output cases, missing observability.
+**`medium`** — the default for a real bug not in the two tiers above (edge-case crashes,
+perf regressions with no immediate user impact, minor wrong-output, missing observability).
 
-**`low` / `nit`** — style, readability, naming, test-coverage gaps that
-don't point at a real defect.
+**`low` / `nit`** — style, readability, naming, test-coverage gaps with no real defect behind them.
 
-**Conservation rule**: if a finding feels like it *could* be `high` but you
-can't point to a concrete scenario that triggers on typical inputs, drop it
-to `medium`. A review with 1 `critical` + 4 `medium` reads as more credible
-than a review with 5 `critical` — the judge (human or LLM) weighs the signal
-by scarcity of the top tier.
+**Conservation rule (SPECULATIVE findings only):** if a finding *could* be `high` but you can't
+point to a concrete trigger on typical inputs, drop it to `medium` — 1 `critical` + 4 `medium`
+reads as more credible than 5 `critical`. **Conservation NEVER applies to a security-control
+removal or an acceptance-criterion break** — those keep their tier even when the path looks rare.
+Down-tiering a real security break is the failure to avoid, not just inflating nits.
 
 <example type="anti-pattern" name="severity-inflation">
-{
-  "title": "Missing type hint on helper function",
-  "severity": "high",
-  ...
-}
+{"title": "Missing type hint on helper function", "severity": "high"}
 </example>
+Why bad: a missing type hint is `nit` at most — inflating it erodes trust in your `high` labels.
 
-Why bad: missing type hint → `nit` at most. Labelling it `high` erodes the
-reader's trust that your `high` labels mean anything.
+<example type="anti-pattern" name="under-grading-a-security-break">
+A PR drops the credential-stripping step / removes the OAuth `fetch_state` check, so verification
+can be skipped. The reviewer finds the exact lines but writes:
+{"title": "Scope gap in OAuth handling", "severity": "medium"}
+</example>
+Why bad: this is a **security-control removal → `critical`**. Finding the right lines but labelling
+it `medium` (or calling it a "scope gap") is the costliest miss — it buries an auth bypass. Grade it
+`critical` and state plainly what the removed control protected.
 
 <example type="good" name="severity-calibrated">
-{"title": "Auth middleware skips session check on /internal/*", "severity": "critical"},
-{"title": "ImportError at runtime: FooService not defined in codebase", "severity": "high"},
-{"title": "Retry loop lacks jitter — thundering herd risk under load", "severity": "medium"},
+{"title": "Auth middleware skips session check on /internal/*", "severity": "critical"}
+{"title": "OAuth verify bypassed: fetch_state==None silently passes (check removed)", "severity": "critical"}
+{"title": "ImportError at runtime: FooService not defined in codebase", "severity": "high"}
+{"title": "Retry loop lacks jitter — thundering herd risk under load", "severity": "medium"}
 {"title": "Misleading variable name `tmp_x` in long function", "severity": "nit"}
 </example>
-
-Four findings, four tiers. Each label is defensible against the rubric.
+Each label is defensible — and the two security breaks stay `critical`, not down-tiered.
 
 ## Suggested_fix — concrete beats gestural
 
