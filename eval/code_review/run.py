@@ -24,6 +24,7 @@ Examples:
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import UTC
@@ -641,6 +642,11 @@ async def run_all(args: argparse.Namespace) -> None:
 
 def main():
     args = parse_args()
+    # --verbose → emit INFO logs (coordinator "Bedrock converse DONE …" + the per-leaf
+    # "[sdk_worker usage] …" lines) so the A/B harness can tally tokens + cost. Default
+    # stays WARNING-quiet. (Step 14.0: usage/cost observability for the eval.)
+    if getattr(args, "verbose", False):
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s", force=True)
     asyncio.run(run_all(args))
 
 
