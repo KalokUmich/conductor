@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-05-03
+Last updated: 2026-05-31
 
 ## Current State
 
@@ -20,21 +20,43 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
   - WorkspacePanel 5-step creation wizard
   - WorkspaceClient typed HTTP client
   - Workspace code search (`GET /workspace/{room_id}/search`)
-- **Agentic Code Intelligence**:
-  - `AgentLoopService` — LLM-driven iterative tool loop (up to 25 iterations, 500K token budget)
-  - 42 tools across 3 registries: 31 code tools (grep, read_file, list_files, glob, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff, git_diff_files, ast_search, get_callees, get_callers, git_blame, git_show, git_hotspots, find_tests, test_outline, trace_variable, compressed_view, module_summary, expand_symbol, detect_patterns, run_test, list_endpoints, extract_docstrings, db_schema, file_edit, file_write) + 5 Jira tools + 6 browser tools
+- **Agentic Code Intelligence** (dual-engine after the agent-SDK migration, Steps 01–06):
+  - **Coordinators** (General / Domain / PR Brain) run in-house on `AgentLoopService` — LLM-driven iterative tool loop (up to 25 iterations, 500K token budget)
+  - **Dispatched leaf workers** run on the Claude Agent SDK via `SdkWorkerRunner` (SDK/CLI owns the loop + compaction; we keep tools, prompt, evidence gate, vault). The discriminator in `brain._dispatch_explore` routes agents holding `dispatch_*` tools → in-house, else → SDK leaf.
+  - 47 tools across 3 registries + Brain orchestration: code tools (grep, read_file, list_files, glob, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff, git_diff_files, ast_search, get_callees, get_callers, git_blame, git_show, git_hotspots, find_tests, test_outline, trace_variable, compressed_view, module_summary, expand_symbol, detect_patterns, run_test, list_endpoints, extract_docstrings, db_schema, file_edit, file_write, search_facts, update_notes) + 5 Jira tools + 6 browser tools + Brain primitives (dispatch_explore / dispatch_verify / dispatch_sweep, transfer_to_brain, create_plan)
   - 4-layer system prompt: Identity + Tools + Skills & Guidelines + User Message
   - Query classifier: removed (superseded by Brain orchestrator)
   - Dynamic tool sets: 8-12 tools per query type (reduces LLM confusion)
   - Token-based budget controller with convergence signals
   - `trace_variable` — data flow tracing with alias detection, argument→parameter mapping, sink/source patterns
   - Workspace reconnaissance — auto-scan project layout + project marker detection
-  - `chat_with_tools()` on all 3 AI providers (Bedrock Converse, Anthropic Messages, OpenAI)
+  - `chat_with_tools()` on 2 AI providers (Bedrock Converse, Anthropic Messages — Claude-only after the Step 02–03 provider collapse; OpenAI/Alibaba/Moonshot removed)
   - `POST /api/context/query/stream` — Brain orchestrator over SSE (general code Q&A + PR review via `transfer_to_brain`)
   - `POST /api/context/explain-rich` — deep code explanation via agent (replaces XML-prompt pipeline)
 - **RepoMap (Graph-based Symbol Index)**:
   - tree-sitter AST parsing for symbol extraction (used by `find_symbol`, `file_outline`, dependency tools)
   - File dependency graph (networkx) with PageRank ranking
+
+### Agent-SDK Migration (Steps 01–06) — COMPLETE 2026-05-31
+
+The dispatched sub-agent loop was migrated from the in-house `AgentLoopService` onto the **Claude
+Agent SDK** (0.2.x, drives the Claude Code CLI as a subprocess). Coordinators still run in-house;
+only **leaf workers** run on the SDK. Shipped in this migration:
+- **Dual-engine dispatch** — `SdkWorkerRunner` (`agent_loop/sdk_worker.py`) + the discriminator in
+  `brain._dispatch_explore` (agents with `dispatch_*` tools → in-house coordinator; else → SDK leaf).
+  SDK/CLI owns iterate→call-LLM→exec-tools + compaction; we keep the moat (vault-aware MCP tools on a
+  shared `CachedToolExecutor`, the 4-layer full-replace system prompt, a post-call evidence gate, the
+  Brain's `llm_semaphore`). Per-leaf `[sdk_worker usage]` cost line.
+- **Provider collapse (Steps 02–03)** — AI providers reduced to **Claude only** (Bedrock Converse +
+  Anthropic Messages). OpenAI / Alibaba / Moonshot / Qwen providers + the OpenAI dep removed.
+- **Langfuse removed (Steps 01/04)** — replaced by **task-hierarchy telemetry** (`TaskTelemetryService`
+  + the `task` DB table) for per-worker cost/latency.
+- **Bedrock auth — two modes** — **local**: local secret or SSO **profile** with boto3/CLI
+  auto-refresh (`CONDUCTOR_AWS_PROFILE`), a long-lived token for model-perf testing; **deployed**:
+  ambient **IAM role** via the default credential chain. Same resolution in both the in-house provider
+  (`claude_bedrock._get_client`) and the SDK leaf path (`sdk_worker.bedrock_env`).
+
+Phase 14 (below) builds on this. Detail + eval gates in `docs/REFACTOR_EXECUTION_LOG.md`.
 
 ## Phase 1: Foundation (COMPLETE)
 
@@ -320,14 +342,17 @@ and `config/brains/*.yaml`. The historical workflow engine modules
 (`classifier_engine.py`, `mermaid.py`, the `/api/workflows` REST endpoints, and
 `config/workflows/*.yaml`) were deleted.
 
-#### Langfuse Observability (COMPLETE)
-Self-hosted LLM tracing with nested execution trees, cost tracking, and latency analysis.
-- [x] `docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)
-- [x] `langfuse>=2.0` in `requirements.txt`
-- [x] `LangfuseSettings` + `LangfuseSecrets` in `config.py`
-- [x] `make langfuse-up`, `make langfuse-down`, `make langfuse-logs` Makefile targets
-- [x] Traces nested as: workflow → route → agent → llm_call → tool
-- [x] Coexists with SessionTrace — Langfuse adds Web UI + team sharing; SessionTrace keeps tool params + thinking text
+#### Langfuse Observability (SUPERSEDED — removed in the agent-SDK migration, Step 01/04)
+> **Superseded.** Langfuse (server, the `langfuse` Python dep, `LangfuseSettings`/`LangfuseSecrets`,
+> the `make langfuse-*` targets, and the Langfuse DB plumbing) was **removed** during the agent-SDK
+> migration. Per-worker cost/latency is now captured by **task-hierarchy telemetry**
+> (`TaskTelemetryService` + the `task` DB table — see the Agent-SDK Migration block under Current
+> State and `docs/REFACTOR_EXECUTION_LOG.md`). The historical scope below is kept for the record only.
+- [x] ~~`docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)~~
+- [x] ~~`langfuse>=2.0` in `requirements.txt`~~
+- [x] ~~`LangfuseSettings` + `LangfuseSecrets` in `config.py`~~
+- [x] ~~`make langfuse-up`, `make langfuse-down`, `make langfuse-logs` Makefile targets~~
+- [x] ~~Traces nested as: workflow → route → agent → llm_call → tool~~
 
 #### Workflow Visualization Panel (REMOVED)
 The standalone WebView graph (`workflow.html`, `workflowPanel.ts`,
@@ -1283,7 +1308,7 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 **Reference files**: `Tool.ts` (792 lines), `tools.ts` (tool registry)
 
 **Completed**:
-- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 42 tools
+- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 47 tools
 - [x] Summary generation for context compaction — `_clear_old_tool_results()` uses `summary_template` for readable one-line summaries (e.g., `grep 'auth' in src/: 12 matches`)
 - [x] `format_tool_summary()` utility function with fallback for unknown tools
 - [x] 42 new tests covering grep enhancements, glob tool, ToolMetadata, and context clearing
@@ -2031,9 +2056,9 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
 | **Phase 13: AI Summary → Action Pipeline** | **🔴 Next Up** | **Sprint 15–16** |
 
-## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (PLANNED)
+## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (IN PROGRESS)
 
-**Status**: Planned. Builds on the agent-SDK worker migration (Steps 01–06, tracked in `docs/REFACTOR_EXECUTION_LOG.md`) and the SDK capability research recorded there (2026-05-30). **Prerequisite**: Step 06 (SDK leaf-worker loop) merged + eval-gated.
+**Status**: In progress. The agent-SDK worker migration (**Steps 01–06**) is **COMPLETE** (merged 2026-05-31; see the Agent-SDK Migration block under Current State and `docs/REFACTOR_EXECUTION_LOG.md`) — `SdkWorkerRunner` leaf loop, provider collapse to Claude-only, Langfuse→task telemetry, and the two-mode Bedrock auth all shipped. The Phase 14 first slice (foundation auth/guard, Opus 4.8 model A/B, severity-rubric fix, Anthropic-compliance audit, preset-persona probe) is also merged. Remaining Phase 14 work (Agent Skills remap, Concierge Router, 3-tier split) continues below.
 
 **Goal**: Evolve Conductor's backend from "a PR-review tool with a hand-rolled classifier Brain" into an **AI-native team backend** — a long-lived assistant that understands the codebase, drives Jira / GitLab / Azure / Figma, joins & summarises meetings, scans new code nightly to update docs, and (eventually) evaluates work and opens its own bug-fix PRs, tailored per team member. The structural enabler is a clean 3-tier split that puts each responsibility where it belongs (SDK vs Python), navigable by a new engineer in an afternoon.
 

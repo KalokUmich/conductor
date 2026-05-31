@@ -33,7 +33,6 @@ make format         # format backend Python (black + ruff format)
 make lint-check     # lint + format check (CI mode, no changes)
 make typecheck-strict  # mypy on strict-audit modules (Phase 11.3; must pass)
 make typecheck      # mypy across full backend (informational — legacy has ~40 known errors)
-make langfuse-up    # start self-hosted Langfuse (port 3001)
 make update-prompt-library   # download latest prompts.chat CSV (agent design reference)
 ```
 
@@ -82,19 +81,26 @@ cp config/conductor.secrets.yaml.example config/conductor.secrets.yaml
 ```
 
 Key settings in `conductor.settings.yaml`:
-- `langfuse.enabled` + secrets in `conductor.secrets.yaml`
 - `ai_models[].explorer: true` — mark model as sub-agent capable
+
+**Bedrock auth — two deployment modes** (same resolution in `claude_bedrock._get_client` and
+`sdk_worker.bedrock_env`; mode is inferred from which creds are present):
+- **Local** — a local secret or an SSO **profile** with auto-refresh, for a long-lived token to
+  test model performance. Set `CONDUCTOR_AWS_PROFILE=<profile>` (boto3 + the CLI's AWS SDK
+  auto-refresh role creds from the cached SSO login — one `aws sso login` per ~8h, no hourly
+  pasting), or supply static `CONDUCTOR_AWS_ACCESS_KEY_ID` / `CONDUCTOR_AWS_SECRET_ACCESS_KEY`.
+- **Deployed** — no static keys and no profile → Bedrock is reached via the ambient **IAM role**
+  (ECS task role / instance profile) through the default credential chain.
 
 Environment variables override secrets for cloud deployment (`CONDUCTOR_*` prefix):
 ```bash
-CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock credentials
+CONDUCTOR_AWS_PROFILE=...             # Bedrock — local SSO profile (auto-refresh); omit in deployed/role mode
+CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock — static creds (alternative to profile)
 CONDUCTOR_AWS_SECRET_ACCESS_KEY=...
 CONDUCTOR_AWS_REGION=eu-west-2
 CONDUCTOR_POSTGRES_PASSWORD=...       # Database
 CONDUCTOR_JIRA_CLIENT_ID=...          # Integrations (Jira 3LO)
 CONDUCTOR_ATLASSIAN_READONLY_TOKEN=...  # Atlassian readonly (Jira + Confluence)
-LANGFUSE_PUBLIC_KEY=...               # Observability
-LANGFUSE_SECRET_KEY=...
 ```
 See `docs/GUIDE.md` §21.7 for the full variable reference.
 
@@ -123,7 +129,13 @@ Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `
 
 ## What's Next
 
-See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-04):
+See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-05).
+
+**Recently shipped (Agent-SDK Migration, Steps 01–06 — COMPLETE 2026-05-31):**
+- **Dual-engine dispatch** — dispatched **leaf** sub-agents now run on the **Claude Agent SDK** via `SdkWorkerRunner` (`backend/app/agent_loop/sdk_worker.py`); **coordinators** (General / Domain / PR Brain) stay in-house on `AgentLoopService`. The discriminator in `brain._dispatch_explore` routes agents holding `dispatch_*` tools → in-house, else → SDK leaf. The SDK/CLI owns the loop + compaction; we keep the moat (vault-aware MCP tools on a shared `CachedToolExecutor`, the 4-layer full-replace system prompt, a post-call evidence gate).
+- **Claude-only providers** — AI providers collapsed to Bedrock Converse + Anthropic Messages (OpenAI / Alibaba / Moonshot / Qwen removed).
+- **Langfuse → task telemetry** — Langfuse removed; per-worker cost/latency now via `TaskTelemetryService` + the `task` DB table.
+- **Bedrock auth — two modes** — local (secret / SSO profile auto-refresh via `CONDUCTOR_AWS_PROFILE`) vs deployed (ambient IAM role / default chain); see the Configuration section above. Detail + eval gates in `docs/REFACTOR_EXECUTION_LOG.md`.
 
 **Recently shipped (PR Brain v2 productisation):**
 - **Phase 9.13 PR Brain v2** — coordinator-worker agent-as-tool architecture with `dispatch_subagent` (file-range scoped, 3 checks) + `dispatch_dimension_worker` (full-diff through one role lens); 7 agent_factory role templates; legacy v1 fleet deleted.
