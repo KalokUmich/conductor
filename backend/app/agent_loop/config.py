@@ -11,7 +11,7 @@ Usage::
 
     config = AgentLoopConfig(
         max_iterations=20,
-        budget_config=BudgetConfig(max_input_tokens=300_000),
+        budget_config=BudgetConfig(max_usd=1.0),
         is_sub_agent=True,
         forced_tools=["grep", "read_file"],
         agent_identity={"name": "explore_architecture", ...},

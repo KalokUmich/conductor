@@ -1516,7 +1516,7 @@ class AgentLoopService:
                     },
                 )
 
-            remaining_tokens = budget.config.max_input_tokens - budget.cumulative_input
+            remaining_tokens = max(0.0, budget.config.max_usd - budget.cumulative_usd)
             tool_results_content.append(self._tool_result_block(tc.id, tool_result, tc.name, remaining_tokens))
             iter_trace.tool_calls.append(tc_trace)
 
@@ -1543,8 +1543,8 @@ class AgentLoopService:
                 "Budget FORCE_CONCLUDE at iteration %d: %s (input tokens: %s/%s)",
                 iteration + 1,
                 conclude_reason,
-                budget.cumulative_input,
-                budget.config.max_input_tokens,
+                budget.cumulative_usd,
+                budget.config.max_usd,
             )
             # Append the pending tool results FIRST so the conversation has
             # no orphaned toolUse blocks (Bedrock rejects unmatched tool_use).

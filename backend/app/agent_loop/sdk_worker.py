@@ -155,11 +155,17 @@ def _file_param(params: Dict[str, Any]) -> Optional[str]:
     return params.get("path") or params.get("file") or params.get("file_path")
 
 
-def _usage_to_budget_summary(usage: Optional[Dict[str, Any]], iterations: int) -> Dict[str, Any]:
+def _usage_to_budget_summary(
+    usage: Optional[Dict[str, Any]],
+    iterations: int,
+    total_cost_usd: Optional[float] = None,
+) -> Dict[str, Any]:
     """Map the SDK ``ResultMessage.usage`` dict onto our budget_summary keys.
 
     Brain reads ``total_input_tokens`` / ``total_output_tokens`` (brain.py:1488,
-    1524-1525); we also surface cache + raw usage for telemetry.
+    1524-1525); we also surface cache + raw usage for telemetry. ``total_cost_usd``
+    is the CLI's authoritative spend for this leaf (USD budget economy) — passed
+    straight through so the Brain reports actual dollars, not a token estimate.
     """
     u = usage or {}
     in_tok = u.get("input_tokens", 0) or 0
@@ -172,6 +178,7 @@ def _usage_to_budget_summary(usage: Optional[Dict[str, Any]], iterations: int) -
         "total_tokens": in_tok + out_tok,
         "cache_read_input_tokens": cache_read,
         "cache_creation_input_tokens": cache_write,
+        "total_cost_usd": total_cost_usd,
         "iterations": iterations,
         "raw_usage": u or None,
     }
@@ -197,6 +204,7 @@ class SdkWorkerRunner:
         temperature: Optional[float] = None,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
         allow_builtins: bool = True,
+        max_budget_usd: Optional[float] = None,
     ) -> None:
         self._model = model
         self._executor = tool_executor
@@ -208,6 +216,11 @@ class SdkWorkerRunner:
         self._temperature = temperature
         self._llm_semaphore = llm_semaphore
         self._allow_builtins = allow_builtins
+        # USD spend ceiling for this leaf — enforced by the CLI itself
+        # (--max-budget-usd). The leaf stops with an error_max_budget_usd result
+        # if exceeded. None = no cap. This is the SDK-path equivalent of the
+        # in-house BudgetController token gate (the SDK exposes no token cap).
+        self._max_budget_usd = max_budget_usd
 
     # --- SDK options -------------------------------------------------------
     def _build_options(self, system_prompt: str) -> ClaudeAgentOptions:
@@ -239,6 +252,12 @@ class SdkWorkerRunner:
             # allow_builtins=False → only our MCP tools exist (local-mode strategy B).
             setting_sources=None if self._allow_builtins else [],
         )
+        # USD spend cap — the only cumulative-spend lever the CLI exposes (it has
+        # no token-budget param). Set only when present so an uncapped run keeps
+        # the SDK default. Guarded by hasattr for older SDK builds.
+        if self._max_budget_usd is not None and hasattr(opts, "max_budget_usd"):
+            with contextlib.suppress(Exception):
+                opts.max_budget_usd = self._max_budget_usd  # type: ignore[attr-defined]
         if self._temperature is not None and hasattr(opts, "temperature"):
             # Surfaced if the SDK build supports it; harmless to skip if not.
             with contextlib.suppress(Exception):
@@ -258,11 +277,12 @@ class SdkWorkerRunner:
         tool_calls = 0
         files: set[str] = set()
         usage: Optional[Dict[str, Any]] = None
+        total_cost_usd: Optional[float] = None
         iterations = 0
         error: Optional[str] = None
 
         async def _drive() -> None:
-            nonlocal tool_calls, iterations, usage, error
+            nonlocal tool_calls, iterations, usage, total_cost_usd, error
             async for msg in query(prompt=user_message, options=opts):
                 if isinstance(msg, AssistantMessage):
                     iterations += 1
@@ -287,6 +307,9 @@ class SdkWorkerRunner:
                             )
                 elif isinstance(msg, ResultMessage):
                     usage = getattr(msg, "usage", None)
+                    # Authoritative USD spend for this leaf, priced by the CLI
+                    # (USD budget economy). Preferred over our token×price compute.
+                    total_cost_usd = getattr(msg, "total_cost_usd", None)
                     if getattr(msg, "is_error", False):
                         error = getattr(msg, "result", None) or "SDK reported is_error"
 
@@ -304,12 +327,13 @@ class SdkWorkerRunner:
         # harness greps this alongside the coordinator's "converse DONE" lines.
         _u = usage or {}
         logger.info(
-            "[sdk_worker usage] model=%s in=%s out=%s cache_read=%s cache_creation=%s tools=%d iters=%d",
+            "[sdk_worker usage] model=%s in=%s out=%s cache_read=%s cache_creation=%s cost_usd=%s tools=%d iters=%d",
             self._model,
             _u.get("input_tokens", 0),
             _u.get("output_tokens", 0),
             _u.get("cache_read_input_tokens", 0),
             _u.get("cache_creation_input_tokens", 0),
+            f"{total_cost_usd:.4f}" if total_cost_usd is not None else "n/a",
             tool_calls,
             iterations,
         )
@@ -322,7 +346,7 @@ class SdkWorkerRunner:
             duration_ms=(time.time() - t0) * 1000.0,
             error=error,
             files_accessed=sorted(files),
-            budget_summary=_usage_to_budget_summary(usage, iterations),
+            budget_summary=_usage_to_budget_summary(usage, iterations, total_cost_usd),
         )
 
     # --- public: run with post-call evidence gate --------------------------
@@ -372,4 +396,7 @@ def _merge_budget(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> D
         "iterations",
     )
     merged: Dict[str, Any] = {k: (a.get(k, 0) or 0) + (b.get(k, 0) or 0) for k in keys}
+    # USD cost: sum both passes; None only if neither pass reported a cost.
+    ca, cb = a.get("total_cost_usd"), b.get("total_cost_usd")
+    merged["total_cost_usd"] = None if ca is None and cb is None else (ca or 0.0) + (cb or 0.0)
     return merged

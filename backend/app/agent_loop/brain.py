@@ -1645,7 +1645,7 @@ class AgentToolExecutor(ToolExecutor):
             config=AgentLoopConfig(
                 max_iterations=agent_config.limits.max_iterations,
                 max_evidence_retries=1,
-                budget_config=BudgetConfig(max_input_tokens=budget_tokens),
+                budget_config=BudgetConfig(max_usd=budget_usd),
                 is_sub_agent=True,
                 perspective=agent_config.instructions,
                 forced_tools=agent_tool_names,
