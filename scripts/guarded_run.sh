@@ -26,6 +26,10 @@ STALL_MIN="${STALL_MIN:-10}"
 POLL="${POLL:-20}"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Inherit the non-secret SSO profile selector so the launched command auto-refreshes
+# creds (CONDUCTOR_AWS_PROFILE) instead of falling back to stale static yaml creds.
+[ -f "$REPO_ROOT/config/conductor.local.env" ] && . "$REPO_ROOT/config/conductor.local.env"
+
 : > "$LOG"
 
 # Pre-flight cred gate (fail fast before spending wall-clock).
