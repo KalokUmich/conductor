@@ -277,7 +277,7 @@ def print_report(case_id: str, mode: str, run_result: dict, scoring: dict):
 # lowest-tier becomes the explorer/sub-agent. Single flag uses that
 # model for both roles.
 _MODELS = {
-    "opus": ("eu.anthropic.claude-opus-4-7", 2),
+    "opus": ("eu.anthropic.claude-opus-4-8", 2),
     "sonnet": ("eu.anthropic.claude-sonnet-4-6", 1),
     "haiku": ("eu.anthropic.claude-haiku-4-5-20251001-v1:0", 0),
 }

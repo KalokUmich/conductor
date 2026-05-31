@@ -150,11 +150,11 @@ ai_models:
     enabled: true
     explorer: true    # fallback explorer when Haiku is unavailable
 
-  # Opus 4.7: premium brain — top reasoning ($15/1M in, $75/1M out)
-  - id: "claude-opus-4-7-bedrock"
+  # Opus 4.8: premium brain — top reasoning (Phase 14: severity-calibration A/B vs Sonnet)
+  - id: "claude-opus-4-8-bedrock"
     provider: "aws_bedrock"
-    model_name: "eu.anthropic.claude-opus-4-7"
-    display_name: "Claude Opus 4.7 (Bedrock EU)"
+    model_name: "eu.anthropic.claude-opus-4-8"
+    display_name: "Claude Opus 4.8 (Bedrock EU)"
     enabled: true
     # NOT explorer — reserved for Brain/PR review synthesis
 
