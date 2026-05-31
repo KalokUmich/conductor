@@ -2,7 +2,7 @@
 
 > Captured: 2026-05-29 (run finished 23:41 UTC) · Commit: `aa316f9` (current `main`)
 > Purpose: the **meet-or-exceed bar** for the Bedrock+Claude+SDK refactor
-> (`docs/agent-sdk-hybrid-worker-design.md` §11.2 / §12.4). After migration,
+> (`docs/archive/agent-sdk-hybrid-worker-design.md` §11.2 / §12.4). After migration,
 > code review (PR Brain v2) must match or exceed these numbers.
 
 ## Run config

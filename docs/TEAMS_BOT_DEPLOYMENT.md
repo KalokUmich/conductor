@@ -272,7 +272,7 @@ Requirements in all cases:
   - `https://login.microsoftonline.com/*` (token acquisition + JWT signing keys)
   - `https://smba.trafficmanager.net/*` (outbound replies to Teams)
   - `https://graph.microsoft.com/*` (reading channel message history)
-  - whatever the existing AI provider needs (Bedrock / Anthropic / OpenAI)
+  - whatever the existing AI provider needs (Bedrock / Anthropic — Claude only)
 - **Secrets**: inject the four `CONDUCTOR_TEAMS_*` env vars via App Service Configuration / AWS Secrets Manager / Kubernetes Secret. Never bake them into the image.
 
 ### A.2.2 Swap messaging endpoint to production
@@ -398,7 +398,7 @@ Log per-request:
 - Any Graph API call failures with the upstream error code
 - Any Bot Framework reply failures
 
-Emit to Langfuse (existing project convention) as a new trace tag `integration=teams`.
+Record via task-hierarchy telemetry (the `task` table; the project convention after Langfuse was removed), tagged `integration=teams`.
 
 ### B.2.7 Handoff of new env vars
 

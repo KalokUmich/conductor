@@ -24,7 +24,7 @@
 14. [身份认证](#14-身份认证)
 15. [Jira 集成](#15-jira-集成)
 16. [LangExtract 集成](#16-langextract-集成)
-17. [Langfuse 可观测性](#17-langfuse-可观测性)
+17. [任务遥测 / Task Telemetry](#17-任务遥测--task-telemetry)
 18. [评估系统 (eval/)](#18-评估系统-eval)
 19. [测试规范](#19-测试规范)
 20. [常见开发任务](#20-常见开发任务)
@@ -114,13 +114,13 @@ VS Code Extension
 
 FastAPI Backend
 ├── workflow/          — 配置驱动的多 Agent 工作流引擎  ← 核心新增
-├── agent_loop/        — LLM Agent Loop（43 个工具）
+├── agent_loop/        — LLM Agent Loop + SDK 叶子调度（47 个工具）
 ├── code_review/       — PR 多 Agent 评审管线
-├── ai_provider/       — 三提供商抽象层（Bedrock / Anthropic / OpenAI）
+├── ai_provider/       — Claude-only 提供商抽象层（Bedrock Converse + Anthropic Messages）
 ├── git_workspace/     — Git 裸仓库 + Worktree 管理
 ├── chat/              — WebSocket 聊天 + Redis 热缓存 + Postgres 持久化
 ├── browser/           — Playwright Chromium 浏览工具（browse_url / search_web / screenshot）
-├── code_tools/        — 43 个工具实现（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault）+ Python CLI
+├── code_tools/        — 47 个工具实现（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault + 笔记）+ Python CLI
 └── langextract/       — 多厂商 Bedrock 结构化提取集成
 ```
 
@@ -288,12 +288,12 @@ async def context_query_stream(req: ContextQueryRequest, ...):
 
 Brain（强模型）跑自己的 LLM 循环，可调用 4 个 meta-tool：
 
-- `dispatch_agent("agent_name", query)` — 单 agent 探索
-- `dispatch_swarm("preset_name", queries=[...])` — 并行多 agent
+- `dispatch_explore("agent_name", query)` — 单 agent 探索（叶子 worker 跑在 Claude Agent SDK 上）
+- `transfer_to_brain("domain")` — 业务流 / 端到端问题交给 Domain Brain（取代已退役的 `dispatch_swarm`）
 - `transfer_to_brain("pr_review", params)` — 一次性切到专精 brain（如 PR review）
 - `ask_user(...)` — 中途向用户确认方向
 
-例：用户问"认证逻辑"，Brain 看到这是简单单 agent 任务，调用 `dispatch_agent("entry_point_finder", "认证逻辑入口")`。
+例：用户问"认证逻辑"，Brain 看到这是简单单 agent 任务，调用 `dispatch_explore("entry_point_finder", "认证逻辑入口")`。
 
 **第五步：被 dispatch 的子 agent 跑 AgentLoopService**（`backend/app/agent_loop/service.py`）
 
@@ -324,7 +324,7 @@ async def run_stream(self, query, workspace_path):
 ```
 用户输入 → ChatInput.tsx 解析 → useWebSocket/extension.ts SSE 请求 →
 agent_loop/router.py → WorkflowEngine.run_brain_stream() →
-Brain LLM 循环 → dispatch_agent / dispatch_swarm / transfer_to_brain →
+Brain LLM 循环 → dispatch_explore / transfer_to_brain →
 子 agent AgentLoopService.run_stream() → LLM ↔ execute_tool() 循环 →
 SSE 事件流回 → ChatContext → ThinkingIndicator/MessageBubble 实时渲染
 ```
@@ -371,8 +371,8 @@ Phase 2: 存在性检查（v2u 重排序：先确定性后 LLM）
 Phase 3: Coordinator 循环（strong tier）
   ├─ Survey diff + impact graph + 强制要求
   ├─ 两种分发 primitive：
-  │  • dispatch_subagent —— 按文件范围 + 3 个可证伪 check（role 或 checks 模式）
-  │  • dispatch_dimension_worker（P12b）—— 按 bug 类别从一个 role lens 扫整个 diff
+  │  • dispatch_verify —— 按文件范围 + 3 个可证伪 check（role 或 checks 模式）
+  │  • dispatch_sweep（P12b）—— 按 bug 类别从一个 role lens 扫整个 diff
   ├─ P10 自适应 model_tier（explorer 默认，strong 仅限跨文件逻辑推理）
   ├─ 遇到 unexpected observation 时 replan
   └─ 直接在 answer 里输出 review + findings
@@ -413,12 +413,15 @@ backend/
 │   │   ├── models.py              # Pydantic 模型：AgentConfig、BrainConfig、SwarmConfig
 │   │   ├── loader.py              # 加载 Markdown Agent 文件 + Brain/Swarm YAML
 │   │   ├── engine.py              # WorkflowEngine.run_brain_stream() — Brain 入口
-│   │   ├── router.py              # /api/brain/swarms — Agent Swarm UI 数据源
-│   │   └── observability.py       # Langfuse @observe 装饰器（禁用时零开销）
+│   │   └── router.py              # /api/brain/swarms — Agent Swarm UI 数据源
 │   │
-│   ├── agent_loop/                # LLM Agent 循环引擎 + Brain 编排器
-│   │   ├── service.py             # AgentLoopService — LLM 循环 + 工具派发
-│   │   ├── brain.py               # AgentToolExecutor — dispatch_agent / dispatch_swarm / transfer_to_brain
+│   ├── agent_loop/                # LLM Agent 循环引擎 + Brain 编排器（双引擎调度）
+│   │   ├── service.py             # AgentLoopService — 协调者的 in-house LLM 循环 + 工具派发
+│   │   ├── sdk_worker.py          # SdkWorkerRunner — 被派发的叶子 worker 跑在 Claude Agent SDK 上
+│   │   ├── sdk_tools.py           # build_worker_mcp_server — 给 SDK 叶子的 vault-aware MCP 工具
+│   │   ├── task_telemetry.py      # TaskTelemetryService — 任务层级用量遥测（task 表，取代 Langfuse）
+│   │   ├── brain.py               # AgentToolExecutor — dispatch_explore / dispatch_verify / dispatch_sweep / transfer_to_brain；双引擎判别器（_ORCHESTRATION_TOOLS）
+│   │   ├── domain_brain.py        # DomainBrainOrchestrator — transfer_to_brain("domain")
 │   │   ├── pr_brain.py            # PRBrainOrchestrator — PR 评审专用确定性管线
 │   │   ├── query_markers.py       # QueryType enum + marker 解析（前后端共享约定）
 │   │   ├── budget.py              # BudgetController — token 预算三级信号
@@ -427,18 +430,17 @@ backend/
 │   │   ├── prompts.py             # 四层 System Prompt 构建 + 9 种 Investigation Skills
 │   │   └── router.py              # POST /api/context/query/stream（SSE）
 │   │
-│   ├── code_tools/                # 43 个工具（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault）
+│   ├── code_tools/                # 47 个工具（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault + 笔记 + Brain primitives）
 │   │   ├── tools.py               # 所有工具实现 + execute_tool() 调度器
 │   │   ├── schemas.py             # Pydantic 模型 + LLM 工具定义（TOOL_DEFINITIONS）
 │   │   ├── output_policy.py       # 每工具截断策略（预算自适应）
 │   │   ├── __main__.py            # Python CLI 入口：python -m app.code_tools <tool> <ws> '<params>'
 │   │   └── router.py              # /api/code-tools/ 直接调用接口
 │   │
-│   ├── ai_provider/               # LLM 提供商抽象层
+│   ├── ai_provider/               # LLM 提供商抽象层（Claude only）
 │   │   ├── base.py                # AIProvider ABC + ToolCall/ToolUseResponse/TokenUsage
-│   │   ├── claude_bedrock.py      # AWS Bedrock Converse API
+│   │   ├── claude_bedrock.py      # AWS Bedrock Converse API（bearer / static / SSO profile / IAM role）
 │   │   ├── claude_direct.py       # Anthropic Messages API
-│   │   ├── openai_provider.py     # OpenAI Chat Completions
 │   │   └── resolver.py            # ProviderResolver — 健康检查 + 自动选优
 │   │
 │   ├── code_review/               # PR 评审共享工具（由 PR Brain v2 消费）
@@ -500,7 +502,7 @@ backend/
 ├── requirements.txt
 └── tests/                         # 1300+ 测试
     ├── conftest.py                # 中央 stub（cocoindex、litellm 等）
-    ├── test_code_tools.py         # 139 个：42 工具 + 调度器 + 多语言
+    ├── test_code_tools.py         # 139 个：代码工具 + 调度器 + 多语言
     ├── test_agent_loop.py         # 55 个：循环 + 四层 Prompt + 完整性检查
     ├── test_budget_controller.py  # 20 个：预算信号
     ├── test_compressed_tools.py   # 24 个：压缩视图工具
@@ -538,9 +540,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     resolver = ProviderResolver(conductor_config)
     resolver.resolve()
     set_resolver(resolver)
-    app.state.agent_provider      = resolver.get_active_provider()      # 强模型
-    app.state.explorer_provider   = resolver.get_explorer_provider()    # 轻量模型（可选）
-    app.state.classifier_provider = resolver.get_classifier_provider()  # 分类模型（可选）
+    app.state.agent_provider      = resolver.get_active_provider()      # 强模型（协调者）
+    app.state.explorer_provider   = resolver.get_explorer_provider()    # 轻量模型（叶子 worker）
 
     # 3. 单例服务初始化（必须在 lifespan 中用 engine= 参数首次调用）
     TodoService.get_instance(engine=engine)
@@ -549,8 +550,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ChatPersistenceService.get_instance(engine=engine)
     # 注意：不在 lifespan 中初始化会导致首次请求时 RuntimeError
 
-    # 4. Langfuse 可观测性（self-hosted，可选）
-    init_langfuse(settings)
+    # 4. 任务遥测（TaskTelemetryService — 每个 task 的用量写入 task 表；取代 Langfuse）
+    TaskTelemetryService.get_instance(engine=engine)
 
     # 5. Ngrok 隧道（VS Code Remote-WSL 场景，可选）
     if ngrok_cfg.get("enabled"):
@@ -565,7 +566,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # 关闭清理
     stop_ngrok()
-    langfuse_flush()
     await git_service.shutdown()
 ```
 
@@ -591,8 +591,8 @@ Brain 在它的 prompt 里被告知所有可用的子 agent + swarm（来自 `co
 
 | Meta-tool | 用途 |
 |---|---|
-| `dispatch_agent("name", query)` | 单个专精 agent 探索一个具体目标 |
-| `dispatch_swarm("preset", queries=[...])` | 用预设并行跑 3-6 个 agent |
+| `dispatch_explore("name", query)` | 单个专精 agent 探索一个具体目标（叶子跑在 Claude Agent SDK 上） |
+| `dispatch_verify` / `dispatch_sweep` | PR Brain 专用：按文件范围做 check / 按 bug 类别扫整个 diff |
 | `transfer_to_brain("pr_review", params)` | 一次性切换到专精 brain（目前只有 PR Brain） |
 | `ask_user(question, options)` | 中途向用户确认方向 |
 
@@ -681,7 +681,7 @@ GET /api/brain/swarms
 #   }
 ```
 
-供 extension 的 Agent Swarm UI tab 可视化 Brain 的 handoff 目标（`transfer_to_brain` 与 `dispatch_swarm`）。
+供 extension 的 Agent Swarm UI tab 可视化 Brain 的 handoff 目标（`transfer_to_brain`）。`dispatch_swarm` 已于 Phase 9.19 退役，由 Domain Brain 取代。
 
 ---
 
@@ -708,7 +708,7 @@ LLM 看到问题 → 决定先 grep 搜索关键词
 
 LLM 每一步都能基于已有信息决定下一步，可以进行真正的多步推理。
 
-### 7.2 43 个工具（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault）
+### 7.2 47 个工具（代码 + 文件编辑 + Jira + 浏览器 + Fact Vault + 笔记）
 
 工具分布在三个 Registry 中，通过 `execute_tool(name, workspace, params)` 统一调度：
 - **代码工具** (32)：`code_tools/tools.py`（含 Phase 9.15 加入的 `search_facts`）
@@ -1051,7 +1051,7 @@ class TokenUsage:
     cache_write_tokens: int = 0
 ```
 
-**内部消息格式**统一用 Bedrock Converse 格式（content block 数组），OpenAI provider 在内部负责格式转换：
+**内部消息格式**统一用 Bedrock Converse 格式（content block 数组），两个 Claude provider 共用：
 
 ```python
 # 所有 provider 接受的消息格式
@@ -1066,13 +1066,14 @@ messages = [
 ]
 ```
 
-### 8.2 三个提供商实现
+### 8.2 两个提供商实现（Claude only）
+
+Step 02–03 的 provider 收敛后只剩两个 Claude provider（OpenAI / 阿里 / Moonshot / Qwen 均已删除）：
 
 | 提供商 | 文件 | 底层 API | 备注 |
 |--------|------|---------|------|
-| `ClaudeBedrockProvider` | `claude_bedrock.py` | Bedrock Converse API | 支持跨区域推理 Profile |
+| `ClaudeBedrockProvider` | `claude_bedrock.py` | Bedrock Converse API | 跨区域推理 Profile；4 档认证（bearer / static / SSO profile / IAM role） |
 | `ClaudeDirectProvider` | `claude_direct.py` | Anthropic Messages API | 支持 prompt cache |
-| `OpenAIProvider` | `openai_provider.py` | OpenAI Chat Completions | 内部转换消息格式 |
 
 ### 8.3 ProviderResolver — 自动选优
 
@@ -1090,10 +1091,13 @@ class ProviderResolver:
         self._active = min(self._healthy, key=lambda x: x[2])
 ```
 
-ProviderResolver 还支持三种角色：
-- `get_active_provider()` → 强模型（Sonnet/GPT-4），用于评审综合、重要决策
-- `get_explorer_provider()` → 轻量模型（Haiku/Qwen），用于 Explorer Agent，成本低
-- `get_classifier_provider()` → 分类专用模型，可用于 LLM 辅助路由分类
+ProviderResolver 支持两种角色：
+- `get_active_provider()` → 强模型（Sonnet），用于协调者综合、重要决策
+- `get_explorer_provider()` → 轻量模型（Haiku），用于叶子 explorer agent，成本低
+
+**Bedrock 认证 — 两种部署模式**（`claude_bedrock._get_client` 与 `sdk_worker.bedrock_env` 同一套解析，按配置里有哪种凭证推断；优先级 **bearer > static > profile > role**）：
+- **本地** — Bedrock API key（`CONDUCTOR_AWS_BEARER_TOKEN` → `AWS_BEARER_TOKEN_BEDROCK`，单个长期 token，最省事的模型测试 token）/ 静态 key / SSO profile（`CONDUCTOR_AWS_PROFILE`，boto3 + CLI 自动刷新）。
+- **部署** — 三者都没有 → 走 ECS task role / 实例 profile 的默认凭证链（IAM role）。
 
 **查看当前提供商状态：**
 ```bash
@@ -1514,7 +1518,7 @@ Extension: /jira transform → "[jira] Create a Jira ticket for: Fix login bug..
       ↓
 POST /api/context/query/stream → Brain（Sonnet）
       ↓
-Brain: create_plan → dispatch_agent(
+Brain: create_plan → dispatch_explore(
     tools=["grep", "read_file", "jira_search", "jira_create_issue", ...],
     skill="issue_tracking", model="strong", budget_tokens=500000)
       ↓
@@ -1803,81 +1807,52 @@ result = await svc.extract_from_text(
 
 ---
 
-## 17. Langfuse 可观测性
+## 17. 任务遥测 / Task Telemetry
 
-Langfuse 提供嵌套执行树、成本追踪和延迟分析，是 SessionTrace 的补充：
+> **Langfuse 已移除**（agent-SDK 迁移 Step 01/04）。Langfuse server、`langfuse` Python 依赖、`LangfuseSettings`/`LangfuseSecrets`、`make langfuse-*` 目标、`workflow/observability.py` 全部删除。每个 worker 的成本 / 延迟改由**任务层级遥测**记录。
 
-| | SessionTrace | Langfuse |
-|---|---|---|
-| 数据 | 工具参数、思考文本、预算信号 | 成本、延迟、嵌套树 |
-| 存储 | 本地 JSON 文件 | Postgres（自托管）|
-| 界面 | 无（离线分析）| Web UI（团队可视化）|
-| 开销 | ~0（本地写文件）| ~0.1ms（异步 SDK）|
+`TaskTelemetryService`（`agent_loop/task_telemetry.py`）把整棵任务树持久化到 Postgres 的 `task` 表：根协调者任务 + 每个被派发 agent 的子任务，通过 `task_id` / `parent_task_id` / `root_task_id` 串联，按任务汇总 token 用量与状态。没有 DB 时所有记录调用都是 no-op。
 
-### 17.1 本地启动 Langfuse
+### 17.1 概念字段（`task` 表）
 
-```bash
-# 启动 Langfuse + PostgreSQL（端口 3001）
-make langfuse-up
+| 字段 | 说明 |
+|------|------|
+| `id` / `parent_task_id` / `root_task_id` | 任务树串联 |
+| `kind` | `coordinator`（in-house AgentLoopService）/ `sub_agent`（SDK 叶子 worker） |
+| `agent_name` / `query` / `depth` | 任务身份 |
+| `status` | `running` → `completed` / `failed` |
+| `input_tokens` / `output_tokens` / `cache_read_*` / `cache_creation_*` | 用量汇总 |
+| `started_at` / `completed_at` / `duration_ms` | 时延 |
 
-# 查看日志
-make langfuse-logs
+（权威列定义见 `database/changelog/` 的 Liquibase changeset。）
 
-# 关闭
-make langfuse-down
-```
-
-访问 `http://localhost:3001`，创建项目并获取 API Keys。
-
-### 17.2 配置
-
-```yaml
-# conductor.settings.yaml
-langfuse:
-  enabled: true
-  host: "http://localhost:3001"
-
-# conductor.secrets.yaml
-langfuse:
-  public_key: "pk-..."
-  secret_key: "sk-..."
-```
-
-### 17.3 追踪结构
-
-PR 评审的 Langfuse 追踪树示例：
-
-```
-brain: pr_review                         45.2s  $0.38
-├── transfer_to_brain("pr_review")       0.1ms
-├── PRBrainOrchestrator phase 1: pre-compute (parse_diff, classify_risk, prefetch_diffs)
-├── dispatch agent: correctness          35.2s  $0.12
-│   └── agent: correctness (explorer)
-│       ├── llm_call (generation)         1.2s   →工具: grep
-│       ├── llm_call (generation)         0.9s   →工具: read_file
-│       └── ... (共 18 次工具调用)
-├── dispatch agent: security             32.8s  $0.09
-│   └── ...（与 correctness 并行）
-├── stage: arbitrate                      3.8s  $0.08
-│   └── agent: arbitrator (judge)
-└── stage: synthesize                     2.3s  $0.03
-    └── agent: review_synthesizer (judge)
-```
-
-### 17.4 @observe 装饰器
-
-在工作流代码中使用零侵入的装饰器：
+### 17.2 记录任务
 
 ```python
-from app.workflow.observability import observe
+from app.agent_loop.task_telemetry import record_start, record_complete
 
-# 当 Langfuse 禁用时，这些装饰器是零开销的 no-op
-@observe(name="agent")
-async def _run_agent(self, agent: AgentConfig, ...):
-    ...
+# 派发子 agent 前
+await record_start(task_id=child, parent_task_id=self._task_id,
+                   root_task_id=self._root_task_id,
+                   kind="sub_agent", agent_name="security", query=q, depth=d)
+# 完成后（budget_summary 自动映射到 token 字段）
+await record_complete(task_id=child, status="completed", budget_summary={...})
 ```
 
-禁用 Langfuse 时（`langfuse.enabled: false` 或包未安装），`@observe` 直接返回原函数，没有任何开销。
+SDK 叶子 worker 另外打一行 `[sdk_worker usage] model=... in=... out=... cache_read=...` INFO 日志，便于直接 grep 单个叶子的成本（与协调者的 `converse DONE` 行对齐）。
+
+### 17.3 查询任务树
+
+```sql
+-- 某次请求的完整任务树
+SELECT * FROM task WHERE root_task_id = $1 ORDER BY started_at;
+-- token 成本汇总
+SELECT SUM(input_tokens) AS in_tok, SUM(output_tokens) AS out_tok,
+       SUM(cache_read_input_tokens) AS cache_hits
+FROM task WHERE root_task_id = $1;
+```
+
+`SessionTrace`（`agent_loop/trace.py`，本地 JSON + Postgres 回退）仍然保留，记录工具参数与思考文本，用于离线分析 —— 与任务遥测互补。
 
 ---
 
@@ -2047,7 +2022,7 @@ make test-parity                                  # 合约检查 + 形状验证 
 
 | 文件 | 数量 | 覆盖内容 |
 |------|------|---------|
-| `test_code_tools.py` | 139 | 全部 42 工具 + 调度器 + 多语言 |
+| `test_code_tools.py` | 139 | 代码工具 + 调度器 + 多语言 |
 | `test_agent_loop.py` | 55 | Agent Loop + 四层 Prompt + 完整性检查 |
 | `test_brain.py` | 64 | Brain 编排器 + dispatch 模式 |
 | `test_jira_tools.py` | 21 | Jira Agent 工具 |
@@ -2237,38 +2212,11 @@ TOOL_REGISTRY = {
 
 5. 在 `tests/test_code_tools.py` 中添加测试。
 
-### 20.3 添加一个新的 AI 提供商
+### 20.3 AI 提供商架构（已收敛为 Claude only）
 
-1. 继承 `AIProvider`：
+Step 02–03 的 provider 收敛后，提供商层**只支持两个 Claude provider**：`ClaudeBedrockProvider`（Bedrock Converse）和 `ClaudeDirectProvider`（Anthropic Messages）。OpenAI / 阿里 / Moonshot / Qwen 已删除，不再支持新增第三方厂商。
 
-```python
-# ai_provider/my_provider.py
-class MyProvider(AIProvider):
-    def chat_with_tools(self, messages, tools, system="") -> ToolUseResponse:
-        # 将 Bedrock 格式的 messages 转换为 My API 格式
-        api_messages = _convert_messages(messages)
-        api_tools = _convert_tools(tools)
-
-        resp = my_api.chat(messages=api_messages, tools=api_tools, system=system)
-
-        # 转换回统一格式
-        return ToolUseResponse(
-            text=resp.text,
-            tool_calls=[ToolCall(id=tc.id, name=tc.name, input=tc.args) for tc in resp.tool_calls],
-            stop_reason=resp.finish_reason,
-            usage=TokenUsage(input_tokens=resp.usage.prompt, output_tokens=resp.usage.completion),
-        )
-```
-
-2. 在 `ProviderResolver` 中注册：
-
-```python
-# ai_provider/resolver.py
-def _configured_providers(self) -> list[tuple[str, AIProvider]]:
-    ...
-    if self._config.ai_providers.my_provider.api_key:
-        yield "my_provider", MyProvider(self._config.ai_providers.my_provider)
-```
+需要换模型或换认证方式时**无需写代码**，全部由环境变量驱动（见 §8.3 的 Bedrock 四档认证与 §21.7 的环境变量表）。`AIProvider` ABC 仍是抽象基类，但实现集合已锁定为 Claude。
 
 ### 20.4 修改某个 agent 的工具集或人格
 
@@ -2332,7 +2280,7 @@ ripgrep (rg)   # grep 工具用的底层搜索引擎
 
 # 可选
 ast-grep       # ast_search 工具（结构化 AST 查询）
-docker         # 运行 Langfuse（自托管可观测性）
+docker         # 本地起 Postgres + Redis（部署环境用托管 DB 时不需要）
 ```
 
 ### 21.2 目录布局
@@ -2387,20 +2335,18 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ### 21.5 Docker 组件网络（本地开发）
 
-本地 Docker Compose 使用三个 compose 文件，共享同一个 `conductor-net` Docker 网络：
+本地 Docker Compose 使用两个 compose 文件，共享同一个 `conductor-net` Docker 网络：
 
 ```
 docker/docker-compose.data.yaml   → Postgres (conductor-postgres:5432)
                                     Redis    (conductor-redis:6379)
 docker/docker-compose.app.yaml    → Backend  (使用容器名访问 data 层)
-docker/docker-compose.langfuse.yaml → Langfuse (使用容器名访问 Postgres)
 ```
 
 **启动命令：**
 
 ```bash
 make data-up       # 先启动 Postgres + Redis
-make langfuse-up   # 启动 Langfuse（共用同一个 Postgres）
 make app-up        # 启动后端（连接到同一个网络）
 
 # 或者一键启动全栈
@@ -2445,16 +2391,13 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | 环境变量 | 对应 secret | 必须 |
 |---------|-----------|------|
 | **AI Providers** | | |
-| `CONDUCTOR_AWS_ACCESS_KEY_ID` | ai_providers.aws_bedrock.access_key_id | Bedrock 时必须 |
-| `CONDUCTOR_AWS_SECRET_ACCESS_KEY` | ai_providers.aws_bedrock.secret_access_key | Bedrock 时必须 |
+| `CONDUCTOR_AWS_BEARER_TOKEN` | ai_providers.aws_bedrock.bearer_token | 本地：Bedrock API key（bearer），优先级最高 |
+| `CONDUCTOR_AWS_PROFILE` | ai_providers.aws_bedrock.profile | 本地：SSO profile（自动刷新）；部署/role 模式留空 |
+| `CONDUCTOR_AWS_ACCESS_KEY_ID` | ai_providers.aws_bedrock.access_key_id | 本地：静态 key（profile 的替代） |
+| `CONDUCTOR_AWS_SECRET_ACCESS_KEY` | ai_providers.aws_bedrock.secret_access_key | 同上 |
 | `CONDUCTOR_AWS_SESSION_TOKEN` | ai_providers.aws_bedrock.session_token | 临时凭证时设置 |
 | `CONDUCTOR_AWS_REGION` | ai_providers.aws_bedrock.region | 默认 us-east-1 |
 | `CONDUCTOR_ANTHROPIC_API_KEY` | ai_providers.anthropic.api_key | Anthropic Direct 时必须 |
-| `CONDUCTOR_OPENAI_API_KEY` | ai_providers.openai.api_key | OpenAI 时必须 |
-| `CONDUCTOR_ALIBABA_API_KEY` | ai_providers.alibaba.api_key | DashScope 时必须 |
-| `CONDUCTOR_ALIBABA_BASE_URL` | ai_providers.alibaba.base_url | 默认新加坡区 |
-| `CONDUCTOR_MOONSHOT_API_KEY` | ai_providers.moonshot.api_key | Moonshot 时必须 |
-| `CONDUCTOR_MOONSHOT_BASE_URL` | ai_providers.moonshot.base_url | 默认 api.moonshot.ai |
 | **Database** | | |
 | `CONDUCTOR_POSTGRES_USER` | postgres.user | 默认 conductor |
 | `CONDUCTOR_POSTGRES_PASSWORD` | postgres.password | 默认 conductor |
@@ -2468,10 +2411,8 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | `CONDUCTOR_GOOGLE_CLIENT_ID` | google_sso.client_id | Google SSO 时必须 |
 | `CONDUCTOR_GOOGLE_CLIENT_SECRET` | google_sso.client_secret | Google SSO 时必须 |
 | `CONDUCTOR_NGROK_AUTHTOKEN` | ngrok.authtoken | Ngrok 时必须 |
-| **Observability** | | |
-| `LANGFUSE_PUBLIC_KEY` | langfuse.public_key | Langfuse 时必须 |
-| `LANGFUSE_SECRET_KEY` | langfuse.secret_key | Langfuse 时必须 |
-| `LANGFUSE_HOST` | langfuse.host（settings.yaml 中） | 默认 localhost:3001 |
+
+> 部署到 ECS 时，**不设** 任何 AWS key / profile，Bedrock 会自动走 task role（默认凭证链）。可观测性由任务遥测（`task` 表）提供，无需任何 `LANGFUSE_*` 变量（Langfuse 已移除）。
 
 #### ECS Task Definition 最小示例
 
@@ -2484,10 +2425,7 @@ Variables not set will fall back to the dev defaults in the YAML file.
       { "name": "CONDUCTOR_AWS_REGION", "value": "eu-west-2" },
       { "name": "CONDUCTOR_POSTGRES_PASSWORD", "value": "prod-password" },
       { "name": "CONDUCTOR_JIRA_CLIENT_ID", "value": "..." },
-      { "name": "CONDUCTOR_JIRA_CLIENT_SECRET", "value": "..." },
-      { "name": "LANGFUSE_PUBLIC_KEY", "value": "pk-lf-prod-..." },
-      { "name": "LANGFUSE_SECRET_KEY", "value": "sk-lf-prod-..." },
-      { "name": "LANGFUSE_HOST", "value": "https://langfuse.your-domain.com" }
+      { "name": "CONDUCTOR_JIRA_CLIENT_SECRET", "value": "..." }
     ],
     "secrets": [
       {

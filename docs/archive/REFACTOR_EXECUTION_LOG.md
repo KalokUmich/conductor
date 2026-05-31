@@ -1,8 +1,11 @@
 # Agent-SDK refactor — execution log & protocol
 
+> **STATUS: COMPLETE (2026-05-31).** Steps 01–06 merged + the Phase 14 first slice merged. Archived
+> historical record — for ongoing work see ROADMAP.md Phase 14.
+>
 > Parent branch: `refactor/agent-sdk-migration` (cut from `main` @ `de603e8`, 2026-05-30).
-> Design: `docs/agent-sdk-hybrid-worker-design.md` (DECIDED: Bedrock-only + Claude-only + SDK, retire Langfuse incl. DB).
-> This file is the live status board. Update it at every step boundary so any machine can resume.
+> Design: `agent-sdk-hybrid-worker-design.md` (DECIDED: Bedrock-only + Claude-only + SDK, retire Langfuse incl. DB).
+> This file was the live status board during the migration; updated at every step boundary so any machine could resume.
 
 ## The loop (one step = one child branch)
 

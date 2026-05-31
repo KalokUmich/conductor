@@ -33,7 +33,6 @@ make eval-brain-regression TAG=fast PARALLELISM=1   # tight-RAM machines
 python ../eval/agent_quality/run_bedrock.py                  # Bedrock (Sonnet/Haiku)
 python ../eval/agent_quality/run_bedrock.py --workflow --haiku  # Haiku explorer + Sonnet judge
 python ../eval/agent_quality/run_bedrock.py --brain              # Brain orchestrator
-python ../eval/agent_quality/run_qwen.py --workflow            # Qwen (DashScope)
 
 # Tool parity (Python vs TS)
 python ../eval/tool_parity/run.py --generate-baseline
@@ -58,5 +57,5 @@ regression "vanishes" with partial data.
 ## Scoring
 
 - **Code review**: `eval/code_review/run.py` — scoring: recall (35%), precision (20%), severity (15%), location (10%), recommendation (10%), context (10%)
-- **Agent quality**: `eval/agent_quality/run_bedrock.py` / `run_qwen.py` — pattern-match answers against `required_findings` in baseline JSON
+- **Agent quality**: `eval/agent_quality/run_bedrock.py` — pattern-match answers against `required_findings` in baseline JSON
 - **Tool parity**: `eval/tool_parity/run.py` — diff Python vs TS tool outputs for the same inputs

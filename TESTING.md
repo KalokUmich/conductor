@@ -72,7 +72,7 @@ make update-contracts                         # regenerate after schema changes
 | `tests/test_tool_parity_subprocess.py` | 60+ | Python direct vs Python CLI shape parity. Phase 9.18 step 3 added 4 new classes: glob, ast_search, file_edit, file_write |
 | `tests/test_local_tools_parity.py` | 23 | Local mode contract validation |
 | **Other** | | |
-| `tests/test_ai_provider.py` | 131 | All 3 AI providers + chat_with_tools + TokenUsage |
+| `tests/test_ai_provider.py` | 131 | Both Claude providers (Bedrock + Direct) + chat_with_tools + TokenUsage |
 | `tests/test_bedrock_tool_repair.py` | 64 | Bedrock tool-call repair + malformed response handling |
 | `tests/test_prompt_builder.py` | 64 | 4-layer prompt assembly, skill injection |
 | `tests/test_shared.py` | 55 | Shared code-review functions (evidence gate, dedup, ranking) |
@@ -168,7 +168,7 @@ The `test_budget_controller.py` file covers `BudgetController` in `agent_loop/bu
 - `NORMAL` signal — below 70% token threshold
 - `WARN_CONVERGE` signal — at 70% threshold or diminishing returns detected
 - `FORCE_CONCLUDE` signal — at 90% threshold or max iterations reached
-- Token tracking: `track(TokenUsage)` accumulates input/output/total across all 3 providers
+- Token tracking: `track(TokenUsage)` accumulates input/output/total across both Claude providers
 - Budget context injection: `get_budget_context()` returns string seen by LLM each turn
 - Hard constraints at WARN: broad search tools (grep, find_symbol) blocked
 - Edge cases: zero budget, negative tokens, overflow protection
@@ -323,7 +323,7 @@ The `test_config_new.py` file covers (RAG remnants removed):
 - `load_settings()` — YAML loading, missing files, secrets merging
 - JWT secrets configuration
 - `setdefault()` semantics (does not overwrite existing env vars)
-- AWS, OpenAI credential injection via `os.environ.setdefault()`
+- AWS credential injection via `os.environ.setdefault()`
 
 ### Phase 9.15 + 9.18 Infrastructure (~95 tests)
 

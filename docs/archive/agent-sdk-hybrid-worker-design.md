@@ -1,12 +1,21 @@
-# Design: Hybrid SDK Worker — Claude Agent SDK as the worker inner-loop
+# Design: SDK Worker — Claude Agent SDK as the worker inner-loop
 
-> Status: **DRAFT for review** · Last updated: 2026-05-29 · Author: kalok (+ Claude)
-> Baseline commit: `77497d1` (origin/main). All file:line refs are against this commit.
+> Status: **SHIPPED — SDK-only (2026-05-31)** · Originally drafted 2026-05-29 · Author: kalok (+ Claude)
+> Baseline commit: `77497d1` (origin/main). File:line refs are against that commit and have since moved.
 >
-> **How to use this doc at the office:** read it top to bottom, then jump to
-> §9 (Open decisions) — those are what we need to settle before any code.
-> This doc supersedes the earlier `agent-sdk-migration-discussion.md` (which
-> was written against a stale fork and assumed things that are no longer true).
+> **What actually shipped (vs this draft):** it landed as **SDK-only, not hybrid.** Steps 02–03
+> collapsed providers to **Claude-only** (the Haiku/DeepSeek/Qwen/Nova multi-vendor explorer tier was
+> removed), which dissolved the original reason for a hybrid path — so there is **no `is_claude`
+> branch**. Every dispatched **leaf** worker runs on the Claude Agent SDK (`SdkWorkerRunner`), while
+> **coordinators** (General / Domain / PR Brain) stay in-house on `AgentLoopService`. The real
+> discriminator is `brain._dispatch_explore` (`_ORCHESTRATION_TOOLS`), not the single `brain.py:1323`
+> line referenced below. Langfuse was retired in favour of task-hierarchy telemetry
+> (`TaskTelemetryService` + the `task` table).
+>
+> Authoritative shipped record: `REFACTOR_EXECUTION_LOG.md` + the live docs (`backend/CLAUDE.md`,
+> `docs/GUIDE.md` §6–§8 / §17). **The sections below are the original design rationale, kept for
+> history** — where they say "hybrid" / "non-Claude workers" / "open decision", read them as
+> superseded by the summary above.
 
 ---
 

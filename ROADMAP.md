@@ -56,7 +56,7 @@ only **leaf workers** run on the SDK. Shipped in this migration:
   ambient **IAM role** via the default credential chain. Same resolution in both the in-house provider
   (`claude_bedrock._get_client`) and the SDK leaf path (`sdk_worker.bedrock_env`).
 
-Phase 14 (below) builds on this. Detail + eval gates in `docs/REFACTOR_EXECUTION_LOG.md`.
+Phase 14 (below) builds on this. Detail + eval gates in `docs/archive/REFACTOR_EXECUTION_LOG.md`.
 
 ## Phase 1: Foundation (COMPLETE)
 
@@ -347,7 +347,7 @@ and `config/brains/*.yaml`. The historical workflow engine modules
 > the `make langfuse-*` targets, and the Langfuse DB plumbing) was **removed** during the agent-SDK
 > migration. Per-worker cost/latency is now captured by **task-hierarchy telemetry**
 > (`TaskTelemetryService` + the `task` DB table — see the Agent-SDK Migration block under Current
-> State and `docs/REFACTOR_EXECUTION_LOG.md`). The historical scope below is kept for the record only.
+> State and `docs/archive/REFACTOR_EXECUTION_LOG.md`). The historical scope below is kept for the record only.
 - [x] ~~`docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)~~
 - [x] ~~`langfuse>=2.0` in `requirements.txt`~~
 - [x] ~~`LangfuseSettings` + `LangfuseSecrets` in `config.py`~~
@@ -2058,7 +2058,7 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 
 ## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (IN PROGRESS)
 
-**Status**: In progress. The agent-SDK worker migration (**Steps 01–06**) is **COMPLETE** (merged 2026-05-31; see the Agent-SDK Migration block under Current State and `docs/REFACTOR_EXECUTION_LOG.md`) — `SdkWorkerRunner` leaf loop, provider collapse to Claude-only, Langfuse→task telemetry, and the two-mode Bedrock auth all shipped. The Phase 14 first slice (foundation auth/guard, Opus 4.8 model A/B, severity-rubric fix, Anthropic-compliance audit, preset-persona probe) is also merged. Remaining Phase 14 work (Agent Skills remap, Concierge Router, 3-tier split) continues below.
+**Status**: In progress. The agent-SDK worker migration (**Steps 01–06**) is **COMPLETE** (merged 2026-05-31; see the Agent-SDK Migration block under Current State and `docs/archive/REFACTOR_EXECUTION_LOG.md`) — `SdkWorkerRunner` leaf loop, provider collapse to Claude-only, Langfuse→task telemetry, and the two-mode Bedrock auth all shipped. The Phase 14 first slice (foundation auth/guard, Opus 4.8 model A/B, severity-rubric fix, Anthropic-compliance audit, preset-persona probe) is also merged. Remaining Phase 14 work (Agent Skills remap, Concierge Router, 3-tier split) continues below.
 
 **Goal**: Evolve Conductor's backend from "a PR-review tool with a hand-rolled classifier Brain" into an **AI-native team backend** — a long-lived assistant that understands the codebase, drives Jira / GitLab / Azure / Figma, joins & summarises meetings, scans new code nightly to update docs, and (eventually) evaluates work and opens its own bug-fix PRs, tailored per team member. The structural enabler is a clean 3-tier split that puts each responsibility where it belongs (SDK vs Python), navigable by a new engineer in an afternoon.
 
@@ -2131,7 +2131,7 @@ The refactor MUST leave code + layout **clean enough for a new engineer to map i
 - **Anthropic-compliance:** re-audited the live prompts → already compliant (forceful language on hard constraints is correct per #6). No churn.
 - **#1 core (preset+append) — REFUTED:** `system_prompt={preset:claude_code, append:role}` *dilutes* the severity rubric (−0.179) for net-worse composite → **full-replace kept** (branch `refactor/step-14-4-preset` parked). The Claude Code *harness* (loop/fluency, already used) helps; its *persona* doesn't. SKILL.md progressive-disclosure deferred (same dilution caution — it's a cache-economics optimization, not a quality lever).
 - **Still planned (this phase):** Concierge / Tier-1 router (#2), MCP integration backbone (#3), context-enriched PR review (#6), autonomous workflows (#4), per-member assistant (#5).
-- Detail: `docs/PHASE14_{SCORE_DIAGNOSIS,PROMPT_AUDIT,AB_RESULT}.md` + `docs/REFACTOR_EXECUTION_LOG.md` (Phase 14 section).
+- Detail: `docs/archive/PHASE14_{SCORE_DIAGNOSIS,PROMPT_AUDIT,AB_RESULT}.md` + `docs/archive/REFACTOR_EXECUTION_LOG.md` (Phase 14 section).
 
 ## Architecture Decision Log
 
