@@ -182,6 +182,14 @@ def create_provider(provider_name: str, model: str = None):
                 region = region or bdr.region
             except Exception:
                 pass
+        profile = os.environ.get("CONDUCTOR_AWS_PROFILE") or ""
+        if profile:
+            # SSO profile → boto3 auto-refreshes role creds (no static token).
+            return ClaudeBedrockProvider(
+                region_name=(region or os.environ.get("CONDUCTOR_AWS_REGION") or "eu-west-2"),
+                model_id=model or "eu.anthropic.claude-sonnet-4-6",
+                aws_profile=profile,
+            )
         return ClaudeBedrockProvider(
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,

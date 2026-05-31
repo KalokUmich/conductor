@@ -97,13 +97,18 @@ def _create_provider(model_id: str = "eu.anthropic.claude-sonnet-4-6"):
         _deep_merge(secrets, local)
 
     bedrock = secrets["ai_providers"]["aws_bedrock"]
-    provider = ClaudeBedrockProvider(
-        aws_access_key_id=bedrock["access_key_id"],
-        aws_secret_access_key=bedrock["secret_access_key"],
-        aws_session_token=bedrock.get("session_token"),
-        region_name="eu-west-2",  # inference profiles require eu-west-2
-        model_id=model_id,
-    )
+    profile = os.environ.get("CONDUCTOR_AWS_PROFILE") or bedrock.get("profile") or ""
+    if profile:
+        # SSO profile → boto3 auto-refreshes role creds (no static token).
+        provider = ClaudeBedrockProvider(region_name="eu-west-2", model_id=model_id, aws_profile=profile)
+    else:
+        provider = ClaudeBedrockProvider(
+            aws_access_key_id=bedrock["access_key_id"],
+            aws_secret_access_key=bedrock["secret_access_key"],
+            aws_session_token=bedrock.get("session_token"),
+            region_name="eu-west-2",  # inference profiles require eu-west-2
+            model_id=model_id,
+        )
     if not provider.health_check():
         logger.error("Provider health check failed for %s", model_id)
         sys.exit(1)
