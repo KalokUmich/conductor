@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.code_tools.executor import DefaultToolExecutor
+from app.code_tools.executor import LocalToolExecutor
 from app.scratchpad.store import FactStore
 from app.scratchpad.executor import CachedToolExecutor
 from app.agent_loop.sdk_worker import SdkWorkerRunner
@@ -44,7 +44,7 @@ async def _main() -> int:
     print(f"tools     : {TOOLS}")
 
     store = FactStore(":memory:", "sdk-smoke-session")
-    inner = DefaultToolExecutor(WORKSPACE)
+    inner = LocalToolExecutor(WORKSPACE)
     executor = CachedToolExecutor(inner, store, agent="sdk-smoke")
 
     # allow_builtins=False → local-mode strategy B: ONLY our MCP tools exist, no
