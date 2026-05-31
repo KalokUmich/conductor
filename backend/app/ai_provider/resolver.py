@@ -134,13 +134,20 @@ class ProviderResolver:
         return enabled_map.get(provider_type, False)
 
     def _is_provider_configured(self, provider_type: ProviderType) -> bool:
-        """Check if a provider has API keys configured."""
+        """Check if a provider has credentials configured.
+
+        For Bedrock, gating on static keys alone wrongly disabled the provider in
+        bearer-token and SSO-profile mode (→ "no healthy provider" → PR Brain
+        never built → 503). Bedrock has four valid auth modes (bearer > static >
+        profile > ambient IAM role, same priority as ``claude_bedrock._get_client``
+        / ``sdk_worker.bedrock_env``) — including the deployed role case with no
+        explicit creds — so once it's enabled we always attempt it and let
+        ``health_check`` be the real reachability gate.
+        """
         if provider_type == ProviderType.ANTHROPIC:
             return bool(self.providers_config.anthropic.api_key)
         elif provider_type == ProviderType.AWS_BEDROCK:
-            return bool(
-                self.providers_config.aws_bedrock.access_key_id and self.providers_config.aws_bedrock.secret_access_key
-            )
+            return True
         return False
 
     def _create_provider(
