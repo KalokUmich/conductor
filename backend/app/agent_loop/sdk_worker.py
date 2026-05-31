@@ -229,7 +229,13 @@ class SdkWorkerRunner:
             allowed_tools=qualified_tool_names(self._tool_names),
             system_prompt=system_prompt,
             max_turns=self._max_turns,
-            permission_mode="bypassPermissions",
+            # "auto", not "bypassPermissions": our MCP tools are pre-approved via
+            # allowed_tools, so auto runs fully autonomously (verified identical to
+            # bypass on read AND write tool calls). Critically, only bypass maps to
+            # --dangerously-skip-permissions, which the CLI REFUSES under root —
+            # so bypass broke the leaf inside the container (runs as root). auto
+            # avoids that guard and works as root in-container and non-root on host.
+            permission_mode="auto",
             # allow_builtins=False → only our MCP tools exist (local-mode strategy B).
             setting_sources=None if self._allow_builtins else [],
         )
