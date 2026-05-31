@@ -47,3 +47,22 @@ library · 17. **Validate with eval**.
 - **14.3** owns B/C/D after confirming each against the live file; gate on the A/B subset + agent_quality
   not regressing (principle #17 + the role-separation scar).
 - **14.4** owns E (workspace-context drop) as part of the 4-layer→SDK remap.
+
+## Resolution (2026-05-31)
+
+- **A (severity rubric) — DONE in 14.2.** Rewritten as examples; critical now covers
+  security-control removal + acceptance-criterion breaks; conservation scoped to speculative
+  findings. Eval-gated: severity 0.562→0.662 (+0.10), composite 0.812→0.831, gate green (merge `08e7ef6`).
+- **B/C/D — NO CHANGE WARRANTED (verified against the live file).** On re-reading
+  `pr_brain_coordinator.md`:
+  - **C (negative framing, L20 "PLANNER… not a verifier")** — the contrast is the point of the rule
+    (Survey-tools-gather-context vs workers-verify); reframing loses clarity. Defensible.
+  - **B (dispatch-floor "rule-list", 53–66)** — already carries a strong rationale (42–51) *and* a
+    worked example (the plaintext-password case). Adding more would be redundant.
+  - **D (CRITICAL/MUST/`non-negotiable`/`MANDATORY`)** — these guard **hard constraints** (dispatch
+    floor, mandatory investigations), where forceful language is **correct** per principle #6
+    (Layer-3 safety/irreversible). Not a violation.
+  Changing already-compliant prompts for marginal "compliance" — validated only against high-variance
+  evals (severity 0.43–0.56, composite 0.68–0.82 same-config) — would risk regression (principle #8
+  scar) for ~zero gain. So 14.3 makes **no prompt edits**; the one real win (severity) shipped in 14.2.
+- **E (workspace-context drop)** — deferred to 14.4 (SDK Skills remap).
