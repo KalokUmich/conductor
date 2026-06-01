@@ -477,8 +477,10 @@ async def recheck_pull_request(
             raise HTTPException(status_code=503, detail="Azure DevOps PR Brain not initialized.")
 
         from .recheck import (
+            _RECHECK_FINDING_MARKER,
             build_prior_review_context,
             confirmed_fixed,
+            dedupe_findings_against_priors,
             format_recheck_report,
             parse_review_threads,
             still_open,
@@ -520,12 +522,10 @@ async def recheck_pull_request(
                 worktree_path=worktree_path,
                 diff_spec=diff_spec,
             )
-            fixed = confirmed_fixed(verdicts)
-            open_v = still_open(verdicts)
             logger.info(
-                "[AzureDevOps] recheck: verified %d fixed, %d still open",
-                len(fixed),
-                len(open_v),
+                "[AzureDevOps] recheck: verified %d fixed, %d still open (pre-dedupe)",
+                len(confirmed_fixed(verdicts)),
+                len(still_open(verdicts)),
             )
 
             # Step 3: re-review with the verified prior status as context
@@ -572,6 +572,21 @@ async def recheck_pull_request(
             finally:
                 orchestrator.cleanup()
 
+            # Step 3.5: fold re-review findings that overlap a prior comment back
+            # into that comment. A finding at the same file+nearby line as a prior
+            # comment is the SAME issue resurfacing, not new — drop it. If it
+            # overlaps one we marked verified-fixed, that's a contradiction: the
+            # fix isn't real, so flip the verdict to still-open (won't be resolved).
+            findings, verdicts = dedupe_findings_against_priors(findings, verdicts)
+            fixed = confirmed_fixed(verdicts)
+            open_v = still_open(verdicts)
+            logger.info(
+                "[AzureDevOps] recheck: after dedupe — %d fixed, %d still open, %d new",
+                len(fixed),
+                len(open_v),
+                len(findings),
+            )
+
             # Step 4: auto-resolve threads we confirmed fixed (reply + mark fixed)
             threads_resolved = 0
             for v in fixed:
@@ -602,7 +617,8 @@ async def recheck_pull_request(
                             project=req.project,
                             repo=req.repo,
                             pr_id=req.pr_id,
-                            content=comment.content,
+                            # Tag so a later recheck skips its own output (self-filter).
+                            content=comment.content + "\n\n" + _RECHECK_FINDING_MARKER,
                             file_path=comment.file_path,
                             start_line=comment.start_line,
                             end_line=comment.end_line,

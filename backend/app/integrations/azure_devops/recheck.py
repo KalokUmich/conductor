@@ -52,6 +52,12 @@ _STATUS_INT_TO_NAME = {v: k for k, v in _STATUS_STR_TO_INT.items()}
 # verify (it's a roll-up, not an actionable comment).
 _BOT_SUMMARY_MARKER = "Conductor AI Code Review"
 
+# Hidden marker appended to findings posted BY a recheck pass. A recheck verifies
+# human + first-round-review comments — NOT its own output — so threads carrying
+# this marker are skipped, preventing each recheck's findings from accumulating as
+# the next recheck's "prior comments". (Rendered invisible by Markdown.)
+_RECHECK_FINDING_MARKER = "<!-- conductor-recheck-finding -->"
+
 
 @dataclass
 class PriorComment:
@@ -105,8 +111,8 @@ def parse_review_threads(threads: List[dict]) -> List[PriorComment]:
         content = (root.get("content") or "").strip()
         if not content:
             continue
-        if _BOT_SUMMARY_MARKER in content:
-            continue  # our own summary roll-up — not an actionable item
+        if _BOT_SUMMARY_MARKER in content or _RECHECK_FINDING_MARKER in content:
+            continue  # our own roll-up / a prior recheck's own finding — don't re-verify
 
         ctx = t.get("threadContext") or {}
         fp = (ctx.get("filePath") or "").lstrip("/") or None
@@ -343,6 +349,57 @@ def confirmed_fixed(verdicts: List[PriorVerdict]) -> List[PriorVerdict]:
 
 def still_open(verdicts: List[PriorVerdict]) -> List[PriorVerdict]:
     return [v for v in verdicts if not (v.addressed and v.confidence >= _RESOLVE_CONFIDENCE_FLOOR)]
+
+
+def _same_file(a: Optional[str], b: Optional[str]) -> bool:
+    """Two paths refer to the same file, tolerating leading-prefix drift."""
+    if not a or not b:
+        return False
+    a, b = a.lstrip("/"), b.lstrip("/")
+    if a == b:
+        return True
+    sa, sb = a.split("/"), b.split("/")
+    n = min(3, len(sa), len(sb))
+    return sa[-n:] == sb[-n:]
+
+
+def dedupe_findings_against_priors(findings: list, verdicts: List[PriorVerdict], *, line_window: int = 15):
+    """Fold re-review findings that overlap a prior comment back into that comment.
+
+    A "new" finding at the same file + nearby line as a prior comment is NOT new —
+    it's the prior issue resurfacing. We drop it from the new-findings list (the
+    prior comment already covers it) and, crucially, if it overlaps a comment we
+    had marked verified-FIXED, that's a contradiction: the re-review still flags
+    that spot, so the fix isn't real. Flip the verdict to not-addressed so the
+    thread is NOT resolved and shows as still-open.
+
+    Returns ``(kept_findings, verdicts)`` (verdicts mutated in place).
+    """
+    kept = []
+    for f in findings:
+        f_file = getattr(f, "file", "") or ""
+        f_line = getattr(f, "start_line", 0) or 0
+        overlap = None
+        for v in verdicts:
+            c = v.comment
+            if not c.is_inline:
+                continue
+            if _same_file(f_file, c.file_path) and abs(f_line - (c.line or 0)) <= line_window:
+                overlap = v
+                break
+        if overlap is None:
+            kept.append(f)
+            continue
+        # Overlaps a prior comment → same issue, not a new finding.
+        if overlap.addressed and overlap.confidence >= _RESOLVE_CONFIDENCE_FLOOR:
+            # Contradiction: we said fixed, but the re-review re-flags this spot.
+            overlap.addressed = False
+            overlap.confidence = 0.0
+            overlap.reason = (
+                f"re-review still flags this location ({getattr(f, 'title', 'issue')}) — not actually fixed"
+            )
+        # else: already still-open → the prior comment covers it; just drop the finding.
+    return kept, verdicts
 
 
 def build_prior_review_context(verdicts: List[PriorVerdict]) -> str:

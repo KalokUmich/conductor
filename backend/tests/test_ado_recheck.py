@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
 from app.integrations.azure_devops import recheck
 from app.integrations.azure_devops.recheck import (
+    _RECHECK_FINDING_MARKER,
     PriorComment,
     PriorVerdict,
     _extract_json_array,
     _file_diff,
     _resolve_in_worktree,
+    _same_file,
     build_prior_review_context,
     confirmed_fixed,
+    dedupe_findings_against_priors,
     format_recheck_report,
     parse_review_threads,
     still_open,
@@ -94,6 +98,54 @@ def test_parse_skips_empty_and_systemint_commenttype():
         {"id": 10, "status": "active", "comments": [{"content": "noise", "commentType": 4}]},  # system int
     ]
     assert parse_review_threads(threads) == []
+
+
+def test_parse_self_filters_prior_recheck_findings():
+    threads = [
+        _thread(1, "Real bug to verify", file="/a.java", line=5),  # first-round / human → keep
+        _thread(2, f"Prior recheck issue\n\n{_RECHECK_FINDING_MARKER}", file="/b.java", line=9),  # ours → skip
+    ]
+    parsed = parse_review_threads(threads)
+    assert {p.thread_id for p in parsed} == {1}
+
+
+# ---------------------------------------------------------------------------
+# dedupe_findings_against_priors — overlap with old comments
+# ---------------------------------------------------------------------------
+
+
+def _finding(file, line, title="X"):
+    return SimpleNamespace(file=file, start_line=line, title=title)
+
+
+def test_same_file_suffix_match():
+    assert _same_file("abound-server/cms/Foo.java", "cms/Foo.java")
+    assert _same_file("/a/b/c.py", "a/b/c.py")
+    assert not _same_file("x/Foo.java", "y/Bar.java")
+    assert not _same_file(None, "a.py")
+
+
+def test_dedupe_drops_finding_overlapping_still_open():
+    open_v = _verdict(False, 0.0)  # comment at a.py:1, still-open
+    kept, _ = dedupe_findings_against_priors([_finding("a.py", 5)], [open_v])
+    assert kept == []  # folded into the still-open prior, not posted as new
+    assert open_v.addressed is False  # unchanged
+
+
+def test_dedupe_flips_fixed_when_new_finding_overlaps():
+    fixed_v = _verdict(True, 0.9)  # comment at a.py:1, we marked it fixed
+    kept, _ = dedupe_findings_against_priors([_finding("a.py", 8, "still broken")], [fixed_v])
+    assert kept == []  # finding folded in
+    assert fixed_v.addressed is False  # contradiction → flipped to still-open
+    assert fixed_v not in confirmed_fixed([fixed_v])  # so it won't be resolved
+    assert "re-review still flags" in fixed_v.reason
+
+
+def test_dedupe_keeps_non_overlapping_finding():
+    v = _verdict(True, 0.9)  # comment at a.py:1
+    kept, _ = dedupe_findings_against_priors([_finding("other.py", 100)], [v])
+    assert len(kept) == 1  # genuinely new → kept
+    assert v.addressed is True  # untouched
 
 
 # ---------------------------------------------------------------------------
