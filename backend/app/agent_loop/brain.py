@@ -567,6 +567,9 @@ class AgentToolExecutor(ToolExecutor):
         self._max_depth = config.max_depth
         self._max_concurrent = config.max_concurrent
         self._sub_agent_timeout = config.sub_agent_timeout
+        # BudgetEconomics per-leaf USD cap (None → static _SDK_LEAF_MAX_USD). Propagated
+        # to deeper executors so a PR Brain's computed cap reaches every SDK leaf.
+        self._leaf_max_usd = getattr(config, "leaf_max_usd", None)
 
         self._code_context: Optional[Dict[str, Any]] = None
         self._plan: Optional[Dict[str, Any]] = None
@@ -1360,6 +1363,7 @@ class AgentToolExecutor(ToolExecutor):
                 max_depth=self._max_depth,
                 max_concurrent=self._max_concurrent,
                 sub_agent_timeout=self._sub_agent_timeout,
+                leaf_max_usd=self._leaf_max_usd,
             ),
             trace_writer=self._trace_writer,
             event_sink=self._event_sink,
@@ -1597,7 +1601,7 @@ class AgentToolExecutor(ToolExecutor):
             max_evidence_retries=1,
             temperature=agent_config.limits.temperature,
             llm_semaphore=self._llm_semaphore,
-            max_budget_usd=_SDK_LEAF_MAX_USD,
+            max_budget_usd=(self._leaf_max_usd or _SDK_LEAF_MAX_USD),
         )
 
         # max_turns bounds iterations; the wall-clock timeout bounds total time.

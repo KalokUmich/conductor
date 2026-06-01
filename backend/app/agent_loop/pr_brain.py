@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from app.agent_loop.budget_economics import TaskSignals, get_budget_economics
 from app.agent_loop.lifecycle import fire_hook
 from app.ai_provider.base import AIProvider
 from app.code_review.diff_parser import parse_diff
@@ -120,8 +121,7 @@ _MANDATORY_DISPATCH_RULES: List[tuple] = [
         "exclusive locks on large tables, and irreversible migrations ship "
         "outages and data loss; dedicated dispatch required",
         re.compile(
-            r"(?:^|/)(?:migrations?|changelog|flyway|liquibase)(?:/|$)"
-            r"|V\d+__[A-Za-z0-9_]+\.sql$",
+            r"(?:^|/)(?:migrations?|changelog|flyway|liquibase)(?:/|$)" r"|V\d+__[A-Za-z0-9_]+\.sql$",
             re.IGNORECASE,
         ),
     ),
@@ -148,7 +148,7 @@ _MANDATORY_DISPATCH_RULES: List[tuple] = [
 # Missing extension (e.g. Makefile, .yml) → only generic patterns.
 _EXT_TO_LANG: Dict[str, str] = {
     ".java": "java",
-    ".kt": "kotlin",      # kotlin reuses Java Spring Security
+    ".kt": "kotlin",  # kotlin reuses Java Spring Security
     ".py": "python",
     ".go": "go",
     ".ts": "typescript",
@@ -170,74 +170,101 @@ def _compile_content_patterns(raw: List[tuple], *, case_insensitive: bool = Fals
 
 # Java + Kotlin (Spring Security ecosystem): annotations, security
 # classes, and crypto / JWT library usage.
-_SECURITY_PATTERNS_JAVA: List[tuple] = _compile_content_patterns([
-    (r"@(?:PreAuthorize|Secured|RolesAllowed|WithMockUser|EnableWebSecurity|PermitAll|DenyAll|PostAuthorize|PreFilter|PostFilter)\b",
-     "Spring Security annotation (access control)"),
-    (r"\bnew\s+(?:BCrypt|Argon2|Pbkdf2|SCrypt)PasswordEncoder\s*\(",
-     "Password encoder constructor (hashing policy)"),
-    (r"\b(?:HttpSecurity|SecurityFilterChain|AuthenticationManager|AuthenticationProvider|UserDetailsService|PasswordEncoder|JwtDecoder|JwtAuthenticationConverter|OAuth2AuthenticationToken|JwtEncoder)\b",
-     "Spring Security configuration / token primitive"),
-    (r"\bMessageDigest\.isEqual\s*\(", "Constant-time byte comparison"),
-    (r"\bSecureRandom\s*\(", "Cryptographic RNG construction"),
-    (r"\bJwts\.(?:builder|parser|parserBuilder|SIG)\b",
-     "JJWT library call (token sign/verify)"),
-    (r'"grant_type"\s*[:,]|"access_token"\s*[:,]|"refresh_token"\s*[:,]',
-     "OAuth2 grant / token field string"),
-    (r"\bCipher\.getInstance\s*\(", "Cipher construction (crypto primitive)"),
-    (r"\b(?:KeyPairGenerator|KeyFactory|KeyGenerator)\.getInstance\s*\(",
-     "Crypto key material setup"),
-])
+_SECURITY_PATTERNS_JAVA: List[tuple] = _compile_content_patterns(
+    [
+        (
+            r"@(?:PreAuthorize|Secured|RolesAllowed|WithMockUser|EnableWebSecurity|PermitAll|DenyAll|PostAuthorize|PreFilter|PostFilter)\b",
+            "Spring Security annotation (access control)",
+        ),
+        (
+            r"\bnew\s+(?:BCrypt|Argon2|Pbkdf2|SCrypt)PasswordEncoder\s*\(",
+            "Password encoder constructor (hashing policy)",
+        ),
+        (
+            r"\b(?:HttpSecurity|SecurityFilterChain|AuthenticationManager|AuthenticationProvider|UserDetailsService|PasswordEncoder|JwtDecoder|JwtAuthenticationConverter|OAuth2AuthenticationToken|JwtEncoder)\b",
+            "Spring Security configuration / token primitive",
+        ),
+        (r"\bMessageDigest\.isEqual\s*\(", "Constant-time byte comparison"),
+        (r"\bSecureRandom\s*\(", "Cryptographic RNG construction"),
+        (r"\bJwts\.(?:builder|parser|parserBuilder|SIG)\b", "JJWT library call (token sign/verify)"),
+        (r'"grant_type"\s*[:,]|"access_token"\s*[:,]|"refresh_token"\s*[:,]', "OAuth2 grant / token field string"),
+        (r"\bCipher\.getInstance\s*\(", "Cipher construction (crypto primitive)"),
+        (r"\b(?:KeyPairGenerator|KeyFactory|KeyGenerator)\.getInstance\s*\(", "Crypto key material setup"),
+    ]
+)
 
 # Python: decorators + security library imports + password / crypto funcs.
-_SECURITY_PATTERNS_PYTHON: List[tuple] = _compile_content_patterns([
-    (r"^\s*@(?:login_required|permission_required|csrf_exempt|staff_member_required|user_passes_test|api_key_required|token_required)\b",
-     "Auth / CSRF decorator"),
-    (r"^\s*(?:from|import)\s+(?:bcrypt|cryptography|jose|jwt|passlib|authlib|django_otp|oauthlib|pyotp|argon2)\b",
-     "Security library import"),
-    (r"\b(?:check_password|make_password|compare_digest|pbkdf2_hmac|constant_time_compare)\s*\(",
-     "Password / constant-time function call"),
-    (r"\bbcrypt\.(?:hashpw|checkpw|gensalt)\s*\(", "bcrypt call"),
-    (r"\bhmac\.(?:compare_digest|new)\s*\(", "HMAC operation"),
-    (r"\bjwt\.(?:encode|decode|get_unverified_claims)\s*\(", "JWT encode/decode"),
-    (r"\b(?:AES|RSA|Fernet|Ed25519|X25519)\.", "Cryptographic primitive class"),
-])
+_SECURITY_PATTERNS_PYTHON: List[tuple] = _compile_content_patterns(
+    [
+        (
+            r"^\s*@(?:login_required|permission_required|csrf_exempt|staff_member_required|user_passes_test|api_key_required|token_required)\b",
+            "Auth / CSRF decorator",
+        ),
+        (
+            r"^\s*(?:from|import)\s+(?:bcrypt|cryptography|jose|jwt|passlib|authlib|django_otp|oauthlib|pyotp|argon2)\b",
+            "Security library import",
+        ),
+        (
+            r"\b(?:check_password|make_password|compare_digest|pbkdf2_hmac|constant_time_compare)\s*\(",
+            "Password / constant-time function call",
+        ),
+        (r"\bbcrypt\.(?:hashpw|checkpw|gensalt)\s*\(", "bcrypt call"),
+        (r"\bhmac\.(?:compare_digest|new)\s*\(", "HMAC operation"),
+        (r"\bjwt\.(?:encode|decode|get_unverified_claims)\s*\(", "JWT encode/decode"),
+        (r"\b(?:AES|RSA|Fernet|Ed25519|X25519)\.", "Cryptographic primitive class"),
+    ]
+)
 
 # Go: security-critical std + popular libraries.
-_SECURITY_PATTERNS_GO: List[tuple] = _compile_content_patterns([
-    (r'"(?:crypto/subtle|crypto/rand|crypto/hmac|crypto/rsa|crypto/ecdsa|crypto/tls|crypto/x509)"',
-     "Crypto stdlib import"),
-    (r'"(?:golang\.org/x/crypto/bcrypt|golang\.org/x/crypto/argon2|golang\.org/x/crypto/scrypt)"',
-     "Password hashing library import"),
-    (r'"(?:github\.com/golang-jwt/jwt|github\.com/dgrijalva/jwt-go|github\.com/lestrrat-go/jwx)',
-     "JWT library import"),
-    (r"\bsubtle\.ConstantTimeCompare\s*\(", "Constant-time comparison"),
-    (r"\bbcrypt\.(?:CompareHashAndPassword|GenerateFromPassword)\s*\(",
-     "bcrypt operation"),
-    (r"\bjwt\.(?:Parse|ParseWithClaims|Sign|New|NewWithClaims)\b", "JWT operation"),
-    (r"\bmiddleware\.(?:BasicAuth|JWTAuth|RequireAuth)\b", "Auth middleware"),
-])
+_SECURITY_PATTERNS_GO: List[tuple] = _compile_content_patterns(
+    [
+        (
+            r'"(?:crypto/subtle|crypto/rand|crypto/hmac|crypto/rsa|crypto/ecdsa|crypto/tls|crypto/x509)"',
+            "Crypto stdlib import",
+        ),
+        (
+            r'"(?:golang\.org/x/crypto/bcrypt|golang\.org/x/crypto/argon2|golang\.org/x/crypto/scrypt)"',
+            "Password hashing library import",
+        ),
+        (
+            r'"(?:github\.com/golang-jwt/jwt|github\.com/dgrijalva/jwt-go|github\.com/lestrrat-go/jwx)',
+            "JWT library import",
+        ),
+        (r"\bsubtle\.ConstantTimeCompare\s*\(", "Constant-time comparison"),
+        (r"\bbcrypt\.(?:CompareHashAndPassword|GenerateFromPassword)\s*\(", "bcrypt operation"),
+        (r"\bjwt\.(?:Parse|ParseWithClaims|Sign|New|NewWithClaims)\b", "JWT operation"),
+        (r"\bmiddleware\.(?:BasicAuth|JWTAuth|RequireAuth)\b", "Auth middleware"),
+    ]
+)
 
 # TypeScript / JavaScript (shared): Node + React + browser auth patterns.
-_SECURITY_PATTERNS_TSJS: List[tuple] = _compile_content_patterns([
-    # Imports / requires from auth/security packages
-    (r"(?:from\s+|require\s*\(\s*)['\"](?:jsonwebtoken|bcrypt(?:js)?|passport(?:-[\w-]+)?|express-session|next-auth|@auth0/[\w-]+|@okta/[\w-]+|firebase/auth|@clerk/[\w-]+|iron-session|cookie-session|csurf|helmet|express-rate-limit|argon2|scrypt-kdf)['\"]",
-     "Auth/security npm package import"),
-    # JWT / bcrypt function calls
-    (r"\b(?:jwt\.(?:sign|verify|decode)|bcrypt\.(?:compare|hash|genSalt))\s*\(",
-     "JWT / bcrypt call"),
-    # Browser credential storage — strong signal for XSS/exfil risk
-    (r"(?:localStorage|sessionStorage)\.(?:setItem|getItem)\s*\(\s*['\"](?:token|auth|session|jwt|accessToken|refreshToken|apiKey)",
-     "Browser-storage credential (XSS exfil surface)"),
-    (r"document\.cookie\s*[=+]", "Direct cookie write"),
-    # React auth components / hooks
-    (r"<(?:AuthGuard|ProtectedRoute|RequireAuth|RoleGuard|PrivateRoute|AuthProvider)\b",
-     "React auth wrapper component"),
-    (r"\b(?:useAuth|useSession|useUser|useClerk|useAuth0)\s*\(", "Auth React hook"),
-    # Passport / middleware
-    (r"\bpassport\.authenticate\s*\(", "Passport strategy invocation"),
-    # CSRF / CORS middleware
-    (r"\b(?:csrf|csurf|helmet|cors)\s*\(\s*\{?", "Security middleware invocation"),
-])
+_SECURITY_PATTERNS_TSJS: List[tuple] = _compile_content_patterns(
+    [
+        # Imports / requires from auth/security packages
+        (
+            r"(?:from\s+|require\s*\(\s*)['\"](?:jsonwebtoken|bcrypt(?:js)?|passport(?:-[\w-]+)?|express-session|next-auth|@auth0/[\w-]+|@okta/[\w-]+|firebase/auth|@clerk/[\w-]+|iron-session|cookie-session|csurf|helmet|express-rate-limit|argon2|scrypt-kdf)['\"]",
+            "Auth/security npm package import",
+        ),
+        # JWT / bcrypt function calls
+        (r"\b(?:jwt\.(?:sign|verify|decode)|bcrypt\.(?:compare|hash|genSalt))\s*\(", "JWT / bcrypt call"),
+        # Browser credential storage — strong signal for XSS/exfil risk
+        (
+            r"(?:localStorage|sessionStorage)\.(?:setItem|getItem)\s*\(\s*['\"](?:token|auth|session|jwt|accessToken|refreshToken|apiKey)",
+            "Browser-storage credential (XSS exfil surface)",
+        ),
+        (r"document\.cookie\s*[=+]", "Direct cookie write"),
+        # React auth components / hooks
+        (
+            r"<(?:AuthGuard|ProtectedRoute|RequireAuth|RoleGuard|PrivateRoute|AuthProvider)\b",
+            "React auth wrapper component",
+        ),
+        (r"\b(?:useAuth|useSession|useUser|useClerk|useAuth0)\s*\(", "Auth React hook"),
+        # Passport / middleware
+        (r"\bpassport\.authenticate\s*\(", "Passport strategy invocation"),
+        # CSRF / CORS middleware
+        (r"\b(?:csrf|csurf|helmet|cors)\s*\(\s*\{?", "Security middleware invocation"),
+    ]
+)
 
 # Map language tag → pattern list so extension lookup stays O(1).
 _SECURITY_PATTERNS_BY_LANG: Dict[str, List[tuple]] = {
@@ -257,30 +284,27 @@ _SECURITY_PATTERNS_BY_LANG: Dict[str, List[tuple]] = {
 # (`addCountIpWhitelist` → contains `Whitelist`).
 _GENERIC_SECURITY_PATTERNS: List[tuple] = _compile_content_patterns(
     [
-        (r"(?:whitelist|allowlist|blocklist|denylist|blacklist)",
-         "Allow/deny list concept"),
-        (r"(?:firewall|ratelimit|rate_limit|throttl\w*)",
-         "Firewall / rate limit concept"),
-        (r"\b(?:allowed_ips?|denied_ips?|trusted_ips?|blocked_ips?)\b",
-         "IP allow/deny list"),
-        (r"\bcsrf[-_]?token\b|\bcsrf_exempt\b|\bSameSite\b|\bHttpOnly\b|\bSecure\s*[;=]",
-         "Cookie / CSRF security attribute"),
-        (r"\b(?:Bearer |Basic )\s+?\{?[A-Za-z0-9._-]+\}?",
-         "HTTP Authorization scheme literal"),
+        (r"(?:whitelist|allowlist|blocklist|denylist|blacklist)", "Allow/deny list concept"),
+        (r"(?:firewall|ratelimit|rate_limit|throttl\w*)", "Firewall / rate limit concept"),
+        (r"\b(?:allowed_ips?|denied_ips?|trusted_ips?|blocked_ips?)\b", "IP allow/deny list"),
+        (
+            r"\bcsrf[-_]?token\b|\bcsrf_exempt\b|\bSameSite\b|\bHttpOnly\b|\bSecure\s*[;=]",
+            "Cookie / CSRF security attribute",
+        ),
+        (r"\b(?:Bearer |Basic )\s+?\{?[A-Za-z0-9._-]+\}?", "HTTP Authorization scheme literal"),
     ],
     case_insensitive=True,
 )
 
 # Reliability content patterns — DDL / migration SQL that may ship
 # outages regardless of whether the file sits in a /migrations/ dir.
-_RELIABILITY_CONTENT_PATTERNS: List[tuple] = _compile_content_patterns([
-    (r"\bALTER\s+TABLE\b.*?\b(?:ADD|DROP|ALTER|RENAME)\s+COLUMN\b",
-     "DDL column change (lock / rewrite risk)"),
-    (r"\bDROP\s+(?:TABLE|INDEX|CONSTRAINT|VIEW)\b",
-     "Destructive DDL"),
-    (r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\b",
-     "Index creation (potentially long lock)"),
-])
+_RELIABILITY_CONTENT_PATTERNS: List[tuple] = _compile_content_patterns(
+    [
+        (r"\bALTER\s+TABLE\b.*?\b(?:ADD|DROP|ALTER|RENAME)\s+COLUMN\b", "DDL column change (lock / rewrite risk)"),
+        (r"\bDROP\s+(?:TABLE|INDEX|CONSTRAINT|VIEW)\b", "Destructive DDL"),
+        (r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\b", "Index creation (potentially long lock)"),
+    ]
+)
 
 
 def _detect_required_dispatches_from_diff_content(
@@ -313,12 +337,14 @@ def _detect_required_dispatches_from_diff_content(
         bucket = hits.setdefault(role, [])
         if len(bucket) >= max_matches_per_role:
             return
-        bucket.append({
-            "file": file_path,
-            "line": line_no,
-            "snippet": snippet[:120],  # truncate for log / prompt safety
-            "reason": reason,
-        })
+        bucket.append(
+            {
+                "file": file_path,
+                "line": line_no,
+                "snippet": snippet[:120],  # truncate for log / prompt safety
+                "reason": reason,
+            }
+        )
 
     for file_path, diff_text in file_diffs.items():
         ext = _os.path.splitext(file_path)[1].lower()
@@ -362,15 +388,15 @@ def _detect_required_dispatches_from_diff_content(
         combined_reason = (
             "Diff content matches security / reliability primitives — "
             "even though the file path doesn't self-declare as security-"
-            "critical, the code added here is (triggers: "
-            + ", ".join(reasons)
-            + ")"
+            "critical, the code added here is (triggers: " + ", ".join(reasons) + ")"
         )
-        results.append({
-            "role": role,
-            "reason": combined_reason,
-            "matching_evidence": hits[role],
-        })
+        results.append(
+            {
+                "role": role,
+                "reason": combined_reason,
+                "matching_evidence": hits[role],
+            }
+        )
     return results
 
 
@@ -399,12 +425,14 @@ def _detect_required_dispatches(
     for role, reason, pattern in _MANDATORY_DISPATCH_RULES:
         matches = sorted({p for p in paths if pattern.search(p)})
         if matches:
-            requirements.append({
-                "role": role,
-                "reason": reason,
-                "matching_paths": matches,
-                "_tier": 1,
-            })
+            requirements.append(
+                {
+                    "role": role,
+                    "reason": reason,
+                    "matching_paths": matches,
+                    "_tier": 1,
+                }
+            )
 
     # Tier 2 — diff content
     for entry in _detect_required_dispatches_from_diff_content(file_diffs):
@@ -484,12 +512,14 @@ def _detect_dimension_triggers(
             or len(hotspot_symbols_set) >= _DIMENSION_TRIGGER_MIN_SYMBOLS
         )
         if fires:
-            triggers.append({
-                "file": f.path,
-                "caller_files": caller_files_distinct[:10],
-                "caller_count": len(caller_files_distinct),
-                "hotspot_symbols": sorted(hotspot_symbols_set)[:10],
-            })
+            triggers.append(
+                {
+                    "file": f.path,
+                    "caller_files": caller_files_distinct[:10],
+                    "caller_count": len(caller_files_distinct),
+                    "hotspot_symbols": sorted(hotspot_symbols_set)[:10],
+                }
+            )
 
     return triggers
 
@@ -640,9 +670,7 @@ class PRBrainOrchestrator:
                 session_id = f"{slug}-{_uuid.uuid4().hex[:8]}"
             else:
                 session_id = f"pr-{_uuid.uuid4().hex[:12]}"
-            scratchpad = FactStore.open(
-                session_id, workspace=workspace_path, task_id=task_id
-            )
+            scratchpad = FactStore.open(session_id, workspace=workspace_path, task_id=task_id)
             self._owns_scratchpad = True
         self._scratchpad = scratchpad
 
@@ -781,8 +809,12 @@ class PRBrainOrchestrator:
         # dispatch_verify, replans on unexpected observations, and
         # synthesises with unified severity classification.
         async for event in self._run_v2_coordinator(
-            pr_context, risk_profile, file_diffs, impact_context,
-            budget_multiplier, start_time,
+            pr_context,
+            risk_profile,
+            file_diffs,
+            impact_context,
+            budget_multiplier,
+            start_time,
         ):
             yield event
 
@@ -839,6 +871,24 @@ class PRBrainOrchestrator:
 
         brain_config = load_brain_config()
         swarm_registry = load_swarm_registry()
+
+        # Pre-flight USD budget consult (BudgetEconomics). PR review is a MANDATORY
+        # consult: estimate a loose total ceiling + per-leaf cap from the diff size
+        # before any worker is dispatched. The hard anchor is a 2000-line PR → $50
+        # total; caps are loose safety circuit-breakers (a real leaf spends
+        # ~$0.05-0.50), so they never throttle a normal review — they only stop a
+        # runaway loop. The per-leaf cap rides the SDK leaf via max_budget_usd; the
+        # total cap is recorded for monitoring + future coordinator-level cutoff.
+        budget_plan = get_budget_economics().estimate(
+            "pr",
+            TaskSignals(
+                diff_lines=pr_context.total_changed_lines,
+                expected_leaves=max(1, pr_context.file_count),
+            ),
+        )
+        logger.info("[PR Brain v2] Budget plan: %s", budget_plan.to_dict())
+        yield WorkflowEvent("budget_plan", budget_plan.to_dict())
+
         budget_mgr = BrainBudgetManager(
             self._config.limits.total_session_tokens,
         )
@@ -850,6 +900,8 @@ class PRBrainOrchestrator:
             max_depth=self._config.limits.max_depth,
             max_concurrent=self._config.limits.max_concurrent_agents,
             sub_agent_timeout=self._config.limits.sub_agent_timeout,
+            # BudgetEconomics per-leaf cap → every SDK leaf dispatched in this review.
+            leaf_max_usd=budget_plan.per_leaf_max_usd,
         )
 
         executor = AgentToolExecutor(
@@ -857,7 +909,7 @@ class PRBrainOrchestrator:
             agent_registry=self._agent_registry,
             swarm_registry=swarm_registry,
             agent_provider=self._explorer_provider,  # haiku for sub-agents
-            strong_provider=self._provider,          # sonnet = the Brain itself
+            strong_provider=self._provider,  # sonnet = the Brain itself
             config=executor_cfg,
             brain_config=brain_config,
             trace_writer=self._trace_writer,
@@ -881,21 +933,28 @@ class PRBrainOrchestrator:
         # ------------------------------------------------------------------
         existence_summary = ""
         import os as _os_v2phase2
+
         if _os_v2phase2.environ.get("CONDUCTOR_PR_BRAIN_V2_SKIP_EXISTENCE", "0") != "1":
             try:
                 async for ev in self._run_v2_phase2_existence(
-                    executor, pr_context, file_diffs,
+                    executor,
+                    pr_context,
+                    file_diffs,
                 ):
                     yield ev
                 existence_summary = self._format_existence_summary_for_coordinator()
             except Exception as exc:
                 logger.warning(
-                    "[PR Brain v2] Phase 2 existence check failed (non-fatal): %s", exc,
+                    "[PR Brain v2] Phase 2 existence check failed (non-fatal): %s",
+                    exc,
                 )
 
         # Build the coordinator's task — diff + impact + coordinator skill.
         coordinator_query = self._build_v2_coordinator_query(
-            pr_context, risk_profile, file_diffs, impact_context,
+            pr_context,
+            risk_profile,
+            file_diffs,
+            impact_context,
             existence_summary=existence_summary,
         )
 
@@ -903,9 +962,17 @@ class PRBrainOrchestrator:
         # including dispatch_verify, read-only survey tools, and runs the
         # 5-phase loop under the pr_brain_coordinator skill's direction.
         coordinator_tools = [
-            "grep", "read_file", "find_symbol", "file_outline",
-            "get_callers", "get_callees", "get_dependencies",
-            "git_diff", "git_diff_files", "git_show", "git_log",
+            "grep",
+            "read_file",
+            "find_symbol",
+            "file_outline",
+            "get_callers",
+            "get_callees",
+            "get_dependencies",
+            "git_diff",
+            "git_diff_files",
+            "git_show",
+            "git_log",
             "dispatch_verify",
             "dispatch_sweep",
         ]
@@ -934,7 +1001,8 @@ class PRBrainOrchestrator:
         }
 
         coordinator_result = await executor.execute(
-            "dispatch_explore", coordinator_params,
+            "dispatch_explore",
+            coordinator_params,
         )
 
         logger.info(
@@ -944,7 +1012,8 @@ class PRBrainOrchestrator:
 
         # Parse the coordinator's final answer into ReviewFindings + synthesis.
         review_output = self._parse_v2_coordinator_output(
-            coordinator_result, pr_context,
+            coordinator_result,
+            pr_context,
         )
 
         # Phase 9.17 lifecycle hook — coordinator finished all dispatches
@@ -974,17 +1043,19 @@ class PRBrainOrchestrator:
         # Skip via env CONDUCTOR_PR_BRAIN_V2_SKIP_VERIFY=1 for A/B testing.
         # ------------------------------------------------------------------
         import os as _os_v2phase6
-        if (
-            _os_v2phase6.environ.get("CONDUCTOR_PR_BRAIN_V2_SKIP_VERIFY", "0") != "1"
-            and review_output["findings"]
-        ):
+
+        if _os_v2phase6.environ.get("CONDUCTOR_PR_BRAIN_V2_SKIP_VERIFY", "0") != "1" and review_output["findings"]:
             try:
                 review_output = await self._apply_v2_precision_filter(
-                    executor, review_output, pr_context, file_diffs,
+                    executor,
+                    review_output,
+                    pr_context,
+                    file_diffs,
                 )
             except Exception as exc:
                 logger.warning(
-                    "[PR Brain v2] Precision filter failed (non-fatal): %s", exc,
+                    "[PR Brain v2] Precision filter failed (non-fatal): %s",
+                    exc,
                 )
 
         yield WorkflowEvent(
@@ -1062,7 +1133,8 @@ class PRBrainOrchestrator:
         Yielding WorkflowEvent for observability.
         """
         yield WorkflowEvent(
-            "v2_phase2_start", {"phase": "existence_verification"},
+            "v2_phase2_start",
+            {"phase": "existence_verification"},
         )
 
         # Pack the diff text the worker needs to inspect. Keep bounded so
@@ -1123,9 +1195,7 @@ class PRBrainOrchestrator:
         # receivers, MRO, and nested definitions that signature grep
         # patterns can miss.
         lang_hints: List[str] = []
-        extensions = {
-            Path(f.path).suffix.lower() for f in pr_context.files if f.path
-        }
+        extensions = {Path(f.path).suffix.lower() for f in pr_context.files if f.path}
         if ".java" in extensions:
             lang_hints.append(
                 "**Java (`.java`)** — prefer `find_symbol(name)` over grep. "
@@ -1193,6 +1263,7 @@ class PRBrainOrchestrator:
 
         if store is not None:
             try:
+
                 def _inject_phantom(found: Dict[str, str], *, kind: str) -> None:
                     nonlocal added_from_ast, missing_count
                     name = found["name"]
@@ -1214,8 +1285,7 @@ class PRBrainOrchestrator:
                         _fs = _find_symbol(self._workspace_path, name)
                         if _fs.success and _fs.data:
                             logger.info(
-                                "[PR Brain v2] P13 phantom '%s' suppressed — "
-                                "find_symbol found %d definition(s)",
+                                "[PR Brain v2] P13 phantom '%s' suppressed — " "find_symbol found %d definition(s)",
                                 name,
                                 len(_fs.data),
                             )
@@ -1223,8 +1293,7 @@ class PRBrainOrchestrator:
                             return
                     except Exception as exc:
                         logger.debug(
-                            "[PR Brain v2] P13 find_symbol cross-check failed "
-                            "for %s (proceeding to flag): %s",
+                            "[PR Brain v2] P13 find_symbol cross-check failed " "for %s (proceeding to flag): %s",
                             name,
                             exc,
                         )
@@ -1238,36 +1307,43 @@ class PRBrainOrchestrator:
                             signature_info=None,
                         )
                         p13_handled_names.add(name)
-                        p13_missing_details.append({
-                            "name": name, "kind": kind,
-                            "referenced_at": found["referenced_at"],
-                        })
+                        p13_missing_details.append(
+                            {
+                                "name": name,
+                                "kind": kind,
+                                "referenced_at": found["referenced_at"],
+                            }
+                        )
                         added_from_ast += 1
                         missing_count += 1
                     except Exception as exc:
                         logger.debug(
                             "[PR Brain v2] P13 put_existence failed for %s: %s",
-                            name, exc,
+                            name,
+                            exc,
                         )
 
                 for found in _scan_new_python_imports_for_missing(
-                    self._workspace_path, file_diffs,
+                    self._workspace_path,
+                    file_diffs,
                 ):
                     _inject_phantom(found, kind="import")
 
                 for found in _scan_new_go_references_for_missing(
-                    self._workspace_path, file_diffs,
+                    self._workspace_path,
+                    file_diffs,
                 ):
                     _inject_phantom(found, kind="reference")
 
                 for found in _scan_new_java_references_for_missing(
-                    self._workspace_path, file_diffs,
+                    self._workspace_path,
+                    file_diffs,
                 ):
                     _inject_phantom(found, kind="class")
             except Exception as exc:
                 logger.warning(
-                    "[PR Brain v2] P13 deterministic scan failed "
-                    "(non-fatal): %s", exc,
+                    "[PR Brain v2] P13 deterministic scan failed " "(non-fatal): %s",
+                    exc,
                 )
 
         if added_from_ast:
@@ -1290,8 +1366,7 @@ class PRBrainOrchestrator:
                 "your analysis — do not waste tool calls re-verifying "
                 "import-level existence for these names.\n\n"
                 + "\n".join(
-                    f"- `{d['name']}` (kind={d['kind']}, at `{d['referenced_at']}`)"
-                    for d in p13_missing_details[:40]
+                    f"- `{d['name']}` (kind={d['kind']}, at `{d['referenced_at']}`)" for d in p13_missing_details[:40]
                 )
             )
 
@@ -1330,23 +1405,23 @@ class PRBrainOrchestrator:
                 "[PR Brain v2] existence-check LLM worker hit %ds "
                 "wall-clock timeout. P13 facts already persisted (%d "
                 "missing symbols); coordinator proceeds with those.",
-                _PHASE2_TIMEOUT_SECONDS, added_from_ast,
+                _PHASE2_TIMEOUT_SECONDS,
+                added_from_ast,
             )
             llm_timeout = True
             result = None
 
         if result is not None and not result.success:
             logger.warning(
-                "[PR Brain v2] existence-check dispatch failed: %s", result.error,
+                "[PR Brain v2] existence-check dispatch failed: %s",
+                result.error,
             )
             llm_error = str(result.error)
             result = None
 
         if result is not None:
             condensed = result.data or {}
-            raw_answer = (
-                condensed.get("answer") or condensed.get("final_answer") or ""
-            )
+            raw_answer = condensed.get("answer") or condensed.get("final_answer") or ""
             parsed = _parse_existence_json(raw_answer)
             if parsed is None:
                 logger.warning(
@@ -1388,8 +1463,11 @@ class PRBrainOrchestrator:
             "[PR Brain v2] Phase 2 existence: P13 flagged %d, LLM worker "
             "added %d more signature-level facts, total missing=%d "
             "(llm_timeout=%s, llm_error=%s)",
-            added_from_ast, len(llm_symbols), missing_count,
-            llm_timeout, llm_error,
+            added_from_ast,
+            len(llm_symbols),
+            missing_count,
+            llm_timeout,
+            llm_error,
         )
         yield WorkflowEvent(
             "v2_phase2_complete",
@@ -1438,18 +1516,22 @@ class PRBrainOrchestrator:
                 f"runtime the moment affected code is loaded."
             )
             lines.append("")
-            lines.append("**MANDATORY**: your final findings JSON MUST include one "
-                         "entry per missing symbol, pointing at the REFERENCE "
-                         "site (not where the symbol 'would' be defined), with "
-                         "title of the form 'ImportError at runtime: {name} "
-                         "not defined in codebase'. Severity = `critical`. "
-                         "Category = `correctness`. Confidence = `0.99`.")
+            lines.append(
+                "**MANDATORY**: your final findings JSON MUST include one "
+                "entry per missing symbol, pointing at the REFERENCE "
+                "site (not where the symbol 'would' be defined), with "
+                "title of the form 'ImportError at runtime: {name} "
+                "not defined in codebase'. Severity = `critical`. "
+                "Category = `correctness`. Confidence = `0.99`."
+            )
             lines.append("")
-            lines.append("**DO NOT** speculate about what the non-existent "
-                         "symbol 'would have done'. Do NOT emit findings "
-                         "about negative offsets, null checks, or any logic "
-                         "inside a phantom class. The class does not exist — "
-                         "the ImportError IS the bug. Stop there.")
+            lines.append(
+                "**DO NOT** speculate about what the non-existent "
+                "symbol 'would have done'. Do NOT emit findings "
+                "about negative offsets, null checks, or any logic "
+                "inside a phantom class. The class does not exist — "
+                "the ImportError IS the bug. Stop there."
+            )
             lines.append("")
             lines.append("**Required finding template** (copy this shape — fill the brackets):")
             lines.append("")
@@ -1461,9 +1543,13 @@ class PRBrainOrchestrator:
             lines.append('  "file": "<FILE where the reference is>",')
             lines.append('  "start_line": <LINE of the reference>,')
             lines.append('  "end_line": <LINE of the reference>,')
-            lines.append('  "evidence": ["grep \'class <SYMBOL>\' / \'def <SYMBOL>\' returned 0 matches in the codebase"],')
+            lines.append(
+                "  \"evidence\": [\"grep 'class <SYMBOL>' / 'def <SYMBOL>' returned 0 matches in the codebase\"],"
+            )
             lines.append('  "risk": "Every call path that loads <FILE> raises ImportError/NameError at runtime.",')
-            lines.append('  "suggested_fix": "Either define <SYMBOL> in the imported module, or remove the reference. The current PR is unshippable as written.",')
+            lines.append(
+                '  "suggested_fix": "Either define <SYMBOL> in the imported module, or remove the reference. The current PR is unshippable as written.",'
+            )
             lines.append('  "category": "correctness"')
             lines.append("}")
             lines.append("```")
@@ -1473,16 +1559,11 @@ class PRBrainOrchestrator:
             for m in missing:
                 ref = m.referenced_at or "(unknown)"
                 ev = (m.evidence or "").strip()[:200]
-                lines.append(
-                    f"- `{m.symbol_name}` ({m.symbol_kind}) referenced at `{ref}` — evidence: {ev}"
-                )
+                lines.append(f"- `{m.symbol_name}` ({m.symbol_kind}) referenced at `{ref}` — evidence: {ev}")
             lines.append("")
 
         if present:
-            sig_mismatch = [
-                p for p in present
-                if p.signature_info and p.signature_info.get("missing_params")
-            ]
+            sig_mismatch = [p for p in present if p.signature_info and p.signature_info.get("missing_params")]
             if sig_mismatch:
                 lines.append("### ⚠️ Signature mismatches — DIRECT FINDINGS REQUIRED")
                 lines.append("")
@@ -1497,16 +1578,13 @@ class PRBrainOrchestrator:
                 lines.append("")
                 for m in sig_mismatch:
                     missing_params = m.signature_info.get("missing_params", [])
-                    lines.append(
-                        f"- `{m.symbol_name}` at `{m.referenced_at}` — "
-                        f"missing params: {missing_params}"
-                    )
+                    lines.append(f"- `{m.symbol_name}` at `{m.referenced_at}` — " f"missing params: {missing_params}")
                 lines.append("")
             other_present = [p for p in present if p not in sig_mismatch]
             if other_present:
                 lines.append(
                     f"**{len(other_present)} other symbol(s) verified present.** "
-                    f"Use `search_facts(kind=\"existence\", symbol=\"X\")` to "
+                    f'Use `search_facts(kind="existence", symbol="X")` to '
                     f"look up any of them; sub-agents you dispatch can "
                     f"skip the verify-existence-first step for these."
                 )
@@ -1531,8 +1609,7 @@ class PRBrainOrchestrator:
         lines.append("# PR Review — coordinator task")
         lines.append("")
         lines.append(f"Diff spec: `{self._diff_spec}`")
-        lines.append(f"Files changed: {pr_context.file_count}  "
-                     f"Lines changed: {pr_context.total_changed_lines}")
+        lines.append(f"Files changed: {pr_context.file_count}  " f"Lines changed: {pr_context.total_changed_lines}")
         lines.append("")
 
         # ------------------------------------------------------------------
@@ -1590,10 +1667,7 @@ class PRBrainOrchestrator:
         lines.append("## Files in diff")
         lines.append("")
         for f in pr_context.files:
-            lines.append(
-                f"- `{f.path}`  (+{f.additions} −{f.deletions}, "
-                f"{f.status}, category={f.category.value})"
-            )
+            lines.append(f"- `{f.path}`  (+{f.additions} −{f.deletions}, " f"{f.status}, category={f.category.value})")
         lines.append("")
         lines.append("## Risk profile")
         lines.append("")
@@ -1668,9 +1742,7 @@ class PRBrainOrchestrator:
             for req in required:
                 tier = req.get("_tier", 1)
                 tier_label = "Tier 1 — path" if tier == 1 else "Tier 2 — diff content"
-                lines.append(
-                    f"### `role=\"{req['role']}\"` — REQUIRED ({tier_label})"
-                )
+                lines.append(f"### `role=\"{req['role']}\"` — REQUIRED ({tier_label})")
                 lines.append("")
                 lines.append(f"**Trigger reason**: {req['reason']}")
                 lines.append("")
@@ -1683,18 +1755,12 @@ class PRBrainOrchestrator:
                     lines.append("**Matching evidence** (file:line — why):")
                     for ev in req["matching_evidence"]:
                         snippet = ev["snippet"].replace("\n", " ")
-                        lines.append(
-                            f"- `{ev['file']}:{ev['line']}` — {ev['reason']} "
-                            f"— `{snippet[:80]}`"
-                        )
+                        lines.append(f"- `{ev['file']}:{ev['line']}` — {ev['reason']} " f"— `{snippet[:80]}`")
                     lines.append("")
             logger.info(
-                "[PR Brain v2] Mandatory-dispatch Phase 1 detected %d "
-                "required role(s) across 2 tiers: %s",
+                "[PR Brain v2] Mandatory-dispatch Phase 1 detected %d " "required role(s) across 2 tiers: %s",
                 len(required),
-                ", ".join(
-                    f"{r['role']}(T{r.get('_tier', 1)})" for r in required
-                ),
+                ", ".join(f"{r['role']}(T{r.get('_tier', 1)})" for r in required),
             )
 
         # P12b — Dimension-worker trigger hints. OPT-IN, not mandatory.
@@ -1704,7 +1770,8 @@ class PRBrainOrchestrator:
         # dispatch_sweep; we just tell it "here's where
         # a cross-file sweep would pay off".
         dim_triggers = _detect_dimension_triggers(
-            self._workspace_path, pr_context,
+            self._workspace_path,
+            pr_context,
         )
         n_files_for_cap = len(pr_context.files)
         dim_cap = _dimension_dispatch_cap(n_files_for_cap)
@@ -1721,8 +1788,8 @@ class PRBrainOrchestrator:
                 f"(new contract, signature change, shared middleware "
                 f"edit) must be verified at every caller site, and a "
                 f"bunch of narrow scoped dispatches would miss the "
-                f"cross-cut. `model_tier=\"explorer\"` default @ 150K "
-                f"budget; escalate to `model_tier=\"strong\"` only when "
+                f'cross-cut. `model_tier="explorer"` default @ 150K '
+                f'budget; escalate to `model_tier="strong"` only when '
                 f"cross-file logical inference is required."
             )
             lines.append("")
@@ -1734,15 +1801,11 @@ class PRBrainOrchestrator:
                     f"({', '.join(f'`{c}`' for c in trig['caller_files'][:5])}"
                     f"{'...' if len(trig['caller_files']) > 5 else ''})"
                 )
-                if trig['hotspot_symbols']:
-                    lines.append(
-                        "- Hotspot symbols: "
-                        f"{', '.join(f'`{s}`' for s in trig['hotspot_symbols'][:5])}"
-                    )
+                if trig["hotspot_symbols"]:
+                    lines.append("- Hotspot symbols: " f"{', '.join(f'`{s}`' for s in trig['hotspot_symbols'][:5])}")
                 lines.append("")
             logger.info(
-                "[PR Brain v2] P12b dimension triggers: %d candidate file(s), "
-                "cap=%d: %s",
+                "[PR Brain v2] P12b dimension triggers: %d candidate file(s), " "cap=%d: %s",
                 len(dim_triggers),
                 dim_cap,
                 ", ".join(t["file"] for t in dim_triggers[:5]),
@@ -1767,22 +1830,15 @@ class PRBrainOrchestrator:
         lines.append("## Dispatch budget for THIS PR")
         lines.append("")
         lines.append(
-            f"- PR size: **{size_label}** ({n_files} files, "
-            f"{pr_context.total_changed_lines} lines changed)"
+            f"- PR size: **{size_label}** ({n_files} files, " f"{pr_context.total_changed_lines} lines changed)"
         )
-        lines.append(
-            f"- Hard cap: **{dispatch_cap} dispatches** across all replan rounds"
-        )
+        lines.append(f"- Hard cap: **{dispatch_cap} dispatches** across all replan rounds")
         if size_label == "large":
             lines.append(
-                "- Cluster first: group files by feature/intent in Survey, "
-                "then dispatch 1-2 role agents per cluster"
+                "- Cluster first: group files by feature/intent in Survey, " "then dispatch 1-2 role agents per cluster"
             )
         else:
-            lines.append(
-                "- Small PR: 1-3 targeted dispatches typically suffice. "
-                "Don't pad."
-            )
+            lines.append("- Small PR: 1-3 targeted dispatches typically suffice. " "Don't pad.")
         lines.append("")
 
         lines.append("## Your task")
@@ -1794,11 +1850,11 @@ class PRBrainOrchestrator:
             f"(≤5 files per dispatch, ≤{dispatch_cap} total dispatches). "
             "Two dispatch modes available — pick per investigation: "
             "(a) `checks=[q1, q2, q3]` for localised suspicions where "
-            "you have concrete yes/no questions; (b) `role=\"security\"|"
-            "\"correctness\"|\"concurrency\"|\"reliability\"|\"performance\"|"
-            "\"test_coverage\"` + `direction_hint=\"...\"` for specialist "
+            'you have concrete yes/no questions; (b) `role="security"|'
+            '"correctness"|"concurrency"|"reliability"|"performance"|'
+            '"test_coverage"` + `direction_hint="..."` for specialist '
             "deep-dive on a risk dimension. You may combine: "
-            "`role=\"security\", checks=[...]`. "
+            '`role="security", checks=[...]`. '
             "At Synthesize, classify severity yourself using the "
             "`## Severity rubric` section of your skill — reserve `critical` "
             "and `high` for their listed categories, default borderline "
@@ -1825,7 +1881,9 @@ class PRBrainOrchestrator:
         lines.append('    "evidence": ["line quote", "cross-reference"],')
         lines.append('    "risk": "what could go wrong in production",')
         lines.append('    "suggested_fix": "concrete, implementable fix",')
-        lines.append('    "category": "correctness | security | reliability | concurrency | performance | test_coverage"')
+        lines.append(
+            '    "category": "correctness | security | reliability | concurrency | performance | test_coverage"'
+        )
         lines.append("  }")
         lines.append("]")
         lines.append("```")
@@ -1877,8 +1935,7 @@ class PRBrainOrchestrator:
         findings, injected_count = _inject_missing_symbol_findings(findings)
         if injected_count:
             logger.info(
-                "[PR Brain v2] Injected %d missing-symbol finding(s) "
-                "that coordinator omitted",
+                "[PR Brain v2] Injected %d missing-symbol finding(s) " "that coordinator omitted",
                 injected_count,
             )
 
@@ -1889,7 +1946,8 @@ class PRBrainOrchestrator:
         # finding. Guards against coordinator missing multi-site stub
         # bugs (grafana-009 class).
         findings, stub_injected = _inject_stub_caller_findings(
-            findings, file_diffs,
+            findings,
+            file_diffs,
         )
         if stub_injected:
             logger.info(
@@ -1904,8 +1962,7 @@ class PRBrainOrchestrator:
         findings, reflection_drops = _reflect_against_phase2_facts(findings)
         if reflection_drops:
             logger.info(
-                "[PR Brain v2] Reflection pass dropped %d finding(s) "
-                "whose premise contradicts Phase 2 facts",
+                "[PR Brain v2] Reflection pass dropped %d finding(s) " "whose premise contradicts Phase 2 facts",
                 reflection_drops,
             )
 
@@ -1927,7 +1984,9 @@ class PRBrainOrchestrator:
 
         logger.info(
             "[PR Brain v2] Precision filter: direct=%d unclear=%d low=%d",
-            len(direct), len(unclear), len(low),
+            len(direct),
+            len(unclear),
+            len(low),
         )
 
         confirmed_from_verifier: List[Dict[str, Any]] = []
@@ -1940,7 +1999,8 @@ class PRBrainOrchestrator:
         # so structuring them as the cache-stable prefix lets calls 2..N
         # hit the prompt cache (input cost ~10% of fresh).
         verifier_prefix = self._build_verifier_system_prefix(
-            pr_context, file_diffs,
+            pr_context,
+            file_diffs,
         )
 
         if unclear:
@@ -1967,7 +2027,9 @@ class PRBrainOrchestrator:
 
         logger.info(
             "[PR Brain v2] Verifier: confirmed=%d refuted=%d still_unclear=%d",
-            len(confirmed_from_verifier), refuted_count, len(unclear_after_verify),
+            len(confirmed_from_verifier),
+            refuted_count,
+            len(unclear_after_verify),
         )
 
         final_findings = direct + confirmed_from_verifier
@@ -1978,13 +2040,10 @@ class PRBrainOrchestrator:
         # Mechanical LLM-free check: a finding targeting a file outside
         # the PR diff is almost always a coordinator hallucination. Move
         # such findings to secondary_notes instead of emitting.
-        final_findings, scope_demoted, scope_demoted_count = (
-            _filter_findings_to_diff_scope(final_findings, file_diffs)
-        )
+        final_findings, scope_demoted, scope_demoted_count = _filter_findings_to_diff_scope(final_findings, file_diffs)
         if scope_demoted_count:
             logger.info(
-                "[PR Brain v2] Diff-scope filter demoted %d finding(s) "
-                "whose file is not in the PR diff",
+                "[PR Brain v2] Diff-scope filter demoted %d finding(s) " "whose file is not in the PR diff",
                 scope_demoted_count,
             )
             secondary = scope_demoted + secondary
@@ -1998,8 +2057,7 @@ class PRBrainOrchestrator:
                 "",
                 "---",
                 "",
-                "## Secondary observations (not scored, low-confidence or "
-                "unverified)",
+                "## Secondary observations (not scored, low-confidence or " "unverified)",
                 "",
             ]
             for s in secondary:
@@ -2007,9 +2065,7 @@ class PRBrainOrchestrator:
                 file_ = s.get("file", "")
                 line = s.get("start_line", "")
                 conf = s.get("confidence", "")
-                secondary_block_lines.append(
-                    f"- **{title}** — `{file_}:{line}` (conf={conf})"
-                )
+                secondary_block_lines.append(f"- **{title}** — `{file_}:{line}` (conf={conf})")
             synthesis = synthesis + "\n".join(secondary_block_lines)
 
         return {
@@ -2029,7 +2085,9 @@ class PRBrainOrchestrator:
         }
 
     def _build_verifier_system_prefix(
-        self, pr_context: PRContext, file_diffs: Dict[str, str],
+        self,
+        pr_context: PRContext,
+        file_diffs: Dict[str, str],
     ) -> str:
         """Phase 9.16 — assemble the verifier's static system prefix.
 
@@ -2064,7 +2122,9 @@ class PRBrainOrchestrator:
         return f"{skill_text}\n\n{ctx_prefix}".strip()
 
     async def _verify_single(
-        self, finding: Dict[str, Any], file_diffs: Dict[str, str],
+        self,
+        finding: Dict[str, Any],
+        file_diffs: Dict[str, str],
         system_prefix: str,
     ) -> str:
         """Phase 9.16 forked verifier — single finding via fork_call.
@@ -2104,7 +2164,9 @@ class PRBrainOrchestrator:
         return _extract_single_verdict(raw)
 
     async def _verify_batch(
-        self, unclear: List[Dict[str, Any]], file_diffs: Dict[str, str],
+        self,
+        unclear: List[Dict[str, Any]],
+        file_diffs: Dict[str, str],
         system_prefix: str,
     ) -> List[str]:
         """Phase 9.16 forked verifier — N>=3 findings via fork_call.
@@ -2186,9 +2248,7 @@ class PRBrainOrchestrator:
 
         if not coordinator_result.success:
             err = getattr(coordinator_result, "error", "unknown error")
-            default["synthesis"] = (
-                f"PR Brain v2 coordinator failed: {err}"
-            )
+            default["synthesis"] = f"PR Brain v2 coordinator failed: {err}"
             return default
 
         data = coordinator_result.data
@@ -2297,8 +2357,12 @@ class PRBrainOrchestrator:
 
 
 _SEVERITY_RANK = {
-    "critical": 5, "high": 4, "medium": 3,
-    "low": 2, "nit": 1, "praise": 0,
+    "critical": 5,
+    "high": 4,
+    "medium": 3,
+    "low": 2,
+    "nit": 1,
+    "praise": 0,
 }
 
 
@@ -2347,7 +2411,9 @@ def _dedup_findings_by_location(findings: List[Dict[str, Any]]) -> List[Dict[str
 
 
 def _finding_covers_symbol(
-    finding: Dict[str, Any], symbol_name: str, reference_file: str,
+    finding: Dict[str, Any],
+    symbol_name: str,
+    reference_file: str,
 ) -> bool:
     """True if ``finding`` already reports the missing-symbol bug for
     ``symbol_name``. Matching rules — ANY one is enough:
@@ -2379,8 +2445,12 @@ def _finding_covers_symbol(
     if f_file and ref_file and f_file == ref_file:
         lowered = title.lower()
         for marker in (
-            "importerror", "nameerror", "typeerror",
-            "undefined", "not defined", "does not exist",
+            "importerror",
+            "nameerror",
+            "typeerror",
+            "undefined",
+            "not defined",
+            "does not exist",
             "missing symbol",
         ):
             if marker in lowered:
@@ -2429,16 +2499,12 @@ def _inject_missing_symbol_findings(
         present = list(store.iter_existence(exists=True))
     except Exception as exc:
         logger.warning(
-            "[PR Brain v2] missing-symbol post-pass skipped — "
-            "iter_existence failed: %s", exc,
+            "[PR Brain v2] missing-symbol post-pass skipped — " "iter_existence failed: %s",
+            exc,
         )
         return (findings, 0)
 
-    sig_mismatches = [
-        p for p in present
-        if p.signature_info
-        and p.signature_info.get("missing_params")
-    ]
+    sig_mismatches = [p for p in present if p.signature_info and p.signature_info.get("missing_params")]
 
     if not missing and not sig_mismatches:
         return (findings, 0)
@@ -2447,18 +2513,12 @@ def _inject_missing_symbol_findings(
     result = list(findings)
 
     for m in missing:
-        if any(
-            _finding_covers_symbol(f, m.symbol_name, m.referenced_at or "")
-            for f in result
-        ):
+        if any(_finding_covers_symbol(f, m.symbol_name, m.referenced_at or "") for f in result):
             continue
         ref_file, ref_line = _parse_reference_location(m.referenced_at or "")
         evidence_detail = (m.evidence or "").strip()[:300]
         synthetic = {
-            "title": (
-                f"ImportError at runtime: {m.symbol_name} "
-                f"not defined in codebase"
-            ),
+            "title": (f"ImportError at runtime: {m.symbol_name} " f"not defined in codebase"),
             "severity": "critical",
             "confidence": 0.99,
             "file": ref_file,
@@ -2491,19 +2551,12 @@ def _inject_missing_symbol_findings(
         bad_list = [str(bp) for bp in bad_params]
         # Check each bad-param name against existing findings — skip if
         # any kwarg is already covered.
-        if any(
-            any(_finding_covers_symbol(f, bp, p.referenced_at or "")
-                for f in result)
-            for bp in bad_list
-        ):
+        if any(any(_finding_covers_symbol(f, bp, p.referenced_at or "") for f in result) for bp in bad_list):
             continue
         ref_file, ref_line = _parse_reference_location(p.referenced_at or "")
         accepted = p.signature_info.get("actual_params") or []
         synthetic = {
-            "title": (
-                f"TypeError at runtime: {p.symbol_name}() does not accept "
-                f"{', '.join(bad_list)}"
-            ),
+            "title": (f"TypeError at runtime: {p.symbol_name}() does not accept " f"{', '.join(bad_list)}"),
             "severity": "high",
             "confidence": 0.97,
             "file": ref_file,
@@ -2515,8 +2568,7 @@ def _inject_missing_symbol_findings(
                 f"the signature.",
             ],
             "risk": (
-                f"Every invocation raises `TypeError: unexpected keyword "
-                f"argument '{bad_list[0]}'` at runtime."
+                f"Every invocation raises `TypeError: unexpected keyword " f"argument '{bad_list[0]}'` at runtime."
             ),
             "suggested_fix": (
                 f"Either extend `{p.symbol_name}`'s signature to accept "
@@ -2614,31 +2666,29 @@ def _scan_new_python_imports_for_missing(
                             seen_names.add(name)
                             checked += 1
                             if _python_symbol_defined_anywhere(
-                                workspace_path, name,
+                                workspace_path,
+                                name,
                                 timeout_s=grep_timeout_s,
                             ):
                                 continue
-                            found.append({
-                                "name": name,
-                                "referenced_at": (
-                                    f"{file_path}:{current_new_line}"
-                                ),
-                                "evidence": (
-                                    f"Deterministic grep for `class {name}`, "
-                                    f"`def {name}`, `{name} =` in "
-                                    f"`*.py` → 0 matches. Import `from "
-                                    f"{module} import {name}` will raise "
-                                    f"ImportError at runtime."
-                                ),
-                            })
+                            found.append(
+                                {
+                                    "name": name,
+                                    "referenced_at": (f"{file_path}:{current_new_line}"),
+                                    "evidence": (
+                                        f"Deterministic grep for `class {name}`, "
+                                        f"`def {name}`, `{name} =` in "
+                                        f"`*.py` → 0 matches. Import `from "
+                                        f"{module} import {name}` will raise "
+                                        f"ImportError at runtime."
+                                    ),
+                                }
+                            )
                 else:
                     bare_match = _PYTHON_BARE_IMPORT_RE.match(raw)
                     if bare_match:
                         module = bare_match.group(1)
-                        if (
-                            not module.startswith(".")
-                            and not _is_framework_module(module)
-                        ):
+                        if not module.startswith(".") and not _is_framework_module(module):
                             # For `import X.Y`, we check if the root module
                             # X has any .py file. Skip for now — bare
                             # imports rarely produce phantom-symbol bugs.
@@ -2654,13 +2704,48 @@ def _scan_new_python_imports_for_missing(
 
 
 _FRAMEWORK_MODULE_PREFIXES = (
-    "os", "sys", "re", "json", "typing", "logging", "abc", "collections",
-    "contextlib", "dataclasses", "enum", "functools", "io", "itertools",
-    "math", "pathlib", "random", "subprocess", "time", "unittest",
-    "warnings", "asyncio", "concurrent", "datetime", "decimal",
-    "django", "flask", "rest_framework", "pydantic", "sqlalchemy",
-    "requests", "urllib3", "numpy", "pandas", "pytest", "mypy",
-    "starlette", "fastapi", "click", "boto3", "botocore", "sentry_sdk",
+    "os",
+    "sys",
+    "re",
+    "json",
+    "typing",
+    "logging",
+    "abc",
+    "collections",
+    "contextlib",
+    "dataclasses",
+    "enum",
+    "functools",
+    "io",
+    "itertools",
+    "math",
+    "pathlib",
+    "random",
+    "subprocess",
+    "time",
+    "unittest",
+    "warnings",
+    "asyncio",
+    "concurrent",
+    "datetime",
+    "decimal",
+    "django",
+    "flask",
+    "rest_framework",
+    "pydantic",
+    "sqlalchemy",
+    "requests",
+    "urllib3",
+    "numpy",
+    "pandas",
+    "pytest",
+    "mypy",
+    "starlette",
+    "fastapi",
+    "click",
+    "boto3",
+    "botocore",
+    "sentry_sdk",
 )
 
 
@@ -2690,6 +2775,7 @@ def _module_is_first_party(workspace_path: str, module: str) -> bool:
     Returns False on any error / missing workspace (fail-safe: skip).
     """
     import os as _os
+
     if not workspace_path or not module or module.startswith("."):
         return False
     try:
@@ -2700,9 +2786,7 @@ def _module_is_first_party(workspace_path: str, module: str) -> bool:
         # Also try under common repo layouts: src/<module>, backend/<module>
         for root_prefix in ("src", "backend", "lib"):
             for suffix in (".py", "/__init__.py"):
-                if _os.path.exists(
-                    _os.path.join(workspace_path, root_prefix, candidate + suffix)
-                ):
+                if _os.path.exists(_os.path.join(workspace_path, root_prefix, candidate + suffix)):
                     return True
     except Exception:
         return False
@@ -2727,7 +2811,10 @@ def _split_import_names(names_chunk: str) -> List[str]:
 
 
 def _python_symbol_defined_anywhere(
-    workspace_path: str, name: str, *, timeout_s: float = 8.0,
+    workspace_path: str,
+    name: str,
+    *,
+    timeout_s: float = 8.0,
 ) -> bool:
     """Grep the workspace for a Python definition of ``name``.
 
@@ -2741,19 +2828,26 @@ def _python_symbol_defined_anywhere(
     # avoids matching ``from X import name`` or ``foo(name=...)``.
     # Using extended regex: ^\s*(class|def)\s+name\b  OR
     # ^\s*name\s*=
-    pattern = (
-        rf"^\s*(class|def)\s+{re.escape(name)}\b|"
-        rf"^\s*{re.escape(name)}\s*="
-    )
+    pattern = rf"^\s*(class|def)\s+{re.escape(name)}\b|" rf"^\s*{re.escape(name)}\s*="
     try:
         r = subprocess.run(
             [
-                "grep", "-r", "-E", pattern, workspace_path,
-                "--include=*.py", "--max-count=1", "-l",
-                "--exclude-dir=.git", "--exclude-dir=.venv",
-                "--exclude-dir=node_modules", "--exclude-dir=__pycache__",
+                "grep",
+                "-r",
+                "-E",
+                pattern,
+                workspace_path,
+                "--include=*.py",
+                "--max-count=1",
+                "-l",
+                "--exclude-dir=.git",
+                "--exclude-dir=.venv",
+                "--exclude-dir=node_modules",
+                "--exclude-dir=__pycache__",
             ],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
         )
         # exit 0 = found ≥1 match; exit 1 = no match; exit 2 = error
         if r.returncode == 0 and r.stdout.strip():
@@ -2817,10 +2911,10 @@ _GO_FUNC_DECL_RE = re.compile(
 # generic locals like `ctx`, `req`, `err`, `res`, `i`, `n`, `x`.
 _GO_SUBSTANTIVE_IDENT_RE = re.compile(
     r"^(?:"
-    r"[A-Za-z_][A-Za-z0-9_]{5,}|"      # >= 6 chars
+    r"[A-Za-z_][A-Za-z0-9_]{5,}|"  # >= 6 chars
     r"[a-z][a-z0-9]*[A-Z][A-Za-z0-9_]*|"  # camelCase
-    r"[A-Z][A-Za-z0-9]*[_A-Z][A-Z_]*|"   # UPPER_SNAKE
-    r"[A-Za-z]+_[A-Za-z_]+"              # snake_case (non-leading _)
+    r"[A-Z][A-Za-z0-9]*[_A-Z][A-Z_]*|"  # UPPER_SNAKE
+    r"[A-Za-z]+_[A-Za-z_]+"  # snake_case (non-leading _)
     r")$"
 )
 # Matches `func (recv *T) Name(` or `func Name(` and captures the
@@ -2853,35 +2947,91 @@ _GO_METHOD_SIG_RE = re.compile(
 # identifier followed by whitespace followed by a type token). If
 # present, the parens contain typed params → signature. If absent,
 # the parens contain values/expressions → call.
-_GO_TYPED_PARAM_RE = re.compile(
-    r"[a-z_]\w*\s+(?:\*|\[\]|\.\.\.)*[\w.]"
-)
+_GO_TYPED_PARAM_RE = re.compile(r"[a-z_]\w*\s+(?:\*|\[\]|\.\.\.)*[\w.]")
 
 # Go keywords + built-in identifiers + universe block. Covers every
 # identifier a Go file can reference without a definition in user code.
 _GO_BUILTINS: set[str] = {
     # keywords
-    "break", "case", "chan", "const", "continue", "default", "defer",
-    "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
-    "interface", "map", "package", "range", "return", "select",
-    "struct", "switch", "type", "var",
+    "break",
+    "case",
+    "chan",
+    "const",
+    "continue",
+    "default",
+    "defer",
+    "else",
+    "fallthrough",
+    "for",
+    "func",
+    "go",
+    "goto",
+    "if",
+    "import",
+    "interface",
+    "map",
+    "package",
+    "range",
+    "return",
+    "select",
+    "struct",
+    "switch",
+    "type",
+    "var",
     # pre-declared types
-    "bool", "byte", "complex64", "complex128", "error", "float32",
-    "float64", "int", "int8", "int16", "int32", "int64", "rune",
-    "string", "uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
-    "any", "comparable",
+    "bool",
+    "byte",
+    "complex64",
+    "complex128",
+    "error",
+    "float32",
+    "float64",
+    "int",
+    "int8",
+    "int16",
+    "int32",
+    "int64",
+    "rune",
+    "string",
+    "uint",
+    "uint8",
+    "uint16",
+    "uint32",
+    "uint64",
+    "uintptr",
+    "any",
+    "comparable",
     # pre-declared values
-    "true", "false", "iota", "nil",
+    "true",
+    "false",
+    "iota",
+    "nil",
     # built-in functions
-    "append", "cap", "clear", "close", "complex", "copy", "delete",
-    "imag", "len", "make", "max", "min", "new", "panic", "print",
-    "println", "real", "recover",
+    "append",
+    "cap",
+    "clear",
+    "close",
+    "complex",
+    "copy",
+    "delete",
+    "imag",
+    "len",
+    "make",
+    "max",
+    "min",
+    "new",
+    "panic",
+    "print",
+    "println",
+    "real",
+    "recover",
 }
 
 
 def _go_dir_has_dot_import(file_path: str, workspace_path: str) -> bool:
     """True if the diff file uses dot-imports (skip entire file when so)."""
     import os as _os
+
     full = _os.path.join(workspace_path, file_path)
     try:
         with open(full, encoding="utf-8", errors="replace") as f:
@@ -2891,7 +3041,10 @@ def _go_dir_has_dot_import(file_path: str, workspace_path: str) -> bool:
 
 
 def _go_symbol_defined_anywhere(
-    workspace_path: str, name: str, *, timeout_s: float = 8.0,
+    workspace_path: str,
+    name: str,
+    *,
+    timeout_s: float = 8.0,
 ) -> bool:
     """Workspace-wide grep for ANY Go top-level definition of `name`,
     OR for `name` appearing as a function parameter anywhere.
@@ -2925,12 +3078,22 @@ def _go_symbol_defined_anywhere(
     try:
         r = subprocess.run(
             [
-                "grep", "-r", "-E", pattern, workspace_path,
-                "--include=*.go", "--max-count=1", "-l",
-                "--exclude-dir=.git", "--exclude-dir=vendor",
-                "--exclude-dir=node_modules", "--exclude-dir=.venv",
+                "grep",
+                "-r",
+                "-E",
+                pattern,
+                workspace_path,
+                "--include=*.go",
+                "--max-count=1",
+                "-l",
+                "--exclude-dir=.git",
+                "--exclude-dir=vendor",
+                "--exclude-dir=node_modules",
+                "--exclude-dir=.venv",
             ],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
         )
         if r.returncode == 0 and r.stdout.strip():
             return True
@@ -2990,7 +3153,7 @@ def _extract_go_locals_from_diff(diff_text: str) -> set[str]:
                             close_idx = idx
                             break
                 if close_idx != -1:
-                    params = body[open_idx + 1: close_idx]
+                    params = body[open_idx + 1 : close_idx]
                     # Each param is `name Type` or `name1, name2 Type`.
                     # Split on commas, extract leading identifier.
                     for seg in params.split(","):
@@ -3041,12 +3204,7 @@ def _extract_go_bare_references_from_diff(
         if is_addition:
             body = raw[1:]
             stripped = body.strip()
-            if (
-                stripped.startswith("//")
-                or stripped.startswith("/*")
-                or stripped.startswith("*")
-                or not stripped
-            ):
+            if stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*") or not stripped:
                 if not raw.startswith("-"):
                     current_new_line += 1
                 continue
@@ -3057,10 +3215,7 @@ def _extract_go_bare_references_from_diff(
             # method decl): `Foo(x int) string`. Distinguished from a
             # call (`foo("x")`) by having a TYPED param inside the
             # parens — `name Type` pattern.
-            if (
-                not stripped.startswith("func ")
-                and _GO_METHOD_SIG_RE.match(body)
-            ):
+            if not stripped.startswith("func ") and _GO_METHOD_SIG_RE.match(body):
                 # Extract content between outer `(` and matching `)`
                 open_idx = body.find("(")
                 if open_idx >= 0:
@@ -3076,7 +3231,7 @@ def _extract_go_bare_references_from_diff(
                                 close_idx = _idx
                                 break
                     if close_idx > open_idx:
-                        params = body[open_idx + 1: close_idx]
+                        params = body[open_idx + 1 : close_idx]
                         if _GO_TYPED_PARAM_RE.search(params):
                             # Typed param → signature → skip line
                             if not raw.startswith("-"):
@@ -3161,7 +3316,8 @@ def _scan_new_go_references_for_missing(
             continue
         locals_set = _extract_go_locals_from_diff(diff_text)
         for name, line in _extract_go_bare_references_from_diff(
-            diff_text, skip_names=locals_set,
+            diff_text,
+            skip_names=locals_set,
         ):
             if name in seen_names:
                 continue
@@ -3170,19 +3326,23 @@ def _scan_new_go_references_for_missing(
             seen_names.add(name)
             checked += 1
             if _go_symbol_defined_anywhere(
-                workspace_path, name, timeout_s=grep_timeout_s,
+                workspace_path,
+                name,
+                timeout_s=grep_timeout_s,
             ):
                 continue
-            found.append({
-                "name": name,
-                "referenced_at": f"{file_path}:{line}",
-                "evidence": (
-                    f"Deterministic workspace-wide grep for "
-                    f"`func/var/const/type {name}` in any `.go` "
-                    f"file → 0 matches. Bare identifier reference "
-                    f"will fail `go build` with 'undefined: {name}'."
-                ),
-            })
+            found.append(
+                {
+                    "name": name,
+                    "referenced_at": f"{file_path}:{line}",
+                    "evidence": (
+                        f"Deterministic workspace-wide grep for "
+                        f"`func/var/const/type {name}` in any `.go` "
+                        f"file → 0 matches. Bare identifier reference "
+                        f"will fail `go build` with 'undefined: {name}'."
+                    ),
+                }
+            )
         if checked >= max_symbols_checked:
             break
     return found
@@ -3225,30 +3385,80 @@ _JAVA_PACKAGE_RE = re.compile(r"^\s*package\s+([\w.]+)\s*;", re.MULTILINE)
 # are rare enough in PR diffs that we prefer the cleaner filter.
 _JAVA_LANG_CLASSES: set[str] = {
     # primitives wrappers
-    "Boolean", "Byte", "Character", "Double", "Float", "Integer",
-    "Long", "Short", "Void",
+    "Boolean",
+    "Byte",
+    "Character",
+    "Double",
+    "Float",
+    "Integer",
+    "Long",
+    "Short",
+    "Void",
     # core
-    "Object", "String", "StringBuilder", "StringBuffer", "Math",
-    "System", "Thread", "ThreadGroup", "ThreadLocal", "Runtime",
-    "Process", "ProcessBuilder", "Class", "ClassLoader", "Package",
-    "Enum", "Record", "Number", "Comparable", "Iterable", "Readable",
-    "CharSequence", "AutoCloseable", "Cloneable", "Runnable",
+    "Object",
+    "String",
+    "StringBuilder",
+    "StringBuffer",
+    "Math",
+    "System",
+    "Thread",
+    "ThreadGroup",
+    "ThreadLocal",
+    "Runtime",
+    "Process",
+    "ProcessBuilder",
+    "Class",
+    "ClassLoader",
+    "Package",
+    "Enum",
+    "Record",
+    "Number",
+    "Comparable",
+    "Iterable",
+    "Readable",
+    "CharSequence",
+    "AutoCloseable",
+    "Cloneable",
+    "Runnable",
     # throwables
-    "Throwable", "Exception", "Error", "RuntimeException",
-    "NullPointerException", "IllegalArgumentException",
-    "IllegalStateException", "UnsupportedOperationException",
-    "ClassNotFoundException", "ClassCastException",
-    "ArrayIndexOutOfBoundsException", "IndexOutOfBoundsException",
-    "StringIndexOutOfBoundsException", "ArithmeticException",
-    "NumberFormatException", "InterruptedException",
-    "NoSuchMethodException", "NoSuchFieldException",
-    "SecurityException", "OutOfMemoryError", "StackOverflowError",
-    "AssertionError", "LinkageError", "NoClassDefFoundError",
-    "VerifyError", "AbstractMethodError", "IncompatibleClassChangeError",
+    "Throwable",
+    "Exception",
+    "Error",
+    "RuntimeException",
+    "NullPointerException",
+    "IllegalArgumentException",
+    "IllegalStateException",
+    "UnsupportedOperationException",
+    "ClassNotFoundException",
+    "ClassCastException",
+    "ArrayIndexOutOfBoundsException",
+    "IndexOutOfBoundsException",
+    "StringIndexOutOfBoundsException",
+    "ArithmeticException",
+    "NumberFormatException",
+    "InterruptedException",
+    "NoSuchMethodException",
+    "NoSuchFieldException",
+    "SecurityException",
+    "OutOfMemoryError",
+    "StackOverflowError",
+    "AssertionError",
+    "LinkageError",
+    "NoClassDefFoundError",
+    "VerifyError",
+    "AbstractMethodError",
+    "IncompatibleClassChangeError",
 }
 # Java primitive keywords (never class references)
 _JAVA_PRIMITIVES: set[str] = {
-    "void", "boolean", "byte", "char", "short", "int", "long", "float",
+    "void",
+    "boolean",
+    "byte",
+    "char",
+    "short",
+    "int",
+    "long",
+    "float",
     "double",
 }
 
@@ -3261,6 +3471,7 @@ def _parse_java_file_imports(workspace_path: str, file_path: str) -> tuple[set[s
     and `import com.foo.*;` (adds `com.foo` to the star set).
     """
     import os as _os
+
     full = _os.path.join(workspace_path, file_path)
     imported_simple: set[str] = set()
     star_imports: set[str] = set()
@@ -3323,7 +3534,11 @@ def _java_source_set_peers(package_dir: str) -> List[str]:
 
 
 def _java_class_defined_in_package(
-    workspace_path: str, package_dir: str, name: str, *, timeout_s: float = 8.0,
+    workspace_path: str,
+    package_dir: str,
+    name: str,
+    *,
+    timeout_s: float = 8.0,
 ) -> bool:
     """Grep package dir (+ its Maven source-set peers) for a top-level
     class/interface/enum/record definition.
@@ -3343,11 +3558,7 @@ def _java_class_defined_in_package(
         if not _os.path.isdir(full_dir):
             continue
         try:
-            candidate_files.extend(
-                _os.path.join(full_dir, f)
-                for f in _os.listdir(full_dir)
-                if f.endswith(".java")
-            )
+            candidate_files.extend(_os.path.join(full_dir, f) for f in _os.listdir(full_dir) if f.endswith(".java"))
         except OSError:
             continue
 
@@ -3374,7 +3585,9 @@ def _java_class_defined_in_package(
     try:
         r = subprocess.run(
             ["grep", "-E", "-l", "--max-count=1", pattern, *candidate_files],
-            capture_output=True, text=True, timeout=timeout_s,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
         )
         if r.returncode == 0 and r.stdout.strip():
             return True
@@ -3448,6 +3661,7 @@ def _scan_new_java_references_for_missing(
       * Fails soft on any error
     """
     import os as _os
+
     if not workspace_path or not file_diffs:
         return []
 
@@ -3461,7 +3675,8 @@ def _scan_new_java_references_for_missing(
         if not file_path.endswith(".java"):
             continue
         imported, star_imports, _pkg = _parse_java_file_imports(
-            workspace_path, file_path,
+            workspace_path,
+            file_path,
         )
         # If the file uses star-imports, MVP skips the file to avoid
         # false positives. Star-imports hide which exact class names
@@ -3483,22 +3698,26 @@ def _scan_new_java_references_for_missing(
                 continue
             checked += 1
             if _java_class_defined_in_package(
-                workspace_path, package_dir, name,
+                workspace_path,
+                package_dir,
+                name,
                 timeout_s=grep_timeout_s,
             ):
                 continue
-            found.append({
-                "name": name,
-                "referenced_at": f"{file_path}:{line}",
-                "evidence": (
-                    f"Deterministic grep for `class/interface/enum/"
-                    f"record {name}` in Java package directory "
-                    f"`{package_dir}/` → 0 matches; `{name}` is not "
-                    f"imported in the file nor in `java.lang`. "
-                    f"Compilation will fail with 'cannot find symbol: "
-                    f"class {name}'."
-                ),
-            })
+            found.append(
+                {
+                    "name": name,
+                    "referenced_at": f"{file_path}:{line}",
+                    "evidence": (
+                        f"Deterministic grep for `class/interface/enum/"
+                        f"record {name}` in Java package directory "
+                        f"`{package_dir}/` → 0 matches; `{name}` is not "
+                        f"imported in the file nor in `java.lang`. "
+                        f"Compilation will fail with 'cannot find symbol: "
+                        f"class {name}'."
+                    ),
+                }
+            )
         if checked >= max_symbols_checked:
             break
     return found
@@ -3524,7 +3743,8 @@ _GO_STUB_BODY_RE = re.compile(
     re.VERBOSE | re.MULTILINE,
 )
 _PY_STUB_BODY_RE = re.compile(
-    r"^\s*raise\s+NotImplementedError\b", re.MULTILINE,
+    r"^\s*raise\s+NotImplementedError\b",
+    re.MULTILINE,
 )
 # Java: `throw new UnsupportedOperationException(...)` is the canonical
 # "stub" pattern. `NotImplementedException` is Apache Commons. For
@@ -3636,22 +3856,14 @@ def _scan_for_stub_call_sites(
                     # body (Python). For Java the `}` is usually indented
                     # (method-in-class); for Go it's usually column 0.
                     # Accept either case.
-                    is_brace_close = (
-                        (is_go or is_java)
-                        and raw.startswith("+")
-                        and raw[1:].strip() == "}"
-                    )
+                    is_brace_close = (is_go or is_java) and raw.startswith("+") and raw[1:].strip() == "}"
                     if is_brace_close:
-                        body = "\n".join(
-                            ln.lstrip("+ \t")
-                            for ln in current_fn_body_lines
-                        )
-                        body_re = (
-                            _GO_STUB_BODY_RE if is_go else _JAVA_STUB_BODY_RE
-                        )
+                        body = "\n".join(ln.lstrip("+ \t") for ln in current_fn_body_lines)
+                        body_re = _GO_STUB_BODY_RE if is_go else _JAVA_STUB_BODY_RE
                         if body_re.search(body):
                             stubs[current_fn_name] = (
-                                file_path, current_fn_decl_line,
+                                file_path,
+                                current_fn_decl_line,
                             )
                         current_fn_name = None
                         current_fn_body_lines = []
@@ -3660,7 +3872,8 @@ def _scan_for_stub_call_sites(
                         code_line = raw[1:] if raw.startswith("+") else raw
                         if _PY_STUB_BODY_RE.search(code_line):
                             stubs[current_fn_name] = (
-                                file_path, current_fn_decl_line,
+                                file_path,
+                                current_fn_decl_line,
                             )
                         # don't reset — Python fn may have more lines
             if not raw.startswith("-"):
@@ -3705,33 +3918,28 @@ def _scan_for_stub_call_sites(
                     # share the name (`func TablesList(...)` is NOT a
                     # call to TablesList, it's defining a same-name
                     # function in a different package/receiver).
-                    is_decl = any(
-                        code_stripped.startswith(p) for p in _DECL_PREFIXES
-                    )
+                    is_decl = any(code_stripped.startswith(p) for p in _DECL_PREFIXES)
                     # Java method declarations start with annotations /
                     # modifier keywords (`public Foo(...)`, `@Override
                     # public <T> Foo()`). Treat any line whose stripped
                     # prefix matches that shape as a decl, not a call.
                     if not is_decl and file_path.endswith(".java"):
-                        is_decl = bool(
-                            _JAVA_METHOD_DECL_MARKER_RE.match(code_stripped)
-                        )
+                        is_decl = bool(_JAVA_METHOD_DECL_MARKER_RE.match(code_stripped))
                     # Also skip the stub definition line itself.
-                    is_self_site = (
-                        file_path == stub_file
-                        and current_new_line == stub_line
-                    )
+                    is_self_site = file_path == stub_file and current_new_line == stub_line
                     if not is_decl and not is_self_site:
                         key = (file_path, current_new_line)
                         if key not in seen_sites:
                             seen_sites.add(key)
-                            findings.append({
-                                "stub_name": stub_name,
-                                "stub_file": stub_file,
-                                "stub_line": str(stub_line),
-                                "caller_file": file_path,
-                                "caller_line": str(current_new_line),
-                            })
+                            findings.append(
+                                {
+                                    "stub_name": stub_name,
+                                    "stub_file": stub_file,
+                                    "stub_line": str(stub_line),
+                                    "caller_file": file_path,
+                                    "caller_line": str(current_new_line),
+                                }
+                            )
                 # Advance new-file counter for + and context lines.
                 current_new_line += 1
     return findings
@@ -3775,19 +3983,14 @@ def _inject_stub_caller_findings(
             if abs(fl - caller_line) <= 3:
                 # Also check the finding mentions the stub or concept.
                 title = str(f.get("title", "") or "")
-                if (
-                    stub_name in title
-                    or "stub" in title.lower()
-                    or "not implemented" in title.lower()
-                ):
+                if stub_name in title or "stub" in title.lower() or "not implemented" in title.lower():
                     covered = True
                     break
         if covered:
             continue
         synthetic = {
             "title": (
-                f"Call to `{stub_name}()` hits a stub that always "
-                f"returns 'not implemented' — runtime failure"
+                f"Call to `{stub_name}()` hits a stub that always " f"returns 'not implemented' — runtime failure"
             ),
             "severity": "high",
             "confidence": 0.95,
@@ -3917,7 +4120,8 @@ def _reflect_against_phase2_facts(
                 logger.info(
                     "[PR Brain v2] Reflection drop: finding %r claims "
                     "`%s` is missing but Phase 2 confirmed exists=True",
-                    f.get("title", "")[:80], symbol,
+                    f.get("title", "")[:80],
+                    symbol,
                 )
                 contradicted = True
                 break
@@ -3974,9 +4178,10 @@ def _filter_findings_to_diff_scope(
             kept.append(f)
             continue
         logger.info(
-            "[PR Brain v2] Diff-scope drop: finding %r targets `%s` "
-            "which is not in the PR diff (touched: %d files)",
-            f.get("title", "")[:80], file_claim, len(touched_files),
+            "[PR Brain v2] Diff-scope drop: finding %r targets `%s` " "which is not in the PR diff (touched: %d files)",
+            f.get("title", "")[:80],
+            file_claim,
+            len(touched_files),
         )
         f = {**f, "_demoted_reason": "file_not_in_diff"}
         demoted.append(f)
@@ -3992,7 +4197,7 @@ def _extract_single_verdict(raw: str) -> str:
     import re as _re
 
     fenced = _re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw)
-    candidates = list(reversed(fenced)) if fenced else [raw[max(0, raw.rfind("{")):]]
+    candidates = list(reversed(fenced)) if fenced else [raw[max(0, raw.rfind("{")) :]]
     for candidate in candidates:
         try:
             parsed = _json.loads(candidate)
@@ -4067,7 +4272,7 @@ def _parse_existence_json(raw: str) -> Optional[Dict[str, Any]]:
                 elif raw[end] == "}":
                     depth -= 1
                     if depth == 0:
-                        snippet = raw[start: end + 1]
+                        snippet = raw[start : end + 1]
                         if '"symbols"' in snippet:
                             candidates.append(snippet)
                         break
