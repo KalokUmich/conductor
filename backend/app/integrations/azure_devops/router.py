@@ -16,7 +16,11 @@ from fastapi import APIRouter, HTTPException, Request
 
 from .formatter import format_summary_markdown, recommendation_to_vote, split_finding_into_comments
 from .mcp_client import AzureDevOpsClient
-from .models import AzureDevOpsReviewRequest, AzureDevOpsReviewResponse
+from .models import (
+    AzureDevOpsRecheckResponse,
+    AzureDevOpsReviewRequest,
+    AzureDevOpsReviewResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +438,233 @@ async def review_pull_request(
             pr_id=req.pr_id,
             error=str(exc),
         )
+
+
+@router.post("/recheck", response_model=AzureDevOpsRecheckResponse)
+async def recheck_pull_request(
+    req: AzureDevOpsReviewRequest,
+    request: Request,
+) -> AzureDevOpsRecheckResponse:
+    """Second-pass re-review: verify the author addressed prior comments, then
+    re-review for still-open items + regressions the fixes introduced.
+
+    Flow:
+    1. Read all PR comment threads (AI + human; system threads filtered).
+    2. Verify each against the CURRENT code — not the thread's status flag.
+    3. Re-review the diff with that verified status as context (PR Brain).
+    4. Auto-resolve threads confirmed fixed; post new issues inline.
+    5. Post a "Second Pass" report + set vote.
+    """
+    client = _get_client(request)
+    start_time = time.time()
+
+    try:
+        logger.info(
+            "[AzureDevOps] Starting SECOND-PASS recheck for PR #%d in %s/%s",
+            req.pr_id,
+            req.project,
+            req.repo,
+        )
+        pr_data = await client.get_pull_request(req.project, req.repo, req.pr_id)
+        source_branch = req.source_branch or pr_data.get("sourceRefName", "").replace("refs/heads/", "")
+        target_branch = req.target_branch or pr_data.get("targetRefName", "").replace("refs/heads/", "")
+        diff_spec = f"origin/{target_branch}...origin/{source_branch}"
+
+        main_workspace = getattr(request.app.state, "azure_devops_workspace", None)
+        pr_brain_factory = getattr(request.app.state, "pr_brain_factory", None)
+        strong_provider = getattr(request.app.state, "pr_brain_strong_provider", None)
+        if not main_workspace or not pr_brain_factory or not strong_provider:
+            raise HTTPException(status_code=503, detail="Azure DevOps PR Brain not initialized.")
+
+        from .recheck import (
+            build_prior_review_context,
+            confirmed_fixed,
+            format_recheck_report,
+            parse_review_threads,
+            still_open,
+            verify_prior_comments,
+        )
+
+        # Step 1: read prior comments
+        raw_threads = await client.list_threads(req.project, req.repo, req.pr_id)
+        prior = parse_review_threads(raw_threads)
+        logger.info("[AzureDevOps] recheck: %d actionable prior comment(s)", len(prior))
+        if not prior:
+            try:
+                await client.create_thread(
+                    project=req.project,
+                    repo=req.repo,
+                    pr_id=req.pr_id,
+                    content=(
+                        "## \U0001f916 Conductor AI Code Review — Second Pass\n\n"
+                        "No prior review comments were found to re-check. Run the "
+                        "first-pass `/review` to generate findings before a recheck."
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("[AzureDevOps] recheck: failed to post no-op note: %s", exc)
+            return AzureDevOpsRecheckResponse(status="ok", pr_id=req.pr_id, prior_comments=0)
+
+        from .workspace import cleanup_pr_worktree, create_pr_worktree, fetch_latest
+
+        await fetch_latest(main_workspace)
+        worktree_path = await create_pr_worktree(main_workspace, source_branch, req.pr_id)
+        if not worktree_path:
+            raise HTTPException(status_code=500, detail=f"Failed to create worktree for PR #{req.pr_id}")
+
+        try:
+            # Step 2: verify prior comments against the CURRENT code
+            verdicts = await verify_prior_comments(
+                provider=strong_provider,
+                comments=prior,
+                worktree_path=worktree_path,
+            )
+            fixed = confirmed_fixed(verdicts)
+            open_v = still_open(verdicts)
+            logger.info(
+                "[AzureDevOps] recheck: verified %d fixed, %d still open",
+                len(fixed),
+                len(open_v),
+            )
+
+            # Step 3: re-review with the verified prior status as context
+            from app.code_review.models import FindingCategory, ReviewFinding, Severity
+
+            task_id = f"ado-{req.project}-pr-{req.pr_id}-recheck"
+            orchestrator = pr_brain_factory(
+                worktree_path,
+                diff_spec,
+                task_id=task_id,
+                pr_title=pr_data.get("title", "") or "",
+                pr_description=pr_data.get("description", "") or "",
+                prior_review_context=build_prior_review_context(verdicts),
+            )
+
+            findings: list = []
+            merge_rec = ""
+            total_cost_usd = 0.0
+            try:
+                async for event in orchestrator.run_stream():
+                    if event.kind == "done":
+                        data = event.data
+                        merge_rec = data.get("merge_recommendation", "")
+                        total_cost_usd = data.get("total_cost_usd", 0.0)
+                        for fd in data.get("findings", []):
+                            try:
+                                findings.append(
+                                    ReviewFinding(
+                                        title=fd.get("title", ""),
+                                        category=FindingCategory(fd.get("category", "correctness")),
+                                        severity=Severity(fd.get("severity", "warning")),
+                                        confidence=fd.get("confidence", 0.7),
+                                        file=fd.get("file", ""),
+                                        start_line=fd.get("start_line", 0),
+                                        end_line=fd.get("end_line", 0),
+                                        evidence=fd.get("evidence", []),
+                                        risk=fd.get("risk", ""),
+                                        suggested_fix=fd.get("suggested_fix", ""),
+                                        agent=fd.get("agent", ""),
+                                    )
+                                )
+                            except Exception:
+                                continue
+            finally:
+                orchestrator.cleanup()
+
+            # Step 4: auto-resolve threads we confirmed fixed (reply + mark fixed)
+            threads_resolved = 0
+            for v in fixed:
+                try:
+                    await client.reply_to_thread(
+                        req.project,
+                        req.repo,
+                        req.pr_id,
+                        v.comment.thread_id,
+                        f"✅ Conductor verified this is addressed in the current code "
+                        f"— marking resolved.\n\n_{v.reason}_",
+                    )
+                    await client.update_thread_status(req.project, req.repo, req.pr_id, v.comment.thread_id, status=2)
+                    threads_resolved += 1
+                except Exception as exc:
+                    logger.warning(
+                        "[AzureDevOps] recheck: failed to resolve thread %d: %s",
+                        v.comment.thread_id,
+                        exc,
+                    )
+
+            # Step 5: post NEW findings as inline threads
+            threads_created = 0
+            for finding in findings:
+                for comment in split_finding_into_comments(finding):
+                    try:
+                        await client.create_thread(
+                            project=req.project,
+                            repo=req.repo,
+                            pr_id=req.pr_id,
+                            content=comment.content,
+                            file_path=comment.file_path,
+                            start_line=comment.start_line,
+                            end_line=comment.end_line,
+                        )
+                        threads_created += 1
+                    except Exception as exc:
+                        logger.warning("[AzureDevOps] recheck: failed to post new finding: %s", exc)
+
+            # Still-open prior items block approval regardless of the re-review's own call.
+            if open_v:
+                merge_rec = "request_changes"
+
+            # Step 6: post the Second Pass report
+            report = format_recheck_report(
+                verdicts,
+                new_findings_count=len(findings),
+                recommendation=merge_rec or ("approve" if not open_v and not findings else "request_changes"),
+                total_cost_usd=total_cost_usd,
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+            try:
+                await client.create_thread(project=req.project, repo=req.repo, pr_id=req.pr_id, content=report)
+                threads_created += 1
+            except Exception as exc:
+                logger.warning("[AzureDevOps] recheck: failed to post report: %s", exc)
+
+            # Step 7: vote
+            vote_value = recommendation_to_vote(merge_rec)
+            try:
+                await client.vote(req.project, req.repo, req.pr_id, vote_value)
+            except Exception as exc:
+                logger.warning("[AzureDevOps] recheck: failed to set vote: %s", exc)
+
+            logger.info(
+                "[AzureDevOps] PR #%d recheck posted: %d fixed-resolved, %d still-open, "
+                "%d new findings, vote=%d, %.1fs",
+                req.pr_id,
+                threads_resolved,
+                len(open_v),
+                len(findings),
+                vote_value,
+                time.time() - start_time,
+            )
+            return AzureDevOpsRecheckResponse(
+                status="ok",
+                pr_id=req.pr_id,
+                prior_comments=len(prior),
+                verified_fixed=len(fixed),
+                still_open=len(open_v),
+                threads_resolved=threads_resolved,
+                new_findings=len(findings),
+                threads_created=threads_created,
+                merge_recommendation=merge_rec,
+                vote=vote_value,
+            )
+        finally:
+            await cleanup_pr_worktree(main_workspace, worktree_path)
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[AzureDevOps] Recheck failed for PR #%d", req.pr_id)
+        return AzureDevOpsRecheckResponse(status="error", pr_id=req.pr_id, error=str(exc))
 
 
 def _small_pr_skip_message(changed_lines: int, floor: int) -> str:

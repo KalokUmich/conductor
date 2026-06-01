@@ -383,6 +383,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pr_title: str = "",
                 pr_description: str = "",
                 ticket_context: str = "",
+                prior_review_context: str = "",
             ) -> PRBrainOrchestrator:
                 return PRBrainOrchestrator(
                     provider=agent_provider,
@@ -397,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     pr_title=pr_title,
                     pr_description=pr_description,
                     ticket_context=ticket_context,
+                    prior_review_context=prior_review_context,
                 )
 
             app.state.pr_brain_factory = _make_pr_brain

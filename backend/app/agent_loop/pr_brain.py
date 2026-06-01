@@ -630,6 +630,7 @@ class PRBrainOrchestrator:
         pr_title: str = "",
         pr_description: str = "",
         ticket_context: str = "",
+        prior_review_context: str = "",
     ):
         self._provider = provider
         self._explorer_provider = explorer_provider
@@ -650,6 +651,9 @@ class PRBrainOrchestrator:
         # both the coordinator query and the P11 verifier prefix so a single
         # fetch serves every downstream call.
         self._ticket_context = ticket_context or ""
+        # Second-pass re-review context (prior comments + verified status).
+        # Empty for a normal first-pass review.
+        self._prior_review_context = prior_review_context or ""
 
         # Phase 9.15 — task-scoped Fact Vault. Sub-agent tool calls are
         # routed through a CachedToolExecutor so identical grep / read_file /
@@ -1706,6 +1710,16 @@ class PRBrainOrchestrator:
             lines.append("## Linked tickets & docs (authoritative requirements)")
             lines.append("")
             lines.append(self._ticket_context)
+            lines.append("")
+
+        # Second-pass re-review: prior comments + their verified resolution
+        # status. Tells the coordinator what was already raised so it doesn't
+        # re-report genuinely-fixed items and concentrates on still-open ones +
+        # regressions the fixes introduced.
+        if self._prior_review_context:
+            lines.append("## Prior review — second pass")
+            lines.append("")
+            lines.append(self._prior_review_context)
             lines.append("")
 
         lines.append("## Files in diff")
