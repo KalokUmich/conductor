@@ -58,7 +58,7 @@ class CachedToolExecutor(ToolExecutor):
         self._inner = inner
         self._store = store
         self._agent = agent
-        # Per-instance hit counters for debugging / Langfuse export.
+        # Per-instance hit counters for debugging / telemetry export.
         self.stats = {"hits": 0, "misses": 0, "range_hits": 0, "negative_hits": 0, "skipped": 0}
 
     @property

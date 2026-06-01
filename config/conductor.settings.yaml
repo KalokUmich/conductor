@@ -119,9 +119,6 @@ summary:
 ai_provider_settings:
   anthropic_enabled: false
   aws_bedrock_enabled: false
-  openai_enabled: false
-  alibaba_enabled: false
-  moonshot_enabled: false
 
 # =============================================================================
 # AI Models Configuration
@@ -153,11 +150,11 @@ ai_models:
     enabled: true
     explorer: true    # fallback explorer when Haiku is unavailable
 
-  # Opus 4.7: premium brain — top reasoning ($15/1M in, $75/1M out)
-  - id: "claude-opus-4-7-bedrock"
+  # Opus 4.8: premium brain — top reasoning (Phase 14: severity-calibration A/B vs Sonnet)
+  - id: "claude-opus-4-8-bedrock"
     provider: "aws_bedrock"
-    model_name: "eu.anthropic.claude-opus-4-7"
-    display_name: "Claude Opus 4.7 (Bedrock EU)"
+    model_name: "eu.anthropic.claude-opus-4-8"
+    display_name: "Claude Opus 4.8 (Bedrock EU)"
     enabled: true
     # NOT explorer — reserved for Brain/PR review synthesis
 
@@ -168,167 +165,6 @@ ai_models:
     display_name: "Claude Sonnet 4.6 (Anthropic)"
     enabled: true
 
-  # ---- DeepSeek (Bedrock) ----
-  # V3.2: strong reasoning at low cost — good explorer
-  - id: "deepseek-v3-bedrock"
-    provider: "aws_bedrock"
-    model_name: "deepseek.v3.2"
-    display_name: "DeepSeek V3.2 (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # ---- Qwen (Bedrock) ----
-  # Coder Next: latest Qwen coder, good for code exploration
-  - id: "qwen3-coder-next-bedrock"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-coder-next"
-    display_name: "Qwen3 Coder Next (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # Coder 480B: large MoE, strong code — but expensive for explorer
-  - id: "qwen3-coder-480b-bedrock"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-coder-480b-a35b-v1:0"
-    display_name: "Qwen3 Coder 480B (Bedrock)"
-    enabled: true
-    # NOT explorer — 480B MoE is expensive; use as Brain or on-demand
-
-  # 235B MoE: good general-purpose but expensive for sub-agent
-  - id: "qwen3-235b-bedrock"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-235b-a22b-2507-v1:0"
-    display_name: "Qwen3 235B MoE (Bedrock)"
-    enabled: true
-    # NOT explorer — large MoE; available as Brain model
-
-  # 32B: small, fast, but tool use quality is inconsistent
-  - id: "qwen3-32b-bedrock"
-    provider: "aws_bedrock"
-    model_name: "qwen.qwen3-32b-v1:0"
-    display_name: "Qwen3 32B (Bedrock)"
-    enabled: true
-    # NOT explorer — too weak for reliable sub-agent tool use
-
-  # ---- Amazon Nova (Bedrock) ----
-  # Nova Pro: decent all-around, low cost
-  - id: "amazon-nova-pro-bedrock"
-    provider: "aws_bedrock"
-    model_name: "amazon.nova-pro-v1:0"
-    display_name: "Amazon Nova Pro (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # Nova Micro: too weak for tool-use tasks
-  - id: "amazon-nova-micro-bedrock"
-    provider: "aws_bedrock"
-    model_name: "amazon.nova-micro-v1:0"
-    display_name: "Amazon Nova Micro (Bedrock)"
-    enabled: true
-    # NOT explorer — minimal capability, text-only
-
-  # ---- Mistral (Bedrock) ----
-  # Devstral: code specialist, strong for exploration
-  - id: "devstral-bedrock"
-    provider: "aws_bedrock"
-    model_name: "mistral.devstral-2-123b"
-    display_name: "Devstral 123B (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # ---- Moonshot Kimi (Bedrock) ----
-  - id: "kimi-k2.5-bedrock"
-    provider: "aws_bedrock"
-    model_name: "moonshotai.kimi-k2.5"
-    display_name: "Kimi K2.5 (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # ---- NVIDIA (Bedrock) ----
-  # Nemotron 120B: strong reasoning but expensive for sub-agent
-  - id: "nemotron-super-120b-bedrock"
-    provider: "aws_bedrock"
-    model_name: "nvidia.nemotron-super-3-120b"
-    display_name: "Nemotron Super 120B (Bedrock)"
-    enabled: true
-    # NOT explorer — large model, use as Brain or on-demand
-
-  # ---- Z.AI GLM (Bedrock) ----
-  - id: "glm-5-bedrock"
-    provider: "aws_bedrock"
-    model_name: "zai.glm-5"
-    display_name: "GLM-5 (Bedrock)"
-    enabled: true
-    explorer: true
-
-  # ---- OpenAI ----
-  - id: "gpt-4o"
-    provider: "openai"
-    model_name: "gpt-4o"
-    display_name: "GPT-4o"
-    enabled: true
-
-  - id: "gpt-4o-mini"
-    provider: "openai"
-    model_name: "gpt-4o-mini"
-    display_name: "GPT-4o Mini"
-    enabled: true
-
-  # ---- Alibaba / Qwen (DashScope, OpenAI-compatible) ----
-  - id: "qwen3-max"
-    provider: "alibaba"
-    model_name: "qwen3-max"
-    display_name: "Qwen3 Max (DashScope)"
-    enabled: true
-
-  - id: "qwen3.5-plus"
-    provider: "alibaba"
-    model_name: "qwen3.5-plus"
-    display_name: "Qwen3.5 Plus (DashScope)"
-    enabled: true
-    explorer: true
-
-  - id: "qwen3.5-flash"
-    provider: "alibaba"
-    model_name: "qwen3.5-flash"
-    display_name: "Qwen3.5 Flash (DashScope)"
-    enabled: true
-    explorer: true
-
-  - id: "qwen3-coder-plus"
-    provider: "alibaba"
-    model_name: "qwen3-coder-plus"
-    display_name: "Qwen3 Coder Plus (DashScope)"
-    enabled: true
-
-  - id: "qwen3-coder-flash"
-    provider: "alibaba"
-    model_name: "qwen3-coder-flash"
-    display_name: "Qwen3 Coder Flash (DashScope)"
-    enabled: true
-
-    explorer: true
-
-  # ---- Kimi (via Alibaba DashScope) ----
-  - id: "kimi-k2.5"
-    provider: "alibaba"
-    model_name: "kimi-k2.5"
-    display_name: "Kimi K2.5 (DashScope)"
-    enabled: true
-    explorer: true
-
-  # ---- Moonshot / Kimi (OpenAI-compatible, direct) ----
-  - id: "kimi-k2.5-moonshot"
-    provider: "moonshot"
-    model_name: "kimi-k2.5"
-    display_name: "Kimi K2.5 (Moonshot)"
-    enabled: true
-
-  - id: "kimi-k2-thinking-moonshot"
-    provider: "moonshot"
-    model_name: "kimi-k2-thinking"
-    display_name: "Kimi K2 Thinking (Moonshot)"
-    enabled: true
 
 # =============================================================================
 # Prompt Configuration
@@ -372,19 +208,6 @@ trace:
   enabled: true
   backend: "database"                       # "local" (JSON files) or "database" (Postgres)
   local_path: ".conductor/session_traces"   # fallback when database is unavailable
-
-# =============================================================================
-# Langfuse Observability
-# =============================================================================
-# Self-hosted Langfuse via: make langfuse-up  (http://localhost:3001)
-# User/org/project are auto-provisioned on first startup (see docker/.env).
-# Dev defaults — add these to conductor.secrets.yaml:
-#   langfuse:
-#     public_key: "pk-lf-conductor-dev"
-#     secret_key: "sk-lf-conductor-dev"
-langfuse:
-  enabled: true
-  host: "http://localhost:3001"
 
 # =============================================================================
 # Jira Integration

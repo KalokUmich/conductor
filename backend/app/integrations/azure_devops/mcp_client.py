@@ -143,6 +143,71 @@ class AzureDevOpsClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def list_threads(self, project: str, repo: str, pr_id: int) -> list[Dict[str, Any]]:
+        """List all comment threads on a PR (inline + general + system).
+
+        Each thread has ``id``, ``status`` (string: active/fixed/closed/...),
+        ``threadContext`` (filePath + rightFileStart.line for inline threads,
+        None for PR-level), and ``comments`` (each with ``content``,
+        ``commentType`` text/system, ``author``). System threads (votes, ref
+        updates) come back with ``commentType == "system"`` — callers filter.
+        """
+        url = self._url(project, f"git/repositories/{repo}/pullRequests/{pr_id}/threads")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(
+                url,
+                auth=self._auth,
+                params={"api-version": self._api_version},
+            )
+            resp.raise_for_status()
+            return resp.json().get("value", [])
+
+    async def update_thread_status(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        thread_id: int,
+        status: int,
+    ) -> Dict[str, Any]:
+        """Set a thread's status. 1=active, 2=fixed, 3=wontFix, 4=closed, 6=pending."""
+        url = self._url(
+            project,
+            f"git/repositories/{repo}/pullRequests/{pr_id}/threads/{thread_id}",
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.patch(
+                url,
+                auth=self._auth,
+                json={"status": status},
+                params={"api-version": self._api_version},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def reply_to_thread(
+        self,
+        project: str,
+        repo: str,
+        pr_id: int,
+        thread_id: int,
+        content: str,
+    ) -> Dict[str, Any]:
+        """Append a comment to an existing thread (e.g. a verification note)."""
+        url = self._url(
+            project,
+            f"git/repositories/{repo}/pullRequests/{pr_id}/threads/{thread_id}/comments",
+        )
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                auth=self._auth,
+                json={"content": content, "commentType": 1},
+                params={"api-version": self._api_version},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def vote(self, project: str, repo: str, pr_id: int, vote: int) -> Dict[str, Any]:
         """Set a vote on a PR.
 

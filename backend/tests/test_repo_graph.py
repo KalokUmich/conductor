@@ -292,6 +292,28 @@ class TestExtractDefinitions:
         result = extract_definitions("src/main.py", b"def test(): pass\n")
         assert result.file_path == "src/main.py"
 
+    def test_java_constant_indexed(self):
+        """Java `static final` fields index as kind='constant' (closes the
+        find_symbol gap behind the PR 14420 phantom false-positive); plain
+        instance fields as 'field'; method-local variables are NOT indexed."""
+        source = (
+            b"package com.example;\n"
+            b"import java.util.Set;\n"
+            b"public class VisaCheck {\n"
+            b'    private static final Set<String> BRITISH_OR_IRISH_NATIONALITIES = Set.of("GB", "IE");\n'
+            b"    private int instanceField = 3;\n"
+            b"    boolean check(String n) {\n"
+            b"        boolean localVar = BRITISH_OR_IRISH_NATIONALITIES.contains(n);\n"
+            b"        return localVar;\n"
+            b"    }\n"
+            b"}\n"
+        )
+        result = extract_definitions("VisaCheck.java", source)
+        defs = {d.name: d.kind for d in result.definitions}
+        assert defs.get("BRITISH_OR_IRISH_NATIONALITIES") == "constant"
+        assert defs.get("instanceField") == "field"
+        assert "localVar" not in defs  # method-local, not indexed
+
 
 class TestExtractReferences:
     def test_returns_list(self):

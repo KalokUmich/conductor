@@ -1,1 +1,0 @@
-# Embeddings config endpoint package

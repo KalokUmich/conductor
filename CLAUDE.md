@@ -33,7 +33,6 @@ make format         # format backend Python (black + ruff format)
 make lint-check     # lint + format check (CI mode, no changes)
 make typecheck-strict  # mypy on strict-audit modules (Phase 11.3; must pass)
 make typecheck      # mypy across full backend (informational — legacy has ~40 known errors)
-make langfuse-up    # start self-hosted Langfuse (port 3001)
 make update-prompt-library   # download latest prompts.chat CSV (agent design reference)
 ```
 
@@ -82,19 +81,32 @@ cp config/conductor.secrets.yaml.example config/conductor.secrets.yaml
 ```
 
 Key settings in `conductor.settings.yaml`:
-- `langfuse.enabled` + secrets in `conductor.secrets.yaml`
 - `ai_models[].explorer: true` — mark model as sub-agent capable
+
+**Bedrock auth — two deployment modes** (same resolution in `claude_bedrock._get_client` and
+`sdk_worker.bedrock_env`; mode is inferred from which creds are present, priority
+**bearer > static keys > profile > IAM role**):
+- **Local** — pick whichever is simplest for a long-lived token to test model performance:
+  - **Bedrock API key** (recommended for local): `CONDUCTOR_AWS_BEARER_TOKEN=<key>` →
+    exported as `AWS_BEARER_TOKEN_BEDROCK`; a single long-lived bearer token, no SSO login /
+    profile / refresh. ⚠️ it's a long-lived secret — keep it in a sandbox account, gitignored,
+    with a narrow `bedrock:InvokeModel` IAM policy.
+  - **SSO profile**: `CONDUCTOR_AWS_PROFILE=<profile>` (boto3 + the CLI's AWS SDK auto-refresh
+    role creds from the cached SSO login — one `aws sso login` per ~8h, no hourly pasting).
+  - **Static keys**: `CONDUCTOR_AWS_ACCESS_KEY_ID` / `CONDUCTOR_AWS_SECRET_ACCESS_KEY`.
+- **Deployed** — none of the above → Bedrock is reached via the ambient **IAM role**
+  (ECS task role / instance profile) through the default credential chain.
 
 Environment variables override secrets for cloud deployment (`CONDUCTOR_*` prefix):
 ```bash
-CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock credentials
+CONDUCTOR_AWS_BEARER_TOKEN=...        # Bedrock — local Bedrock API key (bearer); highest priority
+CONDUCTOR_AWS_PROFILE=...             # Bedrock — local SSO profile (auto-refresh); omit in deployed/role mode
+CONDUCTOR_AWS_ACCESS_KEY_ID=...       # Bedrock — static creds (alternative to profile)
 CONDUCTOR_AWS_SECRET_ACCESS_KEY=...
 CONDUCTOR_AWS_REGION=eu-west-2
 CONDUCTOR_POSTGRES_PASSWORD=...       # Database
 CONDUCTOR_JIRA_CLIENT_ID=...          # Integrations (Jira 3LO)
 CONDUCTOR_ATLASSIAN_READONLY_TOKEN=...  # Atlassian readonly (Jira + Confluence)
-LANGFUSE_PUBLIC_KEY=...               # Observability
-LANGFUSE_SECRET_KEY=...
 ```
 See `docs/GUIDE.md` §21.7 for the full variable reference.
 
@@ -123,7 +135,13 @@ Extension TypeScript uses ESLint (`.eslintrc.json`) with safety rules (`semi`, `
 
 ## What's Next
 
-See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-04):
+See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-05).
+
+**Recently shipped (Agent-SDK Migration, Steps 01–06 — COMPLETE 2026-05-31):**
+- **Dual-engine dispatch** — dispatched **leaf** sub-agents now run on the **Claude Agent SDK** via `SdkWorkerRunner` (`backend/app/agent_loop/sdk_worker.py`); **coordinators** (General / Domain / PR Brain) stay in-house on `AgentLoopService`. The discriminator in `brain._dispatch_explore` routes agents holding `dispatch_*` tools → in-house, else → SDK leaf. The SDK/CLI owns the loop + compaction; we keep the moat (vault-aware MCP tools on a shared `CachedToolExecutor`, the 4-layer full-replace system prompt, a post-call evidence gate).
+- **Claude-only providers** — AI providers collapsed to Bedrock Converse + Anthropic Messages (OpenAI / Alibaba / Moonshot / Qwen removed).
+- **Task telemetry** — per-worker cost/latency captured via `TaskTelemetryService` + the `task` DB table.
+- **Bedrock auth — two modes** — local (secret / SSO profile auto-refresh via `CONDUCTOR_AWS_PROFILE`) vs deployed (ambient IAM role / default chain); see the Configuration section above. Detail + eval gates in `docs/archive/REFACTOR_EXECUTION_LOG.md`.
 
 **Recently shipped (PR Brain v2 productisation):**
 - **Phase 9.13 PR Brain v2** — coordinator-worker agent-as-tool architecture with `dispatch_subagent` (file-range scoped, 3 checks) + `dispatch_dimension_worker` (full-diff through one role lens); 7 agent_factory role templates; legacy v1 fleet deleted.
@@ -136,6 +154,10 @@ See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-04):
 - **Phase 7.7.11 Jira Webhook Auto-Investigate (MVP)** — `POST /api/webhooks/jira?token=...` receiver. On `jira:issue_created`, dispatches a background asyncio task that fetches the ticket via the readonly client, runs a single zero-tool LLM triage call (Triage / Likely components / First investigation steps / Risks), and posts the result back as an ADF-formatted comment. Real code investigation deferred — needs per-project workspace mounting. Setup walkthrough in `docs/JIRA_WEBHOOK_SETUP.md`.
 - **Phase 11.3 Type checking** — mypy strict-audit baseline on `code_review.splitter` / `translate` / `scratchpad/*`; CI gate for new annotated code. Full backend lint-checked with ~140 legacy debt entries tracked.
 - **v2u Phase 2 reorder** — P13 deterministic (Python/Go/Java import scanners) runs BEFORE LLM existence worker; worker sees "Pre-verified by P13" block and focuses on 5 signature-level checks; timeout 120s → 60s. Sentry composite 0.796 → 0.834 (+0.038), catch 7/10 → 8/10, zero OOM after Makefile serial-suite fix.
+- **Phase 9.19 Domain Brain** — specialised orchestrator for business-flow / domain logic queries. General Brain hands off via `transfer_to_brain("domain")` → `DomainBrainOrchestrator` → coordinator self-survey (mandatory project-doc read + domain-anchor grep) → parallel `dispatch_explore(template=...)` workers → coverage check → synthesis with 8 preserve-specifics rules + 4-section format. Replaces the old `dispatch_swarm("business_flow")` path. Eval (5 cases / agent_quality): 94-98% AVG, 3/5 cases hit 100%. Driving skill: `config/skills/domain_brain_coordinator.md`.
+- **Phase 9.19 dispatch primitive rename + folder reorg** — `dispatch_agent` / `dispatch_subagent` / `dispatch_dimension_worker` → `dispatch_explore` / `dispatch_verify` / `dispatch_sweep` (intent-naming: open prose / scope+checks JSON / full-diff one-lens). Param schemas + tool defs moved into `backend/app/agent_loop/dispatch/{explore,verify,sweep}.py`; handlers stay in `brain.py` (12+ executor-state couplings).
+- **Phase 9.19 dispatch_swarm retired** — `_dispatch_swarm` handler + `DispatchSwarmParams` deleted, `config/swarms/business_flow.yaml` + `config/agents/explore_synthesizer.md` deleted. Domain Brain replaces this path; `load_swarm_registry()` kept (returns `{}`) for back-compat.
+- **Phase 9.18.1 workspace scan pruning** — `_scan_workspace` rewritten from `ws.rglob("*")` (walked all 293K files in render then filtered) to `os.walk` with in-place `dirnames[:]` pruning. Render: 293K files / 270s → 10K files / 18s (96.5% reduction, **14.5x faster**). Extended exclude list with `target/`, `.gradle/`, `out/`, `bin/`, `.idea/`, `.vscode/`, `.next/`, `.nuxt/`, `coverage/`, `.tox/`, `.ruff_cache/`, `.m2/`, `classes/`, `.venv/`. Graph cache TTL 120s → 1800s with `CONDUCTOR_GRAPH_TTL_S` env override.
 
 **Immediate (Sprint 14–16):**
 - **Phase 12: Team Knowledge Base** — Postgres + pgvector, auto-ingest from summaries, context injection into Brain/Summary/Review

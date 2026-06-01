@@ -551,6 +551,25 @@ class TestSubAgentSystemPrompt:
         assert identity_pos < workspace_pos
 
 
+class _FakeSdkRunner:
+    """Captures constructor + run() kwargs and returns a canned SdkAgentResult.
+
+    Step 06c: dispatch_explore now drives the worker via SdkWorkerRunner, so the
+    4-layer prompt lands in run()'s ``system_prompt`` (identity in Layer 1) and the
+    user's query stays clean in ``user_message`` (Layer 4)."""
+
+    last: dict = {}
+
+    def __init__(self, **kwargs):
+        _FakeSdkRunner.last = {"init": kwargs, "run": None}
+
+    async def run(self, *, system_prompt, user_message):
+        from app.agent_loop.sdk_worker import SdkAgentResult
+
+        _FakeSdkRunner.last["run"] = {"system_prompt": system_prompt, "user_message": user_message}
+        return SdkAgentResult(answer="test", tool_calls_made=0, iterations=0)
+
+
 class TestQueryNotContaminatedByRole:
     """Verify that dispatch_explore passes clean queries (no ## Your Role)."""
 
@@ -562,36 +581,8 @@ class TestQueryNotContaminatedByRole:
         mock_inner_executor,
         mock_provider,
     ):
-        """The query passed to AgentLoopService must NOT contain agent instructions."""
-        captured_kwargs = {}
-
-        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
-
-        def capture_init(self, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            original_init(self, *args, **kwargs)
-
-        with (
-            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
-            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
-        ):
-
-            async def empty_stream(*a, **kw):
-                from app.agent_loop.service import AgentEvent
-
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "answer": "test",
-                        "tool_calls_made": 0,
-                        "iterations": 0,
-                        "duration_ms": 0,
-                        "thinking_steps": [],
-                    },
-                )
-
-            mock_stream.side_effect = empty_stream
-
+        """The user_message handed to the SDK worker must NOT carry agent instructions."""
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
             executor = AgentToolExecutor(
                 inner_executor=mock_inner_executor,
                 agent_registry=agent_registry,
@@ -608,11 +599,12 @@ class TestQueryNotContaminatedByRole:
                 },
             )
 
-            # Verify the query passed to run_stream is clean
-            call_args = mock_stream.call_args
-            query_arg = call_args[1].get("query", call_args[0][0] if call_args[0] else "")
-            assert "## Your Role" not in query_arg
-            assert "Map the architecture" not in query_arg  # agent instructions
+            run_kwargs = _FakeSdkRunner.last["run"]
+            assert run_kwargs is not None, "SdkWorkerRunner.run must be invoked"
+            user_message = run_kwargs["user_message"]
+            assert user_message == "How does auth work?"
+            assert "## Your Role" not in user_message
+            assert "Map the architecture" not in user_message  # agent instructions
 
     @pytest.mark.asyncio
     async def test_dispatch_passes_agent_identity(
@@ -622,36 +614,8 @@ class TestQueryNotContaminatedByRole:
         mock_inner_executor,
         mock_provider,
     ):
-        """dispatch_explore must pass agent_identity dict to AgentLoopService via config."""
-        captured_kwargs = {}
-
-        original_init = __import__("app.agent_loop.service", fromlist=["AgentLoopService"]).AgentLoopService.__init__
-
-        def capture_init(self, *args, **kwargs):
-            captured_kwargs.update(kwargs)
-            original_init(self, *args, **kwargs)
-
-        with (
-            patch("app.agent_loop.service.AgentLoopService.__init__", capture_init),
-            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
-        ):
-
-            async def empty_stream(*a, **kw):
-                from app.agent_loop.service import AgentEvent
-
-                yield AgentEvent(
-                    kind="done",
-                    data={
-                        "answer": "test",
-                        "tool_calls_made": 0,
-                        "iterations": 0,
-                        "duration_ms": 0,
-                        "thinking_steps": [],
-                    },
-                )
-
-            mock_stream.side_effect = empty_stream
-
+        """dispatch_explore must bake the agent identity into the worker's system_prompt."""
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
             executor = AgentToolExecutor(
                 inner_executor=mock_inner_executor,
                 agent_registry=agent_registry,
@@ -668,14 +632,143 @@ class TestQueryNotContaminatedByRole:
                 },
             )
 
-            # Verify agent_identity was passed via AgentLoopConfig
-            loop_config = captured_kwargs.get("config")
-            assert loop_config is not None, "AgentLoopService must receive an AgentLoopConfig"
-            identity = loop_config.agent_identity
-            assert identity is not None
-            assert identity["name"] == "explore_architecture"
-            assert identity["description"] == "Maps module structure"
-            assert identity["instructions"] == "Map the architecture."
+            run_kwargs = _FakeSdkRunner.last["run"]
+            assert run_kwargs is not None, "SdkWorkerRunner.run must be invoked"
+            # Identity lives in the 4-layer system prompt (Layer 1), not the query.
+            system_prompt = run_kwargs["system_prompt"]
+            assert "explore_architecture" in system_prompt
+            assert "Map the architecture." in system_prompt  # agent instructions (Layer 1 body)
+
+
+class TestSdkDispatchRoutingAndTelemetry:
+    """Step 06c engine discriminator + Step 06d task telemetry, at the dispatch seam."""
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_routes_to_inhouse_not_sdk(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider
+    ):
+        """An agent holding a dispatch_* tool is a coordinator → in-house loop, NOT SDK
+        (so it keeps its orchestration tools and can fan out to SDK leaf workers)."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "dispatch_explore"]
+        _FakeSdkRunner.last = {"init": None, "run": None}
+
+        async def empty_stream(*a, **kw):
+            from app.agent_loop.service import AgentEvent
+
+            yield AgentEvent(
+                kind="done",
+                data={"answer": "x", "tool_calls_made": 1, "iterations": 1, "duration_ms": 0, "thinking_steps": []},
+            )
+
+        with (
+            patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner),
+            patch("app.agent_loop.service.AgentLoopService.run_stream") as mock_stream,
+        ):
+            mock_stream.side_effect = empty_stream
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "How does auth work?"},
+            )
+
+            assert mock_stream.called, "coordinator must run on the in-house AgentLoopService loop"
+            assert _FakeSdkRunner.last["run"] is None, "coordinator must NOT use the SDK worker"
+
+    @pytest.mark.asyncio
+    async def test_leaf_dispatch_records_task_telemetry(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider, monkeypatch
+    ):
+        """A leaf dispatch records start + complete with the right kind/engine + ids."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "find_symbol"]
+        starts: list = []
+        completes: list = []
+
+        async def cap_start(**kw):
+            starts.append(kw)
+
+        async def cap_complete(**kw):
+            completes.append(kw)
+
+        # Patch the names bound in brain's namespace (it imports them at module load).
+        monkeypatch.setattr("app.agent_loop.brain.record_start", cap_start)
+        monkeypatch.setattr("app.agent_loop.brain.record_complete", cap_complete)
+
+        with patch("app.agent_loop.sdk_worker.SdkWorkerRunner", _FakeSdkRunner):
+            executor = AgentToolExecutor(
+                inner_executor=mock_inner_executor,
+                agent_registry=agent_registry,
+                swarm_registry=swarm_registry,
+                agent_provider=mock_provider,
+                workspace_path="/tmp/test",
+                event_sink=asyncio.Queue(),
+            )
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "How does auth work?"},
+            )
+
+        assert len(starts) == 1 and len(completes) == 1
+        s = starts[0]
+        assert s["kind"] == "sub_agent" and s["engine"] == "sdk"
+        assert s["agent_name"] == "explore_architecture"
+        assert s["task_id"] and s["root_task_id"]
+        assert s["parent_task_id"] is None  # top-level executor → no parent
+        c = completes[0]
+        assert c["task_id"] == s["task_id"]  # same node started + completed
+        assert c["status"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_cancelled_dispatch_finalizes_task_not_left_running(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider, monkeypatch
+    ):
+        """Regression: an OUTER cancellation (e.g. PR Brain's 60s existence-worker
+        wait_for) must finalize the task row as 'cancelled' — not leave it stuck
+        'running' with 0 tokens — and still re-raise so cancellation propagates.
+        Also asserts session_id is threaded into the start record."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "find_symbol"]
+        starts: list = []
+        completes: list = []
+
+        async def cap_start(**kw):
+            starts.append(kw)
+
+        async def cap_complete(**kw):
+            completes.append(kw)
+
+        async def boom_sdk(self, **kw):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr("app.agent_loop.brain.record_start", cap_start)
+        monkeypatch.setattr("app.agent_loop.brain.record_complete", cap_complete)
+        monkeypatch.setattr("app.agent_loop.brain.AgentToolExecutor._run_worker_sdk", boom_sdk)
+
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/test",
+            event_sink=asyncio.Queue(),
+            session_id="ado-test-pr-1-abcd1234",
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "q"},
+            )
+
+        assert len(starts) == 1 and len(completes) == 1
+        assert starts[0]["session_id"] == "ado-test-pr-1-abcd1234"  # session threaded
+        c = completes[0]
+        assert c["status"] == "cancelled"  # finalized, not left 'running'
+        assert c["task_id"] == starts[0]["task_id"]
 
 
 # ---------------------------------------------------------------------------
@@ -704,7 +797,7 @@ class TestBrainConfigLoading:
         # templates (used via dispatch_explore(template=...)).
         assert "explore_implementation" in agents
         assert "explore_usage" in agents
-        assert "pr_existence_check" in agents           # v2 Phase 2 worker
+        assert "pr_existence_check" in agents  # v2 Phase 2 worker
 
 
 # ---------------------------------------------------------------------------

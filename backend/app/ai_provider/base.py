@@ -92,7 +92,7 @@ class AIProvider(ABC):
     def model_name(self) -> str:
         """Return the model identifier used by this provider.
 
-        Used for Langfuse generation tracking and cost calculation.
+        Used for generation tracking and cost calculation.
         """
         ...
 

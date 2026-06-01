@@ -5,9 +5,8 @@
 #
 # This script creates:
 #   1. A dedicated role (DB user)
-#   2. Two databases owned by that role:
+#   2. One database owned by that role:
 #      - conductor  (backend OLTP data — tables managed by Liquibase)
-#      - langfuse   (Langfuse observability — tables managed by Langfuse internally)
 #
 # Usage:
 #   # Interactive — prompts for admin password
@@ -25,9 +24,6 @@
 #   POSTGRES_USER=conductor \
 #   POSTGRES_PASSWORD=conductor-secret \
 #   make db-update
-#
-# Then start Langfuse pointing to the langfuse database.
-# Langfuse auto-creates its own tables on first startup.
 # ============================================================
 
 set -euo pipefail
@@ -105,12 +101,6 @@ $PSQL -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'conductor'" | 
     || $PSQL -d postgres -c "CREATE DATABASE conductor OWNER $APP_USER;"
 echo "  conductor — OK"
 
-# 3. Create langfuse database
-echo "Creating database 'langfuse'..."
-$PSQL -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'langfuse'" | grep -q 1 \
-    || $PSQL -d postgres -c "CREATE DATABASE langfuse OWNER $APP_USER;"
-echo "  langfuse — OK"
-
 echo ""
 echo "=== Done ==="
 echo ""
@@ -118,8 +108,5 @@ echo "Next steps:"
 echo "  1. Run Liquibase to create conductor tables:"
 echo "     POSTGRES_HOST=$DB_HOST POSTGRES_USER=$APP_USER POSTGRES_PASSWORD=*** make db-update"
 echo ""
-echo "  2. Start Langfuse with DATABASE_URL pointing to the langfuse database:"
-echo "     DATABASE_URL=postgresql://$APP_USER:***@$DB_HOST:$DB_PORT/langfuse"
-echo ""
-echo "  3. Start the backend with DATABASE_URL pointing to the conductor database:"
+echo "  2. Start the backend with DATABASE_URL pointing to the conductor database:"
 echo "     DATABASE_URL=postgresql+asyncpg://$APP_USER:***@$DB_HOST:$DB_PORT/conductor"

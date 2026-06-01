@@ -556,6 +556,12 @@ _SYMBOL_CACHE_MAX_WORKSPACES = int(
 _symbol_index_cache: OrderedDict[str, tuple] = OrderedDict()
 _CONDUCTOR_DIR = ".conductor"
 _SYMBOL_INDEX_FILE = "symbol_index.json"
+# Bump when the symbol-index SCHEMA changes (new node kinds, SymbolDef shape).
+# The on-disk cache is otherwise invalidated only by git-HEAD change, so without
+# a version key a stale symbol_index.json (e.g. one built before constants/fields
+# were indexed) would linger across a code upgrade until HEAD moved. v2: added
+# Java field/constant + Go const indexing.
+_SYMBOL_INDEX_SCHEMA = 2
 
 
 def _lru_evict_symbol_cache() -> None:
@@ -634,6 +640,19 @@ def _load_disk_cache(workspace: str) -> Optional[tuple]:
         return None
     try:
         data = _json.loads(path.read_text(encoding="utf-8"))
+        if data.get("schema") != _SYMBOL_INDEX_SCHEMA:
+            # Stale schema (e.g. pre-constant-indexing build) — discard so it's
+            # rebuilt with the current node-type set instead of serving an index
+            # that's missing fields/constants.
+            logger.info(
+                "Disk cache schema mismatch (got %s, want %s) — rebuilding (workspace=%s)",
+                data.get("schema"),
+                _SYMBOL_INDEX_SCHEMA,
+                workspace,
+            )
+            with contextlib.suppress(OSError):
+                path.unlink(missing_ok=True)
+            return None
         head = data.get("git_head")
         raw_index = data.get("index")
         if head and raw_index is not None:
@@ -658,7 +677,11 @@ def _save_disk_cache(workspace: str, index: Dict[str, list], git_head: str) -> N
     path = _disk_cache_path(workspace)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"git_head": git_head, "index": _serialize_definitions(index)}
+        payload = {
+            "schema": _SYMBOL_INDEX_SCHEMA,
+            "git_head": git_head,
+            "index": _serialize_definitions(index),
+        }
         path.write_text(_json.dumps(payload), encoding="utf-8")
     except OSError:
         pass  # non-fatal — in-memory cache still works

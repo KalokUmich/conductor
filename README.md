@@ -123,7 +123,7 @@ Open the VS Code extension and start a session. Then ask questions like:
 │                                  │     │  │  dispatch_agent / dispatch_swarm  │  │
 │  ┌────────────────────────────┐  │HTTP │  │  transfer_to_brain (PR Brain)     │  │
 │  │ WorkspaceClient            │◄─┼─────┼──│  ask_user (mid-loop clarify)      │  │
-│  │ WorkspacePanel (wizard)    │  │     │  │  Langfuse @observe decorators     │  │
+│  │ WorkspacePanel (wizard)    │  │     │  │  TaskTelemetry per-task usage     │  │
 │  │ FileSystemProvider         │  │     │  └───────────────────────────────────┘  │
 │  └────────────────────────────┘  │     │                                          │
 │                                  │     │  ┌───────────────────────────────────┐  │
@@ -149,7 +149,7 @@ Open the VS Code extension and start a session. Then ask questions like:
                                          │                                          │
                                          │  ┌───────────────────────────────────┐  │
                                          │  │ PostgreSQL (Liquibase-managed)    │  │
-                                         │  │  6 tables + Langfuse DB           │  │
+                                         │  │  tables + task telemetry          │  │
                                          │  └───────────────────────────────────┘  │
                                          └──────────────────────────────────────────┘
 ```
@@ -170,7 +170,7 @@ Current prototype includes:
 - **Chat persistence**: write-through micro-batch Postgres + Redis hot cache
 - **Browser tools**: Playwright Chromium automation for web browsing from agents
 - Multi-provider AI support (Bedrock, Anthropic, OpenAI, DashScope, Moonshot)
-- Langfuse self-hosted observability (nested execution trees, cost tracking)
+- Task-hierarchy telemetry (per-task token usage + cost tracking via the `task` table)
 - Jira integration (OAuth 3LO, 5 agent tools, 3-phase investigate→mark→update workflow)
 - Cloud-ready: `CONDUCTOR_*` env vars override secrets for ECS/K8s deployment
 - 2045+ automated tests (533 tool-related + parity)
@@ -315,7 +315,7 @@ npm run compile
 - **聊天持久化**：写穿透 micro-batch Postgres + Redis 热缓存
 - **浏览器工具**：Playwright Chromium 自动化
 - 多提供商 AI 支持（Bedrock、Anthropic、OpenAI、DashScope、Moonshot）
-- Langfuse 自托管可观测性（嵌套执行树、成本追踪）
+- 任务层级遥测（`task` 表记录每个任务的 token 用量与成本）
 - Jira 集成（OAuth 3LO，5 个 Agent 工具，3 阶段 investigate→mark→update 流程）
 - 云部署就绪：`CONDUCTOR_*` 环境变量覆盖 ECS/K8s 部署的 secrets
 - 2045+ 自动化测试（533 工具相关 + parity）

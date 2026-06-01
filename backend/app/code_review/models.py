@@ -88,9 +88,7 @@ class PRContext:
         # semantically meaningful. Avoids matching mid-word substrings like
         # "coauthor" where no separator precedes the keyword.
         pattern = re.compile(
-            r"(?i)(?:^|[/._-])("
-            r"auth|crypto|session|oauth|security|secret|token|credential|permission"
-            r")"
+            r"(?i)(?:^|[/._-])(" r"auth|crypto|session|oauth|security|secret|token|credential|permission" r")"
         )
         return [f for f in self.files if pattern.search(f.path)]
 
@@ -151,13 +149,13 @@ class Severity(str, Enum):
     definitions with examples.
     """
 
-    CRITICAL = "critical"   # provable bug + security / auth / API contract impact
-    HIGH = "high"           # provable bug + functional impact (crash, wrong behavior)
-    MEDIUM = "medium"       # real bug + subtle / conditional trigger
-    LOW = "low"             # edge-case bug, specific input triggers
-    WARNING = "warning"     # deprecated → mapped to MEDIUM by _SEVERITY_MAP
-    NIT = "nit"             # not a defect — style, minor improvement
-    PRAISE = "praise"       # positive feedback
+    CRITICAL = "critical"  # provable bug + security / auth / API contract impact
+    HIGH = "high"  # provable bug + functional impact (crash, wrong behavior)
+    MEDIUM = "medium"  # real bug + subtle / conditional trigger
+    LOW = "low"  # edge-case bug, specific input triggers
+    WARNING = "warning"  # deprecated → mapped to MEDIUM by _SEVERITY_MAP
+    NIT = "nit"  # not a defect — style, minor improvement
+    PRAISE = "praise"  # positive feedback
 
 
 class FindingCategory(str, Enum):
@@ -233,6 +231,7 @@ class ReviewResult:
     agent_results: List[AgentReviewResult] = field(default_factory=list)
     files_reviewed: List[str] = field(default_factory=list)
     total_tokens: int = 0
+    total_cost_usd: float = 0.0  # USD economy: actual session spend (coordinator + leaves)
     total_iterations: int = 0
     total_duration_ms: float = 0.0
     merge_recommendation: str = ""  # "approve", "request_changes", "approve_with_followups"

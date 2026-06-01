@@ -477,7 +477,6 @@ def _make_conductor_config(
     bedrock_secret_key="",
     bedrock_session_token="",
     anthropic_api_key="",
-    openai_api_key="",
     default_model="claude-3-haiku-bedrock",
 ):
     """Helper to build a ConductorConfig for resolver tests."""
@@ -488,7 +487,6 @@ def _make_conductor_config(
         AnthropicSecretsConfig,
         AWSBedrockSecretsConfig,
         ConductorConfig,
-        OpenAISecretsConfig,
         SummaryConfig,
     )
 
@@ -497,7 +495,6 @@ def _make_conductor_config(
         ai_provider_settings=AIProviderSettingsConfig(
             anthropic_enabled=bool(anthropic_api_key),
             aws_bedrock_enabled=bool(bedrock_access_key),
-            openai_enabled=bool(openai_api_key),
         ),
         ai_providers=AIProvidersSecretsConfig(
             anthropic=AnthropicSecretsConfig(api_key=anthropic_api_key),
@@ -506,7 +503,6 @@ def _make_conductor_config(
                 secret_access_key=bedrock_secret_key,
                 session_token=bedrock_session_token,
             ),
-            openai=OpenAISecretsConfig(api_key=openai_api_key),
         ),
         ai_models=[
             AIModelConfig(
@@ -653,8 +649,8 @@ class TestProviderResolver:
 
             assert status.summary_enabled is True
             assert status.active_provider == "aws_bedrock"
-            # All 5 provider types are listed
-            assert len(status.providers) == 5
+            # Both provider types (anthropic, aws_bedrock) are listed
+            assert len(status.providers) == 2
             bedrock_status = next(p for p in status.providers if p.name == "aws_bedrock")
             assert bedrock_status.healthy is True
 
@@ -813,7 +809,7 @@ class TestAIStatusEndpoint:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] == "aws_bedrock"
-            assert len(data["providers"]) == 5
+            assert len(data["providers"]) == 2
             bedrock_provider = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
             assert bedrock_provider["healthy"] is True
 
@@ -854,7 +850,7 @@ class TestAIStatusEndpoint:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] is None
-            assert len(data["providers"]) == 5
+            assert len(data["providers"]) == 2
             bedrock_provider = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
             assert bedrock_provider["healthy"] is False
 
@@ -2106,7 +2102,7 @@ class TestAIStatusEndpointHealthChecks:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] == "anthropic"
-            assert len(data["providers"]) == 5
+            assert len(data["providers"]) == 2
 
             # Find provider statuses
             bedrock_status = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
@@ -2157,7 +2153,7 @@ class TestAIStatusEndpointHealthChecks:
             # Bedrock has priority and is healthy
             assert data["active_provider"] == "aws_bedrock"
             # All provider types are listed
-            assert len(data["providers"]) == 5
+            assert len(data["providers"]) == 2
             # The active provider should be in the list and healthy
             bedrock_status = next((p for p in data["providers"] if p["name"] == "aws_bedrock"), None)
             assert bedrock_status is not None
@@ -2204,7 +2200,7 @@ class TestAIStatusEndpointHealthChecks:
             data = response.json()
             assert data["summary_enabled"] is True
             assert data["active_provider"] is None
-            assert len(data["providers"]) == 5
+            assert len(data["providers"]) == 2
             # Both configured providers should be unhealthy
             bedrock_status = next(p for p in data["providers"] if p["name"] == "aws_bedrock")
             anthropic_status = next(p for p in data["providers"] if p["name"] == "anthropic")

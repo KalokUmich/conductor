@@ -188,6 +188,17 @@ def _walk_for_definitions(node, source: bytes, file_path: str, symbols: FileSymb
         "type_alias_declaration": "type",
     }
 
+    # Field / constant declarations are handled separately from DEF_NODE_TYPES
+    # because one declaration node can bind MULTIPLE names (`int a, b;`) so the
+    # single-name _resolve_def_name contract doesn't fit. We index only
+    # module/class-level constants/fields, not every local variable (Java locals
+    # are `local_variable_declaration`, not `field_declaration`; Go function-local
+    # `var` uses `var_spec`, excluded). This closes a find_symbol gap:
+    # UPPER_SNAKE_CASE constants like BRITISH_OR_IRISH_NATIONALITIES were
+    # unindexed -> find_symbol returned [] -> P13 false-flagged them as phantoms.
+    if node.type in ("field_declaration", "const_spec"):
+        _collect_field_definitions(node, source, file_path, symbols)
+
     if node.type in DEF_NODE_TYPES:
         name_node = _resolve_def_name(node)
 
@@ -266,6 +277,57 @@ def _resolve_def_name(node):
             return child
 
     return None
+
+
+def _collect_field_definitions(node, source: bytes, file_path: str, symbols: FileSymbols) -> None:
+    """Index field / constant declarations as SymbolDefs.
+
+    Unlike the single-name DEF_NODE_TYPES path, one declaration node can bind
+    multiple names (Java ``int a, b;`` / Go ``const ( X = 1; Y = 2 )``), so we
+    collect every ``variable_declarator`` / spec name.
+
+    kind = "constant" for Java ``static final`` fields and all Go consts;
+    "field" for ordinary Java instance fields. The kind lets callers filter via
+    ``find_symbol(name, kind="constant")``.
+    """
+    kind = "constant"
+    if node.type == "field_declaration":
+        modifiers = ""
+        for child in node.children:
+            if child.type == "modifiers":
+                modifiers = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+                break
+        kind = "constant" if ("static" in modifiers and "final" in modifiers) else "field"
+
+    first_line = source[node.start_byte :].split(b"\n")[0]
+    signature = first_line.decode("utf-8", errors="replace").strip()
+    if len(signature) > 120:
+        signature = signature[:117] + "..."
+
+    name_nodes = []
+    for child in node.children:
+        if child.type == "variable_declarator":
+            n = child.child_by_field_name("name")
+            if n is not None:
+                name_nodes.append(n)
+        elif child.type == "identifier":
+            # Go const_spec lists names as direct identifier children.
+            name_nodes.append(child)
+
+    for name_node in name_nodes:
+        name = source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
+        if not name:
+            continue
+        symbols.definitions.append(
+            SymbolDef(
+                name=name,
+                kind=kind,
+                file_path=file_path,
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                signature=signature,
+            )
+        )
 
 
 def _kind_from_type_spec(node) -> str:

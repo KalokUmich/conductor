@@ -1,4 +1,4 @@
-"""Tests for the token-based budget controller."""
+"""Tests for the USD-based budget controller (USD budget economy)."""
 
 from __future__ import annotations
 
@@ -9,23 +9,32 @@ from app.agent_loop.budget import (
     IterationMetrics,
 )
 
+_MODEL = "eu.anthropic.claude-sonnet-4-6"  # EU sonnet: $3/$15 ×1.10
+
+# Helper: 100K input on EU sonnet ≈ 100000 * 3 * 1.10 / 1e6 = $0.33
+# 1M input ≈ $3.30.
+
+
+def _ctl(**cfg) -> BudgetController:
+    return BudgetController(BudgetConfig(**cfg), model=_MODEL)
+
+
 # ---------------------------------------------------------------------------
-# BudgetSignal tests
+# BudgetSignal tests (USD-gated)
 # ---------------------------------------------------------------------------
 
 
 class TestBudgetSignalNormal:
     def test_fresh_controller_returns_normal(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=500_000))
-        assert bc.get_signal() == BudgetSignal.NORMAL
+        assert _ctl(max_usd=5.0).get_signal() == BudgetSignal.NORMAL
 
     def test_low_usage_returns_normal(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=500_000))
+        bc = _ctl(max_usd=5.0)
         bc.track(IterationMetrics(input_tokens=10_000, output_tokens=500))
         assert bc.get_signal() == BudgetSignal.NORMAL
 
     def test_multiple_iterations_under_threshold_normal(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=500_000))
+        bc = _ctl(max_usd=5.0)
         for _ in range(5):
             bc.track(
                 IterationMetrics(
@@ -35,122 +44,53 @@ class TestBudgetSignalNormal:
                     new_symbols_found=1,
                 )
             )
-        # 100K / 500K = 20%
+        # ~$0.36 of $5 = 7%
         assert bc.get_signal() == BudgetSignal.NORMAL
 
 
 class TestBudgetSignalWarnConverge:
     def test_warning_at_threshold(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=100_000,
-                warning_threshold=0.7,
-            )
-        )
-        bc.track(IterationMetrics(input_tokens=75_000, output_tokens=1_000))
+        # max_usd $0.33 with 0.7 warn → 100K input ($0.33) is 100% > 70%.
+        bc = _ctl(max_usd=0.40, warning_threshold=0.7)
+        bc.track(IterationMetrics(input_tokens=100_000, output_tokens=0))
         assert bc.get_signal() == BudgetSignal.WARN_CONVERGE
 
     def test_diminishing_returns_triggers_warning(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=1_000_000,
-                diminishing_returns_window=3,
-            )
-        )
-        # 3 iterations with no new files or symbols
+        bc = _ctl(max_usd=100.0, diminishing_returns_window=3)
         for _ in range(3):
-            bc.track(
-                IterationMetrics(
-                    input_tokens=10_000,
-                    output_tokens=500,
-                    new_files_accessed=0,
-                    new_symbols_found=0,
-                )
-            )
+            bc.track(IterationMetrics(input_tokens=10_000, output_tokens=500))
         assert bc.get_signal() == BudgetSignal.WARN_CONVERGE
 
     def test_diminishing_returns_not_triggered_with_new_files(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=1_000_000,
-                diminishing_returns_window=3,
-            )
-        )
+        bc = _ctl(max_usd=100.0, diminishing_returns_window=3)
         for _ in range(3):
-            bc.track(
-                IterationMetrics(
-                    input_tokens=10_000,
-                    output_tokens=500,
-                    new_files_accessed=1,
-                    new_symbols_found=0,
-                )
-            )
+            bc.track(IterationMetrics(input_tokens=10_000, output_tokens=500, new_files_accessed=1))
         assert bc.get_signal() == BudgetSignal.NORMAL
 
     def test_diminishing_returns_not_triggered_below_window(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=1_000_000,
-                diminishing_returns_window=3,
-            )
-        )
-        # Only 2 iterations — below window
+        bc = _ctl(max_usd=100.0, diminishing_returns_window=3)
         for _ in range(2):
-            bc.track(
-                IterationMetrics(
-                    input_tokens=10_000,
-                    output_tokens=500,
-                    new_files_accessed=0,
-                    new_symbols_found=0,
-                )
-            )
+            bc.track(IterationMetrics(input_tokens=10_000, output_tokens=500))
         assert bc.get_signal() == BudgetSignal.NORMAL
 
 
 class TestBudgetSignalForceConclude:
     def test_critical_threshold_forces_conclude(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=100_000,
-                critical_threshold=0.9,
-            )
-        )
-        bc.track(IterationMetrics(input_tokens=95_000, output_tokens=1_000))
+        # $0.33 input vs $0.35 cap → 94% > 90% critical
+        bc = _ctl(max_usd=0.35, critical_threshold=0.9)
+        bc.track(IterationMetrics(input_tokens=100_000, output_tokens=0))
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
     def test_max_iterations_forces_conclude(self):
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=1_000_000,
-                max_iterations=5,
-            )
-        )
+        bc = _ctl(max_usd=100.0, max_iterations=5)
         for _ in range(5):
-            bc.track(
-                IterationMetrics(
-                    input_tokens=1_000,
-                    output_tokens=100,
-                    new_files_accessed=1,
-                )
-            )
+            bc.track(IterationMetrics(input_tokens=1_000, output_tokens=100, new_files_accessed=1))
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
-    def test_iteration_limit_checked_before_token_ratio(self):
-        """Even with low token usage, hitting max_iterations forces conclude."""
-        bc = BudgetController(
-            BudgetConfig(
-                max_input_tokens=1_000_000,
-                max_iterations=3,
-            )
-        )
+    def test_iteration_limit_checked_before_usd_ratio(self):
+        bc = _ctl(max_usd=100.0, max_iterations=3)
         for _ in range(3):
-            bc.track(
-                IterationMetrics(
-                    input_tokens=100,
-                    output_tokens=50,
-                    new_files_accessed=1,
-                )
-            )
+            bc.track(IterationMetrics(input_tokens=100, output_tokens=50, new_files_accessed=1))
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
 
@@ -160,41 +100,37 @@ class TestBudgetSignalForceConclude:
 
 
 class TestTracking:
-    def test_cumulative_tokens(self):
-        bc = BudgetController()
+    def test_cumulative_tokens_and_usd(self):
+        bc = _ctl(max_usd=5.0)
         bc.track(IterationMetrics(input_tokens=10_000, output_tokens=500))
         bc.track(IterationMetrics(input_tokens=20_000, output_tokens=1_000))
         assert bc.cumulative_input == 30_000
         assert bc.cumulative_output == 1_500
         assert bc.total_tokens == 31_500
+        assert bc.cumulative_usd > 0  # priced, non-zero
 
     def test_iteration_count(self):
-        bc = BudgetController()
+        bc = _ctl(max_usd=5.0)
         bc.track(IterationMetrics(input_tokens=100))
         bc.track(IterationMetrics(input_tokens=100))
         assert bc.iteration_count == 2
 
-    def test_track_file_new(self):
-        bc = BudgetController()
+    def test_cache_read_is_cheaper_than_plain_input(self):
+        cached = _ctl(max_usd=100.0)
+        cached.track(IterationMetrics(input_tokens=0, cache_read_tokens=1_000_000))
+        plain = _ctl(max_usd=100.0)
+        plain.track(IterationMetrics(input_tokens=1_000_000))
+        assert cached.cumulative_usd < plain.cumulative_usd
+
+    def test_track_file_dedup(self):
+        bc = _ctl(max_usd=5.0)
         assert bc.track_file("app/service.py") == 1
-        assert len(bc.files_accessed) == 1
-
-    def test_track_file_duplicate(self):
-        bc = BudgetController()
-        bc.track_file("app/service.py")
         assert bc.track_file("app/service.py") == 0
-        assert len(bc.files_accessed) == 1
 
-    def test_track_symbol_new(self):
-        bc = BudgetController()
+    def test_track_symbol_dedup(self):
+        bc = _ctl(max_usd=5.0)
         assert bc.track_symbol("PaymentService") == 1
-        assert len(bc.symbols_resolved) == 1
-
-    def test_track_symbol_duplicate(self):
-        bc = BudgetController()
-        bc.track_symbol("PaymentService")
         assert bc.track_symbol("PaymentService") == 0
-        assert len(bc.symbols_resolved) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -203,30 +139,23 @@ class TestTracking:
 
 
 class TestBudgetContext:
-    def test_budget_context_format(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=500_000, max_iterations=25))
+    def test_budget_context_shows_usd(self):
+        bc = _ctl(max_usd=5.0, max_iterations=25)
         bc.track(IterationMetrics(input_tokens=100_000, output_tokens=5_000))
-        bc.track_file("app/a.py")
-        bc.track_symbol("Foo")
         ctx = bc.budget_context
-        assert "100,000" in ctx
-        assert "500,000" in ctx
-        assert "20%" in ctx
-        assert "Files: 1" in ctx
-        assert "Symbols: 1" in ctx
+        assert "$" in ctx
+        assert "5.00" in ctx  # max
+        assert "Iteration 1/25" in ctx
 
-    def test_summary_dict(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=100_000))
+    def test_summary_dict_has_usd_and_tokens(self):
+        bc = _ctl(max_usd=5.0)
         bc.track(IterationMetrics(input_tokens=50_000, output_tokens=2_000))
-        bc.track_file("x.py")
         s = bc.summary()
         assert s["total_input_tokens"] == 50_000
         assert s["total_output_tokens"] == 2_000
         assert s["total_tokens"] == 52_000
-        assert s["iterations"] == 1
-        assert s["input_usage_ratio"] == 0.5
-        assert s["files_accessed"] == 1
-        assert s["symbols_resolved"] == 0
+        assert s["total_cost_usd"] > 0
+        assert "usd_usage_ratio" in s
 
 
 # ---------------------------------------------------------------------------
@@ -235,14 +164,14 @@ class TestBudgetContext:
 
 
 class TestEdgeCases:
-    def test_zero_max_tokens_returns_full_ratio(self):
-        bc = BudgetController(BudgetConfig(max_input_tokens=0))
-        assert bc.input_usage_ratio == 1.0
+    def test_zero_max_usd_returns_full_ratio(self):
+        bc = _ctl(max_usd=0.0)
+        assert bc.usd_usage_ratio == 1.0
         assert bc.get_signal() == BudgetSignal.FORCE_CONCLUDE
 
     def test_default_config_values(self):
         cfg = BudgetConfig()
-        assert cfg.max_input_tokens == 1_000_000
+        assert cfg.max_usd == 5.0
         assert cfg.warning_threshold == 0.6
         assert cfg.critical_threshold == 0.9
         assert cfg.max_iterations == 50

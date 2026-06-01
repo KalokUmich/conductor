@@ -199,9 +199,11 @@ class TestInjectMissingSymbolFindings:
         import app.scratchpad as scratch_mod
         from app.agent_loop import pr_brain as mod
 
-        store = self._fake_store([
-            {"name": "FooBar", "referenced_at": "src/app.py:42"},
-        ])
+        store = self._fake_store(
+            [
+                {"name": "FooBar", "referenced_at": "src/app.py:42"},
+            ]
+        )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
         findings, n = mod._inject_missing_symbol_findings([])
@@ -219,19 +221,23 @@ class TestInjectMissingSymbolFindings:
         import app.scratchpad as scratch_mod
         from app.agent_loop import pr_brain as mod
 
-        store = self._fake_store([
-            {"name": "FooBar", "referenced_at": "src/app.py:42"},
-        ])
+        store = self._fake_store(
+            [
+                {"name": "FooBar", "referenced_at": "src/app.py:42"},
+            ]
+        )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        existing = [{
-            "title": "FooBar not defined — ImportError",
-            "severity": "critical",
-            "confidence": 0.95,
-            "file": "src/app.py",
-            "start_line": 42,
-            "end_line": 42,
-        }]
+        existing = [
+            {
+                "title": "FooBar not defined — ImportError",
+                "severity": "critical",
+                "confidence": 0.95,
+                "file": "src/app.py",
+                "start_line": 42,
+                "end_line": 42,
+            }
+        ]
         findings, n = mod._inject_missing_symbol_findings(existing)
         assert n == 0
         assert findings == existing
@@ -240,17 +246,21 @@ class TestInjectMissingSymbolFindings:
         import app.scratchpad as scratch_mod
         from app.agent_loop import pr_brain as mod
 
-        store = self._fake_store([
-            {"name": "FooBar", "referenced_at": "src/app.py:42"},
-        ])
+        store = self._fake_store(
+            [
+                {"name": "FooBar", "referenced_at": "src/app.py:42"},
+            ]
+        )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        existing = [{
-            "title": "Broken import at module load",
-            "evidence": ["class FooBar not found anywhere"],
-            "file": "src/app.py",
-            "start_line": 42,
-        }]
+        existing = [
+            {
+                "title": "Broken import at module load",
+                "evidence": ["class FooBar not found anywhere"],
+                "file": "src/app.py",
+                "start_line": 42,
+            }
+        ]
         _, n = mod._inject_missing_symbol_findings(existing)
         assert n == 0
 
@@ -258,11 +268,13 @@ class TestInjectMissingSymbolFindings:
         import app.scratchpad as scratch_mod
         from app.agent_loop import pr_brain as mod
 
-        store = self._fake_store([
-            {"name": "FooBar", "referenced_at": "src/a.py:10"},
-            {"name": "BazQux", "referenced_at": "src/b.py:20"},
-            {"name": "Quux", "referenced_at": "src/c.py:30"},
-        ])
+        store = self._fake_store(
+            [
+                {"name": "FooBar", "referenced_at": "src/a.py:10"},
+                {"name": "BazQux", "referenced_at": "src/b.py:20"},
+                {"name": "Quux", "referenced_at": "src/c.py:30"},
+            ]
+        )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
         findings, n = mod._inject_missing_symbol_findings([])
@@ -331,12 +343,14 @@ class TestInjectMissingSymbolFindings:
 
         store = self._fake_store(
             missing_symbols=[],
-            sig_mismatches=[{
-                "name": "paginate",
-                "referenced_at": "src/api/list.py:82",
-                "actual_params": ["self", "cursor", "on_results"],
-                "missing_params": ["enable_batch_mode"],
-            }],
+            sig_mismatches=[
+                {
+                    "name": "paginate",
+                    "referenced_at": "src/api/list.py:82",
+                    "actual_params": ["self", "cursor", "on_results"],
+                    "missing_params": ["enable_batch_mode"],
+                }
+            ],
         )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
@@ -356,21 +370,25 @@ class TestInjectMissingSymbolFindings:
 
         store = self._fake_store(
             missing_symbols=[],
-            sig_mismatches=[{
-                "name": "paginate",
-                "referenced_at": "src/api/list.py:82",
-                "actual_params": ["self", "cursor"],
-                "missing_params": ["enable_batch_mode"],
-            }],
+            sig_mismatches=[
+                {
+                    "name": "paginate",
+                    "referenced_at": "src/api/list.py:82",
+                    "actual_params": ["self", "cursor"],
+                    "missing_params": ["enable_batch_mode"],
+                }
+            ],
         )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        existing = [{
-            "title": "paginate() doesn't accept enable_batch_mode kwarg",
-            "file": "src/api/list.py",
-            "start_line": 82,
-            "severity": "high",
-        }]
+        existing = [
+            {
+                "title": "paginate() doesn't accept enable_batch_mode kwarg",
+                "file": "src/api/list.py",
+                "start_line": 82,
+                "severity": "high",
+            }
+        ]
         _, n = mod._inject_missing_symbol_findings(existing)
         assert n == 0
 
@@ -382,12 +400,14 @@ class TestInjectMissingSymbolFindings:
             missing_symbols=[
                 {"name": "FooBar", "referenced_at": "src/app.py:11"},
             ],
-            sig_mismatches=[{
-                "name": "paginate",
-                "referenced_at": "src/api/list.py:82",
-                "actual_params": ["self", "cursor"],
-                "missing_params": ["enable_batch_mode"],
-            }],
+            sig_mismatches=[
+                {
+                    "name": "paginate",
+                    "referenced_at": "src/api/list.py:82",
+                    "actual_params": ["self", "cursor"],
+                    "missing_params": ["enable_batch_mode"],
+                }
+            ],
         )
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
@@ -445,13 +465,15 @@ class TestReflectAgainstPhase2Facts:
         store = self._store_with_present([{"name": "RealClass"}])
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        findings = [{
-            "title": "ImportError: RealClass not defined in module",
-            "severity": "critical",
-            "confidence": 0.9,
-            "file": "src/app.py",
-            "start_line": 10,
-        }]
+        findings = [
+            {
+                "title": "ImportError: RealClass not defined in module",
+                "severity": "critical",
+                "confidence": 0.9,
+                "file": "src/app.py",
+                "start_line": 10,
+            }
+        ]
         kept, dropped = mod._reflect_against_phase2_facts(findings)
         assert dropped == 1
         assert kept == []
@@ -465,13 +487,15 @@ class TestReflectAgainstPhase2Facts:
         store = self._store_with_present([{"name": "RealClass"}])
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        findings = [{
-            "title": "RealClass.process mutates input without validation",
-            "severity": "warning",
-            "confidence": 0.85,
-            "file": "src/app.py",
-            "start_line": 50,
-        }]
+        findings = [
+            {
+                "title": "RealClass.process mutates input without validation",
+                "severity": "warning",
+                "confidence": 0.85,
+                "file": "src/app.py",
+                "start_line": 50,
+            }
+        ]
         kept, dropped = mod._reflect_against_phase2_facts(findings)
         assert dropped == 0
         assert kept == findings
@@ -485,11 +509,13 @@ class TestReflectAgainstPhase2Facts:
         store = self._store_with_present([{"name": "RealClass"}])
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        findings = [{
-            "title": "ImportError at runtime: RealClass not defined",
-            "_injected_from": "phase2_existence_missing",
-            "confidence": 0.99,
-        }]
+        findings = [
+            {
+                "title": "ImportError at runtime: RealClass not defined",
+                "_injected_from": "phase2_existence_missing",
+                "confidence": 0.99,
+            }
+        ]
         kept, dropped = mod._reflect_against_phase2_facts(findings)
         assert dropped == 0
         assert kept == findings
@@ -526,11 +552,13 @@ class TestReflectAgainstPhase2Facts:
         store = self._store_with_present([{"name": "RealClass"}])
         monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
 
-        findings = [{
-            "title": "RealClass uses stale cache key",
-            "risk": "RealClass.compute stores key in mutable dict",
-            "file": "src/a.py",
-        }]
+        findings = [
+            {
+                "title": "RealClass uses stale cache key",
+                "risk": "RealClass.compute stores key in mutable dict",
+                "file": "src/a.py",
+            }
+        ]
         kept, dropped = mod._reflect_against_phase2_facts(findings)
         assert dropped == 0
         assert kept == findings
@@ -583,11 +611,13 @@ class TestFilterFindingsToDiffScope:
         from app.agent_loop.pr_brain import _filter_findings_to_diff_scope
 
         file_diffs = {"src/caller.py": "diff"}
-        findings = [{
-            "title": "ImportError",
-            "file": "src/target.py",
-            "_injected_from": "phase2_existence_missing",
-        }]
+        findings = [
+            {
+                "title": "ImportError",
+                "file": "src/target.py",
+                "_injected_from": "phase2_existence_missing",
+            }
+        ]
         kept, demoted, n = _filter_findings_to_diff_scope(findings, file_diffs)
         assert n == 0
         assert len(kept) == 1
@@ -642,12 +672,7 @@ class TestScanNewPythonImportsForMissing:
         """Build a minimal unified diff adding the given lines to a file
         starting at line 1."""
         body_plus = "\n".join(f"+{ln}" for ln in new_lines)
-        return (
-            f"--- a/{path}\n"
-            f"+++ b/{path}\n"
-            f"@@ -0,0 +1,{len(new_lines)} @@\n"
-            f"{body_plus}"
-        )
+        return f"--- a/{path}\n" f"+++ b/{path}\n" f"@@ -0,0 +1,{len(new_lines)} @@\n" f"{body_plus}"
 
     def test_detects_missing_imported_symbol(self, tmp_path):
         from app.agent_loop.pr_brain import (
@@ -655,12 +680,11 @@ class TestScanNewPythonImportsForMissing:
         )
 
         # workspace has my_mod but NOT FooBar defined
-        (tmp_path / "my_mod.py").write_text(
-            "class RealClass:\n    pass\n"
-        )
+        (tmp_path / "my_mod.py").write_text("class RealClass:\n    pass\n")
         diff = self._diff("entry.py", ["from my_mod import FooBar"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert len(found) == 1
         assert found[0]["name"] == "FooBar"
@@ -671,12 +695,11 @@ class TestScanNewPythonImportsForMissing:
             _scan_new_python_imports_for_missing,
         )
 
-        (tmp_path / "my_mod.py").write_text(
-            "class RealClass:\n    pass\n"
-        )
+        (tmp_path / "my_mod.py").write_text("class RealClass:\n    pass\n")
         diff = self._diff("entry.py", ["from my_mod import RealClass"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -685,16 +708,14 @@ class TestScanNewPythonImportsForMissing:
             _scan_new_python_imports_for_missing,
         )
 
-        (tmp_path / "my_mod.py").write_text(
-            "class Alpha:\n    pass\n\n"
-            "def Beta():\n    return 1\n"
-        )
+        (tmp_path / "my_mod.py").write_text("class Alpha:\n    pass\n\n" "def Beta():\n    return 1\n")
         diff = self._diff(
             "entry.py",
             ["from my_mod import Alpha, Beta, MissingGamma"],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         names = [f["name"] for f in found]
         assert "MissingGamma" in names
@@ -716,7 +737,8 @@ class TestScanNewPythonImportsForMissing:
             ],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -728,7 +750,8 @@ class TestScanNewPythonImportsForMissing:
 
         diff = self._diff("entry.py", ["from .foo import NoneHere"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -739,7 +762,8 @@ class TestScanNewPythonImportsForMissing:
 
         diff = self._diff("entry.py", ["from my_mod import *"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -750,14 +774,14 @@ class TestScanNewPythonImportsForMissing:
             _scan_new_python_imports_for_missing,
         )
 
-        (tmp_path / "my_mod.py").write_text(
-            "class RealThing:\n    pass\n"
-        )
+        (tmp_path / "my_mod.py").write_text("class RealThing:\n    pass\n")
         diff = self._diff(
-            "entry.py", ["from my_mod import RealThing as RT"],
+            "entry.py",
+            ["from my_mod import RealThing as RT"],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -770,7 +794,8 @@ class TestScanNewPythonImportsForMissing:
         (tmp_path / "my_mod.py").write_text("CONFIG = {'a': 1}\n")
         diff = self._diff("entry.py", ["from my_mod import CONFIG"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -790,7 +815,8 @@ class TestScanNewPythonImportsForMissing:
 
         diff = self._diff("entry.ts", ["import { Foo } from './bar';"])
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.ts": diff},
+            str(tmp_path),
+            {"entry.ts": diff},
         )
         assert found == []
 
@@ -805,10 +831,13 @@ class TestScanNewPythonImportsForMissing:
         (tmp_path / "my_mod.py").write_text("# empty module\n")
         many_names = [f"Missing{i}" for i in range(40)]
         diff = self._diff(
-            "entry.py", [f"from my_mod import {', '.join(many_names)}"],
+            "entry.py",
+            [f"from my_mod import {', '.join(many_names)}"],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff}, max_symbols_checked=5,
+            str(tmp_path),
+            {"entry.py": diff},
+            max_symbols_checked=5,
         )
         assert len(found) == 5
 
@@ -826,7 +855,8 @@ class TestScanNewPythonImportsForMissing:
             ["from arroyo.backends.kafka import KafkaPayload"],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         assert found == []
 
@@ -839,15 +869,14 @@ class TestScanNewPythonImportsForMissing:
 
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "my_pkg").mkdir()
-        (tmp_path / "src" / "my_pkg" / "__init__.py").write_text(
-            "class Real:\n    pass\n"
-        )
+        (tmp_path / "src" / "my_pkg" / "__init__.py").write_text("class Real:\n    pass\n")
         diff = self._diff(
             "entry.py",
             ["from my_pkg import Real, Missing"],
         )
         found = _scan_new_python_imports_for_missing(
-            str(tmp_path), {"entry.py": diff},
+            str(tmp_path),
+            {"entry.py": diff},
         )
         names = [f["name"] for f in found]
         assert "Missing" in names
@@ -867,30 +896,24 @@ class TestScanNewGoReferencesForMissing:
 
     def _diff(self, path: str, new_lines: list[str]) -> str:
         body_plus = "\n".join(f"+{ln}" for ln in new_lines)
-        return (
-            f"--- a/{path}\n"
-            f"+++ b/{path}\n"
-            f"@@ -0,0 +1,{len(new_lines)} @@\n"
-            f"{body_plus}"
-        )
+        return f"--- a/{path}\n" f"+++ b/{path}\n" f"@@ -0,0 +1,{len(new_lines)} @@\n" f"{body_plus}"
 
     def test_flags_phantom_bare_call(self, tmp_path):
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "foo"
         pkg.mkdir(parents=True)
-        (pkg / "existing.go").write_text(
-            "package foo\nfunc DefinedFunc() {}\n"
-        )
+        (pkg / "existing.go").write_text("package foo\nfunc DefinedFunc() {}\n")
         (pkg / "new.go").write_text("package foo\n")
         diff = self._diff(
             "pkg/foo/new.go",
-            ["package foo", "", "func UseIt() {",
-             "\tendpointQueryData(\"x\")", "}"],
+            ["package foo", "", "func UseIt() {", '\tendpointQueryData("x")', "}"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/foo/new.go": diff},
+            str(tmp_path),
+            {"pkg/foo/new.go": diff},
         )
         names = [f["name"] for f in found]
         assert "endpointQueryData" in names
@@ -902,19 +925,18 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "foo"
         pkg.mkdir(parents=True)
-        (pkg / "helper.go").write_text(
-            "package foo\nfunc DefinedFunc() string { return \"\" }\n"
-        )
+        (pkg / "helper.go").write_text('package foo\nfunc DefinedFunc() string { return "" }\n')
         (pkg / "new.go").write_text("package foo\n")
         diff = self._diff(
             "pkg/foo/new.go",
-            ["package foo", "", "func UseIt() {",
-             "\tDefinedFunc()", "}"],
+            ["package foo", "", "func UseIt() {", "\tDefinedFunc()", "}"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/foo/new.go": diff},
+            str(tmp_path),
+            {"pkg/foo/new.go": diff},
         )
         assert found == []
 
@@ -922,20 +944,25 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "bar"
         pkg.mkdir(parents=True)
         (pkg / "new.go").write_text("package bar\n")
         diff = self._diff(
             "pkg/bar/new.go",
-            ["package bar", "",
-             "func Work(xs []int) int {",
-             "\ts := make([]int, 0)",
-             "\tfor _, x := range xs { s = append(s, x) }",
-             "\treturn len(s)",
-             "}"],
+            [
+                "package bar",
+                "",
+                "func Work(xs []int) int {",
+                "\ts := make([]int, 0)",
+                "\tfor _, x := range xs { s = append(s, x) }",
+                "\treturn len(s)",
+                "}",
+            ],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/bar/new.go": diff},
+            str(tmp_path),
+            {"pkg/bar/new.go": diff},
         )
         # make, append, len all builtins — none flagged
         assert found == []
@@ -945,16 +972,17 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "baz"
         pkg.mkdir(parents=True)
         (pkg / "new.go").write_text("package baz\n")
         diff = self._diff(
             "pkg/baz/new.go",
-            ["package baz", "",
-             "func Work(c Client) {", "\tc.DoSomething()", "}"],
+            ["package baz", "", "func Work(c Client) {", "\tc.DoSomething()", "}"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/baz/new.go": diff},
+            str(tmp_path),
+            {"pkg/baz/new.go": diff},
         )
         # DoSomething is a method call, not bare — not flagged
         names = [f["name"] for f in found]
@@ -965,16 +993,17 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "qux"
         pkg.mkdir(parents=True)
         (pkg / "new.go").write_text("package qux\n")
         diff = self._diff(
             "pkg/qux/new.go",
-            ["package qux", "", "import \"fmt\"", "",
-             "func Work() { fmt.Println(\"hi\") }"],
+            ["package qux", "", 'import "fmt"', "", 'func Work() { fmt.Println("hi") }'],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/qux/new.go": diff},
+            str(tmp_path),
+            {"pkg/qux/new.go": diff},
         )
         names = [f["name"] for f in found]
         assert "Println" not in names
@@ -986,6 +1015,7 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "selfref"
         pkg.mkdir(parents=True)
         (pkg / "new.go").write_text("package selfref\n")
@@ -994,7 +1024,8 @@ class TestScanNewGoReferencesForMissing:
             ["package selfref", "", "func NewOne() int { return 42 }"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/selfref/new.go": diff},
+            str(tmp_path),
+            {"pkg/selfref/new.go": diff},
         )
         names = [f["name"] for f in found]
         assert "NewOne" not in names
@@ -1004,16 +1035,17 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "a"
         pkg.mkdir(parents=True)
         (pkg / "new_test.go").write_text("package a\n")
         diff = self._diff(
             "pkg/a/new_test.go",
-            ["package a", "", "func TestSomething(t *T) {",
-             "\tsomeUndefinedHelper()", "}"],
+            ["package a", "", "func TestSomething(t *T) {", "\tsomeUndefinedHelper()", "}"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/a/new_test.go": diff},
+            str(tmp_path),
+            {"pkg/a/new_test.go": diff},
         )
         assert found == []
 
@@ -1022,6 +1054,7 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "many"
         pkg.mkdir(parents=True)
         (pkg / "new.go").write_text("package many\n")
@@ -1031,7 +1064,8 @@ class TestScanNewGoReferencesForMissing:
             ["package many", "", "func F() {"] + calls + ["}"],
         )
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/many/new.go": diff},
+            str(tmp_path),
+            {"pkg/many/new.go": diff},
             max_symbols_checked=10,
         )
         assert len(found) <= 10
@@ -1044,13 +1078,11 @@ class TestScanNewGoReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_go_references_for_missing,
         )
+
         pkg = tmp_path / "pkg" / "clientmiddleware"
         pkg.mkdir(parents=True)
         # No helpers define endpoint* symbols.
-        (pkg / "logger_middleware.go").write_text(
-            "package clientmiddleware\n\n"
-            "type LoggerMiddleware struct {}\n"
-        )
+        (pkg / "logger_middleware.go").write_text("package clientmiddleware\n\n" "type LoggerMiddleware struct {}\n")
         # Materialise the patched file — the scanner reads it to check
         # for dot-imports.
         contextual = pkg / "contextual_logger.go"
@@ -1080,7 +1112,8 @@ class TestScanNewGoReferencesForMissing:
         ]
         diff = self._diff("pkg/clientmiddleware/contextual_logger.go", diff_lines)
         found = _scan_new_go_references_for_missing(
-            str(tmp_path), {"pkg/clientmiddleware/contextual_logger.go": diff},
+            str(tmp_path),
+            {"pkg/clientmiddleware/contextual_logger.go": diff},
         )
         names = {f["name"] for f in found}
         assert "endpointQueryData" in names
@@ -1100,12 +1133,7 @@ class TestScanNewJavaReferencesForMissing:
 
     def _diff(self, path: str, new_lines: list[str]) -> str:
         body_plus = "\n".join(f"+{ln}" for ln in new_lines)
-        return (
-            f"--- a/{path}\n"
-            f"+++ b/{path}\n"
-            f"@@ -0,0 +1,{len(new_lines)} @@\n"
-            f"{body_plus}"
-        )
+        return f"--- a/{path}\n" f"+++ b/{path}\n" f"@@ -0,0 +1,{len(new_lines)} @@\n" f"{body_plus}"
 
     def _make_pkg_file(self, tmp_path, rel_path: str, content: str) -> None:
         full = tmp_path / rel_path
@@ -1116,33 +1144,66 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
-            "package com.foo;\n\n"
-            "public class UseIt {\n"
-            "    void run() { new PhantomHelper(); }\n"
-            "}\n",
+            "package com.foo;\n\n" "public class UseIt {\n" "    void run() { new PhantomHelper(); }\n" "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "public class UseIt {",
-             "    void run() { new PhantomHelper(); }",
-             "}"],
+            ["package com.foo;", "", "public class UseIt {", "    void run() { new PhantomHelper(); }", "}"],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         names = [f["name"] for f in found]
         assert "PhantomHelper" in names
         ev = next(f for f in found if f["name"] == "PhantomHelper")["evidence"]
         assert "cannot find symbol" in ev
 
+    def test_same_file_constant_not_flagged(self, tmp_path):
+        """Regression (PR 14420): a reference to a pre-existing same-file
+        `static final` constant via `CONST.method()` must NOT be flagged.
+
+        P13's Java ref pattern matches `FOO.contains(` and assumes FOO is a
+        class; the widened same-package grep now also recognises the constant's
+        field declaration, so it isn't reported as a phantom.
+        """
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/VisaCheck.java",
+            "package com.foo;\n"
+            "import java.util.Set;\n"
+            "public class VisaCheck {\n"
+            "  private static final Set<String> BRITISH_OR_IRISH_NATIONALITIES = "
+            'Set.of("GB", "IE");\n'
+            "  boolean isBritishOrIrish(String n) {\n"
+            "    return BRITISH_OR_IRISH_NATIONALITIES.contains(n);\n"
+            "  }\n"
+            "}\n",
+        )
+        diff = self._diff(
+            "src/main/java/com/foo/VisaCheck.java",
+            ["    return BRITISH_OR_IRISH_NATIONALITIES.contains(n);"],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path),
+            {"src/main/java/com/foo/VisaCheck.java": diff},
+        )
+        names = [f["name"] for f in found]
+        assert "BRITISH_OR_IRISH_NATIONALITIES" not in names
+
     def test_imported_class_not_flagged(self, tmp_path):
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
@@ -1154,15 +1215,19 @@ class TestScanNewJavaReferencesForMissing:
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "import com.bar.RealHelper;",
-             "",
-             "public class UseIt {",
-             "    void run() { new RealHelper(); }",
-             "}"],
+            [
+                "package com.foo;",
+                "",
+                "import com.bar.RealHelper;",
+                "",
+                "public class UseIt {",
+                "    void run() { new RealHelper(); }",
+                "}",
+            ],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         assert found == []
 
@@ -1170,6 +1235,7 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/SiblingClass.java",
@@ -1178,20 +1244,15 @@ class TestScanNewJavaReferencesForMissing:
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
-            "package com.foo;\n\n"
-            "public class UseIt {\n"
-            "    void run() { new SiblingClass(); }\n"
-            "}\n",
+            "package com.foo;\n\n" "public class UseIt {\n" "    void run() { new SiblingClass(); }\n" "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "public class UseIt {",
-             "    void run() { new SiblingClass(); }",
-             "}"],
+            ["package com.foo;", "", "public class UseIt {", "    void run() { new SiblingClass(); }", "}"],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         assert found == []
 
@@ -1207,12 +1268,12 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         # The class under test lives in main/
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/controller/PaymentController.java",
-            "package com.foo.controller;\n\n"
-            "public class PaymentController {}\n",
+            "package com.foo.controller;\n\n" "public class PaymentController {}\n",
         )
         # The test lives in test/ — same package, different root
         self._make_pkg_file(
@@ -1225,10 +1286,13 @@ class TestScanNewJavaReferencesForMissing:
         )
         diff = self._diff(
             "src/test/java/com/foo/controller/PaymentControllerTest.java",
-            ["package com.foo.controller;", "",
-             "public class PaymentControllerTest {",
-             "    void t() { new PaymentController(); }",
-             "}"],
+            [
+                "package com.foo.controller;",
+                "",
+                "public class PaymentControllerTest {",
+                "    void t() { new PaymentController(); }",
+                "}",
+            ],
         )
         found = _scan_new_java_references_for_missing(
             str(tmp_path),
@@ -1236,9 +1300,7 @@ class TestScanNewJavaReferencesForMissing:
         )
         # Must NOT flag PaymentController — it's in the main source-set peer
         names = [f["name"] for f in found]
-        assert "PaymentController" not in names, (
-            f"PaymentController falsely flagged as phantom; found={names}"
-        )
+        assert "PaymentController" not in names, f"PaymentController falsely flagged as phantom; found={names}"
 
     def test_main_class_finds_test_peer_same_package(self, tmp_path):
         """Symmetric — main/ class referencing a helper that only lives
@@ -1246,26 +1308,20 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/test/java/com/foo/util/TestFixture.java",
-            "package com.foo.util;\n\n"
-            "public class TestFixture {}\n",
+            "package com.foo.util;\n\n" "public class TestFixture {}\n",
         )
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/util/UsesFixture.java",
-            "package com.foo.util;\n\n"
-            "public class UsesFixture {\n"
-            "    void t() { new TestFixture(); }\n"
-            "}\n",
+            "package com.foo.util;\n\n" "public class UsesFixture {\n" "    void t() { new TestFixture(); }\n" "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/util/UsesFixture.java",
-            ["package com.foo.util;", "",
-             "public class UsesFixture {",
-             "    void t() { new TestFixture(); }",
-             "}"],
+            ["package com.foo.util;", "", "public class UsesFixture {", "    void t() { new TestFixture(); }", "}"],
         )
         found = _scan_new_java_references_for_missing(
             str(tmp_path),
@@ -1278,25 +1334,29 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
             "package com.foo;\n\n"
             "public class UseIt {\n"
-            "    void run() { new String(\"hi\"); "
+            '    void run() { new String("hi"); '
             "throw new IllegalStateException(); }\n"
             "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "public class UseIt {",
-             "    void run() { new String(\"hi\"); "
-             "throw new IllegalStateException(); }",
-             "}"],
+            [
+                "package com.foo;",
+                "",
+                "public class UseIt {",
+                '    void run() { new String("hi"); ' "throw new IllegalStateException(); }",
+                "}",
+            ],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         # String + IllegalStateException are java.lang.* implicit
         assert found == []
@@ -1306,6 +1366,7 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
@@ -1317,15 +1378,19 @@ class TestScanNewJavaReferencesForMissing:
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "import com.bar.*;",
-             "",
-             "public class UseIt {",
-             "    void run() { new PhantomHelper(); }",
-             "}"],
+            [
+                "package com.foo;",
+                "",
+                "import com.bar.*;",
+                "",
+                "public class UseIt {",
+                "    void run() { new PhantomHelper(); }",
+                "}",
+            ],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         # Star import hides class visibility; MVP skips entire file
         assert found == []
@@ -1334,6 +1399,7 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
@@ -1345,15 +1411,19 @@ class TestScanNewJavaReferencesForMissing:
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "import java.util.List;",
-             "",
-             "public class UseIt {",
-             "    List<PhantomType> items;",
-             "}"],
+            [
+                "package com.foo;",
+                "",
+                "import java.util.List;",
+                "",
+                "public class UseIt {",
+                "    List<PhantomType> items;",
+                "}",
+            ],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         names = [f["name"] for f in found]
         assert "PhantomType" in names
@@ -1362,21 +1432,19 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
-            "package com.foo;\n\n"
-            "public class UseIt extends PhantomBase {\n"
-            "}\n",
+            "package com.foo;\n\n" "public class UseIt extends PhantomBase {\n" "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "public class UseIt extends PhantomBase {",
-             "}"],
+            ["package com.foo;", "", "public class UseIt extends PhantomBase {", "}"],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         names = [f["name"] for f in found]
         assert "PhantomBase" in names
@@ -1385,25 +1453,19 @@ class TestScanNewJavaReferencesForMissing:
         from app.agent_loop.pr_brain import (
             _scan_new_java_references_for_missing,
         )
+
         self._make_pkg_file(
             tmp_path,
             "src/main/java/com/foo/UseIt.java",
-            "package com.foo;\n\n"
-            "public class UseIt {\n"
-            "    int count = 0;\n"
-            "    boolean flag = false;\n"
-            "}\n",
+            "package com.foo;\n\n" "public class UseIt {\n" "    int count = 0;\n" "    boolean flag = false;\n" "}\n",
         )
         diff = self._diff(
             "src/main/java/com/foo/UseIt.java",
-            ["package com.foo;", "",
-             "public class UseIt {",
-             "    int count = 0;",
-             "    boolean flag = false;",
-             "}"],
+            ["package com.foo;", "", "public class UseIt {", "    int count = 0;", "    boolean flag = false;", "}"],
         )
         found = _scan_new_java_references_for_missing(
-            str(tmp_path), {"src/main/java/com/foo/UseIt.java": diff},
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
         )
         # int, boolean are primitives; even the UPPER-start matcher
         # shouldn't pick them up since the pattern requires UPPER prefix
@@ -1441,7 +1503,7 @@ class TestScanForStubCallSites:
             "@@ -10,5 +10,7 @@\n"
             " func Parse() {\n"
             "+\tduckDB := NewInMemoryDB()\n"
-            "+\tduckDB.RunCommands([]string{\"SELECT 1\"})\n"
+            '+\tduckDB.RunCommands([]string{"SELECT 1"})\n'
             " }\n"
         )
         file_diffs = {
@@ -1470,37 +1532,30 @@ class TestScanForStubCallSites:
             "+++ b/pkg/sql/parser.go\n"
             "@@ -20,3 +20,3 @@\n"
             " func Parse() {\n"
-            " \tduckDB.RunCommands([]string{\"x\"})\n"
+            ' \tduckDB.RunCommands([]string{"x"})\n'
             " }\n"
         )
-        found = _scan_for_stub_call_sites({
-            "pkg/sql/db.go": stub_diff,
-            "pkg/sql/parser.go": caller_diff,
-        })
-        assert any(
-            f["caller_file"] == "pkg/sql/parser.go" for f in found
+        found = _scan_for_stub_call_sites(
+            {
+                "pkg/sql/db.go": stub_diff,
+                "pkg/sql/parser.go": caller_diff,
+            }
         )
+        assert any(f["caller_file"] == "pkg/sql/parser.go" for f in found)
 
     def test_python_stub_detection(self):
         from app.agent_loop.pr_brain import _scan_for_stub_call_sites
 
-        stub_diff = (
-            "+++ b/svc.py\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+def fetch_data():\n"
-            "+    raise NotImplementedError\n"
-        )
+        stub_diff = "+++ b/svc.py\n" "@@ -0,0 +1,3 @@\n" "+def fetch_data():\n" "+    raise NotImplementedError\n"
         caller_diff = (
-            "+++ b/api.py\n"
-            "@@ -5,3 +5,4 @@\n"
-            " def handler():\n"
-            "+    data = fetch_data()\n"
-            "     return data\n"
+            "+++ b/api.py\n" "@@ -5,3 +5,4 @@\n" " def handler():\n" "+    data = fetch_data()\n" "     return data\n"
         )
-        found = _scan_for_stub_call_sites({
-            "svc.py": stub_diff,
-            "api.py": caller_diff,
-        })
+        found = _scan_for_stub_call_sites(
+            {
+                "svc.py": stub_diff,
+                "api.py": caller_diff,
+            }
+        )
         assert any(f["stub_name"] == "fetch_data" for f in found)
 
     def test_does_not_flag_stub_without_caller(self):
@@ -1508,12 +1563,7 @@ class TestScanForStubCallSites:
         a legitimate TODO placeholder."""
         from app.agent_loop.pr_brain import _scan_for_stub_call_sites
 
-        stub_diff = (
-            "+++ b/todo.py\n"
-            "@@ -0,0 +1,2 @@\n"
-            "+def later():\n"
-            "+    raise NotImplementedError\n"
-        )
+        stub_diff = "+++ b/todo.py\n" "@@ -0,0 +1,2 @@\n" "+def later():\n" "+    raise NotImplementedError\n"
         found = _scan_for_stub_call_sites({"todo.py": stub_diff})
         assert found == []
 
@@ -1530,17 +1580,13 @@ class TestScanForStubCallSites:
             "+}\n"
         )
         # Another file defines a same-named function. Not a call.
-        other_diff = (
-            "+++ b/b.go\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+func Foo() error {\n"
-            "+\treturn nil\n"
-            "+}\n"
+        other_diff = "+++ b/b.go\n" "@@ -0,0 +1,3 @@\n" "+func Foo() error {\n" "+\treturn nil\n" "+}\n"
+        found = _scan_for_stub_call_sites(
+            {
+                "a.go": stub_diff,
+                "b.go": other_diff,
+            }
         )
-        found = _scan_for_stub_call_sites({
-            "a.go": stub_diff,
-            "b.go": other_diff,
-        })
         # Neither file should be flagged as a caller — b.go's `func Foo`
         # is a declaration, and a.go's is the stub itself.
         assert found == []
@@ -1551,23 +1597,15 @@ class TestScanForStubCallSites:
         from app.agent_loop.pr_brain import _scan_for_stub_call_sites
 
         real_diff = (
-            "+++ b/a.go\n"
-            "@@ -0,0 +1,3 @@\n"
-            "+func (d *DB) Real() error {\n"
-            "+\treturn d.actualWork()\n"
-            "+}\n"
+            "+++ b/a.go\n" "@@ -0,0 +1,3 @@\n" "+func (d *DB) Real() error {\n" "+\treturn d.actualWork()\n" "+}\n"
         )
-        caller_diff = (
-            "+++ b/b.go\n"
-            "@@ -5,3 +5,4 @@\n"
-            " func X() {\n"
-            "+\td.Real()\n"
-            " }\n"
+        caller_diff = "+++ b/b.go\n" "@@ -5,3 +5,4 @@\n" " func X() {\n" "+\td.Real()\n" " }\n"
+        found = _scan_for_stub_call_sites(
+            {
+                "a.go": real_diff,
+                "b.go": caller_diff,
+            }
         )
-        found = _scan_for_stub_call_sites({
-            "a.go": real_diff,
-            "b.go": caller_diff,
-        })
         assert found == []
 
     def test_empty_diff(self):
@@ -1595,14 +1633,14 @@ class TestScanForStubCallSites:
             "+    CertificateUtilsProvider p = provider.getCertificateUtils();\n"
             " }\n"
         )
-        found = _scan_for_stub_call_sites({
-            "impl/Foo.java": stub_diff,
-            "api/Service.java": caller_diff,
-        })
-        assert any(f["stub_name"] == "getCertificateUtils" for f in found)
-        assert any(
-            f["caller_file"] == "api/Service.java" for f in found
+        found = _scan_for_stub_call_sites(
+            {
+                "impl/Foo.java": stub_diff,
+                "api/Service.java": caller_diff,
+            }
         )
+        assert any(f["stub_name"] == "getCertificateUtils" for f in found)
+        assert any(f["caller_file"] == "api/Service.java" for f in found)
 
     def test_java_notimplementedexception_stub(self):
         """Apache Commons pattern."""
@@ -1616,16 +1654,14 @@ class TestScanForStubCallSites:
             "+    }\n"
         )
         caller_diff = (
-            "+++ b/api.java\n"
-            "@@ -5,3 +5,4 @@\n"
-            " public class Api {\n"
-            "+    String data = svc.fetch();\n"
-            " }\n"
+            "+++ b/api.java\n" "@@ -5,3 +5,4 @@\n" " public class Api {\n" "+    String data = svc.fetch();\n" " }\n"
         )
-        found = _scan_for_stub_call_sites({
-            "svc.java": stub_diff,
-            "api.java": caller_diff,
-        })
+        found = _scan_for_stub_call_sites(
+            {
+                "svc.java": stub_diff,
+                "api.java": caller_diff,
+            }
+        )
         assert any(f["stub_name"] == "fetch" for f in found)
 
     def test_java_runtime_exception_with_not_implemented_message(self):
@@ -1640,17 +1676,13 @@ class TestScanForStubCallSites:
             '+        throw new RuntimeException("feature not implemented");\n'
             "+    }\n"
         )
-        caller_diff = (
-            "+++ b/b.java\n"
-            "@@ -5,3 +5,4 @@\n"
-            " public class B {\n"
-            "+    a.doThing();\n"
-            " }\n"
+        caller_diff = "+++ b/b.java\n" "@@ -5,3 +5,4 @@\n" " public class B {\n" "+    a.doThing();\n" " }\n"
+        found = _scan_for_stub_call_sites(
+            {
+                "a.java": stub_diff,
+                "b.java": caller_diff,
+            }
         )
-        found = _scan_for_stub_call_sites({
-            "a.java": stub_diff,
-            "b.java": caller_diff,
-        })
         assert any(f["stub_name"] == "doThing" for f in found)
 
     def test_java_real_runtime_exception_not_flagged(self):
@@ -1665,17 +1697,13 @@ class TestScanForStubCallSites:
             '+        throw new RuntimeException("db connection lost");\n'
             "+    }\n"
         )
-        caller_diff = (
-            "+++ b/b.java\n"
-            "@@ -5,3 +5,4 @@\n"
-            " public class B {\n"
-            "+    a.doThing();\n"
-            " }\n"
+        caller_diff = "+++ b/b.java\n" "@@ -5,3 +5,4 @@\n" " public class B {\n" "+    a.doThing();\n" " }\n"
+        found = _scan_for_stub_call_sites(
+            {
+                "a.java": stub_diff,
+                "b.java": caller_diff,
+            }
         )
-        found = _scan_for_stub_call_sites({
-            "a.java": stub_diff,
-            "b.java": caller_diff,
-        })
         assert found == []
 
     def test_java_does_not_treat_decl_as_call(self):
@@ -1699,10 +1727,12 @@ class TestScanForStubCallSites:
             "+    public void render();\n"
             "+}\n"
         )
-        found = _scan_for_stub_call_sites({
-            "impl/Foo.java": stub_diff,
-            "iface/IFoo.java": iface_diff,
-        })
+        found = _scan_for_stub_call_sites(
+            {
+                "impl/Foo.java": stub_diff,
+                "iface/IFoo.java": iface_diff,
+            }
+        )
         # Expect 0 callers: the only mention outside the stub is a decl.
         assert found == []
 
@@ -1717,17 +1747,13 @@ class TestScanForStubCallSites:
             "+        return a + b;\n"
             "+    }\n"
         )
-        caller_diff = (
-            "+++ b/b.java\n"
-            "@@ -5,3 +5,4 @@\n"
-            " public class B {\n"
-            "+    int x = calc.add(1, 2);\n"
-            " }\n"
+        caller_diff = "+++ b/b.java\n" "@@ -5,3 +5,4 @@\n" " public class B {\n" "+    int x = calc.add(1, 2);\n" " }\n"
+        found = _scan_for_stub_call_sites(
+            {
+                "a.java": real_diff,
+                "b.java": caller_diff,
+            }
         )
-        found = _scan_for_stub_call_sites({
-            "a.java": real_diff,
-            "b.java": caller_diff,
-        })
         assert found == []
 
 
@@ -1751,11 +1777,7 @@ class TestInjectStubCallerFindings:
                 "+}\n"
             ),
             "pkg/sql/parser.go": (
-                "+++ b/pkg/sql/parser.go\n"
-                "@@ -20,3 +20,4 @@\n"
-                " func Parse() {\n"
-                "+\td.RunCommands()\n"
-                " }\n"
+                "+++ b/pkg/sql/parser.go\n" "@@ -20,3 +20,4 @@\n" " func Parse() {\n" "+\td.RunCommands()\n" " }\n"
             ),
         }
 
@@ -1771,14 +1793,17 @@ class TestInjectStubCallerFindings:
     def test_skips_when_coordinator_already_flagged(self):
         from app.agent_loop.pr_brain import _inject_stub_caller_findings
 
-        existing = [{
-            "title": "RunCommands call hits not-implemented stub",
-            "file": "pkg/sql/parser.go",
-            "start_line": 21,
-            "severity": "high",
-        }]
+        existing = [
+            {
+                "title": "RunCommands call hits not-implemented stub",
+                "file": "pkg/sql/parser.go",
+                "start_line": 21,
+                "severity": "high",
+            }
+        ]
         kept, n = _inject_stub_caller_findings(
-            existing, self._grafana_style_diffs(),
+            existing,
+            self._grafana_style_diffs(),
         )
         assert n == 0
         assert kept == existing
@@ -1805,7 +1830,9 @@ class TestPhase2LangHints:
     def _make_ctx(self, paths):
         files = [
             ChangedFile(
-                path=p, additions=10, deletions=0,
+                path=p,
+                additions=10,
+                deletions=0,
                 category=FileCategory.BUSINESS_LOGIC,
             )
             for p in paths
@@ -1841,6 +1868,7 @@ class TestPhase2LangHints:
                 pass
 
         import asyncio as _asyncio
+
         _asyncio.run(_drive())
         return captured
 
@@ -1848,7 +1876,9 @@ class TestPhase2LangHints:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["src/main/java/Foo.java"])
         captured = self._capture_phase2_query(
-            brain, ctx, {"src/main/java/Foo.java": "@@ -1 +1 @@\n+class Foo {}\n"},
+            brain,
+            ctx,
+            {"src/main/java/Foo.java": "@@ -1 +1 @@\n+class Foo {}\n"},
         )
         assert captured["tool"] == "dispatch_explore"
         query = captured["params"]["query"]
@@ -1863,7 +1893,9 @@ class TestPhase2LangHints:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["app/service.py", "app/model.py"])
         captured = self._capture_phase2_query(
-            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+def foo(): pass\n"},
+            brain,
+            ctx,
+            {"app/service.py": "@@ -1 +1 @@\n+def foo(): pass\n"},
         )
         query = captured["params"]["query"]
         assert "Language-specific hints" in query
@@ -1879,7 +1911,9 @@ class TestPhase2LangHints:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["pkg/handler.go"])
         captured = self._capture_phase2_query(
-            brain, ctx, {"pkg/handler.go": "@@ -1 +1 @@\n+func Foo() {}\n"},
+            brain,
+            ctx,
+            {"pkg/handler.go": "@@ -1 +1 @@\n+func Foo() {}\n"},
         )
         query = captured["params"]["query"]
         assert "Go (`.go`)" in query
@@ -1889,7 +1923,9 @@ class TestPhase2LangHints:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["src/components/Button.tsx"])
         captured = self._capture_phase2_query(
-            brain, ctx, {"src/components/Button.tsx": "@@ -1 +1 @@\n+export const Button = () => null\n"},
+            brain,
+            ctx,
+            {"src/components/Button.tsx": "@@ -1 +1 @@\n+export const Button = () => null\n"},
         )
         query = captured["params"]["query"]
         assert "TypeScript" in query
@@ -1902,21 +1938,27 @@ class TestPhase2LangHints:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["src/lib.rs"])
         captured = self._capture_phase2_query(
-            brain, ctx, {"src/lib.rs": "@@ -1 +1 @@\n+fn foo() {}\n"},
+            brain,
+            ctx,
+            {"src/lib.rs": "@@ -1 +1 @@\n+fn foo() {}\n"},
         )
         query = captured["params"]["query"]
         assert "Language-specific hints" not in query
 
     def test_multiple_hints_for_mixed_diff(self):
         brain = _make_pr_brain()
-        ctx = self._make_ctx([
-            "app/service.py",
-            "src/main/java/Bar.java",
-            "pkg/handler.go",
-            "web/app.tsx",
-        ])
+        ctx = self._make_ctx(
+            [
+                "app/service.py",
+                "src/main/java/Bar.java",
+                "pkg/handler.go",
+                "web/app.tsx",
+            ]
+        )
         captured = self._capture_phase2_query(
-            brain, ctx, {
+            brain,
+            ctx,
+            {
                 "app/service.py": "@@ -1 +1 @@\n+pass\n",
                 "src/main/java/Bar.java": "@@ -1 +1 @@\n+class Bar {}\n",
                 "pkg/handler.go": "@@ -1 +1 @@\n+func H() {}\n",
@@ -1941,7 +1983,9 @@ class TestPhase2ReorderP13First:
     def _make_ctx(self, paths):
         files = [
             ChangedFile(
-                path=p, additions=10, deletions=0,
+                path=p,
+                additions=10,
+                deletions=0,
                 category=FileCategory.BUSINESS_LOGIC,
             )
             for p in paths
@@ -1953,22 +1997,26 @@ class TestPhase2ReorderP13First:
             file_count=len(files),
         )
 
-    def _capture_query(self, brain, ctx, file_diffs, monkeypatch,
-                       python_missing=None, go_missing=None, java_missing=None):
+    def _capture_query(
+        self, brain, ctx, file_diffs, monkeypatch, python_missing=None, go_missing=None, java_missing=None
+    ):
         """Monkeypatch the 3 P13 scanners + the factstore + capture the LLM query."""
         from app import scratchpad as sp
         from app.agent_loop import pr_brain as pb
 
         monkeypatch.setattr(
-            pb, "_scan_new_python_imports_for_missing",
+            pb,
+            "_scan_new_python_imports_for_missing",
             lambda *a, **kw: python_missing or [],
         )
         monkeypatch.setattr(
-            pb, "_scan_new_go_references_for_missing",
+            pb,
+            "_scan_new_go_references_for_missing",
             lambda *a, **kw: go_missing or [],
         )
         monkeypatch.setattr(
-            pb, "_scan_new_java_references_for_missing",
+            pb,
+            "_scan_new_java_references_for_missing",
             lambda *a, **kw: java_missing or [],
         )
         # P13 only runs when a FactStore is available. The autouse
@@ -1987,7 +2035,8 @@ class TestPhase2ReorderP13First:
                 captured["tool"] = tool_name
                 captured["params"] = params
                 return ToolResult(
-                    tool_name=tool_name, success=True,
+                    tool_name=tool_name,
+                    success=True,
                     data={"answer": '{"symbols":[]}'},
                 )
 
@@ -1997,6 +2046,7 @@ class TestPhase2ReorderP13First:
                 pass
 
         import asyncio as _asyncio
+
         _asyncio.run(_drive())
         return captured
 
@@ -2004,13 +2054,17 @@ class TestPhase2ReorderP13First:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["app/service.py"])
         captured = self._capture_query(
-            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+from x import Y\n"},
+            brain,
+            ctx,
+            {"app/service.py": "@@ -1 +1 @@\n+from x import Y\n"},
             monkeypatch,
-            python_missing=[{
-                "name": "Y",
-                "referenced_at": "app/service.py:1",
-                "evidence": "from x import Y",
-            }],
+            python_missing=[
+                {
+                    "name": "Y",
+                    "referenced_at": "app/service.py:1",
+                    "evidence": "from x import Y",
+                }
+            ],
         )
         query = captured["params"]["query"]
         assert "Pre-verified missing symbols" in query
@@ -2021,7 +2075,9 @@ class TestPhase2ReorderP13First:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["app/service.py"])
         captured = self._capture_query(
-            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
+            brain,
+            ctx,
+            {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
             monkeypatch,
             python_missing=[],
         )
@@ -2032,7 +2088,9 @@ class TestPhase2ReorderP13First:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["app/service.py"])
         captured = self._capture_query(
-            brain, ctx, {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
+            brain,
+            ctx,
+            {"app/service.py": "@@ -1 +1 @@\n+pass\n"},
             monkeypatch,
         )
         query = captured["params"]["query"]
@@ -2046,7 +2104,8 @@ class TestPhase2ReorderP13First:
         brain = _make_pr_brain()
         ctx = self._make_ctx(["a.py", "b.go", "c.java"])
         captured = self._capture_query(
-            brain, ctx,
+            brain,
+            ctx,
             {
                 "a.py": "@@ -1 +1 @@\n+from x import Py\n",
                 "b.go": "@@ -1 +1 @@\n+GoRef()\n",
@@ -2061,3 +2120,93 @@ class TestPhase2ReorderP13First:
         assert "`Py`" in query
         assert "`GoRef`" in query
         assert "`JavaRef`" in query
+
+
+class TestFixAsDefectFilter:
+    """Demote findings that describe the PR's OWN fix as a defect (PR 14442 bug)."""
+
+    def test_pr_14442_natwest_finding_demoted(self):
+        from app.agent_loop.pr_brain import _filter_findings_describing_own_fix
+
+        # The actual finding posted on PR 14442: describes the old crash, then
+        # its suggested_fix says "The PR correctly fixes this".
+        findings = [
+            {
+                "title": "Fix critical IndexOutOfBoundsException in address line processing",
+                "severity": "high",
+                "risk": "the old code would crash with IndexOutOfBoundsException ... "
+                "New code uses direct iteration index and avoids indexOf() entirely",
+                "suggested_fix": "The PR correctly fixes this by switching from a "
+                "for-each loop with indexOf() lookup to a direct indexed for-loop.",
+                "file": "NatWestServiceImpl.java",
+                "start_line": 897,
+            }
+        ]
+        kept, demoted, count = _filter_findings_describing_own_fix(findings)
+        assert count == 1
+        assert kept == []
+        assert demoted[0]["_demoted_reason"] == "describes_own_fix"
+
+    def test_genuine_defect_kept(self):
+        from app.agent_loop.pr_brain import _filter_findings_describing_own_fix
+
+        findings = [
+            {
+                "title": "Null deref on response.body when timeout fires",
+                "severity": "high",
+                "risk": "The new code path calls response.body() without a null "
+                "check; on timeout response is null → NPE.",
+                "suggested_fix": "Guard with `if (response == null) return;` before use.",
+            }
+        ]
+        kept, _demoted, count = _filter_findings_describing_own_fix(findings)
+        assert count == 0
+        assert len(kept) == 1
+
+    def test_reverse_phrasing_demoted(self):
+        from app.agent_loop.pr_brain import _filter_findings_describing_own_fix
+
+        findings = [{"title": "Race condition", "risk": "The race is resolved by this PR.", "severity": "medium"}]
+        _, _demoted, count = _filter_findings_describing_own_fix(findings)
+        assert count == 1
+
+    def test_injected_finding_never_demoted(self):
+        from app.agent_loop.pr_brain import _filter_findings_describing_own_fix
+
+        findings = [{"title": "x", "risk": "this PR fixes this", "_injected_from": "phantom"}]
+        kept, _, count = _filter_findings_describing_own_fix(findings)
+        assert count == 0 and len(kept) == 1
+
+    def test_empty(self):
+        from app.agent_loop.pr_brain import _filter_findings_describing_own_fix
+
+        assert _filter_findings_describing_own_fix([]) == ([], [], 0)
+
+
+class TestRecomputeMergeRecommendation:
+    def test_dropping_only_high_finding_flips_to_approve(self):
+        from app.agent_loop.pr_brain import _recompute_merge_recommendation
+
+        # 14442: the lone high finding was demoted → empty → must be approve, not request_changes
+        assert _recompute_merge_recommendation([], "request_changes") == "approve"
+
+    def test_high_still_requests_changes(self):
+        from app.agent_loop.pr_brain import _recompute_merge_recommendation
+
+        assert _recompute_merge_recommendation([{"severity": "high"}], "comment") == "request_changes"
+
+    def test_one_medium_is_approve_with_followups(self):
+        from app.agent_loop.pr_brain import _recompute_merge_recommendation
+
+        assert _recompute_merge_recommendation([{"severity": "medium"}], "comment") == "approve_with_followups"
+
+    def test_three_medium_requests_changes(self):
+        from app.agent_loop.pr_brain import _recompute_merge_recommendation
+
+        f = [{"severity": "medium"}] * 3
+        assert _recompute_merge_recommendation(f, "comment") == "request_changes"
+
+    def test_nit_praise_only_is_approve(self):
+        from app.agent_loop.pr_brain import _recompute_merge_recommendation
+
+        assert _recompute_merge_recommendation([{"severity": "nit"}, {"severity": "praise"}], "comment") == "approve"

@@ -9,6 +9,12 @@ pyngrok
 python-multipart
 boto3
 
+# --- Claude Agent SDK (hybrid SDK worker — agent-SDK migration) ---
+# Owns the inner loop of Claude-vendor dispatched workers (Bedrock/Anthropic).
+# Runtime dep: the Claude Code CLI (npm @anthropic-ai/claude-code) must be on PATH;
+# the SDK drives it via subprocess.
+claude-agent-sdk>=0.2,<0.3
+
 # --- PostgreSQL + Redis (OLTP data layer) ---
 sqlalchemy[asyncio]>=2.0
 asyncpg
@@ -25,8 +31,13 @@ networkx
 # tree-sitter-language-pack 1.6 (maintained successor, bundles grammars,
 # compatible with tree-sitter 0.25+). Grammar versions now match the extension's
 # web-tree-sitter 0.26.x so parity tests stay byte-level identical.
+# PINNED 2026-05-30: ==1.6.2 — the 1.6.3 wheel is broken (ships only the _native
+# extension, omits the tree_sitter_language_pack Python module → import fails →
+# silent regex fallback breaks file_outline parity tests). A clean venv rebuild
+# under the old `>=1.6` range resolved to the broken 1.6.3; pin to the last
+# known-good build.
 tree-sitter>=0.25,<0.26
-tree-sitter-language-pack>=1.6,<2.0
+tree-sitter-language-pack==1.6.2
 
 # --- ast-grep (Structural Code Search) ---
 # Used by ast_search tool for AST-pattern matching
@@ -35,13 +46,6 @@ ast-grep-cli
 # --- LangExtract (Structured Document Extraction) ---
 # Google's LLM-powered extraction with custom Claude/Bedrock provider
 langextract
-
-openai>=1.0.0
-
-# --- Langfuse (Observability) ---
-# LLM tracing, cost tracking, execution tree visualization
-# Self-hosted via docker/docker-compose.langfuse.yaml (server v2 — no OTEL)
-langfuse>=2.0,<3.0
 
 # --- Playwright (Browser Automation) ---
 # Headless browser for web browsing, form filling, screenshots
@@ -52,3 +56,4 @@ playwright>=1.40
 ruff>=0.11.0
 black>=25.1.0
 mypy>=1.14.0
+pytest-timeout

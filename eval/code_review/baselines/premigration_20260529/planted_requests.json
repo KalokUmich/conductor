@@ -1,0 +1,399 @@
+{
+  "timestamp": "2026-05-29T22:23:14+00:00",
+  "provider": "bedrock",
+  "model": "eu.anthropic.claude-sonnet-4-6",
+  "mode": "brain",
+  "case_scores": [
+    {
+      "case_id": "requests-001",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.925,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-002",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.925,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-003",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.925,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-004",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.85,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-005",
+      "recall": 1.0,
+      "precision": 0.667,
+      "severity_accuracy": 1.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.933,
+      "expected_count": 1,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "requests-006",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.925,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-007",
+      "recall": 1.0,
+      "precision": 0.667,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.858,
+      "expected_count": 1,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "requests-008",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 1.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 1.0,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-009",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 1.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 1.0,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-010",
+      "recall": 1.0,
+      "precision": 0.667,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 0.5,
+      "catch_rate": 1.0,
+      "composite": 0.808,
+      "expected_count": 1,
+      "actual_count": 2,
+      "error": null
+    },
+    {
+      "case_id": "requests-011",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 1.0,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 1.0,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    },
+    {
+      "case_id": "requests-012",
+      "recall": 1.0,
+      "precision": 1.0,
+      "severity_accuracy": 0.5,
+      "location_accuracy": 1.0,
+      "recommendation_score": 1.0,
+      "context_depth": 1.0,
+      "catch_rate": 1.0,
+      "composite": 0.925,
+      "expected_count": 1,
+      "actual_count": 1,
+      "error": null
+    }
+  ],
+  "judge_verdicts": [
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "**Completeness**: The reviewer's finding [0] maps cleanly to expected[0]: correct file (requests/adapters.py), correct line range (471-485 vs 471-483, essentially the same), correct root cause (timeout = None discards user-supplied timeout), and severity is adjacent (critical vs high). The match table confirms title=YES, file=YES, line=YES, severity=ADJ, rec=YES. This is a clean match on the primary expected finding.\n\n**Reasoning quality**: The evidence chain is complete and verifiable: line 472 sets `timeout = None` unconditionally (with the comment quoted), line 485 passes that None to `conn.urlopen()`, and the reviewer explains that the prior HEAD~1 had proper TimeoutSauce conversion which was deleted without replacement. The reviewer even notes that `TimeoutSauce` import at line 25 is now dead code. An independent reader could follow this chain without re-reading the source.\n\n**Actionability**: The fix is copy-pasteable \u2014 it provides exact Python code to replace `timeout = None` with the full tuple/TimeoutSauce/scalar branching logic, and specifies the exact location (between lines 469 and 474). A junior engineer could apply this directly.\n\n**False positive quality**: There are no secondary findings (the match table shows no unmatched actuals). The reviewer emitted exactly one finding, which matched the expected bug. Score is 5 by definition.",
+      "error": null,
+      "case_id": "requests-001"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "**Completeness:** The match table shows actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=ADJ, category=YES, rec=YES. The reviewer correctly identifies the ConnectionError being swallowed at requests/adapters.py lines 500-505, correctly frames the root cause (exception replaced with synthetic Response), and recommends re-raising. The severity is \"critical\" vs expected \"high\" \u2014 adjacent, so within one level. This is a clean match.\n\n**Reasoning quality:** The reviewer cites specific lines (500, 502, 503, 505), quotes the actual code, traces the call chain to sessions.py:718, explains what the original behavior was (\"Previously: raise ConnectionError(err, request=request)\"), and articulates concrete downstream consequences (retry logic, circuit breakers, raise_for_status behavior). This is a full evidence chain that a skeptical senior engineer could verify without re-reading the source.\n\n**Actionability:** The fix provides copy-pasteable Python code at the exact location (lines 500-505), showing the exact replacement: `except (ProtocolError, OSError) as err: raise ConnectionError(err, request=request)`. A junior engineer could apply this immediately.\n\n**False positive quality:** There are zero secondary findings (unmatched actual: none). The reviewer emitted exactly one finding, which matched the planted bug. Score is 5.",
+      "error": null,
+      "case_id": "requests-002"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**Completeness:** The match table shows actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=ADJ (expected medium, reviewer said high \u2014 within one level), category=YES, rec=YES. The finding correctly identifies the missing `apparent_encoding` fallback in `requests/models.py` at lines 926-938 with the correct root cause. This is a clean match. Score: 5.\n\n**Reasoning Quality:** The reviewer provides a detailed evidence chain: (1) identifies the removed lines as the only path to chardet detection, (2) traces encoding=None to line 930's `str(self.content, encoding, errors='replace')` causing TypeError, (3) explains the except block catches TypeError and falls back to UTF-8, (4) cites the docstring contradiction, (5) explains real-world impact (Latin-1, Windows-1252, etc.). This is a full chain that a skeptical senior engineer could follow without re-reading the source. Score: 5.\n\n**Actionability:** The fix provides copy-pasteable Python code showing exactly what lines to restore and where (after line 926's comment), including the comment line itself. A junior engineer could apply it directly. Score: 5.\n\n**False Positive Quality:** The only unmatched finding is the \"Orphaned comment\" nit at lines 926-927. This is a legitimate observation (the comment `# Fallback to auto-detected encoding.` with no corresponding code is genuinely misleading), and it's directly related to the planted bug rather than being noise. A senior engineer would not dismiss this. The fix suggested is also tied directly to the main bug fix. Score: 4.",
+      "error": null,
+      "case_id": "requests-003"
+    },
+    {
+      "completeness": 3,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 4.2,
+      "analysis": "**Completeness:** The reviewer's finding actual[0] maps to expected[0] with title=YES, file=YES, line=YES (573-576 falls within 549-580), severity=NO (reviewer says critical, expected says medium), and category=YES. The root cause framing is correct (prepare_content_length gutted to no-op), the correct file and line range are identified, and the trigger condition is clearly explained. The severity mismatch (critical vs medium) is one level off per the rubric's \"within one level\" allowance? Actually critical vs medium is more than one level off. However, the rubric says \"severity within one level of expected\" for a 5. Critical vs medium is arguably 2 levels off (medium \u2192 high \u2192 critical). This caps completeness at 3. But wait - the match table itself scored severity=NO, confirming the mismatch. I'll cap at 3 per the rubric.\n\nActually re-reading: \"severity within one level of expected\" \u2014 medium vs critical is two levels off (medium, high, critical). So this is a partial match \u2014 completeness = 3.\n\n**Reasoning quality:** The reviewer cites exact lines (573-576, 565, 598), identifies the trigger condition (body is not None, Content-Length absent \u2192 chunked=True), traces the impact chain through adapters.py:469, and explains the cascading effects. The evidence is detailed enough that a skeptical senior engineer could verify it without re-reading the source. This earns a 5.\n\n**Actionability:** The fix is copy-pasteable Python code with the exact method to restore, placed at the correct location, with explanatory comments. A junior engineer could apply it directly. This is a 5.\n\n**False positive quality:** There are no unmatched actual findings \u2014 the reviewer emitted exactly one finding. Score is 5.",
+      "error": null,
+      "case_id": "requests-004"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**Completeness:** Finding [0] maps to expected[0] with matches on title, file, line, severity, and recommendation. The reviewer correctly identifies the removed `should_strip_auth` guard in `rebuild_auth()` at lines 283-295 (expected 288-296), correctly frames it as a credential leakage security issue at critical severity, and recommends restoring the stripped guard. The match table confirms this. The category is listed as \"correctness\" in the structured finding but \"security\" in the JSON \u2014 the match table shows category=no, but the substance is clearly a security finding and the fix recommendation is correct. This is a clean detection of the planted bug.\n\n**Reasoning quality:** The evidence chain is strong: quotes the removed guard verbatim, notes that `should_strip_auth()` at lines 127-157 still exists but has zero callers post-removal, explains the attack path (attacker-controlled redirect target harvests Authorization header), and traces how the deletion of 6 lines creates the vulnerability. The trigger condition (301/302 redirect to different hostname) is explicitly described. An independent reader could fully re-derive the bug from this evidence.\n\n**Actionability:** The fix is copy-pasteable: specifies exact insertion location (line 291, between the `url = prepared_request.url` assignment and the `.netrc` block) and provides the exact Python code block to restore. A junior engineer could apply this without further investigation.\n\n**False positive quality:** Finding [1] (dead code) is a direct and natural consequence of the same bug \u2014 the `should_strip_auth()` method becomes dead code precisely because the guard was removed. This is a defensible secondary finding that a senior engineer would not dismiss; it's not style/naming/pre-existing noise. It's arguably redundant since fixing [0] resolves [1] automatically (the reviewer notes this), but it's not frivolous. The synthesis also mentions a docstring finding (Finding [2] in the JSON) but this doesn't appear as a structured finding in the reviewer's findings list \u2014 only findings [0] and [1] are listed. The unmatched actual is finding [1], which is defensible.",
+      "error": null,
+      "case_id": "requests-005"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**Completeness:** The match table shows actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=ADJ (reviewer said critical, expected is high \u2014 adjacent), category=YES, rec=YES. The finding correctly identifies the silent fallback in `get_adapter()`, the right file `requests/sessions.py`, the right line range (793-794 vs 785-800), the correct root cause (replacing `raise InvalidSchema` with a fallback return), and recommends restoring the raise. This is a clean match on the primary expected finding.\n\n**Reasoning quality:** The reviewer cites the exact replacement line (`return list(self.adapters.values())[-1]`), traces the call path from `sessions.py:697` (adapter = self.get_adapter) through `sessions.py:703` (adapter.send), names the default adapter mounts, and explains why `file://` falls through. The trigger condition (any URL with non-HTTP/HTTPS scheme) is clearly articulated and reachable from any `Session.get()` call with such a URL. An independent reader could re-derive the bug from this evidence alone.\n\n**Actionability:** The fix is copy-pasteable: \"Revert line 794 to `raise InvalidSchema(f\"No connection adapters were found for {url!r}\")` and remove the fallback.\" Exact file, exact line, exact replacement code. A junior engineer could apply this without further investigation.\n\n**False positive quality:** The reviewer emits 3 secondary findings beyond the matched primary: (1) IndexError on empty adapters dict, (2) test assertion violation in test_requests.py, and (3) non-deterministic fallback. All three are direct consequences of the same planted bug and are analytically sound \u2014 they describe real failure modes introduced by the same change. A senior engineer would not dismiss these as noise; they are legitimate downstream effects of the bug. However, they are secondary findings not in the expected list. The IndexError finding is a genuine secondary defect (different failure mode: empty dict), the test failure finding is defensible (verifiable from the test code), and the non-determinism finding, while somewhat speculative, is grounded in dict ordering behavior. These are all plausible real defects rather than style/naming issues.",
+      "error": null,
+      "case_id": "requests-006"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**Completeness:** Finding [0] maps to expected[0] \u2014 correct file (requests/sessions.py), correct line (447, within the 440-448 range), correct root cause (plain dict replacing RequestsCookieJar), and a concrete fix. The match table confirms title=YES, file=YES, line=YES, severity=ADJ (reviewer says critical, expected says high \u2014 one level off, within tolerance), category=no (reviewer says \"correctness\", expected says \"concurrency\"). The concurrency/thread-safety framing is missing \u2014 the reviewer focuses entirely on AttributeError crashes and cookie mishandling, not on thread safety. However, the primary bug is identified at the correct location with the correct root cause, and the thread-safety aspect is secondary. Per the rubric, severity is within one level and all primary elements match. This qualifies as a 5.\n\n**Reasoning Quality:** Finding [0] cites the exact line (447), traces the call chain to cookies.py:137 where `jar.extract_cookies()` is called, identifies that a plain dict lacks this method, and explains how it is reached via multiple call sites (sessions.py:718, 720, 277). The evidence chain is complete and verifiable \u2014 a skeptical senior engineer could confirm this without re-reading the code. Finding [1] similarly cites the merge path with specific line references. This is a strong 5.\n\n**Actionability:** The fix for Finding [0] is copy-pasteable: \"Revert requests/sessions.py:447 to `self.cookies = cookiejar_from_dict({})`\" with exact file and line. A junior engineer could apply this immediately. Score 5.\n\n**False Positive Quality:** Finding [1] (the secondary) concerns cross-origin cookie leakage due to null domain when dict is used. This is a real downstream consequence of the same bug \u2014 it's plausible and defensible, though arguably a secondary effect of the same root cause rather than an independent finding. It does not appear on any DO-NOT-FLAG list. The synthesis also mentions a third finding (Secure-flag loss) that is not in the findings list but appears in synthesis JSON \u2014 per the rubric, synthesis prose is not credited if it contradicts or extends the findings list. The two actual findings are both defensible consequences of the planted bug. Score 4.",
+      "error": null,
+      "case_id": "requests-007"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "**Completeness:** The match table confirms actual[0] maps to expected[0] on all dimensions (title, file, line, severity, category, recommendation). The reviewer correctly identified the inverted boolean logic at adapters.py:469-470, framed it as a correctness bug of high severity, and explained the exact inversion mechanism.\n\n**Reasoning quality:** The evidence chain is excellent: cites the exact buggy line (`chunked = request.body is None or \"Content-Length\" in request.headers`), explains why each condition produces the wrong result (chunked=True when body is None, chunked=True when Content-Length is present), identifies the correct trigger condition per RFC 7230, and traces the value to its downstream use at line 498. An independent reader could verify the bug solely from this evidence.\n\n**Actionability:** The fix is a concrete, copy-pasteable one-liner (`chunked = not (request.body is None or \"Content-Length\" in request.headers)`) at the exact location, with an explanation of the restored semantics. A junior engineer could apply it without further investigation.\n\n**False positive quality:** There are no secondary findings (unmatched actuals = none), so no noise to penalize.",
+      "error": null,
+      "case_id": "requests-008"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "**Completeness:** The match table confirms actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=YES, category=NO (reviewer used \"correctness\" in the finding header, though the JSON in synthesis uses \"security\"). The finding correctly identifies the missing Proxy-Authorization header stripping in rebuild_proxies() at sessions.py lines 319-328, matching the expected lines 315-325. The root cause framing is correct \u2014 stale header persists because the deletion was removed. Category mismatch (correctness vs security) is noted but the match table already flagged this; however, the JSON payload labels it \"security\" and the finding clearly describes a credential leakage security issue. The finding header says \"correctness\" but the substance is security-correct. This is a borderline case but the match table scored category=NO yet title/file/line/severity/rec all YES \u2014 the bug was clearly found and correctly understood. I'll score this a 5 since only the categorical label differs while the substance is fully correct.\n\n**Reasoning quality:** The evidence chain is strong: it cites specific lines (320-323, 327, 328), explains the exact trigger condition (no credentials \u2192 username=None, password=None \u2192 guard is False \u2192 deletion never executes), identifies the deleted safety net as the root cause, and describes how this is reachable in realistic redirect scenarios (no-credentials redirect and HTTP\u2192HTTPS transitions). This is sufficient for an independent reader to verify without re-reading the source.\n\n**Actionability:** The fix provides a concrete, copy-pasteable Python code block showing exactly where to restore the deleted lines (before the try/except at line 320), with the full restored code snippet. A junior engineer could apply this directly.\n\n**False positive quality:** There are no unmatched actual findings (the match table shows no unmatched actuals). The only finding is the planted bug finding. Score is 5.",
+      "error": null,
+      "case_id": "requests-009"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.8,
+      "analysis": "**Completeness:** Finding [0] maps to expected[0] with title=YES, file=YES, line=YES (177-192 covers 185-195), severity=ADJ (critical vs expected high \u2014 within one level), and rec=YES. The reviewer correctly identified the removed `TooManyRedirects` guard, the infinite loop via `while url:`, and the absence of any alternative check. This is a clean match on the primary expected finding. Score: 5.\n\n**Reasoning quality:** Finding [0] cites the exact deleted lines (190-193), identifies the loop termination condition (`while url:`), confirms no alternative check exists in `resolve_redirects()`, and explains the realistic trigger (any server returning continuous 3xx responses). The evidence chain is complete: trigger is reachable via the default redirect-following path in `Session.send()`, and a skeptical engineer would not need to re-read the source to verify the claim. Score: 5.\n\n**Actionability:** The fix in Finding [0] provides the exact copy-pasteable four lines of Python code to restore at the correct location (\"around line 189, immediately after the socket-consume block\"), including the f-string format and `response=resp` argument. A junior engineer could apply this without further investigation. Score: 5.\n\n**False positive quality:** Finding [1] is the only secondary finding. It flags `max_redirects` as dead/unenforced code \u2014 this is a direct and accurate consequence of the same bug (the attribute is initialized but never read after the guard removal). The evidence is concrete (line 432 for init, line 384 for __reduce__ reference, confirming it's never read in the loop). The reviewer even notes it's a consequence of the primary finding and that restoring the guard fixes it. This is a defensible secondary finding that a senior engineer would not dismiss \u2014 it accurately characterizes the observable symptom of the planted bug. Score: 4.",
+      "error": null,
+      "case_id": "requests-010"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 5,
+      "actionability": 5,
+      "false_positive_quality": 5,
+      "average": 5.0,
+      "analysis": "**Completeness:** The match table shows actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=YES, category=NO (reviewer used \"correctness\" in the finding header but \"security\" in the synthesis/JSON). However, the finding itself clearly identifies the SSL verification bypass, the correct file, the correct line range (249-252, within expected 249-280), and correct severity (critical). The category discrepancy is minor \u2014 the core bug is fully identified with correct root cause framing (CERT_NONE unconditionally set, verify parameter ignored).\n\n**Reasoning quality:** The evidence chain is exemplary: line 250 cited for `CERT_NONE` unconditional assignment, lines 251-252 for CA bundle nullification, the misleading comment at line 249 noted, and lines 254-269 checked to confirm no CERT_REQUIRED path exists anywhere. The trigger condition (any HTTPS call with verify=True or custom bundle) is clearly explained, and the MITM risk is concrete and realistic. An independent reader could fully re-derive the bug from this evidence alone.\n\n**Actionability:** The fix is copy-pasteable Python code showing exactly what lines 249-252 should be replaced with, including the complete conditional logic with CERT_REQUIRED, CA bundle path resolution, and the proper else branch. A junior engineer could apply this directly.\n\n**False positive quality:** There are zero secondary findings (no unmatched actuals). The reviewer emitted exactly one finding targeting the planted bug.",
+      "error": null,
+      "case_id": "requests-011"
+    },
+    {
+      "completeness": 5,
+      "reasoning_quality": 4,
+      "actionability": 5,
+      "false_positive_quality": 4,
+      "average": 4.55,
+      "analysis": "**Completeness:** The match table shows actual[0] maps to expected[0] with title=YES, file=YES, line=YES, severity=ADJ (reviewer said \"high,\" expected \"medium\" \u2014 adjacent), category=YES, rec=YES. The finding correctly identifies the bare except in hooks.py:30-35 that silently swallows hook exceptions, correctly names the root cause (no re-raise, no logging), and points to sessions.py:710 as the only caller affected. This is a clean match on the primary expected finding.\n\n**Reasoning quality:** The evidence chain is strong: cites exact lines (34-35 for the bare except, sessions.py:710 for the caller), explains the trigger condition (any exception in a user hook), explains why callers are affected (they receive silently partial/corrupted hook_data with no error signal), and adds the nuance about mid-chain hook state corruption. The chain is verifiable by an independent reader. One minor gap: it doesn't explicitly show what the pre-bug code looked like (the \"previous behavior\" is asserted but not quoted), but this is a minor omission in an otherwise strong chain.\n\n**Actionability:** The fix provides two concrete, copy-pasteable code options (Option A: remove try/except entirely; Option B: log-and-reraise), shown at the correct location with correct syntax. A junior engineer could apply either without further investigation.\n\n**False positive quality:** There is one secondary finding \u2014 \"New exception-suppression behavior has no test coverage\" in tests/test_hooks.py. This is a test coverage observation, not a runtime defect, and is categorized \"test_coverage.\" It's a mild secondary concern that a senior engineer wouldn't strongly object to, but it's speculative (test gaps aren't bugs). It does not fall into DO-NOT-FLAG style/naming categories, and the match table shows no unmatched primaries. It's a defensible secondary finding, though borderline. Scoring 4 is appropriate: it's plausible and not noise, but is a test gap rather than a concrete defect.",
+      "error": null,
+      "case_id": "requests-012"
+    }
+  ],
+  "aggregate": {
+    "recall": 1.0,
+    "precision": 0.917,
+    "severity_accuracy": 0.625,
+    "location_accuracy": 1.0,
+    "recommendation_score": 1.0,
+    "context_depth": 0.958,
+    "catch_rate": 1.0,
+    "composite": 0.923,
+    "cases_total": 12,
+    "cases_scored": 12,
+    "cases_errored": 0
+  },
+  "regressions": [
+    {
+      "case_id": "requests-001",
+      "baseline_composite": 0.925,
+      "current_composite": 0.925,
+      "delta": -0.0,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-002",
+      "baseline_composite": 0.858,
+      "current_composite": 0.925,
+      "delta": 0.067,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-003",
+      "baseline_composite": 0.85,
+      "current_composite": 0.925,
+      "delta": 0.075,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-004",
+      "baseline_composite": 0.85,
+      "current_composite": 0.85,
+      "delta": 0.0,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-005",
+      "baseline_composite": 1.0,
+      "current_composite": 0.933,
+      "delta": -0.067,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-006",
+      "baseline_composite": 0.925,
+      "current_composite": 0.925,
+      "delta": -0.0,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-007",
+      "baseline_composite": 0.925,
+      "current_composite": 0.858,
+      "delta": -0.067,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-008",
+      "baseline_composite": 0.925,
+      "current_composite": 1.0,
+      "delta": 0.075,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-009",
+      "baseline_composite": 0.933,
+      "current_composite": 1.0,
+      "delta": 0.067,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-010",
+      "baseline_composite": 1.0,
+      "current_composite": 0.808,
+      "delta": -0.192,
+      "is_regression": true
+    },
+    {
+      "case_id": "requests-011",
+      "baseline_composite": 1.0,
+      "current_composite": 1.0,
+      "delta": 0.0,
+      "is_regression": false
+    },
+    {
+      "case_id": "requests-012",
+      "baseline_composite": 0.925,
+      "current_composite": 0.925,
+      "delta": -0.0,
+      "is_regression": false
+    }
+  ],
+  "has_regressions": true,
+  "gold_comparisons": []
+}

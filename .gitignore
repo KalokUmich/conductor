@@ -144,3 +144,4 @@ site/
 
 # Claude Code source study — 47MB reference material, kept local-only
 reference/claude-code/
+config/conductor.local.env

@@ -1,6 +1,6 @@
 # Conductor Project Roadmap
 
-Last updated: 2026-04-05
+Last updated: 2026-05-31
 
 ## Current State
 
@@ -20,21 +20,43 @@ Conductor is a VS Code collaboration extension with a FastAPI backend. The proje
   - WorkspacePanel 5-step creation wizard
   - WorkspaceClient typed HTTP client
   - Workspace code search (`GET /workspace/{room_id}/search`)
-- **Agentic Code Intelligence**:
-  - `AgentLoopService` — LLM-driven iterative tool loop (up to 25 iterations, 500K token budget)
-  - 42 tools across 3 registries: 31 code tools (grep, read_file, list_files, glob, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff, git_diff_files, ast_search, get_callees, get_callers, git_blame, git_show, git_hotspots, find_tests, test_outline, trace_variable, compressed_view, module_summary, expand_symbol, detect_patterns, run_test, list_endpoints, extract_docstrings, db_schema, file_edit, file_write) + 5 Jira tools + 6 browser tools
+- **Agentic Code Intelligence** (dual-engine after the agent-SDK migration, Steps 01–06):
+  - **Coordinators** (General / Domain / PR Brain) run in-house on `AgentLoopService` — LLM-driven iterative tool loop (up to 25 iterations, 500K token budget)
+  - **Dispatched leaf workers** run on the Claude Agent SDK via `SdkWorkerRunner` (SDK/CLI owns the loop + compaction; we keep tools, prompt, evidence gate, vault). The discriminator in `brain._dispatch_explore` routes agents holding `dispatch_*` tools → in-house, else → SDK leaf.
+  - 47 tools across 3 registries + Brain orchestration: code tools (grep, read_file, list_files, glob, find_symbol, find_references, file_outline, get_dependencies, get_dependents, git_log, git_diff, git_diff_files, ast_search, get_callees, get_callers, git_blame, git_show, git_hotspots, find_tests, test_outline, trace_variable, compressed_view, module_summary, expand_symbol, detect_patterns, run_test, list_endpoints, extract_docstrings, db_schema, file_edit, file_write, search_facts, update_notes) + 5 Jira tools + 6 browser tools + Brain primitives (dispatch_explore / dispatch_verify / dispatch_sweep, transfer_to_brain, create_plan)
   - 4-layer system prompt: Identity + Tools + Skills & Guidelines + User Message
   - Query classifier: removed (superseded by Brain orchestrator)
   - Dynamic tool sets: 8-12 tools per query type (reduces LLM confusion)
   - Token-based budget controller with convergence signals
   - `trace_variable` — data flow tracing with alias detection, argument→parameter mapping, sink/source patterns
   - Workspace reconnaissance — auto-scan project layout + project marker detection
-  - `chat_with_tools()` on all 3 AI providers (Bedrock Converse, Anthropic Messages, OpenAI)
+  - `chat_with_tools()` on 2 AI providers (Bedrock Converse, Anthropic Messages — Claude-only after the Step 02–03 provider collapse; OpenAI/Alibaba/Moonshot removed)
   - `POST /api/context/query/stream` — Brain orchestrator over SSE (general code Q&A + PR review via `transfer_to_brain`)
   - `POST /api/context/explain-rich` — deep code explanation via agent (replaces XML-prompt pipeline)
 - **RepoMap (Graph-based Symbol Index)**:
   - tree-sitter AST parsing for symbol extraction (used by `find_symbol`, `file_outline`, dependency tools)
   - File dependency graph (networkx) with PageRank ranking
+
+### Agent-SDK Migration (Steps 01–06) — COMPLETE 2026-05-31
+
+The dispatched sub-agent loop was migrated from the in-house `AgentLoopService` onto the **Claude
+Agent SDK** (0.2.x, drives the Claude Code CLI as a subprocess). Coordinators still run in-house;
+only **leaf workers** run on the SDK. Shipped in this migration:
+- **Dual-engine dispatch** — `SdkWorkerRunner` (`agent_loop/sdk_worker.py`) + the discriminator in
+  `brain._dispatch_explore` (agents with `dispatch_*` tools → in-house coordinator; else → SDK leaf).
+  SDK/CLI owns iterate→call-LLM→exec-tools + compaction; we keep the moat (vault-aware MCP tools on a
+  shared `CachedToolExecutor`, the 4-layer full-replace system prompt, a post-call evidence gate, the
+  Brain's `llm_semaphore`). Per-leaf `[sdk_worker usage]` cost line.
+- **Provider collapse (Steps 02–03)** — AI providers reduced to **Claude only** (Bedrock Converse +
+  Anthropic Messages). OpenAI / Alibaba / Moonshot / Qwen providers + the OpenAI dep removed.
+- **Langfuse removed (Steps 01/04)** — replaced by **task-hierarchy telemetry** (`TaskTelemetryService`
+  + the `task` DB table) for per-worker cost/latency.
+- **Bedrock auth — two modes** — **local**: local secret or SSO **profile** with boto3/CLI
+  auto-refresh (`CONDUCTOR_AWS_PROFILE`), a long-lived token for model-perf testing; **deployed**:
+  ambient **IAM role** via the default credential chain. Same resolution in both the in-house provider
+  (`claude_bedrock._get_client`) and the SDK leaf path (`sdk_worker.bedrock_env`).
+
+Phase 14 (below) builds on this. Detail + eval gates in `docs/archive/REFACTOR_EXECUTION_LOG.md`.
 
 ## Phase 1: Foundation (COMPLETE)
 
@@ -320,14 +342,17 @@ and `config/brains/*.yaml`. The historical workflow engine modules
 (`classifier_engine.py`, `mermaid.py`, the `/api/workflows` REST endpoints, and
 `config/workflows/*.yaml`) were deleted.
 
-#### Langfuse Observability (COMPLETE)
-Self-hosted LLM tracing with nested execution trees, cost tracking, and latency analysis.
-- [x] `docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)
-- [x] `langfuse>=2.0` in `requirements.txt`
-- [x] `LangfuseSettings` + `LangfuseSecrets` in `config.py`
-- [x] `make langfuse-up`, `make langfuse-down`, `make langfuse-logs` Makefile targets
-- [x] Traces nested as: workflow → route → agent → llm_call → tool
-- [x] Coexists with SessionTrace — Langfuse adds Web UI + team sharing; SessionTrace keeps tool params + thinking text
+#### Langfuse Observability (SUPERSEDED — removed in the agent-SDK migration, Step 01/04)
+> **Superseded.** Langfuse (server, the `langfuse` Python dep, `LangfuseSettings`/`LangfuseSecrets`,
+> the `make langfuse-*` targets, and the Langfuse DB plumbing) was **removed** during the agent-SDK
+> migration. Per-worker cost/latency is now captured by **task-hierarchy telemetry**
+> (`TaskTelemetryService` + the `task` DB table — see the Agent-SDK Migration block under Current
+> State and `docs/archive/REFACTOR_EXECUTION_LOG.md`). The historical scope below is kept for the record only.
+- [x] ~~`docker/docker-compose.langfuse.yaml` — Langfuse server + PostgreSQL self-hosted stack (port 3001)~~
+- [x] ~~`langfuse>=2.0` in `requirements.txt`~~
+- [x] ~~`LangfuseSettings` + `LangfuseSecrets` in `config.py`~~
+- [x] ~~`make langfuse-up`, `make langfuse-down`, `make langfuse-logs` Makefile targets~~
+- [x] ~~Traces nested as: workflow → route → agent → llm_call → tool~~
 
 #### Workflow Visualization Panel (REMOVED)
 The standalone WebView graph (`workflow.html`, `workflowPanel.ts`,
@@ -1283,7 +1308,7 @@ Learn from `Tool.ts` — richer tool definitions for better agent behavior.
 **Reference files**: `Tool.ts` (792 lines), `tools.ts` (tool registry)
 
 **Completed**:
-- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 42 tools
+- [x] `ToolMetadata` dataclass: `is_read_only`, `is_concurrent_safe`, `summary_template`, `category` for all 47 tools
 - [x] Summary generation for context compaction — `_clear_old_tool_results()` uses `summary_template` for readable one-line summaries (e.g., `grep 'auth' in src/: 12 matches`)
 - [x] `format_tool_summary()` utility function with fallback for unknown tools
 - [x] 42 new tests covering grep enhancements, glob tool, ToolMetadata, and context clearing
@@ -1403,7 +1428,7 @@ Add `cache_control` / `cachePoint` breakpoints to system prompts and tool defini
 - [ ] Limit to max 4 breakpoints per request (API constraint)
 - [ ] Apply to tool definitions (tool schemas are static across iterations)
 - [ ] Apply to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
-- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Measure cache hit rate and token savings via the `task` telemetry table
 - [ ] Expected impact: ~45% input token reduction for PR review pipeline (810K/1.82M tokens cacheable)
 
 ### 9.12 Diff Sharding for Review Agents (PLANNED)
@@ -1497,6 +1522,24 @@ These are the same refactor — the new sub-agent schema `{checks, findings with
 - Post-Checkpoint A: `dispatch_subagent` works end-to-end; Brain severity classification matches or exceeds fixed-swarm severity_accuracy on 12 requests cases
 - Post-Checkpoint B: composite within ±1pp of Checkpoint A; severity_accuracy 0.583 → 0.75+; judge avg 2.2 → 3.0+; token cost −30%+ vs fixed swarm
 
+### 9.13.1 PR review quality — open optimizations (BACKLOG, unscheduled)
+
+- [ ] **Counterbalancing findings — merge + downgrade.** When two findings are
+  two halves of ONE coherent design that offset each other, PR Brain should merge
+  them into a single finding and calibrate severity to the *net* risk — not report
+  two independent, inflated findings. Observed on PR 14287 (CorsFilter refactor,
+  2026-06-01): the bot flagged "CORS credentials changed to `false`" (Critical) and
+  "wildcard origin `*.acquired.com`" (High) as two separate problems, missing that
+  Spring forbids `allowCredentials(true)` with pattern origins — so the author
+  *deliberately* set credentials=false **to enable** the wildcard origins. The right
+  output is ONE finding at ≤ warning ("confirm dropping cookie-credential auth is
+  intended"), not two criticals. Fix lives in the coordinator's synthesis /
+  arbitration step (§9.13 phase 5): detect finding pairs that reference the same
+  change and offset each other (one enables / de-risks the other), merge, recalibrate
+  to net risk. Same root cause as the severity over-escalation that 9.13 centralised
+  into Brain synthesis — the coordinator needs **cross-finding causal reasoning**, not
+  per-line pattern matching.
+
 ### 9.15 Short-Term Memory — Fact Vault (PLANNED)
 
 **Problem observed (sentry-006)**: when PR Brain dispatches 7 parallel sub-agents, each that independently calls `get_dependencies` triggers its own `_ensure_graph` build on a 17K-file repo. Seven concurrent tree-sitter scans burn ~7× the CPU and budget, and the first finished write overwrites the others. Our module-level `_graph_cache` (tools.py:2113) is shared but has no in-flight coordination — every cold miss stampedes.
@@ -1563,7 +1606,7 @@ Proposed hook points:
 - `on_synthesize_complete` — after final markdown is ready. Good for:
   - Scratchpad consolidation (extract reusable learnings → long-term memory, Phase 9.15 long-term extension)
   - Session cleanup (scratchpad SQLite delete, workspace unlink)
-  - Metrics export (Langfuse event, session trace summary)
+  - Metrics export (task telemetry event, session trace summary)
 - `on_task_end` — terminal hook, guaranteed to fire even on error.
 
 - [ ] `app/agent_loop/lifecycle.py` — hook registry + fire-and-forget executor
@@ -1640,6 +1683,102 @@ Scope of the hardening:
 - [x] Co-ordinate TS-side tree-sitter bump — **no change required**: TS extension's pinned grammar WASM tags (typescript v0.23.2, python v0.23.6, etc.) already have ABI-matching versions bundled in tree-sitter-language-pack, so parity stays green without a TS-side version bump. The extension's existing `download-grammars.sh` pinning machinery validates the alignment automatically
 
 **Dependency**: 9.15 (skip list lives in Fact Vault). Step 1 shipped Sprint 16. The tree-sitter/grammar bump is the highest-risk remaining subitem and should ship on its own PR with parity + eval numbers in the description.
+
+### 9.18.1 Workspace scan walker pruning (COMPLETE — 2026-05-03)
+
+**Followup to 9.18.** Even with subprocess-isolated parsing and per-file timeout, the workspace **walker** itself was wasteful: `_scan_workspace` used `ws.rglob("*")` which recursively walked the ENTIRE tree first, then per-file filtered against the exclude list. On the render workspace (8.5GB / 293K files, ~90% under `node_modules/`), that meant 293K `Path.is_file()` + `Path.relative_to(ws).parts` calls before any meaningful filtering. Wall-clock cost: ~270s per scan.
+
+Fix: rewrote `_scan_workspace` to use `os.walk` with in-place `dirnames[:]` pruning so excluded subtrees are never descended into:
+
+```python
+for dirpath, dirnames, filenames in os.walk(ws):
+    dirnames[:] = [d for d in dirnames if d not in exclude_dir_names]
+    for fn in filenames:
+        # ... per-file work
+```
+
+Also extended the exclude list with JVM (`target/`, `.gradle/`, `out/`, `bin/`, `.m2/`, `classes/`), front-end (`.next/`, `.nuxt/`, `coverage/`), and Python (`.tox/`, `.ruff_cache/`, `.venv/`) outputs — categories the prior list missed.
+
+**Render scan: 293K files / 270s → 10K files / 18s (96.5% file reduction, 14.5x faster).**
+
+Also bumped graph cache TTL: `_GRAPH_TTL_SECONDS` 120s → 1800s (with `CONDUCTOR_GRAPH_TTL_S` env override) so consecutive eval cases on the same workspace re-use the cached graph instead of repaying the scan cost — agent_quality eval used to re-scan render 4× per run because case durations exceeded the old TTL; now scanned once.
+
+- [x] `_scan_workspace`: `ws.rglob("*")` → `os.walk` with dirname pruning
+- [x] Extended exclude list (JVM + front-end + Python categories)
+- [x] Graph cache TTL 120s → 1800s + env override
+- [x] All 70 `test_repo_graph` tests pass; eval workspaces (abound-server + render) scan correctly
+
+### 9.19 Domain Brain — Specialised Orchestrator for Business Flow Queries (COMPLETE — 2026-05-03)
+
+**Thesis**: General Brain shouldn't host business-flow / "how does X work" / domain-logic investigations inline. Brain self-synthesis from prose worker output systematically loses ~5-7 pp of detail (peripheral terms like "approval email", role names like "senior underwriter", enumerated lists like "income verification / classification") because Sonnet compresses peripheral items in summarisation. Solution: hand off to a specialised **Domain Brain** (mirroring the PR Brain v2 pattern), driven by a coordinator skill with mandatory Phase 1 self-survey + parallel template dispatch + coverage check + structured synthesis.
+
+**Architecture (`backend/app/agent_loop/domain_brain.py`):**
+
+```
+transfer_to_brain("domain") → DomainBrainOrchestrator
+  Phase 1: Coordinator Self-Survey (MANDATORY before any worker dispatch)
+           ├─ 1.1 read_file workspace-root CLAUDE.md / README.md
+           │      (project docs encode the team's vocabulary — bridge from
+           │       user's generic terms to codebase's specific terms)
+           ├─ 1.2 list_files / module_summary on workspace root
+           ├─ 1.3 grep using the PROJECT's vocabulary (not the user's)
+           └─ 1.4 file_outline / read_file the candidate domain class to confirm
+                  composite gates, enums, status fields
+  Phase 2: Dispatch Plan
+           ├─ DEFAULT BREADTH: parallel dispatch_explore(template=
+           │   "explore_implementation") + dispatch_explore(template=
+           │   "explore_usage") in ONE turn
+           ├─ Workers anchored on the discovered domain class
+           └─ Workers asked to emit prose + JSON envelope so synthesis
+              enumerates without losing fields
+  Phase 3: Coverage check + synthesis (default ONE round)
+           ├─ List 3-6 dimensions the question expects
+           ├─ Per dimension: covered ✓ / partial ⚠ / uncovered ❌
+           ├─ Re-dispatch ONLY if a load-bearing dimension is uncovered
+           │   (at most ONE follow-up worker)
+           └─ Synthesise per the 8 rules → 4-section format
+              (Flow Overview / Step-by-Step Breakdown / Key Files / Gaps)
+```
+
+**Two load-bearing fixes that were learned the hard way:**
+
+1. **Skill must be registered in `INVESTIGATION_SKILLS` dict.** Loading a `.md` file via `_load_skill()` is not enough — the result has to be put into `INVESTIGATION_SKILLS[name] = text` for `build_sub_agent_system_prompt(skill_key=...)` to find it. The Domain Brain skill silently failed (sub-agent prompt only 1276 chars instead of 14478) until added to the explicit registration list in `prompts.py:~1305`. Symptom: coordinator skipped Phase 1 entirely and lost domain-model anchoring → 50% on the worst case.
+
+2. **Phase 1 must be MANDATORY in skill text, not soft-recommended.** "You should consider reading project docs first" gets Sonnet to skip it and dispatch dynamic workers that miss the anchor. The fix: hard rule + worked-example + counter-example baked into the coordinator skill.
+
+**Eval (5-case agent_quality, Brain mode, Sonnet+Haiku) results:**
+
+| Run | AVG | Total time | Notes |
+|---|---:|---:|---|
+| Pre-baseline (old `dispatch_swarm`) | 95.0% | 640s | reference |
+| Domain Brain after all fixes | **94-98%** | 651-829s | run-to-run variance ~10pt |
+
+Cases that consistently hit 100%: `render_credit_decision`, `render_decline_flow`, `render_idv_process`, `render_open_banking`. The one case below baseline (`abound_render_approval`, 90% vs baseline 95%) loses one secondary `doc_generation` pattern within variance range.
+
+**Dispatch primitive rename + folder reorg (companion change):**
+
+- `dispatch_agent` → `dispatch_explore` (open prose investigation)
+- `dispatch_subagent` → `dispatch_verify` (scope + 3 falsifiable checks JSON)
+- `dispatch_dimension_worker` → `dispatch_sweep` (full-diff one-lens hunt)
+- Param schemas + tool defs moved into `backend/app/agent_loop/dispatch/{explore,verify,sweep}.py` (handlers stay in `brain.py` due to 12+ `AgentToolExecutor` state field couplings)
+
+**Legacy retired:**
+
+- `_dispatch_swarm` handler + `DispatchSwarmParams` deleted
+- `config/swarms/business_flow.yaml` + `config/agents/explore_synthesizer.md` deleted
+- `load_swarm_registry()` kept (returns `{}`) for back-compat
+- General Brain example for "what happens when X is declined" updated to route via `transfer_to_brain("domain")` instead of inline `mode=simple`
+
+**Files:**
+- New: `config/brains/domain.yaml`, `config/skills/domain_brain_coordinator.md`, `backend/app/agent_loop/domain_brain.py`, `backend/app/agent_loop/dispatch/{__init__,explore,verify,sweep}.py`, `backend/tests/test_domain_brain.py`
+- Modified: `engine.py:_run_specialized_brain` (domain branch), `brain.py:_transfer_to_brain` (`valid_brains` adds "domain"), `prompts.py` (skill registration + handoff example), `schemas.py` (re-export from `dispatch/`), `repo_graph/graph.py` (Phase 9.18.1 walker), `code_tools/tools.py` (cache TTL)
+- Deleted: 4 legacy files (swarm yaml, synthesizer agent, 2 renamed test files)
+
+Net diff: -1447 lines. 406 targeted tests pass. Single commit `77497d1`. Mirrored to `abound-server/conductor/sync-7.8.6-and-7.7.11` as `f622914fc`.
+
+**Deferred follow-ups:**
+- Dispatch handler folder reorg (pull `_dispatch_explore` / `_dispatch_verify` / `_dispatch_sweep` out of `AgentToolExecutor` into the `dispatch/` package as standalone functions taking the executor as arg) — needs handler refactor to break the 12-field state coupling
+- Phase 9 frontier work (extended thinking on coordinator turns, streaming sub-agent reactivity, MCP integration) — see `feedback_general_brain_synthesis` memory for the audit notes
 
 ### Reference Study Process
 For each sub-phase:
@@ -1726,18 +1865,18 @@ Python type annotations exist (~70% coverage) but no enforcement. No mypy config
 Layer 3 (project context, workspace layout, skills) is constant per session but re-transmitted every iteration, wasting ~10-20% tokens.
 
 - [ ] Wrap Layer 3 content in Anthropic API `cache_control` blocks (`{"type": "ephemeral"}`)
-- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Measure cache hit rate and token savings via the `task` telemetry table
 - [ ] Expected impact: 10-20% input token cost reduction on multi-iteration sessions
 - [ ] Extend to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
 
 ### 11.5 Observability Expansion (MEDIUM PRIORITY)
-Langfuse `@observe` only covers workflow engine. Agent loop and code review pipeline lack tracing.
+Task-hierarchy telemetry (the `task` table) captures per-task token usage, but the agent loop and code review pipeline still lack fine-grained span/iteration tracing.
 
-- [ ] `@observe` on `AgentLoopService.run_stream()` — trace iterations, tool calls, budget signals
-- [ ] `@observe` on `PRBrainOrchestrator` — trace 6-phase pipeline, per-agent timings
-- [ ] `track_generation()` on every LLM call in agent loop (model name + token usage for cost)
+- [ ] Span tracing on `AgentLoopService.run_stream()` — iterations, tool calls, budget signals
+- [ ] Span tracing on `PRBrainOrchestrator` — 6-phase pipeline, per-agent timings
+- [ ] Per-call usage capture on every LLM call in agent loop (model name + token usage for cost)
 - [ ] Correlation IDs: pass trace ID through WebSocket → agent loop → tool calls
-- [ ] `/health` endpoint with deep checks (Postgres, Redis, AI provider, Langfuse)
+- [ ] `/health` endpoint with deep checks (Postgres, Redis, AI provider)
 
 ### 11.6 Extension Test Coverage (MEDIUM PRIORITY)
 Backend has 1667 tests across 44 files. Extension has only 3 validation scripts.
@@ -1764,7 +1903,7 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 - [ ] `app/exceptions.py` — custom exceptions: `WorkspaceNotFoundError`, `GitOperationError`, `AIProviderError`, `BudgetExhaustedError`
 - [ ] Retry decorator for transient failures (Bedrock throttling, Postgres connection drops)
 - [ ] Exponential backoff for external API calls (Jira, AI providers)
-- [ ] Error categorization in Langfuse traces (transient vs permanent)
+- [ ] Error categorization in task telemetry / traces (transient vs permanent)
 
 ### 11.9 Lab Notebook System (PLANNED — MEDIUM PRIORITY)
 
@@ -1789,9 +1928,9 @@ sources(tag, url, note)         -- research bibliography
 ```
 Commands: `record` / `regression ingest <log>` / `diff <tag-a> <tag-b>` / `export <range> --markdown`. Ingests existing `/tmp/brain-regression-*.log` format. ~200 lines of Python. Lives outside repo.
 
-**C. Langfuse native** — already running on :3001. Use **Datasets** for eval cases, **Dataset runs** for each tag, **Scores** for composite/catch/judge, **Annotations** for narrative. UI has run-vs-run comparison + cost trends + historical graphs. Downside: need ingester from our log format into Langfuse API; UI is data-first not narrative-first.
+**C. Metrics dashboard over the `task` telemetry tables** — per-task token/cost rollups already land in Postgres (the `task` table). A BI/dashboard layer (e.g. Grafana or Metabase) could read them for **run-vs-run comparison, cost trends, historical graphs**. Downside: need an ingester mapping eval tags/scores into the schema, plus standing up the dashboard; UI is data-first not narrative-first.
 
-**Recommended combo** (when implemented): **B + C** — Langfuse for regression numbers / cost trends (has the UI for it), SQLite CLI for narrative + experimental notes that don't fit structured rows. ROADMAP ADR section captures architecture-level decisions that outlast experimental churn.
+**Recommended combo** (when implemented): **B + C** — a metrics dashboard for regression numbers / cost trends (has the UI for it), SQLite CLI for narrative + experimental notes that don't fit structured rows. ROADMAP ADR section captures architecture-level decisions that outlast experimental churn.
 
 - [ ] Pick implementation (A / B / C / combo)
 - [ ] If B/C: write ingester for `/tmp/brain-regression-*-<tag>.log` parser → DB rows
@@ -1809,7 +1948,7 @@ Commands: `record` / `regression ingest <log>` / `diff <tag-a> <tag-b>` / `expor
 11.6 (Extension Tests) ────────> enforced by 11.1
 11.7 (Deployment) ─────────────> benefits from 11.1 (image build)
 11.8 (Error Handling) ─────────> measured by 11.5
-11.9 (Lab Notebook) ───────────> benefits from 11.5 (Langfuse is option C)
+11.9 (Lab Notebook) ───────────> benefits from 11.5 (metrics dashboard is option C)
 ```
 
 ## Phase 12: Team Knowledge Base (PLANNED)
@@ -1927,11 +2066,90 @@ Bridge the gap between AI Summaries and actionable outcomes. Applies to both Ext
 | **Phase 9.16: Forked Agent Pattern (P11 verifier cache reuse)** | **✅ Complete** | **Sprint 18** |
 | **Phase 9.17: Brain Lifecycle Hooks (4 extension points)** | **✅ Complete** | **Sprint 18** |
 | **Phase 11.3: Type Checking (mypy strict-audit baseline)** | **✅ Complete** | **Sprint 18** |
+| **Phase 9.18.1: Workspace scan walker pruning (`os.walk` + extended exclude list, 14.5x faster on render)** | **✅ Complete** | **Sprint 19** |
+| **Phase 9.19: Domain Brain orchestrator + dispatch primitive rename + `dispatch_swarm` retired** | **✅ Complete** | **Sprint 19** |
 | **Phase 11.9: Lab Notebook System (experimental notes + regression history)** | **🟡 Planned** | **TBD** |
 | Phase 10: Companion & Developer Experience | 🟡 Planned | — |
 | Phase 11: Engineering Infrastructure | 🟡 Planned | — |
 | **Phase 12: Team Knowledge Base** | **🔴 Next Up** | **Sprint 14–15** |
 | **Phase 13: AI Summary → Action Pipeline** | **🔴 Next Up** | **Sprint 15–16** |
+
+## Phase 14: SDK-Native Architecture — Agent Skills + Concierge Router (IN PROGRESS)
+
+**Status**: In progress. The agent-SDK worker migration (**Steps 01–06**) is **COMPLETE** (merged 2026-05-31; see the Agent-SDK Migration block under Current State and `docs/archive/REFACTOR_EXECUTION_LOG.md`) — `SdkWorkerRunner` leaf loop, provider collapse to Claude-only, Langfuse→task telemetry, and the two-mode Bedrock auth all shipped. The Phase 14 first slice (foundation auth/guard, Opus 4.8 model A/B, severity-rubric fix, Anthropic-compliance audit, preset-persona probe) is also merged. Remaining Phase 14 work (Agent Skills remap, Concierge Router, 3-tier split) continues below.
+
+**Goal**: Evolve Conductor's backend from "a PR-review tool with a hand-rolled classifier Brain" into an **AI-native team backend** — a long-lived assistant that understands the codebase, drives Jira / GitLab / Azure / Figma, joins & summarises meetings, scans new code nightly to update docs, and (eventually) evaluates work and opens its own bug-fix PRs, tailored per team member. The structural enabler is a clean 3-tier split that puts each responsibility where it belongs (SDK vs Python), navigable by a new engineer in an afternoon.
+
+### Target architecture — 3 tiers
+
+```
+Tier 1 — Concierge (SDK-native)                 ← thin router + generalist + integrations
+  ├─ Skills (SKILL.md): how-to-classify, how-to-use-{jira,gitlab,azure,figma}, how-to-summarise-meeting
+  ├─ MCP integrations:  jira_*, gitlab_*, azure_*, figma_*, calendar_*, kb_*
+  └─ MCP dispatch tools: review_pr(), investigate_domain(), scan_codebase(), summarise_meeting() …
+        │   heavy workflows are TOOLS, NOT SDK subagents → sidesteps the no-nesting limit
+        ▼
+Tier 2 — Capability workflows (Python orchestrators)            ← the moat
+  PR Brain v2 · Domain Brain · nightly doc-scan · meeting-summary · work-eval · auto-bugfix
+  (multi-phase · Fact Vault · budget arbitration · replan · deterministic post-passes)
+  Invokable BOTH by Tier 1 (fuzzy human intent) AND by schedulers/webhooks (known intent)
+        │   each workflow runs its OWN SDK session for its leaves
+        ▼
+Tier 3 — Leaf workers (SdkWorkerRunner, Step 06)   ← code investigation; Fact Vault preserved
+```
+
+### Why this split (SDK capability research, 2026-05-30)
+- **SDK excels at**: intent→tool/skill selection (it *is* a router), MCP-tool orchestration, conversation, progressive-disclosure Skills, per-subagent model/tools. → **Tier 1 belongs on the SDK.**
+- **SDK cannot**: nest subagents; share a cross-agent cache; do cross-agent budget arbitration / replan loops / multi-phase orchestration. → **Tier 2 stays Python.** Exposing Tier-2 workflows as MCP **tools** (not SDK subagents) is the key move — it lets Tier 1 call them while each workflow keeps its own nested SDK leaves + Fact Vault.
+- **Leaf workers**: our `SdkWorkerRunner` (Step 06) beats native SDK subagents because it routes tools through our in-process MCP server → preserves Fact Vault dedup + per-worker usage. → **Tier 3 = the Step 06 engine.**
+
+### Work items
+1. **Skills migration + 4-layer→SDK prompt remap.** Today (Step 06) the worker prompt is the *blunt parity mapping*: `build_sub_agent_system_prompt` collapses L1 (identity) + L3 (guidelines + workspace context) into one **full-replace** `system_prompt` string (L2 tools and L4 query are already separate). Refactor it to use ALL of the SDK's layers (design decided 2026-05-30):
+
+   | Our 4-layer | → SDK primitive |
+   |---|---|
+   | **L1 Identity** (role/perspective, short) | `system_prompt = {preset: "claude_code", append: <role delta>}` — keep Claude Code's tuned code-agent harness/fluency; append only our role identity (NOT a full-replace string) |
+   | **L3 Skills/Guidelines** (investigation patterns, **severity rubric**, risk signals) | `SKILL.md` packages (progressive disclosure; attach per-agent via `AgentDefinition.skills=`) — convert `config/skills/*.md` (domain_brain_coordinator, pr_brain_coordinator, investigation patterns, `code_review_pr`) |
+   | **L3 Workspace context** (layout, project docs, risk) | mostly **drop** — Claude Code does workspace recon + reads `CLAUDE.md` natively via `setting_sources`; inject only the non-derivable delta |
+   | **L2 Tools** | MCP schemas (already separate, unchanged) |
+   | **L4 Task** | `user_message` = clean query **+ this-dispatch scope / checks / direction_hint** (dynamic per-dispatch instructions live here, not in identity) |
+
+   - **Wins**: progressive disclosure shrinks worker prefixes (better prompt-cache); the `claude_code` preset is a cache-stable prefix; loading a crisp severity Skill (instead of burying the rubric in a long system string) + gaining native code-agent fluency may *also* help the severity-calibration gap found in the Step-06c sentry eval (see Execution Log 2026-05-30: SDK under-grades critical/security findings).
+   - **⚠️ Role-separation eval gate (must-test)**: full-replace was originally chosen to protect role distinctness (CLAUDE.md principle #8 — putting shared *strategy* in individual L1 identities once caused a 60%→25% eval regression). The `claude_code` preset is generic *harness*, not a competing *role*, so append *should* preserve distinctness — but this is a **must-eval** change, not a free swap.
+   - **⚠️ Read-only drift**: the preset is tuned for interactive/*acting* coding (edit, run); our leaves are **read-only investigators** → append explicit "investigate, don't act" framing and watch for edit-drift in eval.
+   - Pairs with "+ test until green": do NOT ship the remap without re-running agent_quality + code_review against `baselines/premigration_20260529`.
+2. **Concierge (Tier 1)** — SDK agent with a cheap (Haiku-tier) router; today's `transfer_to_brain("pr_review"/"domain")` evolves into MCP dispatch tools `review_pr()` / `investigate_domain()`. **Deterministic fast-paths**: explicit `/pr` and all cron/webhook triggers BYPASS the LLM router (known intent → call the workflow directly); LLM classification is the fallback for ambiguous natural language only.
+3. **Integration MCP backbone (tool-surface → MCP; integration core stays Python).** Split the existing integrations. **MCP replaces only the agent-facing read/query verbs**, not the backend plumbing.
+   - **Keep (backend integration core, irreplaceable by MCP):** OAuth/3LO token store, webhook receivers (ADO/Jira), platform-shaped comment-posting, the readonly **enrichment/shaping** (regex ticket keys from branch/title → fetch → flatten ADF/storage-XHTML to markdown-lite → splice into the cache-stable prefix), size-gates, scheduling. MCP is a tool-call protocol — it is not a webhook receiver, OAuth broker, comment-poster, or formatter.
+   - **⚠️ Headless-auth constraint (decisive):** the backend runs headless on ECS + cron/webhook, so we MUST use **self-hosted, token-authenticated MCP servers** — NOT hosted interactive-OAuth servers (those can't authenticate in a nightly job; the SDK warns interactively-authed MCP servers are absent in headless/cron runs).
+   - **Adopt as MCP (self-hosted, service-account token):** **Jira / Confluence** — Atlassian **Cloud API token** (email+token Basic auth, the same credential our Phase 7.8.6 readonly client uses; Data Center/Server has true **PATs**) → headless-safe; **GitLab** — **PAT** → headless-safe; **Figma** — official MCP (design-read is pure tool-call).
+   - **Stays bespoke (not a tool-call surface):** **Microsoft Teams** (Graph API + bot framework, Phase 7.5); **Azure DevOps** webhook + comment-posting + `translate_pr_summary` + size-gates (backend — only its *reads* could move to MCP).
+   - **Migration discipline:** do NOT retire a working API client until its MCP equivalent is proven on the **headless/cron** path. The win is real but partial — MCP shrinks the agent-tool layer, not the integration backbone.
+4. **Autonomous capability workflows** — nightly code-scan → doc update; meeting join → summary; work evaluation; auto bug-fix PR. Each is a Tier-2 workflow triggered by a scheduler/webhook (not the router).
+5. **Per-member personal assistant** — member profile + working style in the Team Knowledge Base (Phase 12, pgvector); Concierge injects member context to tailor suggestions.
+6. **Context-enriched PR review (ticket → design).** Upgrade Phase 7.8.6's deterministic ticket/Confluence pre-fetch into *agentic* context-gathering via the MCP backbone, so the AI reviews against **intent**, not just the diff:
+   - **Ticket (have the seed, make it richer):** keep the *primary* linked-ticket pre-fetch deterministic + cache-stable (the anchor — acceptance criteria → review invariants; criterion break = critical; catch intent-drift). Add MCP so the coordinator can *optionally pull more on demand*: parent/epic, linked tickets, related Confluence spec.
+   - **Figma = new review dimension (gated):** when the PR touches UI **and** the ticket references a design, fetch the Figma frame (`get_design_context`/`get_screenshot`) and check the implementation matches design intent. Gate on UI-relevance — Figma screenshots are costly multimodal tokens, so do NOT fetch on every PR.
+   - **Flow:** `diff + ticket(criteria) + design(Figma)` → review against intent. **Headless** (ADO webhook-triggered) → rides on the self-hosted token-auth MCP servers from #3.
+
+### Eval & quality gates
+- **Routing accuracy is a first-class eval** (labeled queries → expected destination); gate it like code_review. (Wrong-mode routing wastes tokens — this has always been critical.)
+- Each Tier-2 workflow keeps its existing eval (code_review composite/catch, agent_quality).
+
+### Engineering discipline (onboarding)
+The refactor MUST leave code + layout **clean enough for a new engineer to map in an afternoon**: one directory per tier, MCP integrations isolated, Skills as discoverable `SKILL.md` packages, a top-of-tree architecture doc, and **no dead code from the pre-SDK era**.
+
+### Sequencing (agreed 2026-05-30)
+① Finish Step 06 eval gate (code_review re-run) → ② Skills + prompt refactor to Claude-native form + test green → ③ build Concierge / Tier-1 + MCP backbone → ④ migrate/author autonomous workflows → ⑤ personal-assistant layer (with Phase 12 KB). **Incremental**: stand the Concierge up *beside* the current Brain, route a subset of intents, eval routing accuracy vs the current classifier, then widen.
+
+### Status (2026-05-31 — first slice shipped)
+- **Foundation (the 2h-hang fix):** SSO auto-refresh (boto3 profile, ~8h/login) + `scripts/guarded_run.sh` (timeout + auth/stall kill) — merged. Long Bedrock runs are now reliable.
+- **Model:** Opus 4.8 registered + A/B'd vs Sonnet on the sentry suite → **Opus REJECTED** (composite 0.676 vs 0.812, severity 0.40 vs 0.56, recall 0.63 vs 0.97; **2.2× cost**). **Default stays Sonnet 4.6.** The severity hypothesis was refuted → it's a prompt problem, not a model one.
+- **Severity (the measured defect) — FIXED:** `pr_brain_coordinator.md` rubric rewritten as examples (security-control removal / acceptance-criterion break = `critical` unmissable; conservation scoped to speculative findings). Eval-gated: **severity +0.10 (0.562→0.662), composite 0.812→0.831** — merged.
+- **Anthropic-compliance:** re-audited the live prompts → already compliant (forceful language on hard constraints is correct per #6). No churn.
+- **#1 core (preset+append) — REFUTED:** `system_prompt={preset:claude_code, append:role}` *dilutes* the severity rubric (−0.179) for net-worse composite → **full-replace kept** (branch `refactor/step-14-4-preset` parked). The Claude Code *harness* (loop/fluency, already used) helps; its *persona* doesn't. SKILL.md progressive-disclosure deferred (same dilution caution — it's a cache-economics optimization, not a quality lever).
+- **Still planned (this phase):** Concierge / Tier-1 router (#2), MCP integration backbone (#3), context-enriched PR review (#6), autonomous workflows (#4), per-member assistant (#5).
+- Detail: `docs/archive/PHASE14_{SCORE_DIAGNOSIS,PROMPT_AUDIT,AB_RESULT}.md` + `docs/archive/REFACTOR_EXECUTION_LOG.md` (Phase 14 section).
 
 ## Architecture Decision Log
 

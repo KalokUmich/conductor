@@ -16,10 +16,6 @@ Environment variable overrides:
     CONDUCTOR_AWS_SESSION_TOKEN      → ai_providers.aws_bedrock.session_token
     CONDUCTOR_AWS_REGION             → ai_providers.aws_bedrock.region
     CONDUCTOR_ANTHROPIC_API_KEY      → ai_providers.anthropic.api_key
-    CONDUCTOR_OPENAI_API_KEY         → ai_providers.openai.api_key
-    CONDUCTOR_ALIBABA_API_KEY        → ai_providers.alibaba.api_key
-    CONDUCTOR_ALIBABA_BASE_URL       → ai_providers.alibaba.base_url
-    CONDUCTOR_MOONSHOT_API_KEY       → ai_providers.moonshot.api_key
     CONDUCTOR_POSTGRES_USER          → postgres.user
     CONDUCTOR_POSTGRES_PASSWORD      → postgres.password
     CONDUCTOR_JIRA_CLIENT_ID         → jira.client_id
@@ -31,9 +27,6 @@ Environment variable overrides:
     CONDUCTOR_GOOGLE_CLIENT_ID       → google_sso.client_id
     CONDUCTOR_GOOGLE_CLIENT_SECRET   → google_sso.client_secret
     CONDUCTOR_NGROK_AUTHTOKEN        → ngrok.authtoken
-    LANGFUSE_PUBLIC_KEY              → langfuse.public_key  (Langfuse SDK convention)
-    LANGFUSE_SECRET_KEY              → langfuse.secret_key
-    LANGFUSE_HOST                    → langfuse.host
 """
 
 from __future__ import annotations
@@ -62,11 +55,8 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_AWS_SECRET_ACCESS_KEY": ("ai_providers", "aws_bedrock", "secret_access_key"),
     "CONDUCTOR_AWS_SESSION_TOKEN": ("ai_providers", "aws_bedrock", "session_token"),
     "CONDUCTOR_AWS_REGION": ("ai_providers", "aws_bedrock", "region"),
-    "CONDUCTOR_OPENAI_API_KEY": ("ai_providers", "openai", "api_key"),
-    "CONDUCTOR_ALIBABA_API_KEY": ("ai_providers", "alibaba", "api_key"),
-    "CONDUCTOR_ALIBABA_BASE_URL": ("ai_providers", "alibaba", "base_url"),
-    "CONDUCTOR_MOONSHOT_API_KEY": ("ai_providers", "moonshot", "api_key"),
-    "CONDUCTOR_MOONSHOT_BASE_URL": ("ai_providers", "moonshot", "base_url"),
+    "CONDUCTOR_AWS_PROFILE": ("ai_providers", "aws_bedrock", "profile"),
+    "CONDUCTOR_AWS_BEARER_TOKEN": ("ai_providers", "aws_bedrock", "bearer_token"),
     "CONDUCTOR_JIRA_CLIENT_ID": ("jira", "client_id"),
     "CONDUCTOR_JIRA_CLIENT_SECRET": ("jira", "client_secret"),
     "CONDUCTOR_ATLASSIAN_READONLY_EMAIL": ("atlassian_readonly", "email"),
@@ -82,8 +72,6 @@ _ENV_SECRETS_MAP = {
     "CONDUCTOR_GOOGLE_CLIENT_ID": ("google_sso", "client_id"),
     "CONDUCTOR_GOOGLE_CLIENT_SECRET": ("google_sso", "client_secret"),
     "CONDUCTOR_NGROK_AUTHTOKEN": ("ngrok", "authtoken"),
-    "LANGFUSE_PUBLIC_KEY": ("langfuse", "public_key"),
-    "LANGFUSE_SECRET_KEY": ("langfuse", "secret_key"),
 }
 
 
@@ -211,19 +199,11 @@ class JWTSecrets(BaseModel):
     algorithm: str = "HS256"
 
 
-class LangfuseSecrets(BaseModel):
-    """Langfuse API keys (from conductor.secrets.yaml)."""
-
-    public_key: str = ""
-    secret_key: str = ""
-
-
 class Secrets(BaseModel):
     database: DatabaseSecrets = Field(default_factory=DatabaseSecrets)
     postgres: PostgresSecrets = Field(default_factory=PostgresSecrets)
     redis: RedisSecrets = Field(default_factory=RedisSecrets)
     jwt: JWTSecrets = Field(default_factory=JWTSecrets)
-    langfuse: LangfuseSecrets = Field(default_factory=LangfuseSecrets)
 
 
 # ---------------------------------------------------------------------------
@@ -321,17 +301,6 @@ class TraceSettings(BaseModel):
     database_url: str = ""  # e.g. "sqlite:///traces.db" or "postgresql://..."
 
 
-class LangfuseSettings(BaseModel):
-    """Configuration for Langfuse observability integration.
-
-    Self-hosted via docker/docker-compose.langfuse.yaml.
-    When disabled, @observe decorators are no-ops (zero overhead).
-    """
-
-    enabled: bool = False
-    host: str = "http://localhost:3001"
-
-
 class CodeSearchSettings(BaseModel):
     """Configuration for code search and repo graph features."""
 
@@ -350,7 +319,6 @@ class AppSettings(BaseModel):
     git_workspace: GitWorkspaceSettings = Field(default_factory=GitWorkspaceSettings)
     code_search: CodeSearchSettings = Field(default_factory=CodeSearchSettings)
     trace: TraceSettings = Field(default_factory=TraceSettings)
-    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     secrets: Secrets = Field(default_factory=Secrets)
 
     def build_postgres_url(self) -> str:
@@ -424,35 +392,13 @@ class AWSBedrockSecretsConfig(BaseModel):
     secret_access_key: str = ""
     session_token: Optional[str] = None
     region: str = "us-east-1"
-
-
-class OpenAISecretsConfig(BaseModel):
-    """OpenAI API credentials."""
-
-    api_key: str = ""
-    organization: Optional[str] = None
-
-
-class AlibabaSecretsConfig(BaseModel):
-    """Alibaba Cloud DashScope API credentials.
-
-    Uses an OpenAI-compatible endpoint at DashScope.
-    Get your API key from: https://dashscope.console.aliyun.com/
-    """
-
-    api_key: str = ""
-    base_url: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-
-
-class MoonshotSecretsConfig(BaseModel):
-    """Moonshot AI (Kimi) API credentials.
-
-    Uses an OpenAI-compatible endpoint.
-    Get your API key from: https://platform.moonshot.ai/
-    """
-
-    api_key: str = ""
-    base_url: str = "https://api.moonshot.ai/v1"
+    # AWS named profile (SSO). When set (and static keys empty), boto3 resolves +
+    # AUTO-REFRESHES the role creds from the cached SSO login — no hourly pasting.
+    profile: Optional[str] = None
+    # Amazon Bedrock API key (bearer token → AWS_BEARER_TOKEN_BEDROCK). Highest-priority
+    # LOCAL-mode option: a single long-lived token, no SSO login / profile / refresh.
+    # botocore (coordinator) auto-resolves it from env; bedrock_env passes it to the CLI.
+    bearer_token: Optional[str] = None
 
 
 class AIProvidersSecretsConfig(BaseModel):
@@ -460,9 +406,6 @@ class AIProvidersSecretsConfig(BaseModel):
 
     anthropic: AnthropicSecretsConfig = Field(default_factory=AnthropicSecretsConfig)
     aws_bedrock: AWSBedrockSecretsConfig = Field(default_factory=AWSBedrockSecretsConfig)
-    openai: OpenAISecretsConfig = Field(default_factory=OpenAISecretsConfig)
-    alibaba: AlibabaSecretsConfig = Field(default_factory=AlibabaSecretsConfig)
-    moonshot: MoonshotSecretsConfig = Field(default_factory=MoonshotSecretsConfig)
 
 
 class AIProviderSettingsConfig(BaseModel):
@@ -470,9 +413,6 @@ class AIProviderSettingsConfig(BaseModel):
 
     anthropic_enabled: bool = False
     aws_bedrock_enabled: bool = False
-    openai_enabled: bool = False
-    alibaba_enabled: bool = False
-    moonshot_enabled: bool = False
 
 
 class AIModelConfig(BaseModel):
@@ -843,17 +783,11 @@ def load_config(
     ai_provider_settings_cfg = AIProviderSettingsConfig(
         anthropic_enabled=aps_data.get("anthropic_enabled", False),
         aws_bedrock_enabled=aps_data.get("aws_bedrock_enabled", False),
-        openai_enabled=aps_data.get("openai_enabled", False),
-        alibaba_enabled=aps_data.get("alibaba_enabled", False),
-        moonshot_enabled=aps_data.get("moonshot_enabled", False),
     )
 
     ap_sec = secrets_raw.get("ai_providers", {})
     anth_sec = ap_sec.get("anthropic", {})
     bdr_sec = ap_sec.get("aws_bedrock", {})
-    oai_sec = ap_sec.get("openai", {})
-    ali_sec = ap_sec.get("alibaba", {})
-    moon_sec = ap_sec.get("moonshot", {})
     ai_providers_cfg = AIProvidersSecretsConfig(
         anthropic=AnthropicSecretsConfig(
             api_key=_env("CONDUCTOR_ANTHROPIC_API_KEY", anth_sec.get("api_key", "")),
@@ -863,21 +797,8 @@ def load_config(
             secret_access_key=_env("CONDUCTOR_AWS_SECRET_ACCESS_KEY", bdr_sec.get("secret_access_key", "")),
             session_token=_env("CONDUCTOR_AWS_SESSION_TOKEN", bdr_sec.get("session_token") or ""),
             region=_env("CONDUCTOR_AWS_REGION", bdr_sec.get("region", "us-east-1")),
-        ),
-        openai=OpenAISecretsConfig(
-            api_key=_env("CONDUCTOR_OPENAI_API_KEY", oai_sec.get("api_key", "")),
-            organization=oai_sec.get("organization"),
-        ),
-        alibaba=AlibabaSecretsConfig(
-            api_key=_env("CONDUCTOR_ALIBABA_API_KEY", ali_sec.get("api_key", "")),
-            base_url=_env(
-                "CONDUCTOR_ALIBABA_BASE_URL",
-                ali_sec.get("base_url", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
-            ),
-        ),
-        moonshot=MoonshotSecretsConfig(
-            api_key=_env("CONDUCTOR_MOONSHOT_API_KEY", moon_sec.get("api_key", "")),
-            base_url=_env("CONDUCTOR_MOONSHOT_BASE_URL", moon_sec.get("base_url", "https://api.moonshot.ai/v1")),
+            profile=(_env("CONDUCTOR_AWS_PROFILE", bdr_sec.get("profile") or "") or None),
+            bearer_token=(_env("CONDUCTOR_AWS_BEARER_TOKEN", bdr_sec.get("bearer_token") or "") or None),
         ),
     )
 

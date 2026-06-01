@@ -32,7 +32,6 @@ from app.code_tools.schemas import TOOL_DEFINITIONS, filter_tools, format_tool_s
 
 if TYPE_CHECKING:
     from app.code_tools.schemas import ToolResult
-from app.workflow.observability import observe
 
 from .budget import BudgetConfig, BudgetController, BudgetSignal, IterationMetrics
 from .config import AgentLoopConfig
@@ -181,7 +180,6 @@ class AgentLoopService:
         self._quality_config = None  # set per-agent via brain dispatch
         self._forced_skill = config.forced_skill  # investigation skill override (Layer 3 skill)
 
-    @observe(name="agent_loop")
     async def run(
         self,
         query: str,
@@ -227,7 +225,6 @@ class AgentLoopService:
                     result.error = event.data.get("error")
         return result
 
-    @observe(name="agent_loop_stream")
     async def run_stream(
         self,
         query: str,
@@ -267,6 +264,7 @@ class AgentLoopService:
         if self._agent_identity and self._agent_identity.get("name"):
             try:
                 from app.scratchpad.context import _current_agent_name
+
                 _current_agent_name.set(self._agent_identity["name"])
             except Exception:
                 pass  # best-effort, never crash the run on this
@@ -296,12 +294,16 @@ class AgentLoopService:
         evidence_retries = 0
         response: Optional[ToolUseResponse] = None
 
-        # Token budget controller — tracks cumulative token usage
+        # Token + USD budget controller. Pass the provider's model id so the
+        # controller prices each iteration correctly (else pricing falls back to
+        # the sonnet tier and logs "unknown model ''" — see pricing._FALLBACK_TIER).
+        _model = getattr(self._provider, "model_name", None) or getattr(self._provider, "model_id", "") or ""
         budget = BudgetController(
             self._budget_config
             or BudgetConfig(
                 max_iterations=self._max_iterations,
-            )
+            ),
+            model=_model,
         )
 
         # Accumulate LLM text throughout the loop so we have a fallback
@@ -415,19 +417,6 @@ class AgentLoopService:
                 input_tokens=response.usage.input_tokens if response.usage else 0,
                 output_tokens=response.usage.output_tokens if response.usage else 0,
             )
-
-            # Record generation to Langfuse (model name + token usage)
-            if response.usage:
-                from app.workflow.observability import track_generation
-
-                track_generation(
-                    name=f"llm_iter_{iteration + 1}",
-                    model=self._provider.model_name,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
-                    cache_read_input_tokens=response.usage.cache_read_input_tokens,
-                    cache_write_input_tokens=response.usage.cache_write_input_tokens,
-                )
 
             # Build iteration trace
             iter_trace = IterationTrace(
@@ -1532,7 +1521,7 @@ class AgentLoopService:
                     },
                 )
 
-            remaining_tokens = budget.config.max_input_tokens - budget.cumulative_input
+            remaining_tokens = max(0.0, budget.config.max_usd - budget.cumulative_usd)
             tool_results_content.append(self._tool_result_block(tc.id, tool_result, tc.name, remaining_tokens))
             iter_trace.tool_calls.append(tc_trace)
 
@@ -1559,8 +1548,8 @@ class AgentLoopService:
                 "Budget FORCE_CONCLUDE at iteration %d: %s (input tokens: %s/%s)",
                 iteration + 1,
                 conclude_reason,
-                budget.cumulative_input,
-                budget.config.max_input_tokens,
+                budget.cumulative_usd,
+                budget.config.max_usd,
             )
             # Append the pending tool results FIRST so the conversation has
             # no orphaned toolUse blocks (Bedrock rejects unmatched tool_use).

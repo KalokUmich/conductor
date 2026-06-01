@@ -18,15 +18,18 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from app.code_tools.executor import ToolExecutor
-from app.code_tools.schemas import ToolResult
+from app.code_tools.schemas import WORKER_MCP_TOOLS, ToolResult
 
 from .config import BrainExecutorConfig
+from .task_telemetry import record_complete, record_start
 
 logger = logging.getLogger(__name__)
 
@@ -41,21 +44,41 @@ _MAX_TOOLS_SUMMARY = 15  # cap on tool-call summary lines returned to Brain
 _MAX_BRAIN_RESERVE = 100_000  # upper bound on tokens Brain reserves for its own calls
 _MIN_AGENT_BUDGET = 50_000  # floor budget allocated to any sub-agent
 _MAX_AGENT_BUDGET = 800_000  # ceiling budget allocated to any sub-agent
+
+# Step 06c — dispatch-engine discriminator. A dispatched agent holding ANY of these
+# tools is an *orchestrator* (Domain/PR Brain coordinator) that must fan out to its
+# own workers, so it keeps the in-house AgentLoopService loop (which retains these
+# tools and recurses back into _dispatch_explore one depth deeper). An agent with
+# none is a *leaf worker* → runs on the Claude Agent SDK. core_tools are code tools
+# only, so only coordinators that declare a dispatch_* / orchestration tool trip this.
+_ORCHESTRATION_TOOLS = frozenset(
+    {"dispatch_explore", "dispatch_verify", "dispatch_sweep", "create_plan", "transfer_to_brain"}
+)
 _DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is generous
+
+# USD budget economy (P1d): the SDK leaf path can't enforce a token cap — the
+# leaf is an independent `claude` subprocess whose only budget knobs are max_turns
+# and max_budget_usd. So we enforce dollars there. This is a LOOSE safety ceiling,
+# not a target: a real leaf spends ~$0.05–0.50, so $8 (16–160× headroom) never
+# hard-stops genuine work but caps a runaway loop before it costs hundreds.
+# Phase 2 BudgetEconomics replaces this constant with a per-task computed cap.
+_SDK_LEAF_MAX_USD = 8.0
 
 # ---------------------------------------------------------------------------
 # Role-factory template loader (P12 — role-based dispatch)
 # ---------------------------------------------------------------------------
 
-_VALID_FACTORY_ROLES = frozenset({
-    "security",
-    "correctness",
-    "concurrency",
-    "reliability",
-    "performance",
-    "test_coverage",
-    "api_contract",
-})
+_VALID_FACTORY_ROLES = frozenset(
+    {
+        "security",
+        "correctness",
+        "concurrency",
+        "reliability",
+        "performance",
+        "test_coverage",
+        "api_contract",
+    }
+)
 
 
 def _load_role_template(role: str) -> Optional[Dict[str, Any]]:
@@ -87,6 +110,7 @@ def _load_role_template(role: str) -> Optional[Dict[str, Any]]:
         return None
 
     import re as _re
+
     match = _re.match(r"\A---\s*\n(.*?)\n---\s*\n(.*)", content, _re.DOTALL)
     if not match:
         logger.warning("Role template %s missing YAML frontmatter", role)
@@ -161,27 +185,19 @@ def _compose_role_system_prompt(
         parts.append("")
         parts.append("\n".join(f"{i+1}. {c}" for i, c in enumerate(checks)))
         parts.append("")
-        parts.append(
-            "For each check, emit `{id, question, verdict, evidence}`."
-        )
+        parts.append("For each check, emit `{id, question, verdict, evidence}`.")
         parts.append("")
 
     parts.append("## Output contract — MUST follow")
     parts.append("")
-    parts.append(
-        "Emit a JSON block at end of turn with this shape:"
-    )
+    parts.append("Emit a JSON block at end of turn with this shape:")
     parts.append("")
     parts.append("```json")
     parts.append("{")
-    parts.append(
-        '  "summary": "≤3 sentences. Overall verdict from your lens.",'
-    )
+    parts.append('  "summary": "≤3 sentences. Overall verdict from your lens.",')
     if checks:
         parts.append('  "checks": [/* verdict per check, in order */],')
-    parts.append(
-        '  "findings": ['
-    )
+    parts.append('  "findings": [')
     parts.append(
         '    {"title": "...", "file": "...", "line": N, '
         '"description": "...", "severity": null, '
@@ -416,7 +432,23 @@ class BrainBudgetManager:
         self.brain_reserve = min(_MAX_BRAIN_RESERVE, int(total_tokens * brain_reserve_ratio))
         self.used: Dict[str, int] = {}  # agent_name → actual tokens consumed (post-report)
         self.reserved: Dict[str, int] = {}  # agent_name → tokens held at allocate() time
+        # USD economy: accumulate real dollar spend per agent as runs report. This
+        # is the reliable aggregate for "what did this review cost" — the leaf SDK
+        # workers run as separate subprocesses, so their cost never lands in the
+        # coordinator's own budget_summary; it only shows up here, via report().
+        self.cost_used: Dict[str, float] = {}  # agent_name → cumulative USD (post-report)
+        self.tokens_total: Dict[str, int] = {}  # agent_name → cumulative total tokens (in+out)
         self._lock = asyncio.Lock()
+
+    @property
+    def total_cost_usd(self) -> float:
+        """Total USD spent across all reported sub-agents this session."""
+        return sum(self.cost_used.values())
+
+    @property
+    def total_tokens_used(self) -> int:
+        """Total tokens (in+out) across all reported sub-agents this session."""
+        return sum(self.tokens_total.values())
 
     @property
     def remaining(self) -> int:
@@ -464,7 +496,13 @@ class BrainBudgetManager:
             )
             return allocated
 
-    async def report(self, agent_name: str, tokens_used: int) -> None:
+    async def report(
+        self,
+        agent_name: str,
+        tokens_used: int,
+        cost_usd: float = 0.0,
+        total_tokens: int = 0,
+    ) -> None:
         """Record actual token usage after a sub-agent completes.
 
         Releases the agent's reservation and moves the actual usage into
@@ -475,10 +513,18 @@ class BrainBudgetManager:
 
         Args:
             agent_name: Name of the sub-agent that completed.
-            tokens_used: Number of input tokens consumed by that run.
+            tokens_used: Number of input tokens consumed by that run (pool accounting).
+            cost_usd: Actual USD spend for that run (authoritative for SDK leaves via
+                ResultMessage.total_cost_usd; computed for in-house). Accumulated for
+                the session-wide cost total reported in the PR review stats.
+            total_tokens: Total tokens (in+out) for that run, for the displayed total.
         """
         async with self._lock:
             self.used[agent_name] = self.used.get(agent_name, 0) + tokens_used
+            if cost_usd:
+                self.cost_used[agent_name] = self.cost_used.get(agent_name, 0.0) + float(cost_usd)
+            if total_tokens:
+                self.tokens_total[agent_name] = self.tokens_total.get(agent_name, 0) + int(total_tokens)
             # Release the reservation — the actual usage in `used` now
             # represents this agent's pool consumption.
             self.reserved.pop(agent_name, None)
@@ -510,6 +556,9 @@ class AgentToolExecutor(ToolExecutor):
         budget_manager: Optional[BrainBudgetManager] = None,
         qa_cache: Optional[Dict[str, str]] = None,
         llm_semaphore: Optional[asyncio.Semaphore] = None,
+        task_id: Optional[str] = None,
+        root_task_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         # Legacy individual params — kept for backward compatibility.
         # When ``config`` is provided these are ignored.
         workspace_path: str = "",
@@ -529,6 +578,12 @@ class AgentToolExecutor(ToolExecutor):
         self._budget_manager = budget_manager
         self._qa_cache = qa_cache or {}
         self._llm_semaphore = llm_semaphore
+        # Telemetry (06d): this executor's own task id + the tree root it anchors.
+        # ``session_id`` carries the human-readable PR/session id so every task row
+        # in the tree is queryable by PR (and propagates down to child dispatches).
+        self._task_id = task_id
+        self._root_task_id = root_task_id
+        self._session_id = session_id
 
         # Build config from individual params when not supplied directly
         if config is None:
@@ -547,6 +602,9 @@ class AgentToolExecutor(ToolExecutor):
         self._max_depth = config.max_depth
         self._max_concurrent = config.max_concurrent
         self._sub_agent_timeout = config.sub_agent_timeout
+        # BudgetEconomics per-leaf USD cap (None → static _SDK_LEAF_MAX_USD). Propagated
+        # to deeper executors so a PR Brain's computed cap reaches every SDK leaf.
+        self._leaf_max_usd = getattr(config, "leaf_max_usd", None)
 
         self._code_context: Optional[Dict[str, Any]] = None
         self._plan: Optional[Dict[str, Any]] = None
@@ -755,12 +813,9 @@ class AgentToolExecutor(ToolExecutor):
                 scope_lines.append(f"- {s}")
         scope_block = "\n".join(scope_lines)
 
-        mode_label = (
-            "combined" if (role and checks) else ("role" if role else "checks")
-        )
+        mode_label = "combined" if (role and checks) else ("role" if role else "checks")
         logger.info(
-            "[dispatch_verify] mode=%s role=%s checks=%d scope_files=%d "
-            "direction_hint=%r depth=%d",
+            "[dispatch_verify] mode=%s role=%s checks=%d scope_files=%d " "direction_hint=%r depth=%d",
             mode_label,
             role or "-",
             len(checks) if checks else 0,
@@ -828,8 +883,13 @@ class AgentToolExecutor(ToolExecutor):
                 role_template["frontmatter"].get("tools_hint")
                 or role_template["frontmatter"].get("tools")
                 or [
-                    "grep", "read_file", "find_symbol", "find_references",
-                    "git_diff", "git_show", "file_outline",
+                    "grep",
+                    "read_file",
+                    "find_symbol",
+                    "find_references",
+                    "git_diff",
+                    "git_show",
+                    "file_outline",
                 ]
             )
             # P10 — Coordinator's explicit `model_tier="strong"` overrides
@@ -838,17 +898,12 @@ class AgentToolExecutor(ToolExecutor):
             if model_tier == "strong":
                 model_hint = "strong"
             else:
-                model_hint = role_template["frontmatter"].get(
-                    "model_hint", model_tier
-                )
+                model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
             # Dispatch in dynamic mode. The role lens lives in the
             # perspective; we pass a terse task query since the
             # perspective already frames the task.
-            task_query = (
-                f"Review the code in your scope through your {role} lens. "
-                f"{success_criteria}"
-            )
+            task_query = f"Review the code in your scope through your {role} lens. " f"{success_criteria}"
             delegated_params = {
                 "perspective": composed_perspective,
                 "tools": tools_hint,
@@ -890,26 +945,30 @@ class AgentToolExecutor(ToolExecutor):
             if context:
                 sub_query_parts.extend(["", "## Context from the Brain", "", context])
 
-            sub_query_parts.extend([
-                "",
-                "## Your output",
-                "",
-                "Emit the JSON schema from your system prompt as your final "
-                "message (wrapped in a ```json block or as the turn body). "
-                "`severity` MUST be null in every finding — the Brain classifies "
-                "severity, not you.",
-            ])
+            sub_query_parts.extend(
+                [
+                    "",
+                    "## Your output",
+                    "",
+                    "Emit the JSON schema from your system prompt as your final "
+                    "message (wrapped in a ```json block or as the turn body). "
+                    "`severity` MUST be null in every finding — the Brain classifies "
+                    "severity, not you.",
+                ]
+            )
 
             if may_subdispatch and self._current_depth == 0:
-                sub_query_parts.extend([
-                    "",
-                    "## Sub-dispatch permitted (depth 2 hard wall)",
-                    "",
-                    "The Brain set `may_subdispatch=true`. If a check truly "
-                    "requires subdivision, you may call `dispatch_verify` ONCE "
-                    "to delegate a narrower investigation. Its result must fold "
-                    "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
-                ])
+                sub_query_parts.extend(
+                    [
+                        "",
+                        "## Sub-dispatch permitted (depth 2 hard wall)",
+                        "",
+                        "The Brain set `may_subdispatch=true`. If a check truly "
+                        "requires subdivision, you may call `dispatch_verify` ONCE "
+                        "to delegate a narrower investigation. Its result must fold "
+                        "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
+                    ]
+                )
 
             sub_query = "\n".join(sub_query_parts)
 
@@ -938,8 +997,7 @@ class AgentToolExecutor(ToolExecutor):
         # return the raw answer with a warning so the Brain can still act.
         if parsed is None:
             logger.warning(
-                "dispatch_verify: worker did not emit parseable JSON. "
-                "Returning raw answer (%d chars).",
+                "dispatch_verify: worker did not emit parseable JSON. " "Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
@@ -951,8 +1009,7 @@ class AgentToolExecutor(ToolExecutor):
                     "unexpected_observations": [],
                     "raw_answer": raw_answer[:4000],
                     "shape_warning": (
-                        "Sub-agent did not return structured JSON — raw answer "
-                        "included for Brain inspection."
+                        "Sub-agent did not return structured JSON — raw answer " "included for Brain inspection."
                     ),
                     "iterations": condensed.get("iterations", 0),
                     "total_input_tokens": condensed.get("total_input_tokens", 0),
@@ -994,12 +1051,9 @@ class AgentToolExecutor(ToolExecutor):
                     ]
                     for e in entries:
                         role_label = f" role={e.role}" if e.role else ""
-                        reason_snippet = (
-                            f" — {e.reason[:80]}" if e.reason else ""
-                        )
+                        reason_snippet = f" — {e.reason[:80]}" if e.reason else ""
                         recap_lines.append(
-                            f"  #{e.dispatch_index} [{e.mode}{role_label}] "
-                            f"{e.scope[:120]}{reason_snippet}"
+                            f"  #{e.dispatch_index} [{e.mode}{role_label}] " f"{e.scope[:120]}{reason_snippet}"
                         )
                     parsed["_plan_recap"] = "\n".join(recap_lines)
             except Exception as exc:
@@ -1051,19 +1105,13 @@ class AgentToolExecutor(ToolExecutor):
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    f"Unknown dimension '{dimension}'. Must be one of "
-                    f"{sorted(_VALID_FACTORY_ROLES)}."
-                ),
+                error=(f"Unknown dimension '{dimension}'. Must be one of " f"{sorted(_VALID_FACTORY_ROLES)}."),
             )
         if not success_criteria or len(success_criteria) < 10:
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    "dispatch_sweep requires success_criteria "
-                    "(≥10 chars) describing what 'done' looks like."
-                ),
+                error=("dispatch_sweep requires success_criteria " "(≥10 chars) describing what 'done' looks like."),
             )
         if not 80_000 <= budget_tokens <= 200_000:
             return ToolResult(
@@ -1077,8 +1125,7 @@ class AgentToolExecutor(ToolExecutor):
             )
 
         logger.info(
-            "[dispatch_sweep] dimension=%s model=%s budget=%d "
-            "symbols=%d direction_hint=%r depth=%d",
+            "[dispatch_sweep] dimension=%s model=%s budget=%d " "symbols=%d direction_hint=%r depth=%d",
             dimension,
             model_tier,
             budget_tokens,
@@ -1092,10 +1139,7 @@ class AgentToolExecutor(ToolExecutor):
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    f"Dimension role '{dimension}' template missing at "
-                    f"config/agent_factory/{dimension}.md."
-                ),
+                error=(f"Dimension role '{dimension}' template missing at " f"config/agent_factory/{dimension}.md."),
             )
 
         # Build a "dimension scope" block — no file slots, just the
@@ -1109,20 +1153,23 @@ class AgentToolExecutor(ToolExecutor):
             "file range; your job is to catch patterns that span files.",
         ]
         if triggering_symbols:
-            scope_lines.extend([
-                "",
-                "**Triggering symbols** (cross-file callers / references "
-                "that motivated this dispatch):",
-                "",
-            ])
+            scope_lines.extend(
+                [
+                    "",
+                    "**Triggering symbols** (cross-file callers / references " "that motivated this dispatch):",
+                    "",
+                ]
+            )
             for sym in triggering_symbols[:20]:
                 scope_lines.append(f"- `{sym}`")
-            scope_lines.extend([
-                "",
-                "Prioritise these symbols in your sweep — the coordinator "
-                "suspects their callers / call sites are where the "
-                "cross-file pattern shows up.",
-            ])
+            scope_lines.extend(
+                [
+                    "",
+                    "Prioritise these symbols in your sweep — the coordinator "
+                    "suspects their callers / call sites are where the "
+                    "cross-file pattern shows up.",
+                ]
+            )
         scope_block = "\n".join(scope_lines)
 
         # Plan memory: persist the dispatch so coordinator recap includes it.
@@ -1138,10 +1185,9 @@ class AgentToolExecutor(ToolExecutor):
                         dispatch_index=plan_dispatch_index,
                         mode="dimension",
                         role=dimension,
-                        scope=(
-                            f"full diff — symbols={triggering_symbols[:5]}"
-                            if triggering_symbols else "full diff"
-                        )[:500],
+                        scope=(f"full diff — symbols={triggering_symbols[:5]}" if triggering_symbols else "full diff")[
+                            :500
+                        ],
                         success_criteria=success_criteria,
                         reason=direction_hint or None,
                     )
@@ -1162,22 +1208,23 @@ class AgentToolExecutor(ToolExecutor):
             role_template["frontmatter"].get("tools_hint")
             or role_template["frontmatter"].get("tools")
             or [
-                "grep", "read_file", "find_symbol", "find_references",
-                "get_callers", "get_callees", "git_diff", "git_show",
+                "grep",
+                "read_file",
+                "find_symbol",
+                "find_references",
+                "get_callers",
+                "get_callees",
+                "git_diff",
+                "git_show",
                 "file_outline",
             ]
         )
         if model_tier == "strong":
             model_hint = "strong"
         else:
-            model_hint = role_template["frontmatter"].get(
-                "model_hint", model_tier
-            )
+            model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
-        task_query = (
-            f"Sweep the entire PR diff through your {dimension} lens. "
-            f"{success_criteria}"
-        )
+        task_query = f"Sweep the entire PR diff through your {dimension} lens. " f"{success_criteria}"
         delegated_params = {
             "perspective": composed_perspective,
             "tools": tools_hint,
@@ -1202,8 +1249,7 @@ class AgentToolExecutor(ToolExecutor):
 
         if parsed is None:
             logger.warning(
-                "dispatch_sweep: worker did not emit parseable "
-                "JSON. Returning raw answer (%d chars).",
+                "dispatch_sweep: worker did not emit parseable " "JSON. Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
@@ -1215,8 +1261,7 @@ class AgentToolExecutor(ToolExecutor):
                     "unexpected_observations": [],
                     "raw_answer": raw_answer[:4000],
                     "shape_warning": (
-                        "Dimension worker did not return structured JSON — "
-                        "raw answer included for Brain inspection."
+                        "Dimension worker did not return structured JSON — " "raw answer included for Brain inspection."
                     ),
                     "iterations": condensed.get("iterations", 0),
                     "total_input_tokens": condensed.get("total_input_tokens", 0),
@@ -1323,9 +1368,9 @@ class AgentToolExecutor(ToolExecutor):
         # Select provider based on resolved model
         provider = self._strong_provider if resolved_model == "strong" else self._agent_provider
 
-        # Allocate budget — respect agent's own budget_tokens as cap
-        from .budget import BudgetConfig  # lazy: avoids circular import (brain ↔ budget)
-
+        # Allocate from the Brain's shared pool (cross-agent fairness). The SDK
+        # worker bounds its own loop by max_turns, so this value is for accounting
+        # only — actual spend is reported back after the run (see below).
         if self._budget_manager:
             pool_tokens = await self._budget_manager.allocate(agent_name, weight)
             agent_cap = agent_config.limits.budget_tokens
@@ -1334,6 +1379,13 @@ class AgentToolExecutor(ToolExecutor):
             budget_tokens = agent_config.limits.budget_tokens
 
         # Build sub-executor (recursive: depth + 1)
+        # Telemetry (06d): each dispatch is one task node. Self-seed a tree root if
+        # this executor wasn't threaded one, mint this child's id, and pass our ids
+        # down so the child's own dispatches link as its descendants.
+        if self._root_task_id is None:
+            self._root_task_id = uuid.uuid4().hex
+        child_task_id = uuid.uuid4().hex
+
         sub_executor = AgentToolExecutor(
             inner_executor=self._inner,
             agent_registry=self._agent_registry,
@@ -1346,11 +1398,15 @@ class AgentToolExecutor(ToolExecutor):
                 max_depth=self._max_depth,
                 max_concurrent=self._max_concurrent,
                 sub_agent_timeout=self._sub_agent_timeout,
+                leaf_max_usd=self._leaf_max_usd,
             ),
             trace_writer=self._trace_writer,
             event_sink=self._event_sink,
             budget_manager=self._budget_manager,
             qa_cache=self._qa_cache,
+            task_id=child_task_id,
+            root_task_id=self._root_task_id,
+            session_id=self._session_id,
         )
         # Propagate code_context to sub-executors
         sub_executor._code_context = self._code_context
@@ -1365,128 +1421,65 @@ class AgentToolExecutor(ToolExecutor):
         # Sub-agents can signal Brain for direction mid-execution
         agent_tool_names.append("signal_blocker")
 
-        # Build and run sub-agent (4-layer prompt architecture)
-        from .config import AgentLoopConfig
-        from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
+        # ---- Pick the engine (Step 06c) --------------------------------------
+        # Orchestrator (holds a dispatch_* / orchestration tool) → in-house
+        # AgentLoopService loop, so it keeps those tools and can fan out to workers
+        # (each dispatch recurses into this method one depth deeper). Leaf worker
+        # (code tools only) → Claude Agent SDK. Both return an AgentResult-shaped
+        # object that the shared post-processing below consumes unchanged.
+        is_orchestrator = bool(set(agent_tool_names) & _ORCHESTRATION_TOOLS)
 
-        svc = AgentLoopService(
-            provider=provider,
-            config=AgentLoopConfig(
-                max_iterations=agent_config.limits.max_iterations,
-                max_evidence_retries=1,
-                budget_config=BudgetConfig(max_input_tokens=budget_tokens),
-                is_sub_agent=True,
-                perspective=agent_config.instructions,
-                forced_tools=agent_tool_names,
-                agent_identity={
-                    "name": agent_config.name,
-                    "description": getattr(agent_config, "description", "") or "",
-                    "instructions": agent_config.instructions,
-                    "skill": getattr(agent_config, "skill", "") or "",
-                },
-                forced_skill=getattr(agent_config, "skill", "") or "",
-            ),
-            tool_executor=sub_executor,
-            trace_writer=self._trace_writer,
-            llm_semaphore=self._llm_semaphore,
+        # Telemetry: record this task as running before dispatch (no-op without a DB).
+        await record_start(
+            task_id=child_task_id,
+            parent_task_id=self._task_id,
+            root_task_id=self._root_task_id,
+            session_id=self._session_id,
+            kind="coordinator" if is_orchestrator else "sub_agent",
+            agent_name=agent_name,
+            query=query,
+            depth=self._current_depth + 1,
+            engine="in_house" if is_orchestrator else "sdk",
+            model=resolved_model,
         )
-        # Per-agent overrides from template
-        if agent_config.limits.temperature is not None:
-            svc._temperature = agent_config.limits.temperature
-        if hasattr(agent_config, "quality"):
-            svc._quality_config = agent_config.quality
-
-        # 4-layer: query stays clean — agent identity is in system prompt (Layer 1),
-        # not in the user message (Layer 4).
 
         start = time.monotonic()
         try:
-            # Stream events to event_sink for real-time UI updates
-            if self._event_sink:
-                result = None
-                from .service import AgentResult  # lazy: avoids circular import (brain ↔ service)
-
-                agent_result = AgentResult()
-                async for event in svc.run_stream(
+            if is_orchestrator:
+                result = await self._run_worker_inhouse(
+                    agent_config=agent_config,
+                    agent_name=agent_name,
+                    provider=provider,
+                    agent_tool_names=agent_tool_names,
+                    sub_executor=sub_executor,
+                    budget_tokens=budget_tokens,
                     query=query,
-                    workspace_path=self._workspace_path,
-                    code_context=self._code_context,
-                ):
-                    # Handle signal_blocker: respond from Brain's Q&A cache or with guidance
-                    if event.kind == "signal_blocker":
-                        from .signal_blocker import respond_to_signal
-
-                        sig_session = event.data.get("session_id", "")
-                        sig_reason = event.data.get("reason", "")
-                        sig_options = event.data.get("options", [])
-                        # Check Q&A cache first
-                        response = None
-                        for key, val in self._qa_cache.items():
-                            if key.lower() in sig_reason.lower():
-                                response = val
-                                break
-                        if not response and sig_options:
-                            response = f"Choose the first option: {sig_options[0]}"
-                        elif not response:
-                            response = "Continue with your best judgment based on the evidence."
-                        respond_to_signal(sig_session, response)
-                        logger.info(
-                            "[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50]
-                        )
-                        continue  # don't forward signal_blocker to UI
-
-                    # Forward agent events with agent_name tag
-                    await self._event_sink.put(
-                        __import__("app.workflow.engine", fromlist=["WorkflowEvent"]).WorkflowEvent(
-                            event.kind,
-                            {"agent_name": agent_name, **event.data},
-                        )
-                    )
-                    if event.kind in ("done", "error"):
-                        agent_result.answer = event.data.get("answer", "")
-                        agent_result.tool_calls_made = event.data.get("tool_calls_made", 0)
-                        agent_result.iterations = event.data.get("iterations", 0)
-                        agent_result.duration_ms = event.data.get("duration_ms", 0)
-                        agent_result.budget_summary = event.data.get("budget_summary")
-                        agent_result.error = event.data.get("error")
-                        # Collect thinking steps
-                        raw_steps = event.data.get("thinking_steps", [])
-                        from .service import ThinkingStep
-
-                        # Field-by-field construction tolerates extra keys
-                        # (e.g. ``agent_name`` injected upstream when events
-                        # are forwarded to the event_sink at line 1442).
-                        # Bare ``ThinkingStep(**s)`` raised TypeError on
-                        # those extras and crashed the whole coordinator.
-                        agent_result.thinking_steps = [
-                            ThinkingStep(
-                                kind=s.get("kind", ""),
-                                iteration=s.get("iteration", 0),
-                                text=s.get("text", ""),
-                                tool=s.get("tool", ""),
-                                params=s.get("params", {}),
-                                summary=s.get("summary", ""),
-                                success=s.get("success", True),
-                            ) if isinstance(s, dict) else s
-                            for s in raw_steps
-                        ]
-                        if event.kind == "context_chunk":
-                            from .service import ContextChunk
-
-                            agent_result.context_chunks.append(ContextChunk(**event.data))
-                result = agent_result
+                )
             else:
-                result = await asyncio.wait_for(
-                    svc.run(query=query, workspace_path=self._workspace_path, code_context=self._code_context),
-                    timeout=self._sub_agent_timeout,
+                result = await self._run_worker_sdk(
+                    agent_config=agent_config,
+                    agent_name=agent_name,
+                    provider=provider,
+                    agent_tool_names=agent_tool_names,
+                    sub_executor=sub_executor,
+                    budget_tokens=budget_tokens,
+                    query=query,
                 )
 
             elapsed = (time.monotonic() - start) * 1000
 
-            # Report budget usage
+            # Report budget usage — tokens for pool accounting, plus USD + total
+            # tokens for the session cost/usage rollup (SDK-leaf cost is authoritative
+            # via total_cost_usd; this is the only place leaf spend is aggregated).
             if self._budget_manager and result.budget_summary:
-                tokens = result.budget_summary.get("total_input_tokens", 0)
-                await self._budget_manager.report(agent_name, tokens)
+                bs = result.budget_summary
+                tokens = bs.get("total_input_tokens", 0)
+                await self._budget_manager.report(
+                    agent_name,
+                    tokens,
+                    cost_usd=float(bs.get("total_cost_usd") or 0.0),
+                    total_tokens=int(bs.get("total_tokens", 0) or 0),
+                )
 
             # Emit completion event
             if self._event_sink:
@@ -1523,11 +1516,21 @@ class AgentToolExecutor(ToolExecutor):
             if result.budget_summary:
                 condensed["total_input_tokens"] = result.budget_summary.get("total_input_tokens", 0)
                 condensed["total_output_tokens"] = result.budget_summary.get("total_output_tokens", 0)
+            await record_complete(
+                task_id=child_task_id,
+                status="done" if (result.answer and result.answer.strip()) else ("error" if result.error else "done"),
+                budget_summary=result.budget_summary,
+                tool_calls=result.tool_calls_made,
+                iterations=result.iterations,
+                duration_ms=elapsed,
+                error=result.error,
+            )
             return ToolResult(tool_name="dispatch_explore", success=True, data=condensed)
 
         except TimeoutError:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("[Brain] Agent '%s' timed out after %.0fms", agent_name, elapsed)
+            await record_complete(task_id=child_task_id, status="timeout", duration_ms=elapsed, error="Agent timed out")
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
 
@@ -1555,10 +1558,27 @@ class AgentToolExecutor(ToolExecutor):
                 },
             )
         except asyncio.CancelledError:
+            # An OUTER timeout (e.g. PR Brain's 60s existence-worker wait_for) or a
+            # shutdown cancels this dispatch mid-flight. Without this, the task row
+            # stays ``running`` forever (orphaned 0-token telemetry). Finalize it as
+            # ``cancelled`` — shielded so the DB write survives the cancellation —
+            # then re-raise so cancellation still propagates. We have no
+            # ``budget_summary`` (the worker never returned) so usage stays 0.
+            elapsed = (time.monotonic() - start) * 1000
+            with contextlib.suppress(Exception):
+                await asyncio.shield(
+                    record_complete(
+                        task_id=child_task_id,
+                        status="cancelled",
+                        duration_ms=elapsed,
+                        error="cancelled (outer timeout or shutdown)",
+                    )
+                )
             raise
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000
             logger.error("[Brain] Agent '%s' failed: %s", agent_name, exc)
+            await record_complete(task_id=child_task_id, status="error", duration_ms=elapsed, error=str(exc))
             if self._event_sink:
                 from app.workflow.engine import WorkflowEvent
 
@@ -1578,6 +1598,217 @@ class AgentToolExecutor(ToolExecutor):
                 success=False,
                 error=f"Agent '{agent_name}' failed: {exc}",
             )
+
+    # -----------------------------------------------------------------
+    # Worker engines (Step 06c) — chosen by _dispatch_explore's discriminator
+    # -----------------------------------------------------------------
+
+    async def _run_worker_sdk(
+        self,
+        *,
+        agent_config: Any,
+        agent_name: str,
+        provider: Any,
+        agent_tool_names: List[str],
+        sub_executor: AgentToolExecutor,
+        budget_tokens: int,
+        query: str,
+    ):
+        """Run a leaf sub-agent on the Claude Agent SDK.
+
+        The SDK/CLI owns the iterate→LLM→exec-tools loop + context compaction; we
+        keep the moat: the shared 4-layer system prompt, our vault-aware MCP tools
+        (behind the SAME CachedToolExecutor via ``sub_executor`` → Fact Vault dedup
+        survives across parallel sub-agents), the post-call evidence gate, and the
+        ``llm_semaphore``. Returns an AgentResult-shaped object.
+        """
+        from .prompts import build_sub_agent_system_prompt  # lazy: circular import (brain ↔ prompts)
+        from .sdk_worker import SdkWorkerRunner  # lazy: defers claude_agent_sdk import
+
+        logger.debug(
+            "[Brain] '%s' SDK worker: budget pool=%d tokens (loop bounded by max_turns=%d)",
+            agent_name,
+            budget_tokens,
+            agent_config.limits.max_iterations,
+        )
+
+        # Vault-aware MCP tools only (this agent's declared tools ∩ WORKER_MCP_TOOLS).
+        # signal_blocker was an uplink the in-house run_stream loop intercepted; the
+        # SDK loop has no such hook, so drop it (the coordinator answered "use best
+        # judgment" ~always anyway → has_signal_blocker=False below).
+        worker_tool_names = sorted((set(agent_tool_names) & WORKER_MCP_TOOLS) - {"signal_blocker"})
+
+        # Layer 1 (identity) + Layer 3 (skills); Layer 2 (tools) is the MCP schemas,
+        # Layer 4 (query) is the user_message.
+        system_prompt = build_sub_agent_system_prompt(
+            agent_name=agent_config.name,
+            agent_description=getattr(agent_config, "description", "") or "",
+            agent_instructions=agent_config.instructions,
+            workspace_path=self._workspace_path,
+            max_iterations=agent_config.limits.max_iterations,
+            code_context=self._code_context,
+            skill_key=getattr(agent_config, "skill", "") or None,
+            has_signal_blocker=False,
+        )
+
+        # tier → Bedrock model id for the CLI (CLAUDE_CODE_USE_BEDROCK path)
+        worker_model = getattr(provider, "model_name", None) or getattr(provider, "model_id", "") or ""
+
+        runner = SdkWorkerRunner(
+            model=worker_model,
+            tool_executor=sub_executor,  # delegates code tools → self._inner (vault)
+            tool_names=worker_tool_names,
+            max_turns=agent_config.limits.max_iterations,
+            max_evidence_retries=1,
+            temperature=agent_config.limits.temperature,
+            llm_semaphore=self._llm_semaphore,
+            max_budget_usd=(self._leaf_max_usd or _SDK_LEAF_MAX_USD),
+        )
+
+        # max_turns bounds iterations; the wall-clock timeout bounds total time.
+        # Live per-tool UI streaming is dropped on the SDK path — _dispatch_explore
+        # still emits agent_dispatched + agent_complete around this call.
+        return await asyncio.wait_for(
+            runner.run(system_prompt=system_prompt, user_message=query),
+            timeout=self._sub_agent_timeout,
+        )
+
+    async def _run_worker_inhouse(
+        self,
+        *,
+        agent_config: Any,
+        agent_name: str,
+        provider: Any,
+        agent_tool_names: List[str],
+        sub_executor: AgentToolExecutor,
+        budget_tokens: int,
+        query: str,
+    ):
+        """Run an orchestrator sub-agent (Domain/PR Brain coordinator) on the in-house
+        AgentLoopService loop.
+
+        Orchestrators must keep their dispatch_* tools so they can fan out to leaf
+        workers — each such dispatch recurses into ``sub_executor._dispatch_explore``
+        one depth deeper, where leaf workers route to the SDK. Streams events to the
+        UI when an ``event_sink`` is present. Returns an AgentResult.
+        """
+        from .budget import BudgetConfig  # lazy: avoids circular import (brain ↔ budget)
+        from .config import AgentLoopConfig
+        from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
+
+        svc = AgentLoopService(
+            provider=provider,
+            config=AgentLoopConfig(
+                max_iterations=agent_config.limits.max_iterations,
+                max_evidence_retries=1,
+                # P1d interim: the BrainBudgetManager still allocates in tokens, so the
+                # token count is passed as a loose USD ceiling here (effectively a no-op
+                # cap — in-house coordinators stay bounded by max_iterations). SDK leaf
+                # workers get a real per-leaf USD cap via max_budget_usd. Full USD
+                # allocation lands when BrainBudgetManager is converted (deferred).
+                budget_config=BudgetConfig(max_usd=float(budget_tokens)),
+                is_sub_agent=True,
+                perspective=agent_config.instructions,
+                forced_tools=agent_tool_names,
+                agent_identity={
+                    "name": agent_config.name,
+                    "description": getattr(agent_config, "description", "") or "",
+                    "instructions": agent_config.instructions,
+                    "skill": getattr(agent_config, "skill", "") or "",
+                },
+                forced_skill=getattr(agent_config, "skill", "") or "",
+            ),
+            tool_executor=sub_executor,
+            trace_writer=self._trace_writer,
+            llm_semaphore=self._llm_semaphore,
+        )
+        # Per-agent overrides from template
+        if agent_config.limits.temperature is not None:
+            svc._temperature = agent_config.limits.temperature
+        if hasattr(agent_config, "quality"):
+            svc._quality_config = agent_config.quality
+
+        # 4-layer: query stays clean — identity is in the system prompt (Layer 1),
+        # not the user message (Layer 4).
+        if not self._event_sink:
+            return await asyncio.wait_for(
+                svc.run(query=query, workspace_path=self._workspace_path, code_context=self._code_context),
+                timeout=self._sub_agent_timeout,
+            )
+
+        # Stream events to event_sink for real-time UI updates.
+        from .service import AgentResult  # lazy: avoids circular import (brain ↔ service)
+
+        agent_result = AgentResult()
+        async for event in svc.run_stream(
+            query=query,
+            workspace_path=self._workspace_path,
+            code_context=self._code_context,
+        ):
+            # Handle signal_blocker: respond from Brain's Q&A cache or with guidance
+            if event.kind == "signal_blocker":
+                from .signal_blocker import respond_to_signal
+
+                sig_session = event.data.get("session_id", "")
+                sig_reason = event.data.get("reason", "")
+                sig_options = event.data.get("options", [])
+                # Check Q&A cache first
+                response = None
+                for key, val in self._qa_cache.items():
+                    if key.lower() in sig_reason.lower():
+                        response = val
+                        break
+                if not response and sig_options:
+                    response = f"Choose the first option: {sig_options[0]}"
+                elif not response:
+                    response = "Continue with your best judgment based on the evidence."
+                respond_to_signal(sig_session, response)
+                logger.info("[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50])
+                continue  # don't forward signal_blocker to UI
+
+            # Forward agent events with agent_name tag
+            await self._event_sink.put(
+                __import__("app.workflow.engine", fromlist=["WorkflowEvent"]).WorkflowEvent(
+                    event.kind,
+                    {"agent_name": agent_name, **event.data},
+                )
+            )
+            if event.kind in ("done", "error"):
+                agent_result.answer = event.data.get("answer", "")
+                agent_result.tool_calls_made = event.data.get("tool_calls_made", 0)
+                agent_result.iterations = event.data.get("iterations", 0)
+                agent_result.duration_ms = event.data.get("duration_ms", 0)
+                agent_result.budget_summary = event.data.get("budget_summary")
+                agent_result.error = event.data.get("error")
+                # Collect thinking steps
+                raw_steps = event.data.get("thinking_steps", [])
+                from .service import ThinkingStep
+
+                # Field-by-field construction tolerates extra keys (e.g. ``agent_name``
+                # injected upstream when events are forwarded to the event_sink above).
+                # Bare ``ThinkingStep(**s)`` raised TypeError on those extras and
+                # crashed the whole coordinator.
+                agent_result.thinking_steps = [
+                    (
+                        ThinkingStep(
+                            kind=s.get("kind", ""),
+                            iteration=s.get("iteration", 0),
+                            text=s.get("text", ""),
+                            tool=s.get("tool", ""),
+                            params=s.get("params", {}),
+                            summary=s.get("summary", ""),
+                            success=s.get("success", True),
+                        )
+                        if isinstance(s, dict)
+                        else s
+                    )
+                    for s in raw_steps
+                ]
+                if event.kind == "context_chunk":
+                    from .service import ContextChunk
+
+                    agent_result.context_chunks.append(ContextChunk(**event.data))
+        return agent_result
 
     # _dispatch_swarm removed 2026-05-03 — Domain Brain
     # (transfer_to_brain("domain")) replaces the legacy parallel-swarm path.

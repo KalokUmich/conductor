@@ -1,12 +1,21 @@
-# Design: Hybrid SDK Worker — Claude Agent SDK as the worker inner-loop
+# Design: SDK Worker — Claude Agent SDK as the worker inner-loop
 
-> Status: **DRAFT for review** · Last updated: 2026-05-29 · Author: kalok (+ Claude)
-> Baseline commit: `77497d1` (origin/main). All file:line refs are against this commit.
+> Status: **SHIPPED — SDK-only (2026-05-31)** · Originally drafted 2026-05-29 · Author: kalok (+ Claude)
+> Baseline commit: `77497d1` (origin/main). File:line refs are against that commit and have since moved.
 >
-> **How to use this doc at the office:** read it top to bottom, then jump to
-> §9 (Open decisions) — those are what we need to settle before any code.
-> This doc supersedes the earlier `agent-sdk-migration-discussion.md` (which
-> was written against a stale fork and assumed things that are no longer true).
+> **What actually shipped (vs this draft):** it landed as **SDK-only, not hybrid.** Steps 02–03
+> collapsed providers to **Claude-only** (the Haiku/DeepSeek/Qwen/Nova multi-vendor explorer tier was
+> removed), which dissolved the original reason for a hybrid path — so there is **no `is_claude`
+> branch**. Every dispatched **leaf** worker runs on the Claude Agent SDK (`SdkWorkerRunner`), while
+> **coordinators** (General / Domain / PR Brain) stay in-house on `AgentLoopService`. The real
+> discriminator is `brain._dispatch_explore` (`_ORCHESTRATION_TOOLS`), not the single `brain.py:1323`
+> line referenced below. Langfuse was retired in favour of task-hierarchy telemetry
+> (`TaskTelemetryService` + the `task` table).
+>
+> Authoritative shipped record: `REFACTOR_EXECUTION_LOG.md` + the live docs (`backend/CLAUDE.md`,
+> `docs/GUIDE.md` §6–§8 / §17). **The sections below are the original design rationale, kept for
+> history** — where they say "hybrid" / "non-Claude workers" / "open decision", read them as
+> superseded by the summary above.
 
 ---
 
@@ -154,7 +163,63 @@ SDK; non-Claude workers → existing `AgentLoopService` (already multi-vendor).
 
 ---
 
-## 5. Proposed design
+## 4bis. SUPERSEDED (2026-05-30): hybrid premise is void → go SDK-only
+
+§4's "forces hybrid" argument rested on a multi-vendor explorer tier. **That tier
+no longer exists.** Steps 02–03 (merged) collapsed config to **Claude-only**
+(4 Claude models / 2 providers: Bedrock + Anthropic-direct); all non-Claude
+models/providers/`OpenAIProvider`/tool-repair were deleted. With no non-Claude
+worker, the `is_claude(provider)` branch at `brain.py:1324` is dead, and the
+`AgentLoopService` "multi-vendor fallback" has nothing to fall back to.
+
+**Decision (user, 2026-05-30): retire `AgentLoopService` as the worker engine —
+ALL dispatched workers run on the Claude Agent SDK.** The coordinator (Brain /
+PR Brain / Domain Brain) stays ours (our moat). Hybrid is dropped.
+
+### Feasibility: can the SDK host our whole worker loop? — YES (investigated 2026-05-30)
+Two-sided recon (`service.py` mechanisms × SDK capabilities). Disposition of our
+10 self-built mechanisms:
+
+| Mechanism (ours) | SDK disposition | Notes |
+|---|---|---|
+| Core loop (iterate→LLM→tools→repeat) | **SDK NATIVE** (CLI-owned, `max_turns`) | the commodity machinery we wanted to stop maintaining |
+| Context compaction (`_clear_old_tool_results`, ~75 LOC, Bedrock-format-coupled) | **SDK NATIVE — delete ours** | CLI auto-compacts; `PreCompact` hook can observe. Biggest win. |
+| 4-layer prompt | **reuse as-is** | `system_prompt=<str>` fully replaces the CLI default (verified) |
+| Budget controller | **mostly SDK** (`max_budget_usd` + `task_budget`); thin cross-worker-cumulative shim stays ours | |
+| **Evidence gate** (our #1 quality moat) | **HOOKABLE — keep logic, re-wire as `PreToolUse`/`Stop` hook** | the one genuinely custom piece that stays; re-validate via eval |
+| Throttle/retry | **SDK NATIVE** (CLI retries) | |
+| Scatter detection | **HOOKABLE** (`PreToolUse` hook) — keep, lightweight | |
+| Thinking-steps (frontend) | **rebuild from message stream** (`ThinkingBlock`/`ToolUseBlock`) | |
+| LLM semaphore (concurrency) | **stays ours** (SDK has no worker-pool) — lives at coordinator layer anyway | |
+| Tool schemas | **typed `@tool` from `code_tools/schemas.py` `model_json_schema()`** | fixes the spike's generic-schema arg-mis-shaping finding |
+
+Net: SDK absorbs loop + compaction + throttle + most of budget (the catch-up tax).
+We keep evidence-gate + scatter (as hooks), cross-worker budget tally, concurrency
+gating, the 4-layer prompt, and our tools — i.e. the orchestration/quality moat.
+
+### Cost of going SDK-only (honest)
+- **~119 tests** (test_agent_loop 55 + test_brain 64 + integration) mock/instantiate
+  `AgentLoopService` → must be rewritten for the SDK path.
+- Evidence-gate + scatter move from inline-in-loop to hook callbacks → behavior
+  re-validated against the code-review + agent-quality eval bar (§12.2).
+- eval harnesses (`eval/agent_quality/run_*.py`) instantiate `AgentLoopService`
+  directly → migrate or keep a thin shim.
+- ECS image must add Node + `@anthropic-ai/claude-code` (the SDK drives the CLI).
+
+### Step 06 boundary (DECIDED 2026-05-30, user)
+**Sub-agents-only first.** Step 06 moves the dispatched sub-agent path
+(`brain.py:1372`) onto the SDK; the **coordinator** Brain loop
+(`workflow/engine.py:159`) stays on `AgentLoopService` for now. Lower-risk first
+move — sub-agent quality can be eval-validated in isolation before touching the
+coordinator. Moving the coordinator onto SDK (full `AgentLoopService` retirement)
+is a later, separate step once the sub-agent path is proven green.
+
+§5 below is the ORIGINAL hybrid design — kept for history; read it through the
+lens of "SDK is now the only worker path, no `is_claude` branch."
+
+---
+
+## 5. Proposed design  (HISTORICAL — hybrid; see §4bis for the SDK-only pivot)
 
 ### 5.1 Shape
 

@@ -4,7 +4,7 @@ This module provides a service that resolves which AI provider to use
 based on configuration and health checks.
 
 The new architecture supports:
-- Multiple providers: Anthropic, AWS Bedrock, OpenAI
+- Multiple providers: Anthropic, AWS Bedrock
 - Multiple models per provider
 - Model selection for summarization
 
@@ -32,7 +32,6 @@ from app.config import (
 from .base import AIProvider
 from .claude_bedrock import ClaudeBedrockProvider
 from .claude_direct import ClaudeDirectProvider
-from .openai_provider import OpenAIProvider
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +41,6 @@ class ProviderType(str, Enum):
 
     ANTHROPIC = "anthropic"
     AWS_BEDROCK = "aws_bedrock"
-    OPENAI = "openai"
-    ALIBABA = "alibaba"
-    MOONSHOT = "moonshot"
 
 
 @dataclass
@@ -86,7 +82,7 @@ class ProviderResolver:
     This service reads API keys from config, creates providers for those
     with non-empty keys, performs health checks, and manages model selection.
 
-    Provider types: anthropic, aws_bedrock, openai
+    Provider types: anthropic, aws_bedrock
 
     Attributes:
         config: Full conductor configuration.
@@ -134,43 +130,36 @@ class ProviderResolver:
         enabled_map = {
             ProviderType.ANTHROPIC: self.provider_settings.anthropic_enabled,
             ProviderType.AWS_BEDROCK: self.provider_settings.aws_bedrock_enabled,
-            ProviderType.OPENAI: self.provider_settings.openai_enabled,
-            ProviderType.ALIBABA: self.provider_settings.alibaba_enabled,
-            ProviderType.MOONSHOT: self.provider_settings.moonshot_enabled,
         }
         return enabled_map.get(provider_type, False)
 
     def _is_provider_configured(self, provider_type: ProviderType) -> bool:
-        """Check if a provider has API keys configured."""
+        """Check if a provider has credentials configured.
+
+        For Bedrock, gating on static keys alone wrongly disabled the provider in
+        bearer-token and SSO-profile mode (→ "no healthy provider" → PR Brain
+        never built → 503). Bedrock has four valid auth modes (bearer > static >
+        profile > ambient IAM role, same priority as ``claude_bedrock._get_client``
+        / ``sdk_worker.bedrock_env``) — including the deployed role case with no
+        explicit creds — so once it's enabled we always attempt it and let
+        ``health_check`` be the real reachability gate.
+        """
         if provider_type == ProviderType.ANTHROPIC:
             return bool(self.providers_config.anthropic.api_key)
         elif provider_type == ProviderType.AWS_BEDROCK:
-            return bool(
-                self.providers_config.aws_bedrock.access_key_id and self.providers_config.aws_bedrock.secret_access_key
-            )
-        elif provider_type == ProviderType.OPENAI:
-            return bool(self.providers_config.openai.api_key)
-        elif provider_type == ProviderType.ALIBABA:
-            return bool(self.providers_config.alibaba.api_key)
-        elif provider_type == ProviderType.MOONSHOT:
-            return bool(self.providers_config.moonshot.api_key)
+            return True
         return False
 
     def _create_provider(
         self,
         provider_type: ProviderType,
         model_name: str,
-        *,
-        enable_thinking: Optional[bool] = None,
     ) -> Optional[AIProvider]:
         """Create a provider instance for the given type and model.
 
         Args:
             provider_type: Which provider backend to use.
             model_name: The model ID / name to pass to the provider.
-            enable_thinking: Override for Alibaba ``enable_thinking``.
-                - ``None`` (default): use the provider default (True for Alibaba).
-                - ``True`` / ``False``: explicitly enable / disable thinking.
         """
         try:
             if provider_type == ProviderType.ANTHROPIC:
@@ -186,32 +175,8 @@ class ProviderResolver:
                     aws_session_token=cfg.session_token or None,
                     region_name=cfg.region,
                     model_id=model_name,
-                )
-            elif provider_type == ProviderType.OPENAI:
-                cfg = self.providers_config.openai
-                return OpenAIProvider(
-                    api_key=cfg.api_key,
-                    model=model_name,
-                    organization=cfg.organization or None,
-                )
-            elif provider_type == ProviderType.ALIBABA:
-                cfg = self.providers_config.alibaba
-                # Default: thinking enabled for Alibaba (classifier / main / explorer).
-                # Pass enable_thinking=False explicitly to disable if needed.
-                thinking = enable_thinking if enable_thinking is not None else True
-                extra_body = {"enable_thinking": thinking}
-                return OpenAIProvider(
-                    api_key=cfg.api_key,
-                    model=model_name,
-                    base_url=cfg.base_url,
-                    extra_body=extra_body,
-                )
-            elif provider_type == ProviderType.MOONSHOT:
-                cfg = self.providers_config.moonshot
-                return OpenAIProvider(
-                    api_key=cfg.api_key,
-                    model=model_name,
-                    base_url=cfg.base_url,
+                    aws_profile=getattr(cfg, "profile", None),
+                    aws_bearer_token=getattr(cfg, "bearer_token", None),
                 )
             else:
                 logger.warning(f"Unknown provider type: {provider_type}")
@@ -236,9 +201,6 @@ class ProviderResolver:
             default_models = {
                 ProviderType.ANTHROPIC: "claude-sonnet-4-20250514",
                 ProviderType.AWS_BEDROCK: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-                ProviderType.OPENAI: "gpt-4o",
-                ProviderType.ALIBABA: "qwen-plus",
-                ProviderType.MOONSHOT: "kimi-k2.5",
             }
             model_name = default_models.get(provider_type, "")
         else:
@@ -433,23 +395,16 @@ class ProviderResolver:
         """Get a provider for code-explorer sub-agents.
 
         Returns the first enabled model with ``explorer: true`` whose
-        provider is healthy.  For Alibaba models, thinking is explicitly
-        **enabled** so the model can reason deeply about code structure
-        before emitting tool calls — this significantly improves the
-        quality of provability judgements in code review findings.
+        provider is healthy.
 
         Returns:
             An AIProvider suitable for sub-agent / explorer work, or None.
         """
         for model in self.models_config:
             if model.explorer and model.enabled and self._provider_health.get(model.provider, False):
-                # Explorer sub-agents: enable thinking for Alibaba models
-                # so the model reasons about code structure before acting.
-                # This improves finding quality (e.g. provability of defects).
                 provider = self._create_provider(
                     model.provider,
                     model.model_name,
-                    enable_thinking=True,
                 )
                 if provider:
                     logger.info("Explorer provider: %s (%s)", model.id, model.provider)
@@ -472,7 +427,6 @@ class ProviderResolver:
         provider = self._create_provider(
             model.provider,
             model.model_name,
-            enable_thinking=False,
         )
         if provider:
             logger.info("Explorer provider set to: %s (%s)", model.id, model.provider)

@@ -24,6 +24,7 @@ Examples:
 import argparse
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import UTC
@@ -164,29 +165,39 @@ def create_provider(provider_name: str, model: str = None):
         )
 
     elif provider_name == "bedrock":
+        # Resolve creds via the SAME shared resolver the app + bedrock-check use
+        # (priority bearer > static > profile > IAM role). The old hand-rolled
+        # logic here only knew static keys + CONDUCTOR_AWS_PROFILE, so a local
+        # bearer token (CONDUCTOR_AWS_BEARER_TOKEN / secrets yaml) fell through to
+        # empty static keys → UnrecognizedClientException on every Converse call.
+        from app.agent_loop.sdk_worker import bedrock_env
         from app.ai_provider.claude_bedrock import ClaudeBedrockProvider
-        # Try environment variables first, fall back to conductor secrets yaml
-        access_key = os.environ.get("AWS_ACCESS_KEY_ID", "")
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-        session_token = os.environ.get("AWS_SESSION_TOKEN")
-        region = os.environ.get("AWS_DEFAULT_REGION", "")
-        if not access_key or not secret_key:
-            try:
-                from app.config import load_config
-                cfg = load_config()
-                bdr = cfg.ai_providers.aws_bedrock
-                access_key = access_key or bdr.access_key_id
-                secret_key = secret_key or bdr.secret_access_key
-                session_token = session_token or bdr.session_token
-                region = region or bdr.region
-            except Exception:
-                pass
+
+        env = bedrock_env()
+        region = (
+            env.get("AWS_REGION")
+            or os.environ.get("CONDUCTOR_AWS_REGION")
+            or "eu-west-2"
+        )
+        model_id = model or "eu.anthropic.claude-sonnet-4-6"
+
+        bearer = env.get("AWS_BEARER_TOKEN_BEDROCK")
+        if bearer:
+            return ClaudeBedrockProvider(
+                region_name=region, model_id=model_id, aws_bearer_token=bearer
+            )
+        profile = env.get("AWS_PROFILE") or os.environ.get("CONDUCTOR_AWS_PROFILE") or ""
+        if profile:
+            # SSO profile → boto3 auto-refreshes role creds (no static token).
+            return ClaudeBedrockProvider(
+                region_name=region, model_id=model_id, aws_profile=profile
+            )
         return ClaudeBedrockProvider(
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-            aws_session_token=session_token,
-            region_name=region or "us-east-1",
-            model_id=model or "eu.anthropic.claude-sonnet-4-6",
+            aws_access_key_id=env.get("AWS_ACCESS_KEY_ID") or "",
+            aws_secret_access_key=env.get("AWS_SECRET_ACCESS_KEY") or "",
+            aws_session_token=env.get("AWS_SESSION_TOKEN"),
+            region_name=region,
+            model_id=model_id,
         )
 
     elif provider_name == "openai":
@@ -641,6 +652,11 @@ async def run_all(args: argparse.Namespace) -> None:
 
 def main():
     args = parse_args()
+    # --verbose → emit INFO logs (coordinator "Bedrock converse DONE …" + the per-leaf
+    # "[sdk_worker usage] …" lines) so the A/B harness can tally tokens + cost. Default
+    # stays WARNING-quiet. (Step 14.0: usage/cost observability for the eval.)
+    if getattr(args, "verbose", False):
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s", force=True)
     asyncio.run(run_all(args))
 
 

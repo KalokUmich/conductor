@@ -11,7 +11,7 @@ Usage::
 
     config = AgentLoopConfig(
         max_iterations=20,
-        budget_config=BudgetConfig(max_input_tokens=300_000),
+        budget_config=BudgetConfig(max_usd=1.0),
         is_sub_agent=True,
         forced_tools=["grep", "read_file"],
         agent_identity={"name": "explore_architecture", ...},
@@ -104,6 +104,10 @@ class BrainExecutorConfig:
             the dispatch handlers).
         sub_agent_timeout: Seconds to wait for a single sub-agent
             before treating it as a timeout (partial success).
+        leaf_max_usd: Optional per-leaf USD circuit-breaker for SDK-dispatched
+            leaf workers (BudgetEconomics-computed). ``None`` → the brain's
+            static ``_SDK_LEAF_MAX_USD`` default. A loose safety ceiling, not a
+            target — it only stops a runaway leaf, never a normal one.
     """
 
     workspace_path: str = ""
@@ -111,3 +115,4 @@ class BrainExecutorConfig:
     max_depth: int = 2
     max_concurrent: int = 3
     sub_agent_timeout: float = 300.0
+    leaf_max_usd: Optional[float] = None

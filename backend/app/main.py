@@ -107,6 +107,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ---- Initialize singleton services with DB engine ----
     if app.state.db_engine:
         try:
+            from .agent_loop.task_telemetry import TaskTelemetryService
             from .audit.service import AuditLogService
             from .files.service import FileStorageService
             from .todos.service import TODOService
@@ -114,11 +115,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             TODOService.get_instance(engine=app.state.db_engine)
             AuditLogService.get_instance(engine=app.state.db_engine)
             FileStorageService.get_instance(engine=app.state.db_engine)
+            TaskTelemetryService.get_instance(engine=app.state.db_engine)
+
+            # USD budget economy (P3): now that telemetry is configured, wire the
+            # BudgetEconomics singleton to self-optimize — its estimates blend
+            # toward measured per-agent p80 cost, refreshed on each on_task_end.
+            from .agent_loop.budget_analyzer import install_self_optimization
+
+            install_self_optimization()
 
             from .auth.user_service import UserService
 
             UserService.init(app.state.db_engine)
-            logger.info("Singleton services initialized: TODOService, AuditLogService, FileStorageService, UserService")
+            logger.info(
+                "Singleton services initialized: TODOService, AuditLogService, "
+                "FileStorageService, TaskTelemetryService, UserService, BudgetEconomics(self-opt)"
+            )
         except Exception as exc:
             logger.error("Failed to initialize singleton services: %s — DB-backed endpoints will return 503", exc)
             app.state.db_engine = None  # mark as unusable so routers return 503
@@ -213,19 +225,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         settings.trace.backend,
     )
 
-    # ---- Langfuse Observability ----
-    from .workflow.observability import init_langfuse
-
-    langfuse_ok = init_langfuse(settings)
-    if langfuse_ok:
-        import os
-
-        logger.info(
-            "Langfuse observability: enabled (host=%s)", os.environ.get("LANGFUSE_HOST", settings.langfuse.host)
-        )
-    else:
-        logger.info("Langfuse observability: disabled")
-
     # ---- Ngrok tunnel ----
     # Read ngrok config from raw YAML (not modelled in AppSettings).
     # Required for VS Code Remote-WSL: the webview runs in the Windows
@@ -287,6 +286,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         import yaml as _yaml
 
         from .workflow.loader import _find_config_dir
+
         _guide_path = _find_config_dir() / "jira_project_guide.yaml"
         if _guide_path.exists():
             app.state.jira_project_guide = _yaml.safe_load(_guide_path.read_text("utf-8")) or {}
@@ -334,10 +334,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         from .integrations.jira.readonly_client import JiraReadonlyClient
 
         app.state.jira_readonly_client = JiraReadonlyClient(
-            site_url=atl_ro.site_url, email=atl_ro.email, api_token=atl_ro.api_token,
+            site_url=atl_ro.site_url,
+            email=atl_ro.email,
+            api_token=atl_ro.api_token,
         )
         app.state.confluence_readonly_client = ConfluenceReadonlyClient(
-            site_url=atl_ro.site_url, email=atl_ro.email, api_token=atl_ro.api_token,
+            site_url=atl_ro.site_url,
+            email=atl_ro.email,
+            api_token=atl_ro.api_token,
         )
         logger.info("Atlassian readonly clients: enabled (site=%s, email=%s)", atl_ro.site_url, atl_ro.email)
     else:
@@ -379,6 +383,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 pr_title: str = "",
                 pr_description: str = "",
                 ticket_context: str = "",
+                prior_review_context: str = "",
             ) -> PRBrainOrchestrator:
                 return PRBrainOrchestrator(
                     provider=agent_provider,
@@ -393,6 +398,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     pr_title=pr_title,
                     pr_description=pr_description,
                     ticket_context=ticket_context,
+                    prior_review_context=prior_review_context,
                 )
 
             app.state.pr_brain_factory = _make_pr_brain
@@ -428,9 +434,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
     # ---- Shutdown ----
     stop_ngrok()
-    from .workflow.observability import flush as langfuse_flush
-
-    langfuse_flush()
     # Flush chat persistence buffers before shutdown
     if chat_persistence:
         await chat_persistence.flush_all()

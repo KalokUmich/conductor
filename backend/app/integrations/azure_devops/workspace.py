@@ -106,8 +106,17 @@ async def ensure_workspace(
         return ws_str
 
     ws.parent.mkdir(parents=True, exist_ok=True)
-    logger.info("[AzureDevOps] Cloning %s → %s", repo_url, ws_str)
-    rc, _, stderr = await _run(["git", "clone", auth_url, ws_str])
+    # Blobless partial clone: fetch the full commit graph + trees (so all
+    # branches + merge-bases needed for `origin/target...origin/source` PR diffs
+    # are present) but DEFER file contents (blobs) until a worktree checkout or
+    # `git diff` actually touches them. On the 160k-object abound-server repo a
+    # full clone ran ~10min then died ("curl 56 Recv failure: Connection timed
+    # out / early EOF"); blobless clones in ~3min and PR review is unaffected —
+    # it only materialises blobs for the changed files (verified end-to-end).
+    logger.info("[AzureDevOps] Cloning (blobless) %s → %s", repo_url, ws_str)
+    rc, _, stderr = await _run(
+        ["git", "clone", "--filter=blob:none", auth_url, ws_str]
+    )
     if rc != 0:
         logger.error("[AzureDevOps] git clone failed: %s", stderr.strip())
         return None

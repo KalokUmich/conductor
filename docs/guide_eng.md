@@ -24,7 +24,7 @@
 14. [Authentication](#14-authentication)
 15. [Jira Integration](#15-jira-integration)
 16. [LangExtract Integration](#16-langextract-integration)
-17. [Langfuse Observability](#17-langfuse-observability)
+17. [Task Telemetry](#17-task-telemetry)
 18. [Eval System (eval/)](#18-eval-system-eval)
 19. [Testing Conventions](#19-testing-conventions)
 20. [Common Development Tasks](#20-common-development-tasks)
@@ -114,13 +114,13 @@ VS Code Extension
 
 FastAPI Backend
 ├── workflow/          — Config-driven multi-agent workflow engine  <- core new addition
-├── agent_loop/        — LLM Agent Loop (43 tools)
+├── agent_loop/        — LLM Agent Loop + SDK leaf dispatch (47 tools)
 ├── code_review/       — PR multi-agent review pipeline
-├── ai_provider/       — Three-provider abstraction layer (Bedrock / Anthropic / OpenAI)
+├── ai_provider/       — Claude-only provider abstraction (Bedrock Converse + Anthropic Messages)
 ├── git_workspace/     — Git bare repo + worktree management
 ├── chat/              — WebSocket chat + Redis hot cache + Postgres persistence
 ├── browser/           — Playwright Chromium browsing tools (browse_url / search_web / screenshot)
-├── code_tools/        — 42 tool implementations (code + file editing + Jira + browser) + Python CLI
+├── code_tools/        — 47 tool implementations (code + file editing + Jira + browser + Fact Vault + notes) + Python CLI
 └── langextract/       — Multi-vendor Bedrock structured extraction integration
 ```
 
@@ -288,12 +288,12 @@ async def context_query_stream(req: ContextQueryRequest, ...):
 
 The Brain (strong model) runs its own LLM loop and can call 4 meta-tools:
 
-- `dispatch_agent("agent_name", query)` — single-agent exploration
-- `dispatch_swarm("preset_name", queries=[...])` — parallel multi-agent
+- `dispatch_explore("agent_name", query)` — single-agent exploration (leaf worker runs on the Claude Agent SDK)
+- `transfer_to_brain("domain")` — business-flow / end-to-end questions go to the Domain Brain (replaces the retired `dispatch_swarm`)
 - `transfer_to_brain("pr_review", params)` — one-shot handoff to a specialized brain (e.g. PR review)
 - `ask_user(...)` — confirm direction with the user mid-flight
 
-Example: the user asks about "auth logic"; the Brain sees this is a simple single-agent task and calls `dispatch_agent("entry_point_finder", "auth logic entry point")`.
+Example: the user asks about "auth logic"; the Brain sees this is a simple single-agent task and calls `dispatch_explore("entry_point_finder", "auth logic entry point")`.
 
 **Step 5: The dispatched sub-agent runs AgentLoopService** (`backend/app/agent_loop/service.py`)
 
@@ -324,7 +324,7 @@ async def run_stream(self, query, workspace_path):
 ```
 User input -> ChatInput.tsx parses -> useWebSocket/extension.ts SSE request ->
 agent_loop/router.py -> WorkflowEngine.run_brain_stream() ->
-Brain LLM loop -> dispatch_agent / dispatch_swarm / transfer_to_brain ->
+Brain LLM loop -> dispatch_explore / transfer_to_brain ->
 sub-agent AgentLoopService.run_stream() -> LLM <-> execute_tool() loop ->
 SSE event stream back -> ChatContext -> ThinkingIndicator/MessageBubble live render
 ```
@@ -373,8 +373,8 @@ Phase 2: Existence check (v2u reorder — deterministic first, then LLM)
 Phase 3: Coordinator loop (strong tier)
   ├─ Survey diff + impact graph + mandatory requirements
   ├─ Two dispatch primitives:
-  │   • dispatch_subagent — scoped to 1-5 files, 3 falsifiable checks (role or checks mode)
-  │   • dispatch_dimension_worker (P12b) — full-diff sweep through one role lens
+  │   • dispatch_verify — scoped to 1-5 files, 3 falsifiable checks (role or checks mode)
+  │   • dispatch_sweep (P12b) — full-diff sweep through one role lens
   ├─ P10 adaptive model_tier (explorer default; strong only for hard cross-file inference)
   ├─ Replan on unexpected observations
   └─ Emit review + findings directly in the answer
@@ -415,12 +415,15 @@ backend/
 │   │   ├── models.py              # Pydantic models: AgentConfig, BrainConfig, SwarmConfig
 │   │   ├── loader.py              # Loads Markdown agent files + Brain/Swarm YAML
 │   │   ├── engine.py              # WorkflowEngine.run_brain_stream() — Brain entry point
-│   │   ├── router.py              # /api/brain/swarms — Agent Swarm UI data source
-│   │   └── observability.py       # Langfuse @observe decorator (zero-cost when disabled)
+│   │   └── router.py              # /api/brain/swarms — Agent Swarm UI data source
 │   │
-│   ├── agent_loop/                # LLM agent loop engine + Brain orchestrator
-│   │   ├── service.py             # AgentLoopService — LLM loop + tool dispatch
-│   │   ├── brain.py               # AgentToolExecutor — dispatch_agent / dispatch_swarm / transfer_to_brain
+│   ├── agent_loop/                # LLM agent loop engine + Brain orchestrator (dual-engine dispatch)
+│   │   ├── service.py             # AgentLoopService — coordinators' in-house LLM loop + tool dispatch
+│   │   ├── sdk_worker.py          # SdkWorkerRunner — dispatched LEAF workers run on the Claude Agent SDK
+│   │   ├── sdk_tools.py           # build_worker_mcp_server — vault-aware MCP tools for the SDK leaf
+│   │   ├── task_telemetry.py      # TaskTelemetryService — per-task hierarchy usage (the `task` table)
+│   │   ├── brain.py               # AgentToolExecutor — dispatch_explore / dispatch_verify / dispatch_sweep / transfer_to_brain; dual-engine discriminator (_ORCHESTRATION_TOOLS)
+│   │   ├── domain_brain.py        # DomainBrainOrchestrator — transfer_to_brain("domain")
 │   │   ├── pr_brain.py            # PRBrainOrchestrator — PR review-specific deterministic pipeline
 │   │   ├── query_markers.py       # QueryType enum + marker parsing (frontend/backend shared convention)
 │   │   ├── budget.py              # BudgetController — three-level token budget signals
@@ -429,18 +432,17 @@ backend/
 │   │   ├── prompts.py             # Four-layer system prompt builder + 9 Investigation Skills
 │   │   └── router.py              # POST /api/context/query/stream (SSE)
 │   │
-│   ├── code_tools/                # 43 tools (code + file editing + Jira + browser + Fact Vault)
+│   ├── code_tools/                # 47 tools (code + file editing + Jira + browser + Fact Vault + notes + Brain primitives)
 │   │   ├── tools.py               # All tool implementations + execute_tool() dispatcher
 │   │   ├── schemas.py             # Pydantic models + LLM tool definitions (TOOL_DEFINITIONS)
 │   │   ├── output_policy.py       # Per-tool truncation policy (budget-adaptive)
 │   │   ├── __main__.py            # Python CLI entry: python -m app.code_tools <tool> <ws> '<params>'
 │   │   └── router.py              # /api/code-tools/ direct invocation interface
 │   │
-│   ├── ai_provider/               # LLM provider abstraction layer
+│   ├── ai_provider/               # LLM provider abstraction layer (Claude only)
 │   │   ├── base.py                # AIProvider ABC + ToolCall/ToolUseResponse/TokenUsage
-│   │   ├── claude_bedrock.py      # AWS Bedrock Converse API
+│   │   ├── claude_bedrock.py      # AWS Bedrock Converse API (bearer / static / SSO profile / IAM role)
 │   │   ├── claude_direct.py       # Anthropic Messages API
-│   │   ├── openai_provider.py     # OpenAI Chat Completions
 │   │   └── resolver.py            # ProviderResolver — health check + auto-select best
 │   │
 │   ├── code_review/               # Shared PR review utilities (consumed by PR Brain v2)
@@ -502,7 +504,7 @@ backend/
 ├── requirements.txt
 └── tests/                         # 1300+ tests
     ├── conftest.py                # Central stubs (cocoindex, litellm, etc.)
-    ├── test_code_tools.py         # 139: 43 tools + dispatcher + multi-language
+    ├── test_code_tools.py         # 139: code tools + dispatcher + multi-language
     ├── test_agent_loop.py         # 55: loop + 4-layer prompt + completeness checks
     ├── test_budget_controller.py  # 20: budget signals
     ├── test_compressed_tools.py   # 24: compressed view tools
@@ -540,9 +542,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     resolver = ProviderResolver(conductor_config)
     resolver.resolve()
     set_resolver(resolver)
-    app.state.agent_provider      = resolver.get_active_provider()      # strong model
-    app.state.explorer_provider   = resolver.get_explorer_provider()    # lightweight model (optional)
-    app.state.classifier_provider = resolver.get_classifier_provider()  # classifier model (optional)
+    app.state.agent_provider      = resolver.get_active_provider()      # strong model (coordinator)
+    app.state.explorer_provider   = resolver.get_explorer_provider()    # lightweight model (leaf worker)
 
     # 3. Singleton service init (must be first-called with engine= in lifespan)
     TodoService.get_instance(engine=engine)
@@ -551,8 +552,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ChatPersistenceService.get_instance(engine=engine)
     # Note: not initializing in lifespan causes RuntimeError on first request
 
-    # 4. Langfuse observability (self-hosted, optional)
-    init_langfuse(settings)
+    # 4. Task telemetry (TaskTelemetryService — per-task usage to the `task` table)
+    TaskTelemetryService.get_instance(engine=engine)
 
     # 5. Ngrok tunnel (VS Code Remote-WSL scenario, optional)
     if ngrok_cfg.get("enabled"):
@@ -567,7 +568,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown cleanup
     stop_ngrok()
-    langfuse_flush()
     await git_service.shutdown()
 ```
 
@@ -593,8 +593,8 @@ The Brain is told in its prompt about all available sub-agents + swarms (loaded 
 
 | Meta-tool | Purpose |
 |---|---|
-| `dispatch_agent("name", query)` | A single specialized agent explores one specific target |
-| `dispatch_swarm("preset", queries=[...])` | Run 3-6 agents in parallel using a preset |
+| `dispatch_explore("name", query)` | A single specialized agent explores one specific target (leaf runs on the Claude Agent SDK) |
+| `dispatch_verify` / `dispatch_sweep` | PR Brain only: scoped file-range checks / full-diff sweep through one lens |
 | `transfer_to_brain("pr_review", params)` | One-shot switch to a specialized brain (currently only PR Brain) |
 | `ask_user(question, options)` | Confirm direction with the user mid-flight |
 
@@ -683,7 +683,7 @@ GET /api/brain/swarms
 #   }
 ```
 
-Used by the extension's Agent Swarm UI tab to visualize the Brain's handoff targets (`transfer_to_brain` and `dispatch_swarm`).
+Used by the extension's Agent Swarm UI tab to visualize the Brain's handoff targets (`transfer_to_brain`). `dispatch_swarm` was retired in Phase 9.19 and replaced by the Domain Brain.
 
 ---
 
@@ -710,7 +710,7 @@ LLM sees the question -> decides to grep keywords first
 
 The LLM can decide each next step based on existing information, enabling true multi-step reasoning.
 
-### 7.2 43 Tools (Code + File Editing + Jira + Browser + Fact Vault)
+### 7.2 47 Tools (Code + File Editing + Jira + Browser + Fact Vault + Notes)
 
 Tools are spread across three registries, dispatched uniformly via `execute_tool(name, workspace, params)`:
 - **Code tools** (32): `code_tools/tools.py` (includes `search_facts` added in Phase 9.15)
@@ -1053,7 +1053,7 @@ class TokenUsage:
     cache_write_tokens: int = 0
 ```
 
-The **internal message format** uses Bedrock Converse format uniformly (content block array); the OpenAI provider handles format conversion internally:
+The **internal message format** uses Bedrock Converse format uniformly (content block array); both Claude providers share it:
 
 ```python
 # Message format accepted by all providers
@@ -1068,13 +1068,14 @@ messages = [
 ]
 ```
 
-### 8.2 Three Provider Implementations
+### 8.2 Two Provider Implementations (Claude only)
+
+After the Step 02–03 provider collapse, only two Claude providers remain (OpenAI / Alibaba / Moonshot / Qwen were removed):
 
 | Provider | File | Underlying API | Notes |
 |--------|------|---------|------|
-| `ClaudeBedrockProvider` | `claude_bedrock.py` | Bedrock Converse API | Supports cross-region inference profiles |
+| `ClaudeBedrockProvider` | `claude_bedrock.py` | Bedrock Converse API | Cross-region inference profiles; 4-way auth (bearer / static / SSO profile / IAM role) |
 | `ClaudeDirectProvider` | `claude_direct.py` | Anthropic Messages API | Supports prompt cache |
-| `OpenAIProvider` | `openai_provider.py` | OpenAI Chat Completions | Converts message format internally |
 
 ### 8.3 ProviderResolver — Auto-select Best
 
@@ -1092,10 +1093,13 @@ class ProviderResolver:
         self._active = min(self._healthy, key=lambda x: x[2])
 ```
 
-ProviderResolver also supports three roles:
-- `get_active_provider()` -> strong model (Sonnet/GPT-4), used for review synthesis and important decisions
-- `get_explorer_provider()` -> lightweight (explorer) model (Haiku/Qwen), used for explorer agents, low cost
-- `get_classifier_provider()` -> classifier-only model, can be used for LLM-assisted routing classification
+ProviderResolver supports two roles:
+- `get_active_provider()` -> strong model (Sonnet), used by coordinators for synthesis and important decisions
+- `get_explorer_provider()` -> lightweight model (Haiku), used by leaf explorer agents, low cost
+
+**Bedrock auth — two deployment modes** (same resolution in `claude_bedrock._get_client` and `sdk_worker.bedrock_env`, inferred from which creds are present; priority **bearer > static > profile > role**):
+- **Local** — a Bedrock API key (`CONDUCTOR_AWS_BEARER_TOKEN` → `AWS_BEARER_TOKEN_BEDROCK`, a single long-lived token, simplest for model-perf testing) / static keys / an SSO profile (`CONDUCTOR_AWS_PROFILE`, boto3 + CLI auto-refresh).
+- **Deployed** — none of those → the ambient IAM role (ECS task role / instance profile) via the default credential chain.
 
 **View current provider status:**
 ```bash
@@ -1516,7 +1520,7 @@ Extension: /jira transform -> "[jira] Create a Jira ticket for: Fix login bug...
       ↓
 POST /api/context/query/stream -> Brain (Sonnet)
       ↓
-Brain: create_plan -> dispatch_agent(
+Brain: create_plan -> dispatch_explore(
     tools=["grep", "read_file", "jira_search", "jira_create_issue", ...],
     skill="issue_tracking", model="strong", budget_tokens=500000)
       ↓
@@ -1806,81 +1810,52 @@ result = await svc.extract_from_text(
 
 ---
 
-## 17. Langfuse Observability
+## 17. Task Telemetry
 
-Langfuse provides nested execution trees, cost tracking, and latency analysis — a complement to SessionTrace:
+> Per-worker cost/latency is captured by **task-hierarchy telemetry** (the Postgres `task` table).
 
-| | SessionTrace | Langfuse |
-|---|---|---|
-| Data | Tool params, thinking text, budget signals | Cost, latency, nested tree |
-| Storage | Local JSON file | Postgres (self-hosted) |
-| UI | None (offline analysis) | Web UI (team-visible) |
-| Overhead | ~0 (local file write) | ~0.1ms (async SDK) |
+`TaskTelemetryService` (`agent_loop/task_telemetry.py`) persists the whole task tree to the Postgres `task` table: a root coordinator task plus a child task per dispatched agent, linked via `task_id` / `parent_task_id` / `root_task_id`, with per-task token-usage and status rollups. All record calls are no-ops when no DB is configured.
 
-### 17.1 Start Langfuse Locally
+### 17.1 Conceptual fields (`task` table)
 
-```bash
-# Start Langfuse + PostgreSQL (port 3001)
-make langfuse-up
+| Field | Meaning |
+|------|---------|
+| `id` / `parent_task_id` / `root_task_id` | Task-tree linkage |
+| `kind` | `coordinator` (in-house AgentLoopService) / `sub_agent` (SDK leaf worker) |
+| `agent_name` / `query` / `depth` | Task identity |
+| `status` | `running` → `completed` / `failed` |
+| `input_tokens` / `output_tokens` / `cache_read_*` / `cache_creation_*` | Usage rollup |
+| `started_at` / `completed_at` / `duration_ms` | Latency |
 
-# View logs
-make langfuse-logs
+(Authoritative columns live in the Liquibase changeset under `database/changelog/`.)
 
-# Stop
-make langfuse-down
-```
-
-Visit `http://localhost:3001`, create a project, and grab the API keys.
-
-### 17.2 Configuration
-
-```yaml
-# conductor.settings.yaml
-langfuse:
-  enabled: true
-  host: "http://localhost:3001"
-
-# conductor.secrets.yaml
-langfuse:
-  public_key: "pk-..."
-  secret_key: "sk-..."
-```
-
-### 17.3 Trace Structure
-
-Example Langfuse trace tree for a PR review:
-
-```
-brain: pr_review                         45.2s  $0.38
-├── transfer_to_brain("pr_review")       0.1ms
-├── PRBrainOrchestrator phase 1: pre-compute (parse_diff, classify_risk, prefetch_diffs)
-├── dispatch agent: correctness          35.2s  $0.12
-│   └── agent: correctness (explorer)
-│       ├── llm_call (generation)         1.2s   -> tool: grep
-│       ├── llm_call (generation)         0.9s   -> tool: read_file
-│       └── ... (18 tool calls total)
-├── dispatch agent: security             32.8s  $0.09
-│   └── ... (parallel with correctness)
-├── stage: arbitrate                      3.8s  $0.08
-│   └── agent: arbitrator (judge)
-└── stage: synthesize                     2.3s  $0.03
-    └── agent: review_synthesizer (judge)
-```
-
-### 17.4 @observe Decorator
-
-Use the zero-intrusion decorator in workflow code:
+### 17.2 Recording tasks
 
 ```python
-from app.workflow.observability import observe
+from app.agent_loop.task_telemetry import record_start, record_complete
 
-# When Langfuse is disabled, these decorators are zero-cost no-ops
-@observe(name="agent")
-async def _run_agent(self, agent: AgentConfig, ...):
-    ...
+# before dispatching a sub-agent
+await record_start(task_id=child, parent_task_id=self._task_id,
+                   root_task_id=self._root_task_id,
+                   kind="sub_agent", agent_name="security", query=q, depth=d)
+# on completion (budget_summary is auto-mapped to the token fields)
+await record_complete(task_id=child, status="completed", budget_summary={...})
 ```
 
-When Langfuse is disabled (`langfuse.enabled: false` or the package isn't installed), `@observe` returns the original function with no overhead at all.
+Each SDK leaf worker also logs one `[sdk_worker usage] model=... in=... out=... cache_read=...` INFO line, so you can grep a single leaf's cost (aligned with the coordinator's `converse DONE` lines).
+
+### 17.3 Querying the task tree
+
+```sql
+-- full tree for one request
+SELECT * FROM task WHERE root_task_id = $1 ORDER BY started_at;
+-- token cost rollup
+SELECT SUM(input_tokens) AS in_tok, SUM(output_tokens) AS out_tok,
+       SUM(cache_read_input_tokens) AS cache_hits
+FROM task WHERE root_task_id = $1;
+```
+
+`SessionTrace` (`agent_loop/trace.py`, local JSON + Postgres fallback) is still kept for tool params + thinking text in offline analysis — complementary to task telemetry.
 
 ---
 
@@ -2053,7 +2028,7 @@ make test-parity                                  # contract check + shape verif
 
 | File | Count | Coverage |
 |------|------|---------|
-| `test_code_tools.py` | 139 | All 43 tools + dispatcher + multi-language |
+| `test_code_tools.py` | 139 | Code tools + dispatcher + multi-language |
 | `test_agent_loop.py` | 55 | Agent Loop + 4-layer prompt + completeness checks |
 | `test_brain.py` | 64 | Brain orchestrator + dispatch patterns |
 | `test_jira_tools.py` | 21 | Jira agent tools |
@@ -2243,38 +2218,11 @@ TOOL_REGISTRY = {
 
 5. Add a test in `tests/test_code_tools.py`.
 
-### 20.3 Add a New AI Provider
+### 20.3 AI Provider Architecture (collapsed to Claude only)
 
-1. Subclass `AIProvider`:
+After the Step 02–03 provider collapse, the provider layer supports **only two Claude providers**: `ClaudeBedrockProvider` (Bedrock Converse) and `ClaudeDirectProvider` (Anthropic Messages). OpenAI / Alibaba / Moonshot / Qwen were removed; adding a new third-party vendor is no longer supported.
 
-```python
-# ai_provider/my_provider.py
-class MyProvider(AIProvider):
-    def chat_with_tools(self, messages, tools, system="") -> ToolUseResponse:
-        # Convert Bedrock-format messages to My API format
-        api_messages = _convert_messages(messages)
-        api_tools = _convert_tools(tools)
-
-        resp = my_api.chat(messages=api_messages, tools=api_tools, system=system)
-
-        # Convert back to the unified format
-        return ToolUseResponse(
-            text=resp.text,
-            tool_calls=[ToolCall(id=tc.id, name=tc.name, input=tc.args) for tc in resp.tool_calls],
-            stop_reason=resp.finish_reason,
-            usage=TokenUsage(input_tokens=resp.usage.prompt, output_tokens=resp.usage.completion),
-        )
-```
-
-2. Register it in `ProviderResolver`:
-
-```python
-# ai_provider/resolver.py
-def _configured_providers(self) -> list[tuple[str, AIProvider]]:
-    ...
-    if self._config.ai_providers.my_provider.api_key:
-        yield "my_provider", MyProvider(self._config.ai_providers.my_provider)
-```
+Switching models or auth modes requires **no code** — it is entirely environment-driven (see §8.3 for the four Bedrock auth modes and §21.7 for the env-var table). The `AIProvider` ABC remains, but the set of implementations is locked to Claude.
 
 ### 20.4 Modify an Agent's Tool Set or Persona
 
@@ -2338,7 +2286,7 @@ ripgrep (rg)   # underlying search engine used by the grep tool
 
 # Optional
 ast-grep       # ast_search tool (structured AST queries)
-docker         # for running Langfuse (self-hosted observability)
+docker         # local Postgres + Redis (not needed when using managed DBs in deployment)
 ```
 
 ### 21.2 Directory Layout
@@ -2393,20 +2341,18 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 ### 21.5 Docker Component Network (Local Development)
 
-Local Docker Compose uses three compose files that share the same `conductor-net` Docker network:
+Local Docker Compose uses two compose files that share the same `conductor-net` Docker network:
 
 ```
 docker/docker-compose.data.yaml   -> Postgres (conductor-postgres:5432)
                                     Redis    (conductor-redis:6379)
 docker/docker-compose.app.yaml    -> Backend  (uses container names to reach the data layer)
-docker/docker-compose.langfuse.yaml -> Langfuse (uses container name to reach Postgres)
 ```
 
 **Startup commands:**
 
 ```bash
 make data-up       # start Postgres + Redis first
-make langfuse-up   # start Langfuse (shares the same Postgres)
 make app-up        # start the backend (joins the same network)
 
 # Or start the full stack in one shot
@@ -2445,16 +2391,13 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | Environment variable | Corresponding secret | Required |
 |---------|-----------|------|
 | **AI Providers** | | |
-| `CONDUCTOR_AWS_ACCESS_KEY_ID` | ai_providers.aws_bedrock.access_key_id | Required for Bedrock |
-| `CONDUCTOR_AWS_SECRET_ACCESS_KEY` | ai_providers.aws_bedrock.secret_access_key | Required for Bedrock |
+| `CONDUCTOR_AWS_BEARER_TOKEN` | ai_providers.aws_bedrock.bearer_token | Local: Bedrock API key (bearer); highest priority |
+| `CONDUCTOR_AWS_PROFILE` | ai_providers.aws_bedrock.profile | Local: SSO profile (auto-refresh); leave unset in deployed/role mode |
+| `CONDUCTOR_AWS_ACCESS_KEY_ID` | ai_providers.aws_bedrock.access_key_id | Local: static keys (alternative to profile) |
+| `CONDUCTOR_AWS_SECRET_ACCESS_KEY` | ai_providers.aws_bedrock.secret_access_key | As above |
 | `CONDUCTOR_AWS_SESSION_TOKEN` | ai_providers.aws_bedrock.session_token | Set when using temporary credentials |
 | `CONDUCTOR_AWS_REGION` | ai_providers.aws_bedrock.region | Defaults to us-east-1 |
 | `CONDUCTOR_ANTHROPIC_API_KEY` | ai_providers.anthropic.api_key | Required for Anthropic Direct |
-| `CONDUCTOR_OPENAI_API_KEY` | ai_providers.openai.api_key | Required for OpenAI |
-| `CONDUCTOR_ALIBABA_API_KEY` | ai_providers.alibaba.api_key | Required for DashScope |
-| `CONDUCTOR_ALIBABA_BASE_URL` | ai_providers.alibaba.base_url | Defaults to Singapore region |
-| `CONDUCTOR_MOONSHOT_API_KEY` | ai_providers.moonshot.api_key | Required for Moonshot |
-| `CONDUCTOR_MOONSHOT_BASE_URL` | ai_providers.moonshot.base_url | Defaults to api.moonshot.ai |
 | **Database** | | |
 | `CONDUCTOR_POSTGRES_USER` | postgres.user | Defaults to conductor |
 | `CONDUCTOR_POSTGRES_PASSWORD` | postgres.password | Defaults to conductor |
@@ -2465,10 +2408,8 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | `CONDUCTOR_GOOGLE_CLIENT_ID` | google_sso.client_id | Required for Google SSO |
 | `CONDUCTOR_GOOGLE_CLIENT_SECRET` | google_sso.client_secret | Required for Google SSO |
 | `CONDUCTOR_NGROK_AUTHTOKEN` | ngrok.authtoken | Required for Ngrok |
-| **Observability** | | |
-| `LANGFUSE_PUBLIC_KEY` | langfuse.public_key | Required for Langfuse |
-| `LANGFUSE_SECRET_KEY` | langfuse.secret_key | Required for Langfuse |
-| `LANGFUSE_HOST` | langfuse.host (in settings.yaml) | Defaults to localhost:3001 |
+
+> On ECS, set **no** AWS key/profile and Bedrock authenticates via the task role (default credential chain). Observability is provided by task telemetry (the `task` table).
 
 #### Minimal ECS Task Definition Example
 
@@ -2481,10 +2422,7 @@ Variables not set will fall back to the dev defaults in the YAML file.
       { "name": "CONDUCTOR_AWS_REGION", "value": "eu-west-2" },
       { "name": "CONDUCTOR_POSTGRES_PASSWORD", "value": "prod-password" },
       { "name": "CONDUCTOR_JIRA_CLIENT_ID", "value": "..." },
-      { "name": "CONDUCTOR_JIRA_CLIENT_SECRET", "value": "..." },
-      { "name": "LANGFUSE_PUBLIC_KEY", "value": "pk-lf-prod-..." },
-      { "name": "LANGFUSE_SECRET_KEY", "value": "sk-lf-prod-..." },
-      { "name": "LANGFUSE_HOST", "value": "https://langfuse.your-domain.com" }
+      { "name": "CONDUCTOR_JIRA_CLIENT_SECRET", "value": "..." }
     ],
     "secrets": [
       {

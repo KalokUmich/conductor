@@ -31,6 +31,22 @@ class AzureDevOpsReviewResponse(BaseModel):
     error: Optional[str] = None
 
 
+class AzureDevOpsRecheckResponse(BaseModel):
+    """Response after a second-pass re-check of a PR."""
+
+    status: str = "ok"
+    pr_id: int = 0
+    prior_comments: int = 0  # actionable prior comments considered
+    verified_fixed: int = 0  # confirmed addressed in current code
+    still_open: int = 0  # prior comments not (yet) addressed
+    threads_resolved: int = 0  # threads auto-marked resolved
+    new_findings: int = 0  # brand-new issues found this pass
+    threads_created: int = 0  # inline threads posted for new issues
+    merge_recommendation: str = ""
+    vote: int = 0
+    error: Optional[str] = None
+
+
 class ThreadComment(BaseModel):
     """A single comment in a PR thread (for formatting)."""
 
