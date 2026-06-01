@@ -140,7 +140,7 @@ See [ROADMAP.md](ROADMAP.md). Near-term priorities (2026-05).
 **Recently shipped (Agent-SDK Migration, Steps 01–06 — COMPLETE 2026-05-31):**
 - **Dual-engine dispatch** — dispatched **leaf** sub-agents now run on the **Claude Agent SDK** via `SdkWorkerRunner` (`backend/app/agent_loop/sdk_worker.py`); **coordinators** (General / Domain / PR Brain) stay in-house on `AgentLoopService`. The discriminator in `brain._dispatch_explore` routes agents holding `dispatch_*` tools → in-house, else → SDK leaf. The SDK/CLI owns the loop + compaction; we keep the moat (vault-aware MCP tools on a shared `CachedToolExecutor`, the 4-layer full-replace system prompt, a post-call evidence gate).
 - **Claude-only providers** — AI providers collapsed to Bedrock Converse + Anthropic Messages (OpenAI / Alibaba / Moonshot / Qwen removed).
-- **Langfuse → task telemetry** — Langfuse removed; per-worker cost/latency now via `TaskTelemetryService` + the `task` DB table.
+- **Task telemetry** — per-worker cost/latency captured via `TaskTelemetryService` + the `task` DB table.
 - **Bedrock auth — two modes** — local (secret / SSO profile auto-refresh via `CONDUCTOR_AWS_PROFILE`) vs deployed (ambient IAM role / default chain); see the Configuration section above. Detail + eval gates in `docs/archive/REFACTOR_EXECUTION_LOG.md`.
 
 **Recently shipped (PR Brain v2 productisation):**

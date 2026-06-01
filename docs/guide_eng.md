@@ -421,7 +421,7 @@ backend/
 │   │   ├── service.py             # AgentLoopService — coordinators' in-house LLM loop + tool dispatch
 │   │   ├── sdk_worker.py          # SdkWorkerRunner — dispatched LEAF workers run on the Claude Agent SDK
 │   │   ├── sdk_tools.py           # build_worker_mcp_server — vault-aware MCP tools for the SDK leaf
-│   │   ├── task_telemetry.py      # TaskTelemetryService — per-task hierarchy usage (the `task` table; replaced Langfuse)
+│   │   ├── task_telemetry.py      # TaskTelemetryService — per-task hierarchy usage (the `task` table)
 │   │   ├── brain.py               # AgentToolExecutor — dispatch_explore / dispatch_verify / dispatch_sweep / transfer_to_brain; dual-engine discriminator (_ORCHESTRATION_TOOLS)
 │   │   ├── domain_brain.py        # DomainBrainOrchestrator — transfer_to_brain("domain")
 │   │   ├── pr_brain.py            # PRBrainOrchestrator — PR review-specific deterministic pipeline
@@ -552,7 +552,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ChatPersistenceService.get_instance(engine=engine)
     # Note: not initializing in lifespan causes RuntimeError on first request
 
-    # 4. Task telemetry (TaskTelemetryService — per-task usage to the `task` table; replaced Langfuse)
+    # 4. Task telemetry (TaskTelemetryService — per-task usage to the `task` table)
     TaskTelemetryService.get_instance(engine=engine)
 
     # 5. Ngrok tunnel (VS Code Remote-WSL scenario, optional)
@@ -1812,7 +1812,7 @@ result = await svc.extract_from_text(
 
 ## 17. Task Telemetry
 
-> **Langfuse was removed** (agent-SDK migration, Step 01/04). The Langfuse server, the `langfuse` Python dependency, `LangfuseSettings`/`LangfuseSecrets`, the `make langfuse-*` targets, and `workflow/observability.py` are all deleted. Per-worker cost/latency is now captured by **task-hierarchy telemetry**.
+> Per-worker cost/latency is captured by **task-hierarchy telemetry** (the Postgres `task` table).
 
 `TaskTelemetryService` (`agent_loop/task_telemetry.py`) persists the whole task tree to the Postgres `task` table: a root coordinator task plus a child task per dispatched agent, linked via `task_id` / `parent_task_id` / `root_task_id`, with per-task token-usage and status rollups. All record calls are no-ops when no DB is configured.
 
@@ -2409,7 +2409,7 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | `CONDUCTOR_GOOGLE_CLIENT_SECRET` | google_sso.client_secret | Required for Google SSO |
 | `CONDUCTOR_NGROK_AUTHTOKEN` | ngrok.authtoken | Required for Ngrok |
 
-> On ECS, set **no** AWS key/profile and Bedrock authenticates via the task role (default credential chain). Observability is provided by task telemetry (the `task` table) — no `LANGFUSE_*` variables are needed (Langfuse was removed).
+> On ECS, set **no** AWS key/profile and Bedrock authenticates via the task role (default credential chain). Observability is provided by task telemetry (the `task` table).
 
 #### Minimal ECS Task Definition Example
 

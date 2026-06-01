@@ -1428,7 +1428,7 @@ Add `cache_control` / `cachePoint` breakpoints to system prompts and tool defini
 - [ ] Limit to max 4 breakpoints per request (API constraint)
 - [ ] Apply to tool definitions (tool schemas are static across iterations)
 - [ ] Apply to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
-- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Measure cache hit rate and token savings via the `task` telemetry table
 - [ ] Expected impact: ~45% input token reduction for PR review pipeline (810K/1.82M tokens cacheable)
 
 ### 9.12 Diff Sharding for Review Agents (PLANNED)
@@ -1588,7 +1588,7 @@ Proposed hook points:
 - `on_synthesize_complete` — after final markdown is ready. Good for:
   - Scratchpad consolidation (extract reusable learnings → long-term memory, Phase 9.15 long-term extension)
   - Session cleanup (scratchpad SQLite delete, workspace unlink)
-  - Metrics export (Langfuse event, session trace summary)
+  - Metrics export (task telemetry event, session trace summary)
 - `on_task_end` — terminal hook, guaranteed to fire even on error.
 
 - [ ] `app/agent_loop/lifecycle.py` — hook registry + fire-and-forget executor
@@ -1847,18 +1847,18 @@ Python type annotations exist (~70% coverage) but no enforcement. No mypy config
 Layer 3 (project context, workspace layout, skills) is constant per session but re-transmitted every iteration, wasting ~10-20% tokens.
 
 - [ ] Wrap Layer 3 content in Anthropic API `cache_control` blocks (`{"type": "ephemeral"}`)
-- [ ] Measure cache hit rate and token savings in Langfuse
+- [ ] Measure cache hit rate and token savings via the `task` telemetry table
 - [ ] Expected impact: 10-20% input token cost reduction on multi-iteration sessions
 - [ ] Extend to Brain system prompt (shared across sub-agent dispatches, per Phase 9.3)
 
 ### 11.5 Observability Expansion (MEDIUM PRIORITY)
-Langfuse `@observe` only covers workflow engine. Agent loop and code review pipeline lack tracing.
+Task-hierarchy telemetry (the `task` table) captures per-task token usage, but the agent loop and code review pipeline still lack fine-grained span/iteration tracing.
 
-- [ ] `@observe` on `AgentLoopService.run_stream()` — trace iterations, tool calls, budget signals
-- [ ] `@observe` on `PRBrainOrchestrator` — trace 6-phase pipeline, per-agent timings
-- [ ] `track_generation()` on every LLM call in agent loop (model name + token usage for cost)
+- [ ] Span tracing on `AgentLoopService.run_stream()` — iterations, tool calls, budget signals
+- [ ] Span tracing on `PRBrainOrchestrator` — 6-phase pipeline, per-agent timings
+- [ ] Per-call usage capture on every LLM call in agent loop (model name + token usage for cost)
 - [ ] Correlation IDs: pass trace ID through WebSocket → agent loop → tool calls
-- [ ] `/health` endpoint with deep checks (Postgres, Redis, AI provider, Langfuse)
+- [ ] `/health` endpoint with deep checks (Postgres, Redis, AI provider)
 
 ### 11.6 Extension Test Coverage (MEDIUM PRIORITY)
 Backend has 1667 tests across 44 files. Extension has only 3 validation scripts.
@@ -1885,7 +1885,7 @@ All exceptions are built-in or Pydantic. No retry logic for transient failures.
 - [ ] `app/exceptions.py` — custom exceptions: `WorkspaceNotFoundError`, `GitOperationError`, `AIProviderError`, `BudgetExhaustedError`
 - [ ] Retry decorator for transient failures (Bedrock throttling, Postgres connection drops)
 - [ ] Exponential backoff for external API calls (Jira, AI providers)
-- [ ] Error categorization in Langfuse traces (transient vs permanent)
+- [ ] Error categorization in task telemetry / traces (transient vs permanent)
 
 ### 11.9 Lab Notebook System (PLANNED — MEDIUM PRIORITY)
 
@@ -1910,9 +1910,9 @@ sources(tag, url, note)         -- research bibliography
 ```
 Commands: `record` / `regression ingest <log>` / `diff <tag-a> <tag-b>` / `export <range> --markdown`. Ingests existing `/tmp/brain-regression-*.log` format. ~200 lines of Python. Lives outside repo.
 
-**C. Langfuse native** — already running on :3001. Use **Datasets** for eval cases, **Dataset runs** for each tag, **Scores** for composite/catch/judge, **Annotations** for narrative. UI has run-vs-run comparison + cost trends + historical graphs. Downside: need ingester from our log format into Langfuse API; UI is data-first not narrative-first.
+**C. Metrics dashboard over the `task` telemetry tables** — per-task token/cost rollups already land in Postgres (the `task` table). A BI/dashboard layer (e.g. Grafana or Metabase) could read them for **run-vs-run comparison, cost trends, historical graphs**. Downside: need an ingester mapping eval tags/scores into the schema, plus standing up the dashboard; UI is data-first not narrative-first.
 
-**Recommended combo** (when implemented): **B + C** — Langfuse for regression numbers / cost trends (has the UI for it), SQLite CLI for narrative + experimental notes that don't fit structured rows. ROADMAP ADR section captures architecture-level decisions that outlast experimental churn.
+**Recommended combo** (when implemented): **B + C** — a metrics dashboard for regression numbers / cost trends (has the UI for it), SQLite CLI for narrative + experimental notes that don't fit structured rows. ROADMAP ADR section captures architecture-level decisions that outlast experimental churn.
 
 - [ ] Pick implementation (A / B / C / combo)
 - [ ] If B/C: write ingester for `/tmp/brain-regression-*-<tag>.log` parser → DB rows
@@ -1930,7 +1930,7 @@ Commands: `record` / `regression ingest <log>` / `diff <tag-a> <tag-b>` / `expor
 11.6 (Extension Tests) ────────> enforced by 11.1
 11.7 (Deployment) ─────────────> benefits from 11.1 (image build)
 11.8 (Error Handling) ─────────> measured by 11.5
-11.9 (Lab Notebook) ───────────> benefits from 11.5 (Langfuse is option C)
+11.9 (Lab Notebook) ───────────> benefits from 11.5 (metrics dashboard is option C)
 ```
 
 ## Phase 12: Team Knowledge Base (PLANNED)

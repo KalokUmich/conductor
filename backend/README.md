@@ -7,7 +7,7 @@
 <a name="english"></a>
 ## English
 
-Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 42 tools + token budget controller + 4-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions, Langfuse observability), Git workspace management, file sharing, Jira integration (OAuth 3LO + 5 agent tools), PostgreSQL-backed persistence (schema managed by Liquibase), and multi-provider AI (Bedrock / Anthropic / OpenAI).
+Conductor backend is a FastAPI application providing real-time chat, agentic code intelligence (LLM agent loop + 42 tools + token budget controller + 4-layer prompts), a config-driven multi-agent workflow engine (YAML + Markdown agent definitions), Git workspace management, file sharing, Jira integration (OAuth 3LO + 5 agent tools), PostgreSQL-backed persistence (schema managed by Liquibase), and multi-provider AI (Bedrock / Anthropic / OpenAI).
 
 ### Quick Start
 
@@ -274,7 +274,7 @@ curl -X POST http://localhost:8000/api/code-tools/execute/grep \
 
 ### Storage
 
-All OLTP data is stored in **PostgreSQL** (shared instance with Langfuse):
+All OLTP data is stored in **PostgreSQL**:
 
 | Table | Description |
 |---|---|
@@ -291,13 +291,12 @@ Other storage:
 - Chat room state: in-memory per process
 
 > Schema is managed by **Liquibase** (`database/changelog/`). Run `make db-update` after `make data-up`.
-> Langfuse manages its own tables internally (Prisma migrations).
 
 ### Docker Networking
 
 All Docker Compose files share the `conductor-net` network. Services communicate via container names:
 
-- `conductor-postgres:5432` — Postgres (backend + Langfuse)
+- `conductor-postgres:5432` — Postgres (backend)
 - `conductor-redis:6379` — Redis (backend)
 
 This avoids `host.docker.internal` resolution issues in WSL2 / Linux Docker environments.
@@ -387,7 +386,7 @@ python ../eval/tool_parity/run.py --compare
 <a name="中文"></a>
 ## 中文
 
-Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 42 个工具 + Token 预算控制器 + 四层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义，Langfuse 可观测性）、Git 工作区管理、文件共享、Jira 集成（OAuth 3LO + 5 个 Agent 工具）、PostgreSQL 持久化（Liquibase 管理表结构），以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
+Conductor 后端基于 FastAPI，提供实时聊天、**智能代码分析**（LLM 驱动的 Agent Loop + 42 个工具 + Token 预算控制器 + 四层 Prompt）、**配置驱动的多 Agent 工作流引擎**（YAML + Markdown Agent 定义）、Git 工作区管理、文件共享、Jira 集成（OAuth 3LO + 5 个 Agent 工具）、PostgreSQL 持久化（Liquibase 管理表结构），以及多 Provider AI 集成（Bedrock / Anthropic / OpenAI）。
 
 ### 快速启动
 
@@ -581,7 +580,7 @@ Extension 的本地工具调度器通过此 CLI 以子进程方式执行工具�
 
 ### 存储
 
-所有 OLTP 数据存储在 **PostgreSQL**（与 Langfuse 共享实例）：
+所有 OLTP 数据存储在 **PostgreSQL**：
 
 | 表名 | 描述 |
 |---|---|
@@ -598,13 +597,12 @@ Extension 的本地工具调度器通过此 CLI 以子进程方式执行工具�
 - 聊天房间状态：进程内存
 
 > 表结构由 **Liquibase** 管理（`database/changelog/`）。启动后运行 `make db-update`。
-> Langfuse 内部自动管理自己的表（Prisma migrations）。
 
 ### Docker 网络
 
 所有 Docker Compose 文件共享 `conductor-net` 网络，服务间通过容器名通信：
 
-- `conductor-postgres:5432` — Postgres（后端 + Langfuse）
+- `conductor-postgres:5432` — Postgres（后端）
 - `conductor-redis:6379` — Redis（后端）
 
 避免 WSL2 / Linux Docker 环境下 `host.docker.internal` 解析失败的问题。

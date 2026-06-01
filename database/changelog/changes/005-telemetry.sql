@@ -1,7 +1,7 @@
 --liquibase formatted sql
 
 --changeset conductor:005-iteration-token-usage
---comment: Per-iteration, per-model token usage incl. cache tokens (cache tokens previously reached only Langfuse, never persisted). Populated by the observability swap (Step 04).
+--comment: Per-iteration, per-model token usage incl. cache tokens (previously never persisted). Populated by the observability swap (Step 04).
 CREATE TABLE IF NOT EXISTS iteration_token_usage (
     id                    SERIAL      PRIMARY KEY,
     session_id            VARCHAR     NOT NULL,

@@ -72,4 +72,4 @@ Create these secrets in Secrets Manager (plain text, not JSON):
 
 - ECS task role should have Bedrock access (`bedrock:InvokeModel`) — no need for AWS key env vars (deployed mode resolves the role via the default credential chain).
 - `DATABASE_URL` and `REDIS_URL` always take highest priority, overriding anything in YAML config.
-- Observability is via task-hierarchy telemetry (the `task` table in the same Postgres) — Langfuse was removed.
+- Observability is via task-hierarchy telemetry (the `task` table in the same Postgres).

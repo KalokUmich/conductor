@@ -419,7 +419,7 @@ backend/
 │   │   ├── service.py             # AgentLoopService — 协调者的 in-house LLM 循环 + 工具派发
 │   │   ├── sdk_worker.py          # SdkWorkerRunner — 被派发的叶子 worker 跑在 Claude Agent SDK 上
 │   │   ├── sdk_tools.py           # build_worker_mcp_server — 给 SDK 叶子的 vault-aware MCP 工具
-│   │   ├── task_telemetry.py      # TaskTelemetryService — 任务层级用量遥测（task 表，取代 Langfuse）
+│   │   ├── task_telemetry.py      # TaskTelemetryService — 任务层级用量遥测（task 表）
 │   │   ├── brain.py               # AgentToolExecutor — dispatch_explore / dispatch_verify / dispatch_sweep / transfer_to_brain；双引擎判别器（_ORCHESTRATION_TOOLS）
 │   │   ├── domain_brain.py        # DomainBrainOrchestrator — transfer_to_brain("domain")
 │   │   ├── pr_brain.py            # PRBrainOrchestrator — PR 评审专用确定性管线
@@ -550,7 +550,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     ChatPersistenceService.get_instance(engine=engine)
     # 注意：不在 lifespan 中初始化会导致首次请求时 RuntimeError
 
-    # 4. 任务遥测（TaskTelemetryService — 每个 task 的用量写入 task 表；取代 Langfuse）
+    # 4. 任务遥测（TaskTelemetryService — 每个 task 的用量写入 task 表）
     TaskTelemetryService.get_instance(engine=engine)
 
     # 5. Ngrok 隧道（VS Code Remote-WSL 场景，可选）
@@ -1809,7 +1809,7 @@ result = await svc.extract_from_text(
 
 ## 17. 任务遥测 / Task Telemetry
 
-> **Langfuse 已移除**（agent-SDK 迁移 Step 01/04）。Langfuse server、`langfuse` Python 依赖、`LangfuseSettings`/`LangfuseSecrets`、`make langfuse-*` 目标、`workflow/observability.py` 全部删除。每个 worker 的成本 / 延迟改由**任务层级遥测**记录。
+> 每个 worker 的成本 / 延迟由**任务层级遥测**记录（Postgres `task` 表）。
 
 `TaskTelemetryService`（`agent_loop/task_telemetry.py`）把整棵任务树持久化到 Postgres 的 `task` 表：根协调者任务 + 每个被派发 agent 的子任务，通过 `task_id` / `parent_task_id` / `root_task_id` 串联，按任务汇总 token 用量与状态。没有 DB 时所有记录调用都是 no-op。
 
@@ -2412,7 +2412,7 @@ Variables not set will fall back to the dev defaults in the YAML file.
 | `CONDUCTOR_GOOGLE_CLIENT_SECRET` | google_sso.client_secret | Google SSO 时必须 |
 | `CONDUCTOR_NGROK_AUTHTOKEN` | ngrok.authtoken | Ngrok 时必须 |
 
-> 部署到 ECS 时，**不设** 任何 AWS key / profile，Bedrock 会自动走 task role（默认凭证链）。可观测性由任务遥测（`task` 表）提供，无需任何 `LANGFUSE_*` 变量（Langfuse 已移除）。
+> 部署到 ECS 时，**不设** 任何 AWS key / profile，Bedrock 会自动走 task role（默认凭证链）。可观测性由任务遥测（`task` 表）提供。
 
 #### ECS Task Definition 最小示例
 

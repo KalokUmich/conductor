@@ -398,7 +398,7 @@ Log per-request:
 - Any Graph API call failures with the upstream error code
 - Any Bot Framework reply failures
 
-Record via task-hierarchy telemetry (the `task` table; the project convention after Langfuse was removed), tagged `integration=teams`.
+Record via task-hierarchy telemetry (the `task` table), tagged `integration=teams`.
 
 ### B.2.7 Handoff of new env vars
 

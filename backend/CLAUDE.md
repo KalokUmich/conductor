@@ -10,7 +10,7 @@ backend/app/
 │   ├── service.py           # AgentLoopService — in-house LLM loop (coordinators) + tool dispatch
 │   ├── sdk_worker.py        # SdkWorkerRunner — dispatched LEAF workers on the Claude Agent SDK (agent-SDK migration)
 │   ├── sdk_tools.py         # build_worker_mcp_server — vault-aware MCP tools exposed to the SDK leaf
-│   ├── task_telemetry.py    # TaskTelemetryService — per-task hierarchy usage (the `task` table; replaced Langfuse)
+│   ├── task_telemetry.py    # TaskTelemetryService — per-task hierarchy usage (the `task` table)
 │   ├── brain.py             # AgentToolExecutor — dispatch_explore/dispatch_verify/dispatch_sweep/transfer_to_brain; dual-engine discriminator (_ORCHESTRATION_TOOLS)
 │   ├── dispatch/            # Phase 9.19 — Pydantic param schemas + tool defs for the three dispatch primitives
 │   │   ├── explore.py       # DispatchExploreParams + DISPATCH_EXPLORE_TOOL_DEF (open-ended sub-agent investigation)
