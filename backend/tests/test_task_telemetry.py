@@ -87,6 +87,33 @@ async def test_start_complete_and_usage_rollup(svc):
 
 
 @pytest.mark.asyncio
+async def test_cost_source_discriminates_sdk_vs_computed(svc):
+    """SDK summaries carry ``raw_usage`` → source 'sdk'; in-house carry
+    ``usd_usage_ratio`` → source 'computed'; no cost → NULL."""
+    await svc.start_task(task_id="r", root_task_id="r", kind="root")
+    # SDK leaf: authoritative cost + raw_usage block
+    await svc.start_task(task_id="sdk1", root_task_id="r", kind="sub_agent", engine="sdk")
+    await svc.complete_task(
+        task_id="sdk1", status="done",
+        budget_summary={"total_input_tokens": 100, "total_cost_usd": 0.05, "raw_usage": {"x": 1}},
+    )
+    # in-house coordinator: computed cost, usd_usage_ratio, no raw_usage
+    await svc.start_task(task_id="ih1", root_task_id="r", kind="coordinator", engine="in_house")
+    await svc.complete_task(
+        task_id="ih1", status="done",
+        budget_summary={"total_input_tokens": 5000, "total_cost_usd": 0.02, "usd_usage_ratio": 0.1},
+    )
+    # no cost info at all → NULL source, 0 cost
+    await svc.start_task(task_id="none1", root_task_id="r", kind="sub_agent")
+    await svc.complete_task(task_id="none1", status="done", budget_summary={"total_input_tokens": 10})
+
+    rows = {t.task_id: t for t in await svc.get_tree("r")}
+    assert (rows["sdk1"].cost_usd, rows["sdk1"].cost_source) == (0.05, "sdk")
+    assert (rows["ih1"].cost_usd, rows["ih1"].cost_source) == (0.02, "computed")
+    assert (rows["none1"].cost_usd, rows["none1"].cost_source) == (0.0, None)
+
+
+@pytest.mark.asyncio
 async def test_two_level_tree_links_parent(svc):
     # root → c1 (coordinator) → g1 (leaf): the depth-2 dispatch our discriminator allows
     await svc.start_task(task_id="root", root_task_id="root", kind="root")

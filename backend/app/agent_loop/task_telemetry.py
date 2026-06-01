@@ -121,14 +121,22 @@ class TaskTelemetryService:
         error: Optional[str] = None,
     ) -> None:
         usage = usage_from_budget(budget_summary)
-        # USD budget economy: store dollars alongside tokens. The SDK leaf path
-        # reports an authoritative ``total_cost_usd`` in its budget_summary; record
-        # it directly (source="sdk"). The in-house path has no cost field here (no
-        # model in scope), so it stays 0 / None — a Phase-3 backfill can compute it
-        # from the persisted tokens + model via ``pricing.cost_from_budget_summary``.
-        sdk_cost = (budget_summary or {}).get("total_cost_usd")
-        cost_usd = float(sdk_cost) if sdk_cost is not None else 0.0
-        cost_source = "sdk" if sdk_cost is not None else None
+        # USD budget economy: store dollars alongside tokens. Both engines now carry
+        # ``total_cost_usd`` in their budget_summary, but the provenance differs:
+        #   * SDK leaf  → the CLI's authoritative ResultMessage.total_cost_usd
+        #     (its summary uniquely carries a ``raw_usage`` block) → source="sdk".
+        #   * in-house  → computed locally by BudgetController via the pricing table
+        #     (its summary uniquely carries ``usd_usage_ratio``) → source="computed".
+        # Discriminate on those engine-specific keys so the label matches reality.
+        bs = budget_summary or {}
+        raw_cost = bs.get("total_cost_usd")
+        cost_usd = float(raw_cost) if raw_cost is not None else 0.0
+        if raw_cost is None:
+            cost_source = None
+        elif "raw_usage" in bs:
+            cost_source = "sdk"
+        else:
+            cost_source = "computed"
         async with self._session_factory() as session:
             await session.execute(
                 update(TaskRecord)
