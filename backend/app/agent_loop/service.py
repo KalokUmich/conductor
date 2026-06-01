@@ -264,6 +264,7 @@ class AgentLoopService:
         if self._agent_identity and self._agent_identity.get("name"):
             try:
                 from app.scratchpad.context import _current_agent_name
+
                 _current_agent_name.set(self._agent_identity["name"])
             except Exception:
                 pass  # best-effort, never crash the run on this
@@ -293,12 +294,16 @@ class AgentLoopService:
         evidence_retries = 0
         response: Optional[ToolUseResponse] = None
 
-        # Token budget controller — tracks cumulative token usage
+        # Token + USD budget controller. Pass the provider's model id so the
+        # controller prices each iteration correctly (else pricing falls back to
+        # the sonnet tier and logs "unknown model ''" — see pricing._FALLBACK_TIER).
+        _model = getattr(self._provider, "model_name", None) or getattr(self._provider, "model_id", "") or ""
         budget = BudgetController(
             self._budget_config
             or BudgetConfig(
                 max_iterations=self._max_iterations,
-            )
+            ),
+            model=_model,
         )
 
         # Accumulate LLM text throughout the loop so we have a fallback
