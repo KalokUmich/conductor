@@ -121,6 +121,14 @@ class TaskTelemetryService:
         error: Optional[str] = None,
     ) -> None:
         usage = usage_from_budget(budget_summary)
+        # USD budget economy: store dollars alongside tokens. The SDK leaf path
+        # reports an authoritative ``total_cost_usd`` in its budget_summary; record
+        # it directly (source="sdk"). The in-house path has no cost field here (no
+        # model in scope), so it stays 0 / None — a Phase-3 backfill can compute it
+        # from the persisted tokens + model via ``pricing.cost_from_budget_summary``.
+        sdk_cost = (budget_summary or {}).get("total_cost_usd")
+        cost_usd = float(sdk_cost) if sdk_cost is not None else 0.0
+        cost_source = "sdk" if sdk_cost is not None else None
         async with self._session_factory() as session:
             await session.execute(
                 update(TaskRecord)
@@ -132,6 +140,8 @@ class TaskTelemetryService:
                     duration_ms=duration_ms,
                     error=(error or None),
                     ended_at=datetime.now(UTC),
+                    cost_usd=cost_usd,
+                    cost_source=cost_source,
                     **usage,
                 )
             )

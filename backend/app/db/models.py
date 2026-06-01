@@ -110,6 +110,10 @@ class TaskRecord(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cache_creation_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # USD budget economy: dollars alongside tokens. cost_source = "sdk" (authoritative
+    # ResultMessage.total_cost_usd) | "computed" (priced from tokens) | NULL (unknown).
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    cost_source: Mapped[str | None] = mapped_column(String, nullable=True)
     tool_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     duration_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
