@@ -160,7 +160,9 @@ class WorkflowEngine:
             provider=self._provider,  # strong model for Brain
             config=AgentLoopConfig(
                 max_iterations=brain_config.limits.max_iterations,
-                budget_config=BudgetConfig(max_input_tokens=brain_config.limits.budget_tokens),
+                # P1d interim: token allocation used as a loose USD ceiling until
+                # BrainLimits is converted to budget_usd (no-op cap; max_iterations bounds).
+                budget_config=BudgetConfig(max_usd=float(brain_config.limits.budget_tokens)),
                 interactive=True,
                 is_brain=True,
                 brain_system_prompt=brain_prompt,

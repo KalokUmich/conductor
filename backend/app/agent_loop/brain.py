@@ -55,6 +55,14 @@ _ORCHESTRATION_TOOLS = frozenset(
 )
 _DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is generous
 
+# USD budget economy (P1d): the SDK leaf path can't enforce a token cap — the
+# leaf is an independent `claude` subprocess whose only budget knobs are max_turns
+# and max_budget_usd. So we enforce dollars there. This is a LOOSE safety ceiling,
+# not a target: a real leaf spends ~$0.05–0.50, so $8 (16–160× headroom) never
+# hard-stops genuine work but caps a runaway loop before it costs hundreds.
+# Phase 2 BudgetEconomics replaces this constant with a per-task computed cap.
+_SDK_LEAF_MAX_USD = 8.0
+
 # ---------------------------------------------------------------------------
 # Role-factory template loader (P12 — role-based dispatch)
 # ---------------------------------------------------------------------------
@@ -1589,6 +1597,7 @@ class AgentToolExecutor(ToolExecutor):
             max_evidence_retries=1,
             temperature=agent_config.limits.temperature,
             llm_semaphore=self._llm_semaphore,
+            max_budget_usd=_SDK_LEAF_MAX_USD,
         )
 
         # max_turns bounds iterations; the wall-clock timeout bounds total time.
