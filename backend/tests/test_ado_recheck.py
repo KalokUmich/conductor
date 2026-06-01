@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from app.integrations.azure_devops import recheck
@@ -9,6 +11,7 @@ from app.integrations.azure_devops.recheck import (
     PriorComment,
     PriorVerdict,
     _extract_json_array,
+    _file_diff,
     _resolve_in_worktree,
     build_prior_review_context,
     confirmed_fixed,
@@ -17,6 +20,31 @@ from app.integrations.azure_devops.recheck import (
     still_open,
     verify_prior_comments,
 )
+
+
+def _make_repo_with_change(tmp_path, *, old: str, new: str, filename: str = "a.py"):
+    """Tiny git repo with one file changed across two commits. Returns diff_spec."""
+
+    def g(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True, text=True)
+
+    g("init", "-q")
+    g("config", "user.email", "t@t.com")
+    g("config", "user.name", "t")
+    (tmp_path / filename).write_text(old)
+    g("add", "-A")
+    g("commit", "-q", "-m", "base")
+    base = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    (tmp_path / filename).write_text(new)
+    g("add", "-A")
+    g("commit", "-q", "-m", "change")
+    head = subprocess.run(
+        ["git", "-C", str(tmp_path), "rev-parse", "HEAD"], capture_output=True, text=True
+    ).stdout.strip()
+    return f"{base}...{head}"
+
 
 # ---------------------------------------------------------------------------
 # parse_review_threads
@@ -166,6 +194,50 @@ async def test_verify_prior_comments_maps_verdicts(tmp_path, monkeypatch):
     assert by_thread[1].addressed is True and by_thread[1].confidence == 0.9
     # general (PR-level) comment is returned, not auto-addressed
     assert by_thread[2].addressed is False
+
+
+def test_file_diff_shows_what_changed(tmp_path):
+    spec = _make_repo_with_change(tmp_path, old="key: ai-agent\n", new="key: ai-agent\ncms-key: new-distinct\n")
+    diff = _file_diff(str(tmp_path), spec, "a.py")
+    assert "cms-key: new-distinct" in diff
+    assert diff.lstrip().startswith("diff --git")
+
+
+@pytest.mark.asyncio
+async def test_verify_includes_diff_as_primary_evidence(tmp_path, monkeypatch):
+    # Mirrors the PR-14227 'use different key' miss: the original value still
+    # appears, but a distinct key was ADDED — the diff must reach the model.
+    spec = _make_repo_with_change(
+        tmp_path,
+        old="ai-agent:\n  public-key: AAA\n",
+        new="ai-agent:\n  public-key: AAA\ncms:\n  public-key: BBB-distinct\n",
+        filename="application-dev.yml",
+    )
+    comment = PriorComment(
+        thread_id=1,
+        file_path="application-dev.yml",
+        line=2,
+        text="use different key",
+        author="K",
+        status=2,
+        replies=["modified"],
+    )
+
+    seen = {}
+
+    async def fake_fork_call(**kwargs):
+        seen["msg"] = kwargs["user_message"]
+        return '[{"index":0,"addressed":true,"confidence":0.9,"reason":"distinct cms key added per diff"}]'
+
+    monkeypatch.setattr(recheck, "fork_call", fake_fork_call)
+    verdicts = await verify_prior_comments(
+        provider=object(), comments=[comment], worktree_path=str(tmp_path), diff_spec=spec
+    )
+    # the diff (showing the added distinct key) reached the model
+    assert "What the PR changed" in seen["msg"]
+    assert "BBB-distinct" in seen["msg"]
+    assert "modified" in seen["msg"]  # author reply included
+    assert verdicts[0].addressed is True
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass, field
 from typing import List, Optional
 
@@ -174,16 +175,55 @@ def _read_code_window(worktree_path: str, file_path: str, line: int, radius: int
     return "".join(f"{i + 1:>5}  {lines[i]}" for i in range(start, end)).rstrip()
 
 
+def _file_diff(worktree_path: str, diff_spec: str, file_path: str, max_lines: int = 200) -> str:
+    """The PR's diff for one file — what the author actually changed.
+
+    This is the primary signal: the comment's line number is from an EARLIER
+    iteration and may not map to the current file, but the diff shows exactly
+    what changed (e.g. a new key block added below the commented line).
+    """
+    rel = file_path
+    on_disk = _resolve_in_worktree(worktree_path, file_path)
+    if on_disk:
+        rel = os.path.relpath(on_disk, worktree_path)
+    try:
+        out = subprocess.run(
+            ["git", "-C", worktree_path, "diff", diff_spec, "--", rel],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("recheck _file_diff failed for %s: %s", file_path, exc)
+        return ""
+    if not out.strip():
+        return ""
+    lines = out.splitlines()
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + [f"... (diff truncated, {len(lines) - max_lines} more lines)"]
+    return "\n".join(lines)
+
+
 _VERIFY_SYSTEM_PROMPT = (
     "You are auditing whether a code author addressed prior review comments. "
-    "For each comment you are given the original comment and the CURRENT code at "
-    "that location (the author has pushed changes since the comment was made). "
-    "Decide ONLY from the current code whether the concern is genuinely "
-    "addressed — do NOT assume it is fixed just because a thread was marked "
-    "resolved. Be strict: a partial or cosmetic change that doesn't remove the "
-    "root cause is NOT addressed.\n\n"
+    "For each comment you get: the original comment text, any author/reviewer "
+    "REPLIES, the thread's resolution status, the PR DIFF of that file (what the "
+    "author actually changed), and the CURRENT code around the commented line.\n\n"
+    "How to decide:\n"
+    "- The DIFF is your primary evidence — the comment's line number is from an "
+    "earlier revision and may no longer point at the relevant code, so judge by "
+    "what the diff CHANGED, not by what sits at the stale line.\n"
+    "- Interpret the comment by INTENT, not literally. A terse comment like 'use "
+    "different key' is addressed if the diff plausibly satisfies that intent "
+    "(e.g. the author added a distinct key block), even if the original value "
+    "still appears elsewhere.\n"
+    "- Weight the signals: if the thread is marked resolved/fixed AND the author "
+    "replied that they changed it AND the diff shows a relevant change, treat it "
+    "as ADDRESSED unless the diff/code clearly shows the concern still stands.\n"
+    "- Still be strict about BLATANT non-fixes: if the diff shows NO relevant "
+    "change to the commented concern, it is NOT addressed regardless of status.\n\n"
     "Return STRICT JSON, an array with one object per comment index:\n"
-    '[{"index": 0, "addressed": true, "confidence": 0.0-1.0, "reason": "one sentence citing the current code"}]\n'
+    '[{"index": 0, "addressed": true, "confidence": 0.0-1.0, "reason": "one sentence citing the diff or code"}]\n'
     "No prose outside the JSON."
 )
 
@@ -213,8 +253,10 @@ async def verify_prior_comments(
     provider: AIProvider,
     comments: List[PriorComment],
     worktree_path: str,
+    diff_spec: str = "",
 ) -> List[PriorVerdict]:
-    """Verify each INLINE prior comment against the current code in one LLM call.
+    """Verify each INLINE prior comment in one LLM call, using the PR diff as the
+    primary signal plus the current code window.
 
     PR-level comments (no file/line) are returned with ``addressed=False`` and a
     reason flagging them for manual confirmation — they can't be checked against
@@ -230,19 +272,38 @@ async def verify_prior_comments(
     if not inline:
         return verdicts
 
+    # Per-file diff, computed once and shared across same-file comments.
+    diffs_by_file: dict = {}
+    if diff_spec:
+        for c in inline:
+            fp = c.file_path or ""
+            if fp not in diffs_by_file:
+                diffs_by_file[fp] = _file_diff(worktree_path, diff_spec, fp)
+
+    diff_sections = []
+    for fp, d in diffs_by_file.items():
+        if d:
+            diff_sections.append(f"### {fp}\n```diff\n{d}\n```")
+    diff_block = (
+        ("## What the PR changed in the commented files (primary evidence)\n\n" + "\n\n".join(diff_sections) + "\n\n")
+        if diff_sections
+        else ""
+    )
+
     blocks = []
     for i, c in enumerate(inline):
         snippet = _read_code_window(worktree_path, c.file_path or "", c.line or 0)
-        reply_note = ("\n  Replies: " + " || ".join(c.replies)) if c.replies else ""
+        reply_note = ("\n  AUTHOR/REVIEWER REPLIES: " + " || ".join(c.replies)) if c.replies else ""
         blocks.append(
             f"### Comment [{i}] — {c.file_path}:{c.line} "
-            f"(ADO status: {_STATUS_INT_TO_NAME.get(c.status, 'active')})\n"
+            f"(thread status: {_STATUS_INT_TO_NAME.get(c.status, 'active')})\n"
             f"ORIGINAL COMMENT:\n{c.text[:1200]}{reply_note}\n\n"
-            f"CURRENT CODE:\n```\n{snippet}\n```"
+            f"CURRENT CODE (line numbers may have shifted since the comment):\n```\n{snippet}\n```"
         )
     user_message = (
         f"There are {len(inline)} prior review comments. For each, decide if it is "
-        f"addressed in the current code.\n\n" + "\n\n".join(blocks)
+        f"addressed — judge primarily from the diff (what changed), interpreting the "
+        f"comment by intent.\n\n" + diff_block + "## Prior comments to verify\n\n" + "\n\n".join(blocks)
     )
 
     raw = await fork_call(

@@ -518,6 +518,7 @@ async def recheck_pull_request(
                 provider=strong_provider,
                 comments=prior,
                 worktree_path=worktree_path,
+                diff_spec=diff_spec,
             )
             fixed = confirmed_fixed(verdicts)
             open_v = still_open(verdicts)
