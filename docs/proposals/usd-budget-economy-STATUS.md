@@ -59,6 +59,29 @@ Migration 007 applied. No `max_input_tokens` left in `backend/app`.
 - Then live PR review: `dev.azure.com/Fintern/Abound/_git/abound-server/pullrequest/14442`,
   confirm total `task.cost_usd` ≪ $50.
 
+## SENTRY 10/10 RESULT + ROOT-CAUSED THE −0.04 (NOT the budget economy)
+Full clean 10-case run: **mean 0.7777** vs sdk_migration baseline **0.8218**
+(−0.044). 0 budget signals across 36 leaves; unknown-model=0 (pricing fix holds).
+
+This −0.04 is **reproducible** (−0.039 / −0.044 over two runs) so it is NOT noise —
+but it is **provably not the USD budget economy**:
+- The budget code fired ZERO signals (error_max_budget/FORCE_CONCLUDE/WARN_CONVERGE
+  all 0) and `estimate()` is pure arithmetic — it never altered a dispatch.
+- Deterministic cases match the baseline EXACTLY (007 0.885/0.885, 008 0.775/0.775).
+- The drop is concentrated in **recall** (002 recall=0.67, 003 recall=0.50) and in
+  cases 002/003/004 — all in the same direction.
+
+**Root cause: the baseline is stale.** `sdk_migration` was captured **2026-05-30**.
+SIX commits landed **2026-05-31** before any USD work (`7d62c51`), including
+**`d775efc` "stop P13 false-flagging existing constants as phantom"** — which
+directly changes which existence-check findings fire → recall → composite. That is
+the recall regression, and it predates + is independent of this branch's budget work.
+
+**Action:** refresh the sentry baseline to current main-line so future evals measure
+reality; do NOT touch budget code for this. (Optionally A/B `d804d34` vs the P13 fix
+to quantify d775efc's recall delta — deferred to save Bedrock spend; timeline+recall
+evidence is already conclusive.)
+
 ## FINAL — all phases + 3 of 4 deferred items DONE (HEAD 3e71870)
 13 commits, clean tree. Quality validated two ways:
 - **Live PR 14442**: PASSED — 1 finding, vote -5, **$0.18 spend** (0.4% of $5 cap),
