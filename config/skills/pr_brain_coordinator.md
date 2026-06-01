@@ -499,6 +499,31 @@ Belong in prose synthesis as "secondary observations", not in findings:
 - Tangential improvements ("could also refactor X") — not this PR's scope.
 - Speculative "potential concern" without a concrete trigger path.
 
+**The bug is on the `-` lines? Then the PR is the FIX, not the defect — never
+flag it.** A unified diff shows removed code on `-` lines and added code on `+`
+lines. A defect that lives ONLY on the `-` lines was just *deleted* by this PR;
+reporting it as an issue (and worse, voting Request Changes) tells the author to
+"fix" the very thing they already fixed. Before you promote any finding, ask:
+"does the broken code still exist on a `+` or unchanged line after this diff
+applies?" If it only existed on a `-` line, it is praise-at-most, never a defect.
+
+<example>
+Diff replaces a buggy `indexOf()` lookup with a direct index loop:
+```
+- for (String value : addressLine) {
+-     value = convert(value);
+-     int i = addressLine.indexOf(value);   // bug: -1 after value mutated
+-     addressLine.set(i, value);            // IndexOutOfBounds on -1
++ for (int i = 0; i < addressLine.size(); i++) {
++     addressLine.set(i, convert(addressLine.get(i)));
++ }
+```
+WRONG → finding `severity: high`, "Fix IndexOutOfBoundsException in addressLine"
+        + Request Changes. (The crash is on `-` lines — the PR already removed it.)
+RIGHT → no finding, or at most a one-line `praise`: "Correctly replaces the
+        indexOf-after-mutation pattern with a stable index loop." Recommend approve.
+</example>
+
 A review with 2 sharp findings reads as more credible than a review with
 2 sharp findings padded by 3 tangential extras. When in doubt, demote.
 

@@ -2052,6 +2052,22 @@ class PRBrainOrchestrator:
             )
             secondary = scope_demoted + secondary
 
+        # Step 6b: drop findings that describe the PR's own FIX as a defect.
+        # A bug living only on the `-` (removed) lines was deleted by this PR;
+        # flagging it (esp. as high/critical + Request Changes) tells the author
+        # to fix what they already fixed. Conservative, LLM-free: only demotes a
+        # finding whose own text self-contradicts ("the PR correctly fixes this"
+        # / "old code" + "new code"). The coordinator skill is the primary guard;
+        # this is the mechanical backstop. (Real bug: PR 14442 NatWest finding.)
+        final_findings, fix_demoted, fix_demoted_count = _filter_findings_describing_own_fix(final_findings)
+        if fix_demoted_count:
+            logger.info(
+                "[PR Brain v2] Fix-as-defect filter demoted %d finding(s) "
+                "that describe the PR's own fix as an issue",
+                fix_demoted_count,
+            )
+            secondary = fix_demoted + secondary
+
         # Append secondary notes to synthesis as a "Secondary observations"
         # block. They don't enter the findings array → don't count against
         # precision / recall in the eval scorer.
@@ -2072,10 +2088,20 @@ class PRBrainOrchestrator:
                 secondary_block_lines.append(f"- **{title}** — `{file_}:{line}` (conf={conf})")
             synthesis = synthesis + "\n".join(secondary_block_lines)
 
+        # Recompute the merge recommendation from the SURVIVING findings. The
+        # original was computed before precision filtering / fix-as-defect /
+        # scope demotion; if those removed the blocking finding(s), the vote must
+        # relax accordingly (else we'd Request Changes with zero real defects —
+        # exactly the PR 14442 false -5). Mirrors code_review.shared logic on dicts.
+        merge_rec = _recompute_merge_recommendation(
+            final_findings, review_output.get("merge_recommendation", "comment")
+        )
+
         return {
             **review_output,
             "findings": final_findings,
             "synthesis": synthesis,
+            "merge_recommendation": merge_rec,
             "_precision_filter_stats": {
                 "direct_findings": len(direct),
                 "unclear_input": len(unclear),
@@ -2085,6 +2111,7 @@ class PRBrainOrchestrator:
                 "low_confidence": len(low),
                 "reflection_dropped": reflection_drops,
                 "diff_scope_demoted": scope_demoted_count,
+                "fix_as_defect_demoted": fix_demoted_count,
             },
         }
 
@@ -4192,6 +4219,92 @@ def _filter_findings_to_diff_scope(
         demoted_count += 1
 
     return (kept, demoted, demoted_count)
+
+
+def _recompute_merge_recommendation(findings: List[Dict[str, Any]], fallback: str) -> str:
+    """Recompute the merge vote from surviving dict findings after demotion.
+
+    Mirrors ``code_review.shared.merge_recommendation`` (which needs ReviewFinding
+    objects) on the dict shape used during precision filtering: any critical/high
+    → request_changes; 3+ medium → request_changes; 1-2 medium →
+    approve_with_followups; otherwise approve. Skips non-defect severities
+    (nit/praise). Falls back to the prior value only if findings is malformed.
+    """
+    try:
+        sev = [str(f.get("severity", "")).lower() for f in findings]
+    except Exception:
+        return fallback
+    blocking = sum(1 for s in sev if s in ("critical", "high"))
+    medium = sum(1 for s in sev if s in ("medium", "warning"))
+    if blocking > 0 or medium >= 3:
+        return "request_changes"
+    if medium >= 1:
+        return "approve_with_followups"
+    return "approve"
+
+
+def _filter_findings_describing_own_fix(
+    findings: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
+    """Demote findings that describe the PR's OWN fix as a defect.
+
+    Failure mode (PR 14442): the coordinator reads a bug that the diff *removes*
+    (lives only on `-` lines), then reports it as an outstanding high-severity
+    issue and votes Request Changes — telling the author to fix what they already
+    fixed. The tell is a self-contradiction in the finding's own text: it both
+    describes the old broken code AND states the PR fixes it.
+
+    Conservative by design — only demotes on an explicit "the PR fixes/corrects
+    this" phrase (optionally corroborated by old-vs-new framing). A genuine defect
+    never says the PR already fixes it, so false-demotes are highly unlikely. The
+    coordinator skill is the primary guard; this is the mechanical backstop.
+
+    Injected findings (Phase 2 existence facts) are never touched. Returns
+    (kept, demoted, demoted_count); demoted go to secondary observations.
+    """
+    if not findings:
+        return ([], [], 0)
+
+    import re as _re
+
+    # "the PR (correctly) fixes/resolves/addresses this", "this PR fixes",
+    # "new code (correctly) fixes", "is fixed by this change", etc.
+    _fix_claim = _re.compile(
+        r"\b(?:this\s+)?(?:pr|change|diff|commit|new\s+code)\b[^.]{0,60}"
+        r"\b(?:correctly\s+)?(?:fix|fixes|fixed|resolv\w*|address\w*|correct\w*|eliminat\w*|avoid\w*)\b",
+        _re.IGNORECASE,
+    )
+    # inverse phrasing: "fixed by this PR", "resolved by the new code"
+    _fix_claim_rev = _re.compile(
+        r"\b(?:fix\w*|resolv\w*|address\w*|correct\w*|eliminat\w*|avoid\w*)\b[^.]{0,40}"
+        r"\bby\s+(?:this\s+)?(?:pr|change|diff|commit|the\s+new\s+code)\b",
+        _re.IGNORECASE,
+    )
+
+    kept: List[Dict[str, Any]] = []
+    demoted: List[Dict[str, Any]] = []
+    count = 0
+    for f in findings:
+        if f.get("_injected_from"):
+            kept.append(f)
+            continue
+        # Scan the finding's own narrative fields for a self-fix claim.
+        blob = (
+            " ".join(str(f.get(k, "") or "") for k in ("title", "risk", "suggested_fix", "reasoning"))
+            + " "
+            + " ".join(str(e) for e in (f.get("evidence") or []))
+        )
+        if _fix_claim.search(blob) or _fix_claim_rev.search(blob):
+            logger.info(
+                "[PR Brain v2] Fix-as-defect drop: finding %r asserts the PR "
+                "already fixes the problem — not an outstanding defect",
+                str(f.get("title", ""))[:80],
+            )
+            demoted.append({**f, "_demoted_reason": "describes_own_fix"})
+            count += 1
+        else:
+            kept.append(f)
+    return (kept, demoted, count)
 
 
 def _extract_single_verdict(raw: str) -> str:
