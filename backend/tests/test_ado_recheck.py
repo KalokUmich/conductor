@@ -13,6 +13,7 @@ from app.integrations.azure_devops.recheck import (
     PriorComment,
     PriorVerdict,
     _extract_json_array,
+    _file_changed_since,
     _file_diff,
     _resolve_in_worktree,
     _same_file,
@@ -246,6 +247,42 @@ async def test_verify_prior_comments_maps_verdicts(tmp_path, monkeypatch):
     assert by_thread[1].addressed is True and by_thread[1].confidence == 0.9
     # general (PR-level) comment is returned, not auto-addressed
     assert by_thread[2].addressed is False
+
+
+def test_file_changed_since_gate(tmp_path):
+    _make_repo_with_change(tmp_path, old="x\n", new="y\n")  # a.py last commit ≈ now
+    # changed after a date in the past; NOT changed since a future date
+    assert _file_changed_since(str(tmp_path), "a.py", "2000-01-01T00:00:00Z") is True
+    assert _file_changed_since(str(tmp_path), "a.py", "2099-01-01T00:00:00Z") is False
+    assert _file_changed_since(str(tmp_path), "a.py", None) is True  # no date → fail open
+    assert _file_changed_since(str(tmp_path), "missing.py", "2099-01-01T00:00:00Z") is True  # no history → fail open
+
+
+@pytest.mark.asyncio
+async def test_verify_gates_unchanged_file_without_llm(tmp_path, monkeypatch):
+    # File's last change is ~now; the comment is dated in the future → unchanged
+    # since the comment → must be still-open WITHOUT any model call.
+    _make_repo_with_change(tmp_path, old="a\n", new="b\n", filename="a.py")
+    c = PriorComment(
+        thread_id=1,
+        file_path="a.py",
+        line=1,
+        text="bug",
+        author="A",
+        status=1,
+        published_date="2099-01-01T00:00:00Z",
+    )
+    called = {"n": 0}
+
+    async def fake_fork_call(**kw):
+        called["n"] += 1
+        return '[{"index":0,"addressed":true,"confidence":0.9,"reason":"x"}]'
+
+    monkeypatch.setattr(recheck, "fork_call", fake_fork_call)
+    verdicts = await verify_prior_comments(provider=object(), comments=[c], worktree_path=str(tmp_path), diff_spec="x")
+    assert called["n"] == 0  # gated → no LLM call (and not auto-credited as fixed)
+    assert verdicts[0].addressed is False
+    assert "unchanged since" in verdicts[0].reason
 
 
 def test_file_diff_shows_what_changed(tmp_path):

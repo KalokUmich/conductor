@@ -30,6 +30,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import List, Optional
 
 from app.agent_loop.forked import fork_call
@@ -70,6 +71,7 @@ class PriorComment:
     author: str
     status: int  # ADO thread status (int)
     replies: List[str] = field(default_factory=list)
+    published_date: Optional[str] = None  # ISO 8601 when the comment was posted
 
     @property
     def is_inline(self) -> bool:
@@ -139,6 +141,7 @@ def parse_review_threads(threads: List[dict]) -> List[PriorComment]:
                 author=(root.get("author") or {}).get("displayName", ""),
                 status=status_int,
                 replies=replies,
+                published_date=root.get("publishedDate"),
             )
         )
     return out
@@ -210,6 +213,43 @@ def _file_diff(worktree_path: str, diff_spec: str, file_path: str, max_lines: in
     return "\n".join(lines)
 
 
+def _file_changed_since(worktree_path: str, file_path: str, since_iso: Optional[str]) -> bool:
+    """Did any commit touch this file AFTER the comment was posted?
+
+    A comment cannot have been addressed if the file hasn't changed since it was
+    made — so when this returns False the caller marks the comment still-open
+    without asking the model (this is what stops a recheck on unchanged code from
+    declaring findings "fixed" just because the area appears in the PR diff).
+
+    Fails OPEN (returns True → fall back to LLM verification) on any uncertainty:
+    no date, no git history, parse error.
+    """
+    if not since_iso:
+        return True
+    rel = file_path
+    on_disk = _resolve_in_worktree(worktree_path, file_path)
+    if on_disk:
+        rel = os.path.relpath(on_disk, worktree_path)
+    try:
+        out = subprocess.run(
+            ["git", "-C", worktree_path, "log", "-1", "--format=%cI", "--", rel],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout.strip()
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("recheck _file_changed_since git failed for %s: %s", file_path, exc)
+        return True
+    if not out:
+        return True
+    try:
+        last_commit = datetime.fromisoformat(out)
+        commented = datetime.fromisoformat(since_iso.replace("Z", "+00:00"))
+        return last_commit > commented
+    except ValueError:
+        return True
+
+
 _VERIFY_SYSTEM_PROMPT = (
     "You are auditing whether a code author addressed prior review comments. "
     "For each comment you get: the original comment text, any author/reviewer "
@@ -227,7 +267,11 @@ _VERIFY_SYSTEM_PROMPT = (
     "replied that they changed it AND the diff shows a relevant change, treat it "
     "as ADDRESSED unless the diff/code clearly shows the concern still stands.\n"
     "- Still be strict about BLATANT non-fixes: if the diff shows NO relevant "
-    "change to the commented concern, it is NOT addressed regardless of status.\n\n"
+    "change to the commented concern, it is NOT addressed regardless of status.\n"
+    "- 'The code is intentional' or 'the comment only asks for stakeholder/human "
+    "verification' is NOT 'addressed'. Such findings stay OPEN until a human acts "
+    "or the specific concern is actually resolved in code — do not auto-credit "
+    "them as fixed.\n\n"
     "Return STRICT JSON, an array with one object per comment index:\n"
     '[{"index": 0, "addressed": true, "confidence": 0.0-1.0, "reason": "one sentence citing the diff or code"}]\n'
     "No prose outside the JSON."
@@ -278,10 +322,31 @@ async def verify_prior_comments(
     if not inline:
         return verdicts
 
+    # Change-gate: a comment cannot have been addressed if its file hasn't changed
+    # since the comment was posted. Those get an automatic still-open verdict (no
+    # LLM call) — this is what stops a recheck on unchanged code from declaring
+    # findings "fixed" just because the flagged area appears in the PR diff.
+    to_verify: List[PriorComment] = []
+    for c in inline:
+        if not _file_changed_since(worktree_path, c.file_path or "", c.published_date):
+            verdicts.append(
+                PriorVerdict(
+                    c,
+                    addressed=False,
+                    confidence=0.0,
+                    reason="file unchanged since this comment was posted — not addressed yet",
+                )
+            )
+        else:
+            to_verify.append(c)
+
+    if not to_verify:
+        return verdicts
+
     # Per-file diff, computed once and shared across same-file comments.
     diffs_by_file: dict = {}
     if diff_spec:
-        for c in inline:
+        for c in to_verify:
             fp = c.file_path or ""
             if fp not in diffs_by_file:
                 diffs_by_file[fp] = _file_diff(worktree_path, diff_spec, fp)
@@ -297,7 +362,7 @@ async def verify_prior_comments(
     )
 
     blocks = []
-    for i, c in enumerate(inline):
+    for i, c in enumerate(to_verify):
         snippet = _read_code_window(worktree_path, c.file_path or "", c.line or 0)
         reply_note = ("\n  AUTHOR/REVIEWER REPLIES: " + " || ".join(c.replies)) if c.replies else ""
         blocks.append(
@@ -307,7 +372,7 @@ async def verify_prior_comments(
             f"CURRENT CODE (line numbers may have shifted since the comment):\n```\n{snippet}\n```"
         )
     user_message = (
-        f"There are {len(inline)} prior review comments. For each, decide if it is "
+        f"There are {len(to_verify)} prior review comments. For each, decide if it is "
         f"addressed — judge primarily from the diff (what changed), interpreting the "
         f"comment by intent.\n\n" + diff_block + "## Prior comments to verify\n\n" + "\n\n".join(blocks)
     )
@@ -316,13 +381,13 @@ async def verify_prior_comments(
         provider=provider,
         system_prompt=_VERIFY_SYSTEM_PROMPT,
         user_message=user_message,
-        max_tokens=min(2000, 200 + 120 * len(inline)),
+        max_tokens=min(2000, 200 + 120 * len(to_verify)),
         label="recheck_verify",
     )
     parsed = _extract_json_array(raw)
     by_index = {int(o["index"]): o for o in parsed if isinstance(o, dict) and "index" in o}
 
-    for i, c in enumerate(inline):
+    for i, c in enumerate(to_verify):
         o = by_index.get(i)
         if o is None:
             # No verdict returned → treat as still-open (safe default: don't auto-resolve).
