@@ -7,7 +7,11 @@ from app.agent_loop.budget_analyzer import (
     _percentile,
     compute_stats,
 )
-from app.agent_loop.budget_economics import BudgetEconomics, TaskSignals
+from app.agent_loop.budget_economics import (
+    BudgetEconomics,
+    TaskSignals,
+    get_budget_economics,
+)
 
 
 class TestPercentile:
@@ -87,3 +91,30 @@ class TestHistoryProvider:
         blended = econ_hist.estimate("business", TaskSignals(sub_type="x")).per_leaf_default_usd
         # measured p80 (=9) >> policy → blended default rises
         assert blended > base
+
+
+class TestInstallSelfOptimization:
+    def test_install_idempotent_and_wires_history(self):
+        import app.agent_loop.budget_analyzer as ba
+        from app.agent_loop.lifecycle import _HOOKS, unregister_hook
+
+        ba._analyzer = None  # clean slate
+        try:
+            a1 = ba.install_self_optimization()
+            a2 = ba.install_self_optimization()
+            assert a1 is a2  # idempotent — same analyzer instance
+            # callback registered exactly once despite two install calls
+            assert _HOOKS["on_task_end"].count(ba._on_task_end_refresh) == 1
+            # singleton history now points at the analyzer
+            assert get_budget_economics()._history is not None
+        finally:
+            unregister_hook("on_task_end", ba._on_task_end_refresh)
+            ba._analyzer = None
+            get_budget_economics().set_history(None)
+
+    def test_on_task_end_refresh_noop_without_analyzer_or_loop(self):
+        import app.agent_loop.budget_analyzer as ba
+
+        ba._analyzer = None
+        # no analyzer + no running loop → must be a silent no-op (no raise)
+        ba._on_task_end_refresh(object())

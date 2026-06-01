@@ -163,3 +163,66 @@ class BudgetAnalyzer:
             return st.p80 if st is not None else None
 
         return provider
+
+
+# ---------------------------------------------------------------------------
+# Self-optimization wiring — close the loop in production (P3, deferred-item d)
+# ---------------------------------------------------------------------------
+
+#: Process-wide analyzer backing the BudgetEconomics singleton's history.
+_analyzer: Optional[BudgetAnalyzer] = None
+#: Throttle: only one in-flight refresh at a time (refresh reads the whole task
+#: table; firing it on every single task end would hammer the DB pointlessly).
+_refresh_inflight = False
+#: Hold a strong reference to the in-flight refresh task so it isn't GC'd mid-run.
+_refresh_task = None
+
+
+def install_self_optimization() -> BudgetAnalyzer:
+    """Wire the analyzer into the BudgetEconomics singleton + the on_task_end hook.
+
+    Idempotent. After this call:
+      * ``get_budget_economics()`` blends its estimates toward measured p80, and
+      * each ``on_task_end`` schedules a throttled ``refresh()`` so new task rows
+        fold into the snapshot over time.
+
+    Best-effort: hook firing is sync and swallows exceptions, and refresh is a
+    fire-and-forget asyncio task — neither can crash the Brain. Call once at
+    startup (e.g. main.py lifespan) when telemetry is configured.
+    """
+    global _analyzer
+    if _analyzer is None:
+        _analyzer = BudgetAnalyzer()
+        from .budget_economics import get_budget_economics
+
+        get_budget_economics().set_history(_analyzer.history_provider())
+        from .lifecycle import register_hook
+
+        register_hook("on_task_end", _on_task_end_refresh)
+        logger.info("[budget_analyzer] self-optimization installed (history + on_task_end)")
+    return _analyzer
+
+
+def _on_task_end_refresh(ctx) -> None:
+    """on_task_end callback: schedule a throttled snapshot refresh (fire-and-forget)."""
+    global _refresh_inflight, _refresh_task
+    if _analyzer is None or _refresh_inflight:
+        return
+    try:
+        import asyncio
+
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # no running loop (sync context) — skip; next task end will catch up
+
+    _refresh_inflight = True
+
+    async def _run() -> None:
+        global _refresh_inflight
+        try:
+            await _analyzer.refresh()
+        finally:
+            _refresh_inflight = False
+
+    # Keep a strong reference so the fire-and-forget task isn't GC'd mid-run.
+    _refresh_task = loop.create_task(_run())

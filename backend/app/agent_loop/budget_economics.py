@@ -115,6 +115,11 @@ class BudgetEconomics:
     def __init__(self, history: Optional[HistoryProvider] = None):
         self._history = history
 
+    def set_history(self, history: Optional[HistoryProvider]) -> None:
+        """Attach (or clear) the measured-cost history provider. Used by the P3
+        analyzer to make the process-wide singleton self-optimizing at runtime."""
+        self._history = history
+
     # -- public API ----------------------------------------------------------
 
     def estimate(self, query_class: str, signals: Optional[TaskSignals] = None) -> BudgetPlan:
