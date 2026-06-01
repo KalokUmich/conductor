@@ -25,6 +25,24 @@ CLI is **2.1.159** and its `--help` lists `--max-budget-usd <amount>` ("stop, re
 (191 in the last combined run). ruff + black clean. `make bedrock-check` PASS.
 Migration 007 applied. No `max_input_tokens` left in `backend/app`.
 
+## ✅ LIVE PR 14442 REVIEW — PASSED (real Fintern PR, rebuilt container w/ USD code)
+`POST /api/integrations/azure-devops/review` on PR 14442 (65-line bugfix
+`[DEV-20136]`) returned:
+```
+{"status":"ok","pr_id":14442,"threads_created":2,"findings_count":1,
+ "merge_recommendation":"request_changes","vote":-5,"error":null}
+```
+- **Consultant fired**: `Budget plan {query_class:'pr', total_cap_usd:5.0,
+  per_leaf_max_usd:2.5, expected_leaves:1}` (65 lines → $5 floor).
+- **Zero budget signals**: error_max_budget=0, FORCE_CONCLUDE=0, WARN_CONVERGE=0.
+- **2 SDK leaves cost $0.072 + $0.112 = $0.18** — 0.4% of the $5 cap (and the
+  monitoring `task` table recorded per-row cost_usd + cost_source: e.g.
+  `pr_existence_check / sdk / $0.1835`, coordinator `$0.0783`). Tokens AND USD
+  both persisted = the stated requirement.
+- Known cosmetic: the in-house coordinator row is tagged `cost_source='sdk'`
+  though computed locally (its budget_summary now carries total_cost_usd from the
+  service.py model fix). Dollar value correct; label is the only nit.
+
 ## VERIFICATION (task #21)
 - **Hard case `greptile-sentry-007` PASSED** (log /tmp/hard007.log):
   composite **0.885**, recall **1.00**, catch **100%**, findings **3**;
