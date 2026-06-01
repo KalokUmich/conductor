@@ -31,7 +31,9 @@ class BudgetSignal(Enum):
 @dataclass
 class BudgetConfig:
     max_usd: float = 5.0  # Total USD budget per session (loose safety ceiling)
-    warning_threshold: float = 0.6  # 60% — inject warning into prompt (gives ~30% buffer to converge before FORCE_CONCLUDE)
+    warning_threshold: float = (
+        0.6  # 60% — inject warning into prompt (gives ~30% buffer to converge before FORCE_CONCLUDE)
+    )
     critical_threshold: float = 0.9  # 90% — force conclusion (reserves ~10% headroom for the wrap-up LLM call)
     max_iterations: int = 50  # Hard iteration cap (independent of the USD gate)
     diminishing_returns_window: int = 3  # N iterations with no new info

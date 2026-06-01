@@ -241,11 +241,7 @@ class WorkflowEngine:
             # Prefer caller-supplied task_id; fall back to room_id or
             # session_id so the scratchpad filename still traces back to the
             # chat session when the source didn't set one explicitly.
-            task_id = (
-                params.get("task_id")
-                or context.get("room_id")
-                or context.get("session_id")
-            )
+            task_id = params.get("task_id") or context.get("room_id") or context.get("session_id")
 
             orchestrator = PRBrainOrchestrator(
                 provider=self._provider,
@@ -285,21 +281,9 @@ class WorkflowEngine:
             # ("/path/to/ws") or empty strings; trusting those leaves the
             # downstream agent loop's _read_key_docs() walking from the
             # filesystem root and crashing on /lost+found/README.md.
-            workspace_path = (
-                context.get("workspace_path")
-                or params.get("workspace_path")
-                or ""
-            )
-            query = (
-                params.get("query")
-                or context.get("query")
-                or context.get("query_text", "")
-            )
-            task_id = (
-                params.get("task_id")
-                or context.get("room_id")
-                or context.get("session_id")
-            )
+            workspace_path = context.get("workspace_path") or params.get("workspace_path") or ""
+            query = params.get("query") or context.get("query") or context.get("query_text", "")
+            task_id = params.get("task_id") or context.get("room_id") or context.get("session_id")
 
             orchestrator = DomainBrainOrchestrator(
                 provider=self._provider,

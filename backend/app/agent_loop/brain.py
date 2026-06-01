@@ -59,15 +59,17 @@ _DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is g
 # Role-factory template loader (P12 — role-based dispatch)
 # ---------------------------------------------------------------------------
 
-_VALID_FACTORY_ROLES = frozenset({
-    "security",
-    "correctness",
-    "concurrency",
-    "reliability",
-    "performance",
-    "test_coverage",
-    "api_contract",
-})
+_VALID_FACTORY_ROLES = frozenset(
+    {
+        "security",
+        "correctness",
+        "concurrency",
+        "reliability",
+        "performance",
+        "test_coverage",
+        "api_contract",
+    }
+)
 
 
 def _load_role_template(role: str) -> Optional[Dict[str, Any]]:
@@ -99,6 +101,7 @@ def _load_role_template(role: str) -> Optional[Dict[str, Any]]:
         return None
 
     import re as _re
+
     match = _re.match(r"\A---\s*\n(.*?)\n---\s*\n(.*)", content, _re.DOTALL)
     if not match:
         logger.warning("Role template %s missing YAML frontmatter", role)
@@ -173,27 +176,19 @@ def _compose_role_system_prompt(
         parts.append("")
         parts.append("\n".join(f"{i+1}. {c}" for i, c in enumerate(checks)))
         parts.append("")
-        parts.append(
-            "For each check, emit `{id, question, verdict, evidence}`."
-        )
+        parts.append("For each check, emit `{id, question, verdict, evidence}`.")
         parts.append("")
 
     parts.append("## Output contract — MUST follow")
     parts.append("")
-    parts.append(
-        "Emit a JSON block at end of turn with this shape:"
-    )
+    parts.append("Emit a JSON block at end of turn with this shape:")
     parts.append("")
     parts.append("```json")
     parts.append("{")
-    parts.append(
-        '  "summary": "≤3 sentences. Overall verdict from your lens.",'
-    )
+    parts.append('  "summary": "≤3 sentences. Overall verdict from your lens.",')
     if checks:
         parts.append('  "checks": [/* verdict per check, in order */],')
-    parts.append(
-        '  "findings": ['
-    )
+    parts.append('  "findings": [')
     parts.append(
         '    {"title": "...", "file": "...", "line": N, '
         '"description": "...", "severity": null, '
@@ -772,12 +767,9 @@ class AgentToolExecutor(ToolExecutor):
                 scope_lines.append(f"- {s}")
         scope_block = "\n".join(scope_lines)
 
-        mode_label = (
-            "combined" if (role and checks) else ("role" if role else "checks")
-        )
+        mode_label = "combined" if (role and checks) else ("role" if role else "checks")
         logger.info(
-            "[dispatch_verify] mode=%s role=%s checks=%d scope_files=%d "
-            "direction_hint=%r depth=%d",
+            "[dispatch_verify] mode=%s role=%s checks=%d scope_files=%d " "direction_hint=%r depth=%d",
             mode_label,
             role or "-",
             len(checks) if checks else 0,
@@ -845,8 +837,13 @@ class AgentToolExecutor(ToolExecutor):
                 role_template["frontmatter"].get("tools_hint")
                 or role_template["frontmatter"].get("tools")
                 or [
-                    "grep", "read_file", "find_symbol", "find_references",
-                    "git_diff", "git_show", "file_outline",
+                    "grep",
+                    "read_file",
+                    "find_symbol",
+                    "find_references",
+                    "git_diff",
+                    "git_show",
+                    "file_outline",
                 ]
             )
             # P10 — Coordinator's explicit `model_tier="strong"` overrides
@@ -855,17 +852,12 @@ class AgentToolExecutor(ToolExecutor):
             if model_tier == "strong":
                 model_hint = "strong"
             else:
-                model_hint = role_template["frontmatter"].get(
-                    "model_hint", model_tier
-                )
+                model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
             # Dispatch in dynamic mode. The role lens lives in the
             # perspective; we pass a terse task query since the
             # perspective already frames the task.
-            task_query = (
-                f"Review the code in your scope through your {role} lens. "
-                f"{success_criteria}"
-            )
+            task_query = f"Review the code in your scope through your {role} lens. " f"{success_criteria}"
             delegated_params = {
                 "perspective": composed_perspective,
                 "tools": tools_hint,
@@ -907,26 +899,30 @@ class AgentToolExecutor(ToolExecutor):
             if context:
                 sub_query_parts.extend(["", "## Context from the Brain", "", context])
 
-            sub_query_parts.extend([
-                "",
-                "## Your output",
-                "",
-                "Emit the JSON schema from your system prompt as your final "
-                "message (wrapped in a ```json block or as the turn body). "
-                "`severity` MUST be null in every finding — the Brain classifies "
-                "severity, not you.",
-            ])
+            sub_query_parts.extend(
+                [
+                    "",
+                    "## Your output",
+                    "",
+                    "Emit the JSON schema from your system prompt as your final "
+                    "message (wrapped in a ```json block or as the turn body). "
+                    "`severity` MUST be null in every finding — the Brain classifies "
+                    "severity, not you.",
+                ]
+            )
 
             if may_subdispatch and self._current_depth == 0:
-                sub_query_parts.extend([
-                    "",
-                    "## Sub-dispatch permitted (depth 2 hard wall)",
-                    "",
-                    "The Brain set `may_subdispatch=true`. If a check truly "
-                    "requires subdivision, you may call `dispatch_verify` ONCE "
-                    "to delegate a narrower investigation. Its result must fold "
-                    "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
-                ])
+                sub_query_parts.extend(
+                    [
+                        "",
+                        "## Sub-dispatch permitted (depth 2 hard wall)",
+                        "",
+                        "The Brain set `may_subdispatch=true`. If a check truly "
+                        "requires subdivision, you may call `dispatch_verify` ONCE "
+                        "to delegate a narrower investigation. Its result must fold "
+                        "into your own 3 verdicts. Your sub-agents cannot sub-dispatch.",
+                    ]
+                )
 
             sub_query = "\n".join(sub_query_parts)
 
@@ -955,8 +951,7 @@ class AgentToolExecutor(ToolExecutor):
         # return the raw answer with a warning so the Brain can still act.
         if parsed is None:
             logger.warning(
-                "dispatch_verify: worker did not emit parseable JSON. "
-                "Returning raw answer (%d chars).",
+                "dispatch_verify: worker did not emit parseable JSON. " "Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
@@ -968,8 +963,7 @@ class AgentToolExecutor(ToolExecutor):
                     "unexpected_observations": [],
                     "raw_answer": raw_answer[:4000],
                     "shape_warning": (
-                        "Sub-agent did not return structured JSON — raw answer "
-                        "included for Brain inspection."
+                        "Sub-agent did not return structured JSON — raw answer " "included for Brain inspection."
                     ),
                     "iterations": condensed.get("iterations", 0),
                     "total_input_tokens": condensed.get("total_input_tokens", 0),
@@ -1011,12 +1005,9 @@ class AgentToolExecutor(ToolExecutor):
                     ]
                     for e in entries:
                         role_label = f" role={e.role}" if e.role else ""
-                        reason_snippet = (
-                            f" — {e.reason[:80]}" if e.reason else ""
-                        )
+                        reason_snippet = f" — {e.reason[:80]}" if e.reason else ""
                         recap_lines.append(
-                            f"  #{e.dispatch_index} [{e.mode}{role_label}] "
-                            f"{e.scope[:120]}{reason_snippet}"
+                            f"  #{e.dispatch_index} [{e.mode}{role_label}] " f"{e.scope[:120]}{reason_snippet}"
                         )
                     parsed["_plan_recap"] = "\n".join(recap_lines)
             except Exception as exc:
@@ -1068,19 +1059,13 @@ class AgentToolExecutor(ToolExecutor):
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    f"Unknown dimension '{dimension}'. Must be one of "
-                    f"{sorted(_VALID_FACTORY_ROLES)}."
-                ),
+                error=(f"Unknown dimension '{dimension}'. Must be one of " f"{sorted(_VALID_FACTORY_ROLES)}."),
             )
         if not success_criteria or len(success_criteria) < 10:
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    "dispatch_sweep requires success_criteria "
-                    "(≥10 chars) describing what 'done' looks like."
-                ),
+                error=("dispatch_sweep requires success_criteria " "(≥10 chars) describing what 'done' looks like."),
             )
         if not 80_000 <= budget_tokens <= 200_000:
             return ToolResult(
@@ -1094,8 +1079,7 @@ class AgentToolExecutor(ToolExecutor):
             )
 
         logger.info(
-            "[dispatch_sweep] dimension=%s model=%s budget=%d "
-            "symbols=%d direction_hint=%r depth=%d",
+            "[dispatch_sweep] dimension=%s model=%s budget=%d " "symbols=%d direction_hint=%r depth=%d",
             dimension,
             model_tier,
             budget_tokens,
@@ -1109,10 +1093,7 @@ class AgentToolExecutor(ToolExecutor):
             return ToolResult(
                 tool_name="dispatch_sweep",
                 success=False,
-                error=(
-                    f"Dimension role '{dimension}' template missing at "
-                    f"config/agent_factory/{dimension}.md."
-                ),
+                error=(f"Dimension role '{dimension}' template missing at " f"config/agent_factory/{dimension}.md."),
             )
 
         # Build a "dimension scope" block — no file slots, just the
@@ -1126,20 +1107,23 @@ class AgentToolExecutor(ToolExecutor):
             "file range; your job is to catch patterns that span files.",
         ]
         if triggering_symbols:
-            scope_lines.extend([
-                "",
-                "**Triggering symbols** (cross-file callers / references "
-                "that motivated this dispatch):",
-                "",
-            ])
+            scope_lines.extend(
+                [
+                    "",
+                    "**Triggering symbols** (cross-file callers / references " "that motivated this dispatch):",
+                    "",
+                ]
+            )
             for sym in triggering_symbols[:20]:
                 scope_lines.append(f"- `{sym}`")
-            scope_lines.extend([
-                "",
-                "Prioritise these symbols in your sweep — the coordinator "
-                "suspects their callers / call sites are where the "
-                "cross-file pattern shows up.",
-            ])
+            scope_lines.extend(
+                [
+                    "",
+                    "Prioritise these symbols in your sweep — the coordinator "
+                    "suspects their callers / call sites are where the "
+                    "cross-file pattern shows up.",
+                ]
+            )
         scope_block = "\n".join(scope_lines)
 
         # Plan memory: persist the dispatch so coordinator recap includes it.
@@ -1155,10 +1139,9 @@ class AgentToolExecutor(ToolExecutor):
                         dispatch_index=plan_dispatch_index,
                         mode="dimension",
                         role=dimension,
-                        scope=(
-                            f"full diff — symbols={triggering_symbols[:5]}"
-                            if triggering_symbols else "full diff"
-                        )[:500],
+                        scope=(f"full diff — symbols={triggering_symbols[:5]}" if triggering_symbols else "full diff")[
+                            :500
+                        ],
                         success_criteria=success_criteria,
                         reason=direction_hint or None,
                     )
@@ -1179,22 +1162,23 @@ class AgentToolExecutor(ToolExecutor):
             role_template["frontmatter"].get("tools_hint")
             or role_template["frontmatter"].get("tools")
             or [
-                "grep", "read_file", "find_symbol", "find_references",
-                "get_callers", "get_callees", "git_diff", "git_show",
+                "grep",
+                "read_file",
+                "find_symbol",
+                "find_references",
+                "get_callers",
+                "get_callees",
+                "git_diff",
+                "git_show",
                 "file_outline",
             ]
         )
         if model_tier == "strong":
             model_hint = "strong"
         else:
-            model_hint = role_template["frontmatter"].get(
-                "model_hint", model_tier
-            )
+            model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
-        task_query = (
-            f"Sweep the entire PR diff through your {dimension} lens. "
-            f"{success_criteria}"
-        )
+        task_query = f"Sweep the entire PR diff through your {dimension} lens. " f"{success_criteria}"
         delegated_params = {
             "perspective": composed_perspective,
             "tools": tools_hint,
@@ -1219,8 +1203,7 @@ class AgentToolExecutor(ToolExecutor):
 
         if parsed is None:
             logger.warning(
-                "dispatch_sweep: worker did not emit parseable "
-                "JSON. Returning raw answer (%d chars).",
+                "dispatch_sweep: worker did not emit parseable " "JSON. Returning raw answer (%d chars).",
                 len(raw_answer),
             )
             return ToolResult(
@@ -1232,8 +1215,7 @@ class AgentToolExecutor(ToolExecutor):
                     "unexpected_observations": [],
                     "raw_answer": raw_answer[:4000],
                     "shape_warning": (
-                        "Dimension worker did not return structured JSON — "
-                        "raw answer included for Brain inspection."
+                        "Dimension worker did not return structured JSON — " "raw answer included for Brain inspection."
                     ),
                     "iterations": condensed.get("iterations", 0),
                     "total_input_tokens": condensed.get("total_input_tokens", 0),
@@ -1645,7 +1627,12 @@ class AgentToolExecutor(ToolExecutor):
             config=AgentLoopConfig(
                 max_iterations=agent_config.limits.max_iterations,
                 max_evidence_retries=1,
-                budget_config=BudgetConfig(max_usd=budget_usd),
+                # P1d interim: the BrainBudgetManager still allocates in tokens, so the
+                # token count is passed as a loose USD ceiling here (effectively a no-op
+                # cap — in-house coordinators stay bounded by max_iterations). SDK leaf
+                # workers get a real per-leaf USD cap via max_budget_usd. Full USD
+                # allocation lands when BrainBudgetManager is converted (deferred).
+                budget_config=BudgetConfig(max_usd=float(budget_tokens)),
                 is_sub_agent=True,
                 perspective=agent_config.instructions,
                 forced_tools=agent_tool_names,
@@ -1702,9 +1689,7 @@ class AgentToolExecutor(ToolExecutor):
                 elif not response:
                     response = "Continue with your best judgment based on the evidence."
                 respond_to_signal(sig_session, response)
-                logger.info(
-                    "[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50]
-                )
+                logger.info("[Brain] Responded to signal from %s: %s → %s", agent_name, sig_reason[:50], response[:50])
                 continue  # don't forward signal_blocker to UI
 
             # Forward agent events with agent_name tag
@@ -1730,15 +1715,19 @@ class AgentToolExecutor(ToolExecutor):
                 # Bare ``ThinkingStep(**s)`` raised TypeError on those extras and
                 # crashed the whole coordinator.
                 agent_result.thinking_steps = [
-                    ThinkingStep(
-                        kind=s.get("kind", ""),
-                        iteration=s.get("iteration", 0),
-                        text=s.get("text", ""),
-                        tool=s.get("tool", ""),
-                        params=s.get("params", {}),
-                        summary=s.get("summary", ""),
-                        success=s.get("success", True),
-                    ) if isinstance(s, dict) else s
+                    (
+                        ThinkingStep(
+                            kind=s.get("kind", ""),
+                            iteration=s.get("iteration", 0),
+                            text=s.get("text", ""),
+                            tool=s.get("tool", ""),
+                            params=s.get("params", {}),
+                            summary=s.get("summary", ""),
+                            success=s.get("success", True),
+                        )
+                        if isinstance(s, dict)
+                        else s
+                    )
                     for s in raw_steps
                 ]
                 if event.kind == "context_chunk":
