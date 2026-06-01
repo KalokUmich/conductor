@@ -25,12 +25,27 @@ CLI is **2.1.159** and its `--help` lists `--max-budget-usd <amount>` ("stop, re
 (191 in the last combined run). ruff + black clean. `make bedrock-check` PASS.
 Migration 007 applied. No `max_input_tokens` left in `backend/app`.
 
-## IN FLIGHT — verification (task #21)
-- Hard case `greptile-sentry-007` running (bg task bmgjmod1k, log /tmp/hard007.log).
-  Cred path now clean (crederr=0). GATE: `error_max_budget`=0 (no hard-stop) AND
-  findings>0. If clean → full sentry suite → composite ≥ ~0.834 baseline.
+## VERIFICATION (task #21)
+- **Hard case `greptile-sentry-007` PASSED** (log /tmp/hard007.log):
+  composite **0.885**, recall **1.00**, catch **100%**, findings **3**;
+  **budget_hardstops=0, force_conclude=0**, crederr=0, traceback=0. Per-leaf
+  cost **$0.11–$0.22** across 4 leaves — i.e. real spend is 16–70× under the loose
+  $8 cap, proving the cap never throttles a normal worker. ✅ THE key gate (USD
+  budget does NOT hard-stop subagents) is met.
+- **Full sentry suite IN FLIGHT** (bg b9xcff861, log /tmp/sentry_full2.log) on the
+  P2-routing code. Early signals: crederr=0, budgeterr=0, and the consultant fires —
+  `[PR Brain v2] Budget plan: {'query_class':'pr','total_cap_usd':5.0,
+  'per_leaf_default_usd':1.67,'per_leaf_max_usd':2.5,'expected_leaves':3}` on a
+  138-line PR (floor $5; loose per-leaf $2.50 vs ~$0.15 real). Awaiting suite AVG
+  vs ~0.834 baseline.
 - Then live PR review: `dev.azure.com/Fintern/Abound/_git/abound-server/pullrequest/14442`,
   confirm total `task.cost_usd` ≪ $50.
+
+## P3 DONE (committed `969ef08`)
+- `budget_analyzer.py` — reads `task.cost_usd` per agent, p50/p80/p95 (drops <5
+  samples, filters zero-cost in-house rows), exposes a `history` provider that
+  `BudgetEconomics.estimate()` blends toward p80. Best-effort/read-only; no DB →
+  pure policy. +14 tests. Wire `refresh()` to the `on_task_end` hook or a cron next.
 
 ## User-decided design call (AskUserQuestion)
 - USD enforcement = **coordinator-level total cap** (chosen) layered on the working
