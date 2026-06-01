@@ -1522,6 +1522,24 @@ These are the same refactor — the new sub-agent schema `{checks, findings with
 - Post-Checkpoint A: `dispatch_subagent` works end-to-end; Brain severity classification matches or exceeds fixed-swarm severity_accuracy on 12 requests cases
 - Post-Checkpoint B: composite within ±1pp of Checkpoint A; severity_accuracy 0.583 → 0.75+; judge avg 2.2 → 3.0+; token cost −30%+ vs fixed swarm
 
+### 9.13.1 PR review quality — open optimizations (BACKLOG, unscheduled)
+
+- [ ] **Counterbalancing findings — merge + downgrade.** When two findings are
+  two halves of ONE coherent design that offset each other, PR Brain should merge
+  them into a single finding and calibrate severity to the *net* risk — not report
+  two independent, inflated findings. Observed on PR 14287 (CorsFilter refactor,
+  2026-06-01): the bot flagged "CORS credentials changed to `false`" (Critical) and
+  "wildcard origin `*.acquired.com`" (High) as two separate problems, missing that
+  Spring forbids `allowCredentials(true)` with pattern origins — so the author
+  *deliberately* set credentials=false **to enable** the wildcard origins. The right
+  output is ONE finding at ≤ warning ("confirm dropping cookie-credential auth is
+  intended"), not two criticals. Fix lives in the coordinator's synthesis /
+  arbitration step (§9.13 phase 5): detect finding pairs that reference the same
+  change and offset each other (one enables / de-risks the other), merge, recalibrate
+  to net risk. Same root cause as the severity over-escalation that 9.13 centralised
+  into Brain synthesis — the coordinator needs **cross-finding causal reasoning**, not
+  per-line pattern matching.
+
 ### 9.15 Short-Term Memory — Fact Vault (PLANNED)
 
 **Problem observed (sentry-006)**: when PR Brain dispatches 7 parallel sub-agents, each that independently calls `get_dependencies` triggers its own `_ensure_graph` build on a 17K-file repo. Seven concurrent tree-sitter scans burn ~7× the CPU and budget, and the first finished write overwrites the others. Our module-level `_graph_cache` (tools.py:2113) is shared but has no in-flight coordination — every cold miss stampedes.
