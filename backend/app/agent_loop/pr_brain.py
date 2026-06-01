@@ -1090,18 +1090,21 @@ class PRBrainOrchestrator:
 
         duration_ms = (time.monotonic() - start_time) * 1000.0
 
-        # Extract total token usage from the coordinator's BudgetController.
-        # ``budget_summary`` is the dict emitted by ``budget.summary()`` —
-        # has ``total_tokens`` which is input+output across every LLM turn
-        # the coordinator made (including dispatched sub-agent calls that
-        # share the coordinator's budget controller).
-        _total_tokens = 0
+        # Token + USD totals for the review stats. The coordinator's own
+        # ``budget_summary`` only covers ITS in-house turns — leaf SDK workers run
+        # as separate subprocesses and report into ``budget_mgr`` instead. So the
+        # reliable session total is the budget manager's aggregate (coordinator +
+        # every dispatched sub-agent), with the coordinator's own summary as a
+        # floor/fallback.
         _total_iterations = 0
+        _coord_tokens = 0
         if isinstance(coordinator_result.data, dict):
             _total_iterations = coordinator_result.data.get("iterations", 0)
             budget_summary = coordinator_result.data.get("budget_summary")
             if isinstance(budget_summary, dict):
-                _total_tokens = int(budget_summary.get("total_tokens", 0) or 0)
+                _coord_tokens = int(budget_summary.get("total_tokens", 0) or 0)
+        _total_tokens = max(_coord_tokens, budget_mgr.total_tokens_used)
+        _total_cost_usd = budget_mgr.total_cost_usd
 
         yield WorkflowEvent(
             "done",
@@ -1112,6 +1115,7 @@ class PRBrainOrchestrator:
                 "merge_recommendation": review_output["merge_recommendation"],
                 "duration_ms": duration_ms,
                 "total_tokens": _total_tokens,
+                "total_cost_usd": _total_cost_usd,
                 "total_iterations": _total_iterations,
                 "agents_dispatched": 1,  # the coordinator itself, sub-dispatches tracked separately
                 "findings_before_arbitration": len(review_output["findings"]),

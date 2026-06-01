@@ -225,11 +225,7 @@ def format_summary_markdown(
     # Long-form body: translator output (platform-shaped) if given,
     # else the raw coordinator synthesis under a "Detailed Analysis"
     # header for backward compatibility.
-    summary_body = (
-        overall_summary_override
-        if overall_summary_override is not None
-        else result.synthesis
-    )
+    summary_body = overall_summary_override if overall_summary_override is not None else result.synthesis
     if summary_body:
         if overall_summary_override is not None:
             # Translator output owns its own section hierarchy
@@ -246,6 +242,8 @@ def format_summary_markdown(
     lines.append("<details>")
     lines.append("<summary>Agent Statistics</summary>")
     lines.append("")
+    # USD economy: budget (dollars) is the headline; tokens kept as secondary detail.
+    lines.append(f"- Total budget: ${result.total_cost_usd:.4f}")
     lines.append(f"- Total tokens: {result.total_tokens:,}")
     lines.append(f"- Total iterations: {result.total_iterations}")
     lines.append(f"- Duration: {result.total_duration_ms / 1000:.1f}s")

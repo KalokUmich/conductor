@@ -111,9 +111,10 @@ async def review_pull_request(
         # off. vote=0 leaves the decision to human reviewers.
         if _total_changed < _MIN_REVIEW_LINES:
             logger.info(
-                "[AzureDevOps] PR #%d has %d lines — below %d, posting "
-                "human-review nudge and skipping AI review",
-                req.pr_id, _total_changed, _MIN_REVIEW_LINES,
+                "[AzureDevOps] PR #%d has %d lines — below %d, posting " "human-review nudge and skipping AI review",
+                req.pr_id,
+                _total_changed,
+                _MIN_REVIEW_LINES,
             )
             try:
                 await client.create_thread(
@@ -121,12 +122,14 @@ async def review_pull_request(
                     repo=req.repo,
                     pr_id=req.pr_id,
                     content=_small_pr_skip_message(
-                        _total_changed, _MIN_REVIEW_LINES,
+                        _total_changed,
+                        _MIN_REVIEW_LINES,
                     ),
                 )
             except Exception as exc:
                 logger.warning(
-                    "[AzureDevOps] Failed to post small-PR notice: %s", exc,
+                    "[AzureDevOps] Failed to post small-PR notice: %s",
+                    exc,
                 )
             return AzureDevOpsReviewResponse(
                 status="ok",
@@ -141,7 +144,9 @@ async def review_pull_request(
             logger.info(
                 "[AzureDevOps] PR #%d has %d lines — above %d, posting "
                 "split-recommended notice and skipping AI review",
-                req.pr_id, _total_changed, _MAX_REVIEW_LINES,
+                req.pr_id,
+                _total_changed,
+                _MAX_REVIEW_LINES,
             )
 
             # Phase 7.8.5 — generate an author-friendly split plan using
@@ -158,7 +163,9 @@ async def review_pull_request(
                 file_count = _count_changed_files(main_workspace, diff_spec)
 
                 strong_provider = getattr(
-                    request.app.state, "pr_brain_strong_provider", None,
+                    request.app.state,
+                    "pr_brain_strong_provider",
+                    None,
                 )
                 if strong_provider and full_diff:
                     split_plan = await generate_pr_split_plan(
@@ -171,13 +178,14 @@ async def review_pull_request(
                     )
             except Exception as exc:
                 logger.warning(
-                    "[AzureDevOps] PR #%d split-plan generation failed "
-                    "(falling back to generic skip message): %s",
-                    req.pr_id, exc,
+                    "[AzureDevOps] PR #%d split-plan generation failed " "(falling back to generic skip message): %s",
+                    req.pr_id,
+                    exc,
                 )
 
             skip_content = _large_pr_skip_message(
-                _total_changed, _MAX_REVIEW_LINES,
+                _total_changed,
+                _MAX_REVIEW_LINES,
             )
             if split_plan:
                 skip_content = skip_content + "\n\n" + split_plan
@@ -191,7 +199,8 @@ async def review_pull_request(
                 )
             except Exception as exc:
                 logger.warning(
-                    "[AzureDevOps] Failed to post large-PR notice: %s", exc,
+                    "[AzureDevOps] Failed to post large-PR notice: %s",
+                    exc,
                 )
             return AzureDevOpsReviewResponse(
                 status="ok",
@@ -252,7 +261,9 @@ async def review_pull_request(
             # multiple reviews run concurrently.
             task_id = f"ado-{req.project}-pr-{req.pr_id}"
             orchestrator = pr_brain_factory(
-                worktree_path, diff_spec, task_id=task_id,
+                worktree_path,
+                diff_spec,
+                task_id=task_id,
                 pr_title=pr_data.get("title", "") or "",
                 pr_description=pr_data.get("description", "") or "",
                 ticket_context=ticket_context,
@@ -271,6 +282,7 @@ async def review_pull_request(
             merge_rec = ""
             files_reviewed = []
             total_tokens = 0
+            total_cost_usd = 0.0
             total_iterations = 0
             duration_ms = 0.0
 
@@ -283,6 +295,7 @@ async def review_pull_request(
                         files_reviewed = data.get("files_reviewed", [])
                         total_iterations = data.get("total_iterations", 0)
                         total_tokens = data.get("total_tokens", 0)
+                        total_cost_usd = data.get("total_cost_usd", 0.0)
                         duration_ms = data.get("duration_ms", 0.0)
                         for fd in data.get("findings", []):
                             try:
@@ -314,6 +327,7 @@ async def review_pull_request(
                 merge_recommendation=merge_rec,
                 synthesis=synthesis,
                 total_tokens=total_tokens,
+                total_cost_usd=total_cost_usd,
                 total_iterations=total_iterations,
                 total_duration_ms=duration_ms,
             )

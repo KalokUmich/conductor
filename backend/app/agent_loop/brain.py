@@ -431,7 +431,23 @@ class BrainBudgetManager:
         self.brain_reserve = min(_MAX_BRAIN_RESERVE, int(total_tokens * brain_reserve_ratio))
         self.used: Dict[str, int] = {}  # agent_name → actual tokens consumed (post-report)
         self.reserved: Dict[str, int] = {}  # agent_name → tokens held at allocate() time
+        # USD economy: accumulate real dollar spend per agent as runs report. This
+        # is the reliable aggregate for "what did this review cost" — the leaf SDK
+        # workers run as separate subprocesses, so their cost never lands in the
+        # coordinator's own budget_summary; it only shows up here, via report().
+        self.cost_used: Dict[str, float] = {}  # agent_name → cumulative USD (post-report)
+        self.tokens_total: Dict[str, int] = {}  # agent_name → cumulative total tokens (in+out)
         self._lock = asyncio.Lock()
+
+    @property
+    def total_cost_usd(self) -> float:
+        """Total USD spent across all reported sub-agents this session."""
+        return sum(self.cost_used.values())
+
+    @property
+    def total_tokens_used(self) -> int:
+        """Total tokens (in+out) across all reported sub-agents this session."""
+        return sum(self.tokens_total.values())
 
     @property
     def remaining(self) -> int:
@@ -479,7 +495,13 @@ class BrainBudgetManager:
             )
             return allocated
 
-    async def report(self, agent_name: str, tokens_used: int) -> None:
+    async def report(
+        self,
+        agent_name: str,
+        tokens_used: int,
+        cost_usd: float = 0.0,
+        total_tokens: int = 0,
+    ) -> None:
         """Record actual token usage after a sub-agent completes.
 
         Releases the agent's reservation and moves the actual usage into
@@ -490,10 +512,18 @@ class BrainBudgetManager:
 
         Args:
             agent_name: Name of the sub-agent that completed.
-            tokens_used: Number of input tokens consumed by that run.
+            tokens_used: Number of input tokens consumed by that run (pool accounting).
+            cost_usd: Actual USD spend for that run (authoritative for SDK leaves via
+                ResultMessage.total_cost_usd; computed for in-house). Accumulated for
+                the session-wide cost total reported in the PR review stats.
+            total_tokens: Total tokens (in+out) for that run, for the displayed total.
         """
         async with self._lock:
             self.used[agent_name] = self.used.get(agent_name, 0) + tokens_used
+            if cost_usd:
+                self.cost_used[agent_name] = self.cost_used.get(agent_name, 0.0) + float(cost_usd)
+            if total_tokens:
+                self.tokens_total[agent_name] = self.tokens_total.get(agent_name, 0) + int(total_tokens)
             # Release the reservation — the actual usage in `used` now
             # represents this agent's pool consumption.
             self.reserved.pop(agent_name, None)
@@ -1431,10 +1461,18 @@ class AgentToolExecutor(ToolExecutor):
 
             elapsed = (time.monotonic() - start) * 1000
 
-            # Report budget usage
+            # Report budget usage — tokens for pool accounting, plus USD + total
+            # tokens for the session cost/usage rollup (SDK-leaf cost is authoritative
+            # via total_cost_usd; this is the only place leaf spend is aggregated).
             if self._budget_manager and result.budget_summary:
-                tokens = result.budget_summary.get("total_input_tokens", 0)
-                await self._budget_manager.report(agent_name, tokens)
+                bs = result.budget_summary
+                tokens = bs.get("total_input_tokens", 0)
+                await self._budget_manager.report(
+                    agent_name,
+                    tokens,
+                    cost_usd=float(bs.get("total_cost_usd") or 0.0),
+                    total_tokens=int(bs.get("total_tokens", 0) or 0),
+                )
 
             # Emit completion event
             if self._event_sink:
