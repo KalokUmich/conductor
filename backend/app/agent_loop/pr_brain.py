@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -52,20 +53,22 @@ logger = logging.getLogger(__name__)
 # PRBrainConfig.  Only true constants (regex, enum maps) stay here.
 # ---------------------------------------------------------------------------
 
-# Wall-clock cap (seconds) for the Phase 2 existence-check worker. The
-# worker does a handful of greps to verify newly-referenced symbols;
-# prompt-level budgets are hints that LLM workers often ignore on large
-# codebases (~10 min hangs observed on 17K-file repos). This is the
-# Hard orchestrator guard — after this deadline, the LLM worker is
-# cancelled and the coordinator proceeds with only P13 deterministic
-# facts. Lowered in v2u from 120s: Phase 2 now runs P13 (Python / Go /
-# Java mechanical scans) BEFORE the LLM worker, so the worker's task
-# is already narrowed to signature-level checks that P13 cannot do.
-# 60s is enough for the narrow task; 120s was pure waste on cold
-# large-repo reviews where the worker never produced facts anyway
-# (observed 4/10 sentry cases + 6/10 grafana + 6/9 keycloak timed out
-# with zero symbols in v2t regression).
-_PHASE2_TIMEOUT_SECONDS = 60
+# Wall-clock cap (seconds) for the Phase 2 existence-check worker. Unlike a
+# normal review sub-agent (``sub_agent_timeout`` = 600s in pr_review.yaml), this
+# worker runs under a hard orchestrator-side ``asyncio.wait_for`` so a runaway
+# never blocks the review — after the deadline it's cancelled and the coordinator
+# proceeds with the P13 deterministic facts alone.
+#
+# Sizing: the worker runs a full ReAct loop (grep / read_file / find_symbol +
+# reasoning). Its FIRST symbol lookup triggers a one-time COLD symbol-index build
+# — ~57s on a ~2.4K-file worktree, more on larger repos — because every PR gets a
+# fresh worktree, so the index is always cold. The old 60s cap was almost entirely
+# eaten by that build (observed: index ready at 57s, timeout at 60s, zero facts),
+# so the worker reliably produced nothing. 180s leaves a real ReAct budget after
+# the cold build while still bounding hangs far below the 600s review cap. The
+# structural fix is to pre-warm the index in Phase 1 (then this can drop again).
+# Override with CONDUCTOR_PHASE2_TIMEOUT_S.
+_PHASE2_TIMEOUT_SECONDS = int(os.environ.get("CONDUCTOR_PHASE2_TIMEOUT_S", "180"))
 
 
 # ---------------------------------------------------------------------------
@@ -663,15 +666,23 @@ class PRBrainOrchestrator:
 
         from app.scratchpad import CachedToolExecutor, FactStore
 
+        # Stable session id for BOTH the Fact Vault filename AND task telemetry: it
+        # folds the human-readable task_id (e.g. "ado-Abound-pr-12345") in as a
+        # prefix so the whole task tree is queryable by PR. Computed unconditionally
+        # (even when the scratchpad is disabled) so telemetry always links.
+        if task_id:
+            slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")[:48] or "pr"
+            self._session_id = f"{slug}-{_uuid.uuid4().hex[:8]}"
+        else:
+            self._session_id = f"pr-{_uuid.uuid4().hex[:12]}"
+
         self._owns_scratchpad = False
         if _os.environ.get("CONDUCTOR_SCRATCHPAD_ENABLED", "1") != "0" and scratchpad is None:
-            if task_id:
-                slug = _re.sub(r"[^A-Za-z0-9._-]+", "-", task_id).strip("-")[:48] or "pr"
-                session_id = f"{slug}-{_uuid.uuid4().hex[:8]}"
-            else:
-                session_id = f"pr-{_uuid.uuid4().hex[:12]}"
-            scratchpad = FactStore.open(session_id, workspace=workspace_path, task_id=task_id)
+            scratchpad = FactStore.open(self._session_id, workspace=workspace_path, task_id=task_id)
             self._owns_scratchpad = True
+        elif scratchpad is not None:
+            # Caller-supplied scratchpad — adopt its session id for telemetry parity.
+            self._session_id = getattr(scratchpad, "session_id", None) or self._session_id
         self._scratchpad = scratchpad
 
         # Token returned by contextvars.ContextVar.set so cleanup() can
@@ -853,6 +864,7 @@ class PRBrainOrchestrator:
 
         from .brain import AgentToolExecutor, BrainBudgetManager
         from .config import BrainExecutorConfig
+        from .task_telemetry import record_complete, record_start
 
         logger.info(
             "[PR Brain v2] Coordinator loop starting: files=%d, lines=%d, budget=%.1fx",
@@ -894,6 +906,21 @@ class PRBrainOrchestrator:
         )
         llm_semaphore = asyncio.Semaphore(self._config.limits.llm_concurrency_limit)
 
+        # Telemetry root (06d): one ``pr_review`` row anchoring this review's task
+        # tree. The coordinator + every dispatched worker link to it via
+        # parent_task_id / root_task_id (all = self._session_id), so the whole-PR
+        # token + USD total is a single SUM over root_task_id, queryable by the
+        # human PR id embedded in session_id. Best-effort (no-op without a DB).
+        await record_start(
+            task_id=self._session_id,
+            root_task_id=self._session_id,
+            session_id=self._session_id,
+            kind="pr_review",
+            agent_name="pr_review_root",
+            engine="orchestrator",
+            query=self._pr_title or None,
+        )
+
         executor_cfg = BrainExecutorConfig(
             workspace_path=self._workspace_path,
             current_depth=0,
@@ -916,6 +943,9 @@ class PRBrainOrchestrator:
             event_sink=self._event_sink,
             budget_manager=budget_mgr,
             llm_semaphore=llm_semaphore,
+            task_id=self._session_id,
+            root_task_id=self._session_id,
+            session_id=self._session_id,
         )
 
         # ------------------------------------------------------------------
@@ -1105,6 +1135,16 @@ class PRBrainOrchestrator:
                 _coord_tokens = int(budget_summary.get("total_tokens", 0) or 0)
         _total_tokens = max(_coord_tokens, budget_mgr.total_tokens_used)
         _total_cost_usd = budget_mgr.total_cost_usd
+
+        # Close the telemetry root row. Own-usage stays 0 (the anchor holds no LLM
+        # turns of its own) — the PR total is the SUM over root_task_id across the
+        # tree, exactly _total_tokens / _total_cost_usd reported here.
+        await record_complete(
+            task_id=self._session_id,
+            status="done",
+            duration_ms=duration_ms,
+            iterations=_total_iterations,
+        )
 
         yield WorkflowEvent(
             "done",

@@ -18,6 +18,7 @@ Design principles:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -557,6 +558,7 @@ class AgentToolExecutor(ToolExecutor):
         llm_semaphore: Optional[asyncio.Semaphore] = None,
         task_id: Optional[str] = None,
         root_task_id: Optional[str] = None,
+        session_id: Optional[str] = None,
         # Legacy individual params — kept for backward compatibility.
         # When ``config`` is provided these are ignored.
         workspace_path: str = "",
@@ -577,8 +579,11 @@ class AgentToolExecutor(ToolExecutor):
         self._qa_cache = qa_cache or {}
         self._llm_semaphore = llm_semaphore
         # Telemetry (06d): this executor's own task id + the tree root it anchors.
+        # ``session_id`` carries the human-readable PR/session id so every task row
+        # in the tree is queryable by PR (and propagates down to child dispatches).
         self._task_id = task_id
         self._root_task_id = root_task_id
+        self._session_id = session_id
 
         # Build config from individual params when not supplied directly
         if config is None:
@@ -1401,6 +1406,7 @@ class AgentToolExecutor(ToolExecutor):
             qa_cache=self._qa_cache,
             task_id=child_task_id,
             root_task_id=self._root_task_id,
+            session_id=self._session_id,
         )
         # Propagate code_context to sub-executors
         sub_executor._code_context = self._code_context
@@ -1428,6 +1434,7 @@ class AgentToolExecutor(ToolExecutor):
             task_id=child_task_id,
             parent_task_id=self._task_id,
             root_task_id=self._root_task_id,
+            session_id=self._session_id,
             kind="coordinator" if is_orchestrator else "sub_agent",
             agent_name=agent_name,
             query=query,
@@ -1551,6 +1558,22 @@ class AgentToolExecutor(ToolExecutor):
                 },
             )
         except asyncio.CancelledError:
+            # An OUTER timeout (e.g. PR Brain's 60s existence-worker wait_for) or a
+            # shutdown cancels this dispatch mid-flight. Without this, the task row
+            # stays ``running`` forever (orphaned 0-token telemetry). Finalize it as
+            # ``cancelled`` — shielded so the DB write survives the cancellation —
+            # then re-raise so cancellation still propagates. We have no
+            # ``budget_summary`` (the worker never returned) so usage stays 0.
+            elapsed = (time.monotonic() - start) * 1000
+            with contextlib.suppress(Exception):
+                await asyncio.shield(
+                    record_complete(
+                        task_id=child_task_id,
+                        status="cancelled",
+                        duration_ms=elapsed,
+                        error="cancelled (outer timeout or shutdown)",
+                    )
+                )
             raise
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000

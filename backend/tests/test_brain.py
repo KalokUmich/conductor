@@ -724,6 +724,52 @@ class TestSdkDispatchRoutingAndTelemetry:
         assert c["task_id"] == s["task_id"]  # same node started + completed
         assert c["status"] == "done"
 
+    @pytest.mark.asyncio
+    async def test_cancelled_dispatch_finalizes_task_not_left_running(
+        self, agent_registry, swarm_registry, mock_inner_executor, mock_provider, monkeypatch
+    ):
+        """Regression: an OUTER cancellation (e.g. PR Brain's 60s existence-worker
+        wait_for) must finalize the task row as 'cancelled' — not leave it stuck
+        'running' with 0 tokens — and still re-raise so cancellation propagates.
+        Also asserts session_id is threaded into the start record."""
+        agent_registry["explore_architecture"].tools = ["grep", "read_file", "find_symbol"]
+        starts: list = []
+        completes: list = []
+
+        async def cap_start(**kw):
+            starts.append(kw)
+
+        async def cap_complete(**kw):
+            completes.append(kw)
+
+        async def boom_sdk(self, **kw):
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr("app.agent_loop.brain.record_start", cap_start)
+        monkeypatch.setattr("app.agent_loop.brain.record_complete", cap_complete)
+        monkeypatch.setattr("app.agent_loop.brain.AgentToolExecutor._run_worker_sdk", boom_sdk)
+
+        executor = AgentToolExecutor(
+            inner_executor=mock_inner_executor,
+            agent_registry=agent_registry,
+            swarm_registry=swarm_registry,
+            agent_provider=mock_provider,
+            workspace_path="/tmp/test",
+            event_sink=asyncio.Queue(),
+            session_id="ado-test-pr-1-abcd1234",
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await executor.execute(
+                "dispatch_explore",
+                {"agent_name": "explore_architecture", "query": "q"},
+            )
+
+        assert len(starts) == 1 and len(completes) == 1
+        assert starts[0]["session_id"] == "ado-test-pr-1-abcd1234"  # session threaded
+        c = completes[0]
+        assert c["status"] == "cancelled"  # finalized, not left 'running'
+        assert c["task_id"] == starts[0]["task_id"]
+
 
 # ---------------------------------------------------------------------------
 # Config Loading
@@ -751,7 +797,7 @@ class TestBrainConfigLoading:
         # templates (used via dispatch_explore(template=...)).
         assert "explore_implementation" in agents
         assert "explore_usage" in agents
-        assert "pr_existence_check" in agents           # v2 Phase 2 worker
+        assert "pr_existence_check" in agents  # v2 Phase 2 worker
 
 
 # ---------------------------------------------------------------------------
