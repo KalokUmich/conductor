@@ -59,6 +59,34 @@ Migration 007 applied. No `max_input_tokens` left in `backend/app`.
 - Then live PR review: `dev.azure.com/Fintern/Abound/_git/abound-server/pullrequest/14442`,
   confirm total `task.cost_usd` ≪ $50.
 
+## FINAL — all phases + 3 of 4 deferred items DONE (HEAD 3e71870)
+13 commits, clean tree. Quality validated two ways:
+- **Live PR 14442**: PASSED — 1 finding, vote -5, **$0.18 spend** (0.4% of $5 cap),
+  0 budget signals, cost persisted to `task` table.
+- **Sentry eval** (two independent runs): **0 budget signals** (error_max_budget /
+  FORCE_CONCLUDE / WARN_CONVERGE all 0) across 30+ leaves → budget economy is
+  behaviorally inert, cannot cause a quality delta. Same-7-case mean ≈0.78 vs
+  0.823 sdk_migration baseline (−0.04) / 0.766 premigration (+0.01); within
+  sentry's known run-to-run variance (deterministic cases match exactly; cases
+  001/002/003 swing ±0.18 run-to-run). The −0.04, if real, predates and is
+  independent of the budget code (zero signals fired) — flagged for a separate
+  look, NOT a budget-economy regression.
+
+Deferred items now DONE:
+- (c) `cost_source` mislabel fixed (`0a26532`) — in-house = "computed", SDK = "sdk",
+  discriminated on engine-specific summary keys. +1 test.
+- (d) self-optimization loop CLOSED (`3e71870`) — `install_self_optimization()` in
+  main.py lifespan points the BudgetEconomics singleton's history at a shared
+  BudgetAnalyzer + a throttled on_task_end refresh. +6 tests.
+
+Still deferred (genuinely optional):
+- (a) coordinator-level **cumulative** total-cap cutoff (per-leaf cap is live; the
+  across-waves stop at `budget_plan.total_cap_usd` is the remaining piece). The
+  user picked this in AskUserQuestion but it was sequenced after validation; safe
+  to add now that the per-leaf path is proven.
+- (b) P1e cosmetic `budget_tokens`→`budget_usd` rename (interim float() casts make
+  the in-house USD cap a harmless no-op; only the SDK leaf cap is "real", correct).
+
 ## P3 DONE (committed `969ef08`)
 - `budget_analyzer.py` — reads `task.cost_usd` per agent, p50/p80/p95 (drops <5
   samples, filters zero-cost in-house rows), exposes a `history` provider that
