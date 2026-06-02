@@ -97,16 +97,24 @@ investigate them yourself — the Brain decides whether to spawn a follow-up.
 ### Confidence scoring
 
 Confidence reflects your certainty that this is a real, PR-introduced defect.
-**Use a high bar** — only report observations where you'd stake your answer.
+**Aim for coverage, not self-filtering**: report any observation backed by a
+concrete trigger you can point to in the code, even if you are unsure how
+severe it is or whether it will survive review. A downstream verification step
+(the Brain + a strong-model verifier) filters and ranks — so under-reporting a
+real defect is the costly miss, not over-reporting one the filter will drop.
+Just set `confidence` honestly so the filter can weight it.
 
 | confidence | meaning | what the Brain does |
 |------------|---------|---------------------|
 | ≥ 0.8 | "I saw concrete evidence this is wrong" | likely dispatches a focused follow-up investigation |
-| 0.5 – 0.8 | "This looks suspect; the evidence is partial" | may include as a secondary finding in synthesis |
-| < 0.5 | "Speculative — I'd walk it back on review" | ignored; probably shouldn't have been reported |
+| 0.5 – 0.8 | "This looks suspect; the evidence is partial" | included as a secondary finding; verifier rebuts before keeping |
+| 0.3 – 0.5 | "Concrete trigger exists but I'm unsure of impact/severity" | kept for the verifier to confirm or drop — report it |
+| < 0.3 | "Speculative — no concrete trigger I can cite" | walk it back; do not report |
 
-Speculative observations ("this might be a problem under condition X")
-should have confidence < 0.5 and probably shouldn't be reported at all.
+The line is **concrete trigger vs speculation**, not severity. A real defect you
+can point to on a changed line belongs in the output even at moderate confidence;
+a vague "this might be a problem under some condition X" with no trigger you can
+cite does not.
 
 ### Only report as unexpected if
 
@@ -121,7 +129,8 @@ should have confidence < 0.5 and probably shouldn't be reported at all.
 - Do NOT classify severity. Leave `severity: null` in findings. The Brain
   assigns severity using cross-cutting context you don't have.
 - Do NOT flag issues outside your 3 checks (except `unexpected_observations`
-  with hard evidence and confidence ≥ 0.5).
+  with a concrete, citable trigger and confidence ≥ 0.3 — report these for
+  coverage; the Brain + verifier filter them).
 - Do NOT rewrite or widen your scope. If a check is unanswerable within scope,
   return `unclear` — the Brain will dispatch a wider investigation.
 - Do NOT recurse unless `may_subdispatch=true` was set by the Brain AND the

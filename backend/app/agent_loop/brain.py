@@ -136,111 +136,135 @@ def _compose_role_system_prompt(
     checks: Optional[List[str]],
     brain_context: Optional[str],
     may_subdispatch: bool,
-) -> str:
-    """Compose a role-specialist system prompt.
+) -> tuple[str, str]:
+    """Compose a role-specialist worker prompt, split into (stable_system, volatile_task).
 
-    **Reference, not copy**: the factory template (Lens / Concerns /
-    Approach / Examples) teaches the mindset; this function fuses that
-    with the PR-specific context Brain has already gathered. The
-    resulting prompt is unique to this dispatch, not a paste of the
-    factory file.
+    **Reference, not copy**: the factory template (Lens / Concerns / Approach /
+    Examples) teaches the mindset; this fuses that with the PR-specific context.
+
+    Returns a 2-tuple so the caller can place each half correctly (4-layer rule,
+    config/CLAUDE.md):
+      * ``stable_system`` — role identity + lens body + output contract + severity
+        & coverage rules + hard boundaries. Byte-identical across every dispatch of
+        this role → a cache-stable system-prompt prefix (Layer 1).
+      * ``volatile_task`` — THIS PR's scope, direction hint, survey context, and
+        specific checks. Per-dispatch; belongs in the user message (Layer 4), NOT
+        the system prompt, so it never busts the cached prefix.
     """
     frontmatter = role_template.get("frontmatter", {})
     role_body = role_template.get("body", "").strip()
     description = frontmatter.get("description", f"{role} reviewer")
 
-    parts: List[str] = []
-    parts.append(f"# You are a {role} reviewer for this PR")
-    parts.append("")
-    parts.append(f"**Role identity**: {description}")
-    parts.append("")
-    parts.append(
+    # --- Stable half: identity + lens + output contract + rules (cache-stable) ---
+    sys_parts: List[str] = []
+    sys_parts.append(f"# You are a {role} reviewer for this PR")
+    sys_parts.append("")
+    sys_parts.append(f"**Role identity**: {description}")
+    sys_parts.append("")
+    sys_parts.append(
         "Your lens, typical concerns, investigation approach, and "
         "finding-shape examples are below. Treat these as how you "
         "*think*; do not copy their specific examples into your output."
     )
-    parts.append("")
-    parts.append(role_body)
-    parts.append("")
-    parts.append("---")
-    parts.append("")
-    parts.append("# Your task in THIS PR (composed by the PR Brain)")
-    parts.append("")
-    parts.append("## Scope — stay inside these files")
-    parts.append("")
-    parts.append(scope_block)
-    parts.append("")
-    if direction_hint:
-        parts.append("## Brain's direction hint")
-        parts.append("")
-        parts.append(direction_hint)
-        parts.append("")
-    if brain_context:
-        parts.append("## Context from Brain's Survey")
-        parts.append("")
-        parts.append(brain_context)
-        parts.append("")
-    if checks:
-        parts.append("## Specific checks Brain wants answered")
-        parts.append("")
-        parts.append("\n".join(f"{i+1}. {c}" for i, c in enumerate(checks)))
-        parts.append("")
-        parts.append("For each check, emit `{id, question, verdict, evidence}`.")
-        parts.append("")
-
-    parts.append("## Output contract — MUST follow")
-    parts.append("")
-    parts.append("Emit a JSON block at end of turn with this shape:")
-    parts.append("")
-    parts.append("```json")
-    parts.append("{")
-    parts.append('  "summary": "≤3 sentences. Overall verdict from your lens.",')
-    if checks:
-        parts.append('  "checks": [/* verdict per check, in order */],')
-    parts.append('  "findings": [')
-    parts.append(
+    sys_parts.append("")
+    sys_parts.append(role_body)
+    sys_parts.append("")
+    sys_parts.append("---")
+    sys_parts.append("")
+    sys_parts.append("## Output contract — MUST follow")
+    sys_parts.append("")
+    sys_parts.append("Emit a JSON block at end of turn with this shape:")
+    sys_parts.append("")
+    sys_parts.append("```json")
+    sys_parts.append("{")
+    sys_parts.append('  "summary": "≤3 sentences. Overall verdict from your lens.",')
+    sys_parts.append(
+        '  "checks": [/* if your task lists specific checks: one verdict per ' "check, in order; omit if none */],"
+    )
+    sys_parts.append('  "findings": [')
+    sys_parts.append(
         '    {"title": "...", "file": "...", "line": N, '
         '"description": "...", "severity": null, '
         '"severity_hint": "critical|high|medium|low|nit", '
         '"confidence": 0.0-1.0}'
     )
-    parts.append("  ]")
-    parts.append("}")
-    parts.append("```")
-    parts.append("")
-    parts.append(
+    sys_parts.append("  ]")
+    sys_parts.append("}")
+    sys_parts.append("```")
+    sys_parts.append("")
+    sys_parts.append(
         "**Severity rules**: `severity` MUST be `null` — Brain classifies "
         "severity, not you. `severity_hint` is a HINT Brain may override. "
-        "At most 5 findings; quality > quantity. Every finding MUST have "
-        "file:line evidence quoted from code."
+        "Every finding MUST have file:line evidence quoted from code."
     )
-    parts.append("")
-    parts.append("## Hard boundaries")
-    parts.append("")
-    parts.append(
-        "- Stay within the scope files above. Cross-file grep only if "
-        "verifying existence of a symbol referenced by your finding."
+    sys_parts.append("")
+    sys_parts.append(
+        "**Coverage over self-filtering**: report every concrete defect you "
+        "find through your lens — including low-severity ones and ones whose "
+        "severity you are unsure how to rank. A downstream verifier filters "
+        "and the Brain ranks, so under-reporting a real bug is the costly "
+        "miss, not over-reporting one the filter will drop. Set `confidence` "
+        "honestly so the filter can weight it. This does NOT license "
+        "speculation — each finding still needs a concrete trigger on a "
+        "changed/`+` line (the boundaries below stand). Cap the list at the "
+        "~7 strongest if you find more."
     )
-    parts.append(
+    sys_parts.append("")
+    sys_parts.append("## Hard boundaries")
+    sys_parts.append("")
+    sys_parts.append(
+        "- Stay within the scope files given in your task. Cross-file grep only "
+        "if verifying existence of a symbol referenced by your finding."
+    )
+    sys_parts.append(
         "- No style / naming nits. No pre-existing issues. No speculative "
         '"potential concern" without a concrete trigger path in THIS diff.'
     )
-    parts.append(
+    sys_parts.append(
         "- If nothing in your lens fires, emit an empty findings array + "
         "a summary explaining what you verified and why nothing rose."
     )
+    stable_system = "\n".join(sys_parts)
 
+    # --- Volatile half: THIS PR's scope/direction/context/checks (Layer 4) ---
+    task_parts: List[str] = []
+    task_parts.append("# Your task in THIS PR (composed by the PR Brain)")
+    task_parts.append("")
+    task_parts.append("## Scope — stay inside these files")
+    task_parts.append("")
+    task_parts.append(scope_block)
+    task_parts.append("")
+    if direction_hint:
+        task_parts.append("## Brain's direction hint")
+        task_parts.append("")
+        task_parts.append(direction_hint)
+        task_parts.append("")
+    if brain_context:
+        task_parts.append("## Context from Brain's Survey")
+        task_parts.append("")
+        task_parts.append(brain_context)
+        task_parts.append("")
+    if checks:
+        task_parts.append("## Specific checks Brain wants answered")
+        task_parts.append("")
+        task_parts.append("\n".join(f"{i+1}. {c}" for i, c in enumerate(checks)))
+        task_parts.append("")
+        task_parts.append(
+            "For each check, emit `{id, question, verdict, evidence}` in the " "`checks` array of your JSON output."
+        )
+        task_parts.append("")
     if may_subdispatch:
-        parts.append("")
-        parts.append("## Sub-dispatch permitted (depth 2 hard wall)")
-        parts.append("")
-        parts.append(
+        task_parts.append("## Sub-dispatch permitted (depth 2 hard wall)")
+        task_parts.append("")
+        task_parts.append(
             "Brain set may_subdispatch=true. You may call "
             "`dispatch_verify` ONCE to delegate a narrower investigation. "
             "Sub-sub-agents cannot dispatch further."
         )
+        task_parts.append("")
+    volatile_task = "\n".join(task_parts).rstrip()
 
-    return "\n".join(parts)
+    return stable_system, volatile_task
 
 
 # ---------------------------------------------------------------------------
@@ -867,7 +891,7 @@ class AgentToolExecutor(ToolExecutor):
                     ),
                 )
 
-            composed_perspective = _compose_role_system_prompt(
+            stable_system, volatile_task = _compose_role_system_prompt(
                 role=role,
                 role_template=role_template,
                 scope_block=scope_block,
@@ -900,12 +924,16 @@ class AgentToolExecutor(ToolExecutor):
             else:
                 model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
-            # Dispatch in dynamic mode. The role lens lives in the
-            # perspective; we pass a terse task query since the
-            # perspective already frames the task.
-            task_query = f"Review the code in your scope through your {role} lens. " f"{success_criteria}"
+            # Dispatch in dynamic mode. The role lens (stable_system) is the
+            # cache-stable Layer-1 perspective; THIS PR's scope/checks/direction
+            # (volatile_task) ride in the user message (Layer 4) so they never
+            # bust the cached system prefix.
+            task_query = (
+                f"{volatile_task}\n\n---\n\n"
+                f"Review the code in your scope through your {role} lens. {success_criteria}"
+            )
             delegated_params = {
-                "perspective": composed_perspective,
+                "perspective": stable_system,
                 "tools": tools_hint,
                 "model": model_hint,
                 "query": task_query,
@@ -1194,7 +1222,7 @@ class AgentToolExecutor(ToolExecutor):
             except Exception as exc:
                 logger.debug("[P4] plan_memory put failed (non-fatal): %s", exc)
 
-        composed_perspective = _compose_role_system_prompt(
+        stable_system, volatile_task = _compose_role_system_prompt(
             role=dimension,
             role_template=role_template,
             scope_block=scope_block,
@@ -1224,9 +1252,11 @@ class AgentToolExecutor(ToolExecutor):
         else:
             model_hint = role_template["frontmatter"].get("model_hint", model_tier)
 
-        task_query = f"Sweep the entire PR diff through your {dimension} lens. " f"{success_criteria}"
+        task_query = (
+            f"{volatile_task}\n\n---\n\n" f"Sweep the entire PR diff through your {dimension} lens. {success_criteria}"
+        )
         delegated_params = {
-            "perspective": composed_perspective,
+            "perspective": stable_system,
             "tools": tools_hint,
             "model": model_hint,
             "query": task_query,

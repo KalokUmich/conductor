@@ -431,7 +431,7 @@ class TestComposeRoleSystemPrompt:
     def test_composes_role_context_and_scope(self):
         from app.agent_loop.brain import _compose_role_system_prompt
 
-        out = _compose_role_system_prompt(
+        sys_prompt, task = _compose_role_system_prompt(
             role="security",
             role_template=self._template_stub(),
             scope_block="- src/auth/oauth.py:100-150",
@@ -440,21 +440,23 @@ class TestComposeRoleSystemPrompt:
             brain_context="PR adds PKCE support",
             may_subdispatch=False,
         )
-        # Contains role template content
-        assert "Attacker view" in out
-        assert "SQL injection" in out
-        # Contains PR-specific additions
+        out = sys_prompt + "\n" + task
+        # Role template content + output contract are in the stable system half
+        assert "Attacker view" in sys_prompt
+        assert "SQL injection" in sys_prompt
+        assert '"severity": null' in sys_prompt
+        assert "severity_hint" in sys_prompt
+        # PR-specific additions are in the volatile task half (Layer 4)
+        assert "src/auth/oauth.py:100-150" in task
+        assert "look for token leaks" in task
+        assert "PR adds PKCE support" in task
+        # ...and everything is reachable from the combined prompt
         assert "src/auth/oauth.py:100-150" in out
-        assert "look for token leaks" in out
-        assert "PR adds PKCE support" in out
-        # Contains output contract
-        assert '"severity": null' in out
-        assert "severity_hint" in out
 
     def test_with_checks_includes_checks_section(self):
         from app.agent_loop.brain import _compose_role_system_prompt
 
-        out = _compose_role_system_prompt(
+        sys_prompt, task = _compose_role_system_prompt(
             role="security",
             role_template=self._template_stub(),
             scope_block="- foo.py",
@@ -463,23 +465,24 @@ class TestComposeRoleSystemPrompt:
             brain_context=None,
             may_subdispatch=False,
         )
+        out = sys_prompt + "\n" + task
         assert "Is X validated?" in out
         assert "Does Y leak?" in out
 
     def test_may_subdispatch_only_emitted_when_true(self):
         from app.agent_loop.brain import _compose_role_system_prompt
 
-        off = _compose_role_system_prompt(
+        off = "\n".join(_compose_role_system_prompt(
             role="security", role_template=self._template_stub(),
             scope_block="- x.py", direction_hint="d", checks=None,
             brain_context=None, may_subdispatch=False,
-        )
+        ))
         assert "may_subdispatch=true" not in off
-        on = _compose_role_system_prompt(
+        on = "\n".join(_compose_role_system_prompt(
             role="security", role_template=self._template_stub(),
             scope_block="- x.py", direction_hint="d", checks=None,
             brain_context=None, may_subdispatch=True,
-        )
+        ))
         assert "may_subdispatch=true" in on
 
 
@@ -548,11 +551,14 @@ class TestDispatchSubagentRoleMode:
         # Dynamic mode: perspective is set, not template
         assert "perspective" in captured
         assert "template" not in captured
-        # Perspective includes the role lens + PR context
+        # CS-3a 4-layer split: the cache-stable perspective (Layer 1) carries the
+        # role lens, but NOT this PR's volatile scope/direction/context...
         assert "security reviewer" in captured["perspective"]
-        assert "src/auth/oauth.py:100-150" in captured["perspective"]
-        assert "token leaks" in captured["perspective"]
-        assert "PKCE" in captured["perspective"]
+        assert "src/auth/oauth.py:100-150" not in captured["perspective"]
+        # ...which now ride in the user message / query (Layer 4) instead.
+        assert "src/auth/oauth.py:100-150" in captured["query"]
+        assert "token leaks" in captured["query"]
+        assert "PKCE" in captured["query"]
         # Tools from the factory template
         assert "grep" in captured["tools"]
 

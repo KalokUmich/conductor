@@ -415,7 +415,7 @@ class TestDispatchDimensionWorkerExecutor:
         )
         monkeypatch.setattr(
             "app.agent_loop.brain._compose_role_system_prompt",
-            lambda **kw: "composed perspective",
+            lambda **kw: ("composed perspective", "composed task"),
         )
         monkeypatch.setattr(executor, "_dispatch_explore", fake_dispatch_explore)
 
