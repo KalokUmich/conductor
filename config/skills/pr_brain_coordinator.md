@@ -493,6 +493,17 @@ location-bearing shape shown in the `## Suggested_fix` section — specific beat
 gestural. If a finding's evidence feels thin, dispatch a strong-model verifier to
 rebut before keeping it.
 
+**Anchor existence / availability / import findings at the diff site, not the
+implementation file.** When the defect is "symbol X doesn't exist", "param Y
+isn't supported", or "Z was imported/called but is wrong", set the finding's
+`file`/`line` at the **`+` line in the changed file that introduced the
+import or call** — e.g. the `from ... import OptimizedCursorPaginator` line in
+the endpoint being edited — NOT the implementation file where the crash would
+surface (e.g. the paginator's own source). The PR author reads the comment on
+the line they wrote; cite the implementation file as supporting evidence in the
+finding body, but pin the location to the diff. (This is location only — it does
+not change which findings you emit or their severity.)
+
 **Findings vs. secondary observations — be disciplined about what enters
 the `findings` array.**
 
