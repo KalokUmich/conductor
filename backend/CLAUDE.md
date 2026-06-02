@@ -17,7 +17,8 @@ backend/app/
 │   │   ├── verify.py        # DispatchVerifyParams/Scope + DISPATCH_VERIFY_TOOL_DEF (scope-bounded structured checks)
 │   │   └── sweep.py         # DispatchSweepParams + DISPATCH_SWEEP_TOOL_DEF (full-diff one-lens cross-file scan)
 │   ├── domain_brain.py      # Phase 9.19 DomainBrainOrchestrator — coordinator self-survey + parallel dispatch + synthesis
-│   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline
+│   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline (LLM orchestration)
+│   ├── existence_scanners.py # Deterministic P13/P14 existence/phantom-symbol/stub scanners + post-processing (pure; re-exported by pr_brain)
 │   ├── forked.py            # Phase 9.16 fork_call primitive — cache-reuse verifier dispatch (bypasses AgentLoopService)
 │   ├── lifecycle.py         # Phase 9.17 hook registry — 4 extension points around the Brain pipeline
 │   ├── budget.py            # BudgetController — token-based budget management
