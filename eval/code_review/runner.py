@@ -112,10 +112,12 @@ def setup_workspace(source_dir: str, patch_path: str, tmp_dir: Optional[str] = N
     # Copy source tree — skip metadata-only dirs, hardlink files for speed.
     #
     # Large eval repos (sentry ~17K files) make shutil.copytree prohibitively
-    # slow (~90s). Hardlinks are instant and safe: git-apply on a hardlinked
-    # file triggers copy-on-write at the filesystem level, so the materialized
-    # base stays intact.  We fall back to regular copy on filesystems that
-    # don't support cross-directory hardlinks (e.g. different mount points).
+    # slow (~90s). Hardlinks are instant. NOTE: hardlinks are NOT copy-on-write
+    # on ext4 / WSL2 — git-apply writes in place, which would mutate the SHARED
+    # base inode and silently corrupt the committed base tree for every later
+    # run (this is exactly what broke keycloak-002). We therefore break the
+    # hardlink for every file the patch touches BEFORE applying (see below).
+    # We fall back to regular copy on filesystems without cross-dir hardlinks.
     src = Path(source_dir)
     dst = Path(workspace)
     skipped = []
@@ -156,6 +158,34 @@ def setup_workspace(source_dir: str, patch_path: str, tmp_dir: Optional[str] = N
     _run_git(workspace, "config", "user.name", "Conductor Eval")
     _run_git(workspace, "add", "-A")
     _run_git(workspace, "commit", "-m", "Initial: clean source")
+
+    # Break hardlinks for every file the patch references BEFORE git apply. On
+    # non-CoW filesystems (ext4, WSL2) git-apply truncates+writes in place, which
+    # mutates the inode SHARED with the committed base tree — corrupting the base
+    # for the next run (the patch's pre-image no longer matches → apply fails).
+    # Replacing each target with a private copy (unlink + rewrite = fresh inode)
+    # confines the mutation to this throwaway workspace. Cheap: only patched files.
+    try:
+        _patch_text = Path(patch_path).read_text(errors="replace")
+        _targets = set()
+        for _ln in _patch_text.splitlines():
+            for _pfx in ("+++ b/", "--- a/"):
+                if _ln.startswith(_pfx):
+                    _p = _ln[len(_pfx) :].strip()
+                    if _p and _p != "/dev/null":
+                        _targets.add(_p)
+        _broken = 0
+        for _rel in _targets:
+            _wf = Path(workspace) / _rel
+            if _wf.is_file() and _wf.stat().st_nlink > 1:
+                _data = _wf.read_bytes()
+                _wf.unlink()
+                _wf.write_bytes(_data)
+                _broken += 1
+        if _broken:
+            logger.info("  setup_workspace: broke %d hardlink(s) for patched files (base-safe)", _broken)
+    except Exception as _exc:
+        logger.warning("  setup_workspace: hardlink-break pre-apply failed (non-fatal): %s", _exc)
 
     # Apply patch — use --reject so hunks targeting excluded directories
     # are dropped rather than failing the whole apply. Any remaining .rej
@@ -319,7 +349,10 @@ def _run_git(cwd: str, *args: str) -> str:
         cwd=cwd,
         capture_output=True,
         text=True,
-        timeout=60,
+        # 300s (was 60s): `git add -A` on the large hardlinked keycloak tree
+        # (~10K files) can exceed 60s under WSL2 I/O contention, which errored
+        # every case on the 2026-06-02 re-run. 5 min is ample headroom.
+        timeout=300,
     )
     if result.returncode != 0:
         raise RuntimeError(

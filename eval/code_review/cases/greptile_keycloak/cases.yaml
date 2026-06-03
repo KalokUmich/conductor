@@ -3,97 +3,51 @@ cases:
   patch: patches/001.patch
   difficulty: hard
   title: Fixing Re-authentication with passkeys
-  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java:413]\
-    \ syntax: 'Succesful' is misspelled\n\n```suggestion\n            // Successful event - password login\n```\n  - [services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java:47]\
-    \ syntax: The method `isConditionalPasskeysEnabled()` is called without parameters, but based on the parent class `UsernamePasswordForm`,\
-    \ it expects a `UserModel` parameter. This will cause a compilatio\n  - [services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java:103]\
-    \ logic: this line still uses the `user` variable directly - ensure `user` is non-null when `shouldShowWebAuthnAuthenticators()`\
-    \ returns true"
+  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest.java:413] syntax: 'Succesful' is misspelled\n\n```suggestion\n            // Successful event - password login\n```\n  - [services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm.java:47] syntax: The method `isConditionalPasskeysEnabled()` is called without parameters, but based on the parent class `UsernamePasswordForm`, it expects a `UserModel` parameter. This will cause a compilatio\n  - [services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator.java:103] logic: this line still uses the `user` variable directly - ensure `user` is non-null when `shouldShowWebAuthnAuthenticators()` returns true"
   source_dir: repos/greptile_bases/keycloak/001
   base_sha: 30f804af450dec523909a52f2a4b97302d27f5cc
   base_ref: improve-auth-user-experience
   head_ref: enhance-passkey-authentication-flow
   expected_findings:
-  - title_pattern: Succesful|Successful
-    file_pattern: testsuite/integration\-arquillian/tests/base/src/test/java/org/keycloak/testsuite/webauthn/passwordless/PasskeysUsernamePasswordFormTest\.java
-    line_range:
-    - 408
-    - 418
-    severity: warning
-    category: correctness
-    recommendation: "'Succesful' is misspelled\n\n```suggestion\n            // Successful event - password login\n```"
-  - title_pattern: UsernamePasswordForm|UserModel|This
+  - title_pattern: isConditionalPasskeysEnabled|UserModel|compil
     file_pattern: services/src/main/java/org/keycloak/authentication/authenticators/browser/UsernameForm\.java
     line_range:
     - 42
     - 52
     severity: critical
     category: correctness
-    recommendation: The method `isConditionalPasskeysEnabled()` is called without parameters, but based on the parent class
-      `UsernamePasswordForm`, it expects a `UserModel` parameter.
-  - title_pattern: this|line|still|uses|the
-    file_pattern: services/src/main/java/org/keycloak/authentication/authenticators/browser/WebAuthnAuthenticator\.java
-    line_range:
-    - 98
-    - 108
-    severity: warning
-    category: security
-    recommendation: this line still uses the `user` variable directly - ensure `user` is non-null when `shouldShowWebAuthnAuthenticators()`
-      returns true
+    recommendation: '`isConditionalPasskeysEnabled()` is called with no arguments at UsernameForm.java:47, but the only definition is `isConditionalPasskeysEnabled(UserModel user)` in the parent UsernamePasswordForm. There is no zero-arg overload -> compile error. Pass `context.getUser()`.'
 - id: greptile-keycloak-002
   patch: patches/002.patch
   difficulty: medium
   title: Add caching support for IdentityProviderStorageProvider.getForLogin operations
-  description: "Test 2\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java:381]\
-    \ logic: Cleanup reference uses incorrect alias - should be 'idp-alias-' + i instead of 'alias'\n\n```suggestion\n   \
-    \         getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-\" + i)::\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java:425]\
-    \ logic: Same cleanup issue - incorrect alias reference\n\n```suggestion\n        getCleanup().addCleanup(testRealm().identityProviders().get(\"\
-    idp-alias-20\")::remove);\n```\n  - [model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:246]\
-    \ logic: using `session.identityProviders().getById(id)` calls the same provider recursively, which could lead to inconsistent\
-    \ caching behavior\n\n```suggestion\n            IdentityProviderModel idp = idp"
+  description: "Test 2\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java:381] logic: Cleanup reference uses incorrect alias - should be 'idp-alias-' + i instead of 'alias'\n\n```suggestion\n            getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-\" + i)::\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest.java:425] logic: Same cleanup issue - incorrect alias reference\n\n```suggestion\n        getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-20\")::remove);\n```\n  - [model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider.java:246] logic: using `session.identityProviders().getById(id)` calls the same provider recursively, which could lead to inconsistent caching behavior\n\n```suggestion\n            IdentityProviderModel idp = idp"
   source_dir: repos/greptile_bases/keycloak/002
   base_sha: 5ff9e9147dc08432b3ec7753906467c390b1e6ee
   base_ref: feature-idp-cache-baseline
   head_ref: feature-idp-cache-implementation
   expected_findings:
-  - title_pattern: Cleanup
+  - title_pattern: idp-alias|incorrect alias
     file_pattern: testsuite/integration\-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest\.java
     line_range:
     - 376
     - 386
     severity: warning
     category: correctness
-    recommendation: "Cleanup reference uses incorrect alias - should be 'idp-alias-' + i instead of 'alias'\n\n```suggestion\n\
-      \            getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-\" + i)::remove)"
-  - title_pattern: Same
+    recommendation: "Cleanup reference uses incorrect alias - should be 'idp-alias-' + i instead of 'alias'\n\n```suggestion\n            getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-\" + i)::remove)"
+  - title_pattern: idp-alias-20|incorrect alias
     file_pattern: testsuite/integration\-arquillian/tests/base/src/test/java/org/keycloak/testsuite/organization/cache/OrganizationCacheTest\.java
     line_range:
     - 420
     - 430
     severity: warning
     category: correctness
-    recommendation: "Same cleanup issue - incorrect alias reference\n\n```suggestion\n        getCleanup().addCleanup(testRealm().identityProviders().get(\"\
-      idp-alias-20\")::remove);\n```"
-  - title_pattern: IdentityProviderModel
-    file_pattern: model/infinispan/src/main/java/org/keycloak/models/cache/infinispan/idp/InfinispanIdentityProviderStorageProvider\.java
-    line_range:
-    - 241
-    - 251
-    severity: warning
-    category: correctness
-    recommendation: "using `session.identityProviders().getById(id)` calls the same provider recursively, which could lead\
-      \ to inconsistent caching behavior\n\n```suggestion\n            IdentityProviderModel idp = idpDelegat"
+    recommendation: "Same cleanup issue - incorrect alias reference\n\n```suggestion\n        getCleanup().addCleanup(testRealm().identityProviders().get(\"idp-alias-20\")::remove);\n```"
 - id: greptile-keycloak-003
   patch: patches/003.patch
   difficulty: hard
   title: Add AuthzClientCryptoProvider for authorization client cryptographic operations
-  description: "Test 3\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java:153]\
-    \ logic: bit shifting could cause integer overflow for large length values, consider using Math.addExact() or similar\
-    \ overflow checking\n  - [common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java:44] logic: method lacks\
-    \ `default` implementation which will break existing CryptoProvider implementations that don't override this method\n\n\
-    ```suggestion\n    default int order() {\n        return 0;\n    }\n`\n  - [authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:67]\
-    \ logic: incorrect provider returned - this returns the default keystore provider instead of BouncyCastle provider, which\
-    \ will break cryptographic operations expecting BC functionality"
+  description: "Test 3\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/ASN1Decoder.java:153] logic: bit shifting could cause integer overflow for large length values, consider using Math.addExact() or similar overflow checking\n  - [common/src/main/java/org/keycloak/common/crypto/CryptoProvider.java:44] logic: method lacks `default` implementation which will break existing CryptoProvider implementations that don't override this method\n\n```suggestion\n    default int order() {\n        return 0;\n    }\n`\n  - [authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider.java:67] logic: incorrect provider returned - this returns the default keystore provider instead of BouncyCastle provider, which will break cryptographic operations expecting BC functionality"
   source_dir: repos/greptile_bases/keycloak/003
   base_sha: 10aca5552314d6e5c9226f3c6d0107861c38c693
   base_ref: feature-authz-crypto-baseline
@@ -106,162 +60,51 @@ cases:
     - 158
     severity: warning
     category: correctness
-    recommendation: bit shifting could cause integer overflow for large length values, consider using Math.addExact() or similar
-      overflow checking
-  - title_pattern: CryptoProvider
+    recommendation: bit shifting could cause integer overflow for large length values, consider using Math.addExact() or similar overflow checking
+  - title_pattern: order|default|SPI
     file_pattern: common/src/main/java/org/keycloak/common/crypto/CryptoProvider\.java
     line_range:
     - 39
     - 49
-    severity: critical
-    category: correctness
-    recommendation: "method lacks `default` implementation which will break existing CryptoProvider implementations that don't\
-      \ override this method\n\n```suggestion\n    default int order() {\n        return 0;\n    }\n```"
-  - title_pattern: BouncyCastle
-    file_pattern: authz/client/src/main/java/org/keycloak/authorization/client/util/crypto/AuthzClientCryptoProvider\.java
-    line_range:
-    - 62
-    - 72
-    severity: critical
-    category: correctness
-    recommendation: incorrect provider returned - this returns the default keystore provider instead of BouncyCastle provider,
-      which will break cryptographic operations expecting BC functionality
-  - title_pattern: Trailing
-    file_pattern: common/src/main/java/org/keycloak/common/crypto/CryptoIntegration\.java
-    line_range:
-    - 62
-    - 72
     severity: warning
     category: correctness
-    recommendation: Trailing comma will be added to the logged string for all ignored providers
+    recommendation: "method lacks `default` implementation which will break existing CryptoProvider implementations that don't override this method\n\n```suggestion\n    default int order() {\n        return 0;\n    }\n```"
 - id: greptile-keycloak-005
   patch: patches/005.patch
   difficulty: medium
   title: Add Client resource type and scopes to authorization schema
-  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:214]\
-    \ syntax: Extra space after assignment operator: should be `Resource resource = resourceStore.findByName(...)`\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java:98]\
-    \ syntax: Method signature indicates it should return boolean but documentation says it returns true\n\n```suggestion\n\
-    \    /**\n     * Throws ForbiddenException if {@link #canView()} returns {@code false}.\n\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java:103]\
-    \ syntax: Method signature indicates it should return void but documentation says it returns true\n\n```suggestion\n \
-    \   /**\n     * Throws ForbiddenException if {@link #canViewClientScopes()} returns {@code"
+  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2.java:214] syntax: Extra space after assignment operator: should be `Resource resource = resourceStore.findByName(...)`\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java:98] syntax: Method signature indicates it should return boolean but documentation says it returns true\n\n```suggestion\n    /**\n     * Throws ForbiddenException if {@link #canView()} returns {@code false}.\n\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator.java:103] syntax: Method signature indicates it should return void but documentation says it returns true\n\n```suggestion\n    /**\n     * Throws ForbiddenException if {@link #canViewClientScopes()} returns {@code"
   source_dir: repos/greptile_bases/keycloak/005
   base_sha: baa6ebbeb8791017c01ce9fa63965f8dc584ddfe
   base_ref: feature-clients-authz-baseline
   head_ref: feature-clients-authz-implementation
   expected_findings:
-  - title_pattern: Extra|Resource
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionsV2\.java
-    line_range:
-    - 209
-    - 219
-    severity: warning
-    category: correctness
-    recommendation: 'Extra space after assignment operator: should be `Resource resource = resourceStore.findByName(...)`'
-  - title_pattern: Throws|ForbiddenException
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator\.java
-    line_range:
-    - 93
-    - 103
-    severity: warning
-    category: correctness
-    recommendation: "Method signature indicates it should return boolean but documentation says it returns true\n\n```suggestion\n\
-      \    /**\n     * Throws ForbiddenException if {@link #canView()} returns {@code false}."
-  - title_pattern: Throws|ForbiddenException
+  - title_pattern: canViewClientScopes|ForbiddenException
     file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/ClientPermissionEvaluator\.java
     line_range:
     - 98
     - 108
     severity: warning
     category: correctness
-    recommendation: "Method signature indicates it should return void but documentation says it returns true\n\n```suggestion\n\
-      \    /**\n     * Throws ForbiddenException if {@link #canViewClientScopes()} returns {@code false}."
-  - title_pattern: Passing|Consider|ClientRepresentation
-    file_pattern: tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/PermissionClientTest\.java
-    line_range:
-    - 315
-    - 325
-    severity: warning
-    category: correctness
-    recommendation: Passing `null` to `create()` method may not test the intended scenario.
-  - title_pattern: UserPolicyRepresentation|Only|Admin|User
-    file_pattern: tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/UserResourceTypeEvaluationTest\.java
-    line_range:
-    - 98
-    - 108
-    severity: warning
-    category: correctness
-    recommendation: "missing space after comma in method parameters\n\n```suggestion\n        UserPolicyRepresentation policy\
-      \ = createUserPolicy(realm, client, \"Only My Admin User Policy\", realm.admin().users().search(\"myadm"
+    recommendation: "Method signature indicates it should return void but documentation says it returns true\n\n```suggestion\n    /**\n     * Throws ForbiddenException if {@link #canViewClientScopes()} returns {@code false}."
   - title_pattern: Flag|ADMIN_FINE_GRAINED_AUTHZ
     file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/AdminPermissions\.java
     line_range:
-    - 78
+    - 76
     - 88
     severity: warning
     category: security
-    recommendation: 'Flag mismatch: using ADMIN_FINE_GRAINED_AUTHZ here while other methods use *_V2; if only V2 is enabled
-      this listener will not run and permissions won’t be cleaned up'
+    recommendation: 'Flag mismatch: using ADMIN_FINE_GRAINED_AUTHZ here while other methods use *_V2; if only V2 is enabled this listener will not run and permissions won’t be cleaned up'
 - id: greptile-keycloak-006
   patch: patches/006.patch
   difficulty: hard
   title: Add Groups resource type and scopes to authorization schema
-  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionEvaluator.java:145]\
-    \ syntax: Documentation incorrectly states '@return Stream of IDs' but method signature returns Set&lt;String&gt;\n\n\
-    ```suggestion\n     * @return Set of IDs of groups with view permission.\n```\n  - [tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/GroupResourceTypeEvaluationTest.java:68]\
-    \ syntax: Double semicolon syntax error\n\n```suggestion\n    private final GroupRepresentation topGroup = new GroupRepresentation();\n\
-    ```\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/UserPermissionEvaluator.java:139] syntax:\
-    \ Missing space after 'or' in the JavaDoc comment\n\n```suggestion\n     * Or if it has a permission to {@link AdminPermissionsSchema#MANAGE}\
-    \ the user or\n```"
+  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionEvaluator.java:145] syntax: Documentation incorrectly states '@return Stream of IDs' but method signature returns Set&lt;String&gt;\n\n```suggestion\n     * @return Set of IDs of groups with view permission.\n```\n  - [tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/GroupResourceTypeEvaluationTest.java:68] syntax: Double semicolon syntax error\n\n```suggestion\n    private final GroupRepresentation topGroup = new GroupRepresentation();\n```\n  - [services/src/main/java/org/keycloak/services/resources/admin/permissions/UserPermissionEvaluator.java:139] syntax: Missing space after 'or' in the JavaDoc comment\n\n```suggestion\n     * Or if it has a permission to {@link AdminPermissionsSchema#MANAGE} the user or\n```"
   source_dir: repos/greptile_bases/keycloak/006
   base_sha: 7a8d18122aea42278332120093d5cefce9748356
   base_ref: feature-groups-authz-baseline
   head_ref: feature-groups-authz-implementation
   expected_findings:
-  - title_pattern: Documentation|Stream|String
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionEvaluator\.java
-    line_range:
-    - 140
-    - 150
-    severity: warning
-    category: correctness
-    recommendation: "Documentation incorrectly states '@return Stream of IDs' but method signature returns Set&lt;String&gt;\n\
-      \n```suggestion\n     * @return Set of IDs of groups with view permission."
-  - title_pattern: Double|GroupRepresentation
-    file_pattern: tests/base/src/test/java/org/keycloak/tests/admin/authz/fgap/GroupResourceTypeEvaluationTest\.java
-    line_range:
-    - 63
-    - 73
-    severity: critical
-    category: correctness
-    recommendation: "Double semicolon syntax error\n\n```suggestion\n    private final GroupRepresentation topGroup = new\
-      \ GroupRepresentation();\n```"
-  - title_pattern: Missing|JavaDoc|AdminPermissionsSchema|MANAGE
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/UserPermissionEvaluator\.java
-    line_range:
-    - 134
-    - 144
-    severity: warning
-    category: correctness
-    recommendation: "Missing space after 'or' in the JavaDoc comment\n\n```suggestion\n     * Or if it has a permission to\
-      \ {@link AdminPermissionsSchema#MANAGE} the user or\n```"
-  - title_pattern: Missing|JavaDoc|AdminPermissionsSchema|MANAGE
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/UserPermissionEvaluator\.java
-    line_range:
-    - 150
-    - 160
-    severity: warning
-    category: correctness
-    recommendation: "Missing space after 'or' in the JavaDoc comment\n\n```suggestion\n     * Or if it has a permission to\
-      \ {@link AdminPermissionsSchema#MANAGE} the user or\n```"
-  - title_pattern: Logic
-    file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionsV2\.java
-    line_range:
-    - 102
-    - 112
-    severity: critical
-    category: correctness
-    recommendation: 'Logic error: when users can view all groups globally, this should return all group IDs, not an empty
-      set'
   - title_pattern: Inconsistent|VIEW|MANAGE
     file_pattern: services/src/main/java/org/keycloak/services/resources/admin/permissions/GroupPermissionsV2\.java
     line_range:
@@ -274,13 +117,7 @@ cases:
   patch: patches/007.patch
   difficulty: hard
   title: Add HTML sanitizer for translated message resources
-  description: "Test 7\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [themes/src/main/resources-community/theme/base/account/messages/messages_lt.properties:101]\
-    \ logic: This line contains Italian text in a Lithuanian translation file. Should be Lithuanian text: 'Installa una delle\
-    \ seguenti applicazioni sul tuo cellulare:' should be replaced with proper Lithuan\n  - [misc/theme-verifier/src/main/java/org/keycloak/themeverifier/VerifyMessageProperties.java:150]\
-    \ syntax: method name has typo: `santizeAnchors` should be `sanitizeAnchors`\n\n```suggestion\n    private String sanitizeAnchors(String\
-    \ key, String value, String englishValue) {\n```\n  - [themes/src/main/resources-community/theme/base/login/messages/messages_lt.properties:71]\
-    \ logic: Critical localization error: Italian text replaced Lithuanian translation for TOTP setup instructions. This breaks\
-    \ the user experience for Lithuanian users and removes essential download links "
+  description: "Test 7\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [themes/src/main/resources-community/theme/base/account/messages/messages_lt.properties:101] logic: This line contains Italian text in a Lithuanian translation file. Should be Lithuanian text: 'Installa una delle seguenti applicazioni sul tuo cellulare:' should be replaced with proper Lithuan\n  - [misc/theme-verifier/src/main/java/org/keycloak/themeverifier/VerifyMessageProperties.java:150] syntax: method name has typo: `santizeAnchors` should be `sanitizeAnchors`\n\n```suggestion\n    private String sanitizeAnchors(String key, String value, String englishValue) {\n```\n  - [themes/src/main/resources-community/theme/base/login/messages/messages_lt.properties:71] logic: Critical localization error: Italian text replaced Lithuanian translation for TOTP setup instructions. This breaks the user experience for Lithuanian users and removes essential download links "
   source_dir: repos/greptile_bases/keycloak/007
   base_sha: 21d53112849fe55f328f3de2f071989b8763de61
   base_ref: feature-html-sanitizer-baseline
@@ -294,15 +131,6 @@ cases:
     severity: warning
     category: security
     recommendation: This line contains Italian text in a Lithuanian translation file.
-  - title_pattern: String
-    file_pattern: misc/theme\-verifier/src/main/java/org/keycloak/themeverifier/VerifyMessageProperties\.java
-    line_range:
-    - 145
-    - 155
-    severity: warning
-    category: correctness
-    recommendation: "method name has typo: `santizeAnchors` should be `sanitizeAnchors`\n\n```suggestion\n    private String\
-      \ sanitizeAnchors(String key, String value, String englishValue) {\n```"
   - title_pattern: Critical|Italian|Lithuanian|TOTP
     file_pattern: themes/src/main/resources\-community/theme/base/login/messages/messages_lt\.properties
     line_range:
@@ -311,17 +139,19 @@ cases:
     severity: critical
     category: security
     recommendation: 'Critical localization error: Italian text replaced Lithuanian translation for TOTP setup instructions.'
+  - title_pattern: Traditional|Simplified|zh_CN|Chinese|locale|totpStep1
+    file_pattern: themes/src/main/resources\-community/theme/base/account/messages/messages_zh_CN\.properties
+    line_range:
+    - 107
+    - 117
+    severity: warning
+    category: correctness
+    recommendation: New totpStep1 value uses Traditional Chinese characters (手機/安裝/應用程式) inside a Simplified Chinese (zh_CN) file; should be Simplified, e.g. 在您的手机上安装以下应用程序之一：
 - id: greptile-keycloak-008
   patch: patches/008.patch
   difficulty: hard
   title: Implement access token context encoding framework
-  description: "Test 8\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/protocol/oidc/encode/AccessTokenContext.java:73]\
-    \ syntax: Wrong parameter validated - should be `rawTokenId` instead of `grantType`\n\n```suggestion\n        Objects.requireNonNull(rawTokenId,\
-    \ \"Null rawTokenId not allowed\");\n```\n  - [services/src/test/java/org/keycloak/protocol/oidc/encode/DefaultTokenContextEncoderProviderTest.java:81]\
-    \ syntax: Typo: 'Not expected to success' should be 'Not expected to succeed'\n\n```suggestion\n            Assert.fail(\"\
-    Not expected to succeed due to incorrect grant type\");\n```\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents.java:483]\
-    \ logic: Critical logic error: this condition returns false when grant shortcuts MATCH. Should be `!items[0].substring(3,\
-    \ 5).equals(expectedGrantShortcut)`\n\n```suggestion\n                if (!items[0].s"
+  description: "Test 8\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/protocol/oidc/encode/AccessTokenContext.java:73] syntax: Wrong parameter validated - should be `rawTokenId` instead of `grantType`\n\n```suggestion\n        Objects.requireNonNull(rawTokenId, \"Null rawTokenId not allowed\");\n```\n  - [services/src/test/java/org/keycloak/protocol/oidc/encode/DefaultTokenContextEncoderProviderTest.java:81] syntax: Typo: 'Not expected to success' should be 'Not expected to succeed'\n\n```suggestion\n            Assert.fail(\"Not expected to succeed due to incorrect grant type\");\n```\n  - [testsuite/integration-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents.java:483] logic: Critical logic error: this condition returns false when grant shortcuts MATCH. Should be `!items[0].substring(3, 5).equals(expectedGrantShortcut)`\n\n```suggestion\n                if (!items[0].s"
   source_dir: repos/greptile_bases/keycloak/008
   base_sha: b545339e2c924263a498653f348610de0c09059c
   base_ref: feature-token-context-baseline
@@ -334,8 +164,7 @@ cases:
     - 78
     severity: warning
     category: correctness
-    recommendation: "Wrong parameter validated - should be `rawTokenId` instead of `grantType`\n\n```suggestion\n        Objects.requireNonNull(rawTokenId,\
-      \ \"Null rawTokenId not allowed\");\n```"
+    recommendation: "Wrong parameter validated - should be `rawTokenId` instead of `grantType`\n\n```suggestion\n        Objects.requireNonNull(rawTokenId, \"Null rawTokenId not allowed\");\n```"
   - title_pattern: Typo|Assert
     file_pattern: services/src/test/java/org/keycloak/protocol/oidc/encode/DefaultTokenContextEncoderProviderTest\.java
     line_range:
@@ -343,49 +172,33 @@ cases:
     - 86
     severity: warning
     category: correctness
-    recommendation: "Typo: 'Not expected to success' should be 'Not expected to succeed'\n\n```suggestion\n            Assert.fail(\"\
-      Not expected to succeed due to incorrect grant type\");\n```"
-  - title_pattern: Critical|MATCH|Should
+    recommendation: "Typo: 'Not expected to success' should be 'Not expected to succeed'\n\n```suggestion\n            Assert.fail(\"Not expected to succeed due to incorrect grant type\");\n```"
+  - title_pattern: Critical|MATCH|substring|grant|shortcut
     file_pattern: testsuite/integration\-arquillian/tests/base/src/test/java/org/keycloak/testsuite/AssertEvents\.java
     line_range:
     - 478
     - 488
     severity: critical
     category: correctness
-    recommendation: 'Critical logic error: this condition returns false when grant shortcuts MATCH.'
-  - title_pattern: null|check|for|encoder|provider
-    file_pattern: services/src/main/java/org/keycloak/protocol/oidc/TokenManager\.java
-    line_range:
-    - 1049
-    - 1059
-    severity: warning
-    category: correctness
-    recommendation: No null check for encoder provider - could cause NPE if provider not registered
+    recommendation: 'Matcher is doubly broken: (1) condition is inverted - it returns false when the grant shortcut MATCHES; (2) wrong substring indices - grant shortcut is at chars 4-6 not 3-5. Correct line: `if (!items[0].substring(4, 6).equals(expectedGrantShortcut)) return false;`'
 - id: greptile-keycloak-009
   patch: patches/009.patch
   difficulty: hard
   title: Implement recovery key support for user storage providers
-  description: "Test 9\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java:19]\
-    \ logic: Calling .get() on Optional without checking if present first will throw NoSuchElementException if no recovery\
-    \ credential exists. Should check credentialModelOpt.isPresent() or use orElseThrow()\n  - [services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java:21]\
-    \ logic: Double .get() calls without null checks - both getNextRecoveryAuthnCode() and the outer get() can throw exceptions\
-    \ if no next code exists.\n\n```suggestion\n        this.codeNumber = recoveryCodeC\n  - [server-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils.java:54]\
-    \ syntax: Minor typo in comment: 'a optional' should be 'an optional'\n\n```suggestion\n     * @return - an optional credential\
-    \ model\n```"
+  description: "Test 9\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java:19] logic: Calling .get() on Optional without checking if present first will throw NoSuchElementException if no recovery credential exists. Should check credentialModelOpt.isPresent() or use orElseThrow()\n  - [services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean.java:21] logic: Double .get() calls without null checks - both getNextRecoveryAuthnCode() and the outer get() can throw exceptions if no next code exists.\n\n```suggestion\n        this.codeNumber = recoveryCodeC\n  - [server-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils.java:54] syntax: Minor typo in comment: 'a optional' should be 'an optional'\n\n```suggestion\n     * @return - an optional credential model\n```"
   source_dir: repos/greptile_bases/keycloak/009
   base_sha: a0852eaa2ed19408ecf8ad02652802d00529a085
   base_ref: feature-recovery-keys-foundation
   head_ref: feature-recovery-keys-implementation
   expected_findings:
-  - title_pattern: Calling|Optional|NoSuchElementException|Should
+  - title_pattern: isPresent|orElseThrow|NoSuchElementException
     file_pattern: services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean\.java
     line_range:
     - 14
     - 24
     severity: critical
-    category: security
-    recommendation: Calling .get() on Optional without checking if present first will throw NoSuchElementException if no recovery
-      credential exists.
+    category: robustness
+    recommendation: Calling .get() on Optional without checking if present first will throw NoSuchElementException if no recovery credential exists.
   - title_pattern: Double|IllegalStateException
     file_pattern: services/src/main/java/org/keycloak/forms/login/freemarker/model/RecoveryAuthnCodeInputLoginBean\.java
     line_range:
@@ -393,52 +206,44 @@ cases:
     - 26
     severity: warning
     category: security
-    recommendation: Double .get() calls without null checks - both getNextRecoveryAuthnCode() and the outer get() can throw
-      exceptions if no next code exists.
-  - title_pattern: Minor
+    recommendation: Double .get() calls without null checks - both getNextRecoveryAuthnCode() and the outer get() can throw exceptions if no next code exists.
+  - title_pattern: a optional|an optional
     file_pattern: server\-spi/src/main/java/org/keycloak/models/utils/RecoveryAuthnCodesUtils\.java
     line_range:
     - 49
     - 59
-    severity: warning
-    category: security
-    recommendation: "Minor typo in comment: 'a optional' should be 'an optional'\n\n```suggestion\n     * @return - an optional\
-      \ credential model\n```"
-  - title_pattern: Recovery|List|String
+    severity: nit
+    category: correctness
+    recommendation: "Minor typo in comment: 'a optional' should be 'an optional'\n\n```suggestion\n     * @return - an optional credential model\n```"
+  - title_pattern: List\.class|List<String>
     file_pattern: testsuite/integration\-arquillian/servers/auth\-server/services/testsuite\-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage\.java
     line_range:
     - 235
     - 245
     severity: warning
     category: correctness
-    recommendation: Recovery codes are deserialized as raw `List.class` but should be typed as `List<String>` to match the
-      expected data structure
-  - title_pattern: Error|Could
+    recommendation: Recovery codes are deserialized as raw `List.class` but should be typed as `List<String>` to match the expected data structure
+  - title_pattern: double space|deserialize
     file_pattern: testsuite/integration\-arquillian/servers/auth\-server/services/testsuite\-providers/src/main/java/org/keycloak/testsuite/federation/BackwardsCompatibilityUserStorage\.java
     line_range:
     - 239
     - 249
-    severity: critical
-    category: security
-    recommendation: "Error message has double space between 'deserialize' and 'credential'\n\n```suggestion\n            \
-      \    log.error(\"Could not deserialize credential of type: recovery-codes\");\n```"
-  - title_pattern: Typo
+    severity: nit
+    category: correctness
+    recommendation: "Error message has double space between 'deserialize' and 'credential'\n\n```suggestion\n                log.error(\"Could not deserialize credential of type: recovery-codes\");\n```"
+  - title_pattern: delayed-suthenticator-config|delayed-authenticator-config
     file_pattern: testsuite/integration\-arquillian/tests/base/src/test/java/org/keycloak/testsuite/federation/storage/BackwardsCompatibilityUserStorageTest\.java
     line_range:
     - 130
     - 140
-    severity: warning
-    category: security
-    recommendation: "Typo in config alias: 'delayed-suthenticator-config' should be 'delayed-authenticator-config'\n\n```suggestion\n\
-      \                                            config.setAlias(\"delayed-authenticator-config\")"
+    severity: nit
+    category: correctness
+    recommendation: "Typo in config alias: 'delayed-suthenticator-config' should be 'delayed-authenticator-config'\n\n```suggestion\n                                            config.setAlias(\"delayed-authenticator-config\")"
 - id: greptile-keycloak-010
   patch: patches/010.patch
   difficulty: hard
   title: Fix concurrent group access to prevent NullPointerException
-  description: "Test 10\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:149]\
-    \ logic: Thread is started but not joined, creating a race condition where the test might complete before the reader thread\
-    \ finishes executing\n\n```suggestion\n        Thread readerThread = new Thread(() \n  - [tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:121]\
-    \ syntax: Variable name has typo: `groupUuuids` should be `groupUuids`"
+  description: "Test 10\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:149] logic: Thread is started but not joined, creating a race condition where the test might complete before the reader thread finishes executing\n\n```suggestion\n        Thread readerThread = new Thread(() \n  - [tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest.java:121] syntax: Variable name has typo: `groupUuuids` should be `groupUuids`"
   source_dir: repos/greptile_bases/keycloak/010
   base_sha: e92b825a14800e42f42d5f22ee314e94cf7c4e27
   base_ref: feature-group-concurrency-update
@@ -451,9 +256,8 @@ cases:
     - 154
     severity: critical
     category: concurrency
-    recommendation: "Thread is started but not joined, creating a race condition where the test might complete before the\
-      \ reader thread finishes executing\n\n```suggestion\n        Thread readerThread = new Thread(() -> {\n  "
-  - title_pattern: Variable
+    recommendation: "Thread is started but not joined, creating a race condition where the test might complete before the reader thread finishes executing\n\n```suggestion\n        Thread readerThread = new Thread(() -> {\n  "
+  - title_pattern: groupUuuids|groupUuids
     file_pattern: tests/base/src/test/java/org/keycloak/tests/admin/group/GroupTest\.java
     line_range:
     - 116

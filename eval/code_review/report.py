@@ -29,6 +29,7 @@ REGRESSION_THRESHOLD = 0.10  # 10% drop triggers regression warning
 @dataclass
 class RegressionResult:
     """Result of comparing against a baseline."""
+
     case_id: str
     baseline_composite: float
     current_composite: float
@@ -48,11 +49,12 @@ class RegressionResult:
 @dataclass
 class GoldComparison:
     """Comparison of a pipeline run against the gold-standard baseline."""
+
     case_id: str
     gold_composite: float
     pipeline_composite: float
-    delta: float            # pipeline - gold (negative = pipeline is worse)
-    pct_of_gold: float      # pipeline / gold as percentage
+    delta: float  # pipeline - gold (negative = pipeline is worse)
+    pct_of_gold: float  # pipeline / gold as percentage
 
     def to_dict(self) -> dict:
         return {
@@ -67,10 +69,11 @@ class GoldComparison:
 @dataclass
 class EvalReport:
     """Complete evaluation report."""
+
     timestamp: str
     provider: str
     model: str
-    mode: str = "pipeline"   # "pipeline" or "gold"
+    mode: str = "pipeline"  # "pipeline" or "gold"
     case_scores: List[dict] = field(default_factory=list)
     judge_verdicts: List[dict] = field(default_factory=list)
     aggregate: Dict[str, float] = field(default_factory=dict)
@@ -145,6 +148,7 @@ def build_report(
 # Self-baseline: save / load / detect regressions
 # ---------------------------------------------------------------------------
 
+
 def save_baseline(report: EvalReport) -> str:
     """Save the report as a timestamped self-baseline.
 
@@ -214,13 +218,15 @@ def detect_regressions(
         delta = score.composite - bl
         is_regression = delta < -REGRESSION_THRESHOLD
 
-        results.append(RegressionResult(
-            case_id=score.case_id,
-            baseline_composite=bl,
-            current_composite=score.composite,
-            delta=delta,
-            is_regression=is_regression,
-        ))
+        results.append(
+            RegressionResult(
+                case_id=score.case_id,
+                baseline_composite=bl,
+                current_composite=score.composite,
+                delta=delta,
+                is_regression=is_regression,
+            )
+        )
 
     return results
 
@@ -228,6 +234,7 @@ def detect_regressions(
 # ---------------------------------------------------------------------------
 # Gold-standard baseline: save / load / compare
 # ---------------------------------------------------------------------------
+
 
 def save_gold_baseline(report: EvalReport) -> str:
     """Save the report as a timestamped gold-standard baseline.
@@ -296,13 +303,15 @@ def compare_to_gold(
         delta = score.composite - gold
         pct = (score.composite / gold * 100) if gold > 0 else 0.0
 
-        comparisons.append(GoldComparison(
-            case_id=score.case_id,
-            gold_composite=gold,
-            pipeline_composite=score.composite,
-            delta=delta,
-            pct_of_gold=pct,
-        ))
+        comparisons.append(
+            GoldComparison(
+                case_id=score.case_id,
+                gold_composite=gold,
+                pipeline_composite=score.composite,
+                delta=delta,
+                pct_of_gold=pct,
+            )
+        )
 
     return comparisons
 
@@ -310,6 +319,7 @@ def compare_to_gold(
 # ---------------------------------------------------------------------------
 # Report printing
 # ---------------------------------------------------------------------------
+
 
 def print_report(report: EvalReport) -> None:
     """Print a human-readable report to stdout.
@@ -358,18 +368,30 @@ def print_report(report: EvalReport) -> None:
     # Aggregate
     agg = report.aggregate
     print(f"\n{'Aggregate':<20} {agg.get('catch_rate', 0.0):>6.3f} ", end="")
-    for key in ["recall", "precision", "severity_accuracy", "location_accuracy",
-                 "recommendation_score", "context_depth", "composite"]:
+    for key in [
+        "recall",
+        "precision",
+        "severity_accuracy",
+        "location_accuracy",
+        "recommendation_score",
+        "context_depth",
+        "composite",
+    ]:
         print(f"{agg.get(key, 0.0):>8.3f} ", end="")
     print()
     # Highlight the headline catch rate the way Greptile reports it
     catch_pct = agg.get("catch_rate", 0.0) * 100
     cases_n = agg.get("cases_scored", len(report.case_scores))
     catches = sum(1 for cs in report.case_scores if cs.get("catch_rate", 0.0) >= 0.5)
-    print(
-        f"\nCatch rate (Greptile-style): {catches}/{cases_n} = "
-        f"{catch_pct:.1f}%"
-    )
+    print(f"\nCatch rate (Greptile-style, per-CASE binary): {catches}/{cases_n} = " f"{catch_pct:.1f}%")
+    # greptile_view = mean per-BUG catch (catch_fraction) — the metric truly
+    # comparable to Greptile's own benchmark; trust this over composite. Falls
+    # back to mean of per-case catch_fraction if the aggregate didn't carry it.
+    gv = agg.get("greptile_view")
+    if gv is None:
+        cfs = [cs.get("catch_fraction", 0.0) for cs in report.case_scores if cs.get("error") is None]
+        gv = (sum(cfs) / len(cfs)) if cfs else 0.0
+    print(f"greptile_view (per-BUG catch, mean catch_fraction): {gv * 100:.1f}%")
 
     # Judge verdicts
     if report.judge_verdicts:

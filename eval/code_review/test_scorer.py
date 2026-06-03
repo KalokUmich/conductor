@@ -16,9 +16,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)  # scorer, runner
 sys.path.insert(0, os.path.abspath(os.path.join(_HERE, "..", "..", "backend")))  # app.*
 
-from app.code_review.models import FindingCategory, ReviewFinding, Severity  # noqa: E402
 from runner import CaseConfig  # noqa: E402
 from scorer import _match_findings, score_case  # noqa: E402
+
+from app.code_review.models import FindingCategory, ReviewFinding, Severity  # noqa: E402
 
 
 def _finding(title, file, start, end, severity, category="correctness"):
@@ -132,6 +133,40 @@ def test_distinct_file_findings_unaffected():
     assert len(score.matches) == 2
 
 
+def test_title_only_match_cannot_steal_a_located_catch():
+    """009 mechanism: a generic title_pattern (e.g. a bare 'should') must not let
+    one expected finding out-bid the file+line CATCH that the finding actually
+    belongs to. Location-first assignment keeps the finding with the expected bug
+    it is physically located at."""
+    expected = [
+        # A: generic title that the finding's title also contains, but a DIFFERENT file
+        {
+            "title_pattern": "should",
+            "file_pattern": "other.py",
+            "line_range": [1, 5],
+            "severity": "low",
+            "category": "maintainability",
+        },
+        # B: the real bug at the finding's exact location, non-matching title
+        {
+            "title_pattern": "ZZZ_NEVER",
+            "file_pattern": "recovery.py",
+            "line_range": [100, 110],
+            "severity": "high",
+            "category": "correctness",
+        },
+    ]
+    findings = [
+        # title contains "should" (hits A's pattern) but is located at B's file+line
+        _finding("Variable name should be clearer", "src/recovery.py", 100, 105, "high", "correctness"),
+    ]
+    score = score_case(_case("steal", expected), findings, [])
+    assert score.catch_rate == 1.0, "the located finding must be credited as a catch"
+    # it must be paired with B (the location it's at), not A (the title word)
+    assert all(m.expected_index == 1 for m in score.matches)
+    assert all(m.file_match and m.line_match for m in score.matches)
+
+
 def test_all_praise_yields_no_match():
     """A review that only emits praise catches nothing and is not credited."""
     expected = [
@@ -149,3 +184,186 @@ def test_all_praise_yields_no_match():
     score = score_case(_case("allpraise", expected), findings, [])
     assert score.catch_rate == 0.0
     assert score.recall == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 2026-06-02 audit fixes: recall location-gate + dismissal exclusion
+# ---------------------------------------------------------------------------
+
+
+def test_recall_not_credited_on_title_only_wrong_file():
+    """A loose stopword title_pattern that hits a finding in the WRONG file must
+    not count toward recall (it carries zero location agreement). Pre-fix this
+    scored recall=1.0; the audit showed it let a reviewer who located nothing
+    inflate the headline."""
+    expected = [
+        {
+            "title_pattern": "refactor",  # generic word the finding's title contains
+            "file_pattern": "intended_file\\.py",
+            "line_range": [10, 20],
+            "severity": "low",
+            "category": "maintainability",
+        },
+    ]
+    # title matches the pattern, but file + line + sev + cat are all wrong.
+    findings = [_finding("please refactor this helper", "src/totally_other.py", 900, 905, "high", "correctness")]
+    score = score_case(_case("titleonly", expected), findings, [])
+    assert score.recall == 0.0, "title-only match in the wrong file must not count toward recall"
+    assert score.catch_rate == 0.0
+
+
+def test_recall_not_credited_on_severity_category_only():
+    """A finding that only coincides on severity+category (eligible via
+    keep_score>=2) but shares no file/line/title must not count toward recall."""
+    expected = [
+        {
+            "title_pattern": "ZZZ_NEVER_MATCHES",
+            "file_pattern": "nomatch\\.py",
+            "line_range": [1, 5],
+            "severity": "critical",
+            "category": "security",
+        },
+    ]
+    findings = [_finding("unrelated observation", "src/elsewhere.py", 900, 905, "critical", "security")]
+    score = score_case(_case("sevcat", expected), findings, [])
+    assert score.recall == 0.0, "severity+category coincidence with no location must not count toward recall"
+    assert score.catch_rate == 0.0
+
+
+def test_dismissal_finding_not_credited_as_catch():
+    """keycloak-003 mechanism: a finding that points at the right file:line but
+    DENIES the defect ("correctly guarded — planted bug is mitigated") must not
+    satisfy catch_rate or recall."""
+    expected = [
+        {
+            "title_pattern": "overflow",
+            "file_pattern": "asn1\\.py",
+            "line_range": [140, 160],
+            "severity": "high",
+            "category": "security",
+        },
+    ]
+    findings = [
+        _finding(
+            "integer overflow is correctly guarded; planted bug is mitigated",
+            "src/asn1.py",
+            146,
+            155,
+            "low",
+            "security",
+        ),
+    ]
+    assert _match_findings(expected, findings) == [], "dismissal must be excluded from matching"
+    score = score_case(_case("dismiss", expected), findings, [])
+    assert score.catch_rate == 0.0
+    assert score.recall == 0.0
+
+
+def test_dismissal_not_counted_as_false_positive():
+    """A dismissal alongside a real catch must not drag precision (it is not a
+    bug claim, like praise)."""
+    expected = [
+        {
+            "title_pattern": "NPE|null",
+            "file_pattern": "integration\\.py",
+            "line_range": [501, 505],
+            "severity": "critical",
+            "category": "security",
+        },
+    ]
+    findings = [
+        _finding("OAuth callback NPE on null state", "src/integration.py", 501, 505, "high", "security"),
+        _finding("checked the token path: no vulnerability here", "src/token.py", 12, 14, "low", "security"),
+    ]
+    score = score_case(_case("dismiss_fp", expected), findings, [])
+    assert score.catch_rate == 1.0, "the real bug is still caught"
+    assert score.precision == 1.0, "the dismissal must not count as a false positive"
+
+
+def test_negated_phrase_is_not_a_dismissal():
+    """The negation lookbehind keeps real findings safe: 'not correctly guarded'
+    asserts a defect and must be credited normally."""
+    expected = [
+        {
+            "title_pattern": "overflow",
+            "file_pattern": "asn1\\.py",
+            "line_range": [140, 160],
+            "severity": "high",
+            "category": "security",
+        },
+    ]
+    findings = [
+        _finding(
+            "integer overflow is not correctly guarded against large input", "src/asn1.py", 146, 155, "high", "security"
+        ),
+    ]
+    score = score_case(_case("negated", expected), findings, [])
+    assert score.catch_rate == 1.0, "a real finding phrased with a negation must still catch"
+    assert score.recall == 1.0
+
+
+def test_catch_fraction_is_per_bug_not_binary():
+    """2026-06-03 audit fix S1: on a multi-bug case, catching 1 of 2 must score
+    catch_fraction=0.5 (per-bug) while the binary catch_rate stays 1.0."""
+    expected = [
+        {
+            "title_pattern": "alpha",
+            "file_pattern": "a\\.py",
+            "line_range": [10, 20],
+            "severity": "high",
+            "category": "correctness",
+        },
+        {
+            "title_pattern": "beta",
+            "file_pattern": "b\\.py",
+            "line_range": [10, 20],
+            "severity": "high",
+            "category": "correctness",
+        },
+    ]
+    findings = [_finding("alpha bug here", "a.py", 12, 14, "high")]  # only catches expected[0]
+    score = score_case(_case("frac", expected), findings, [])
+    assert score.catch_rate == 1.0  # binary: >=1 hit
+    assert abs(score.catch_fraction - 0.5) < 1e-9  # honest per-bug
+    assert "catch_fraction" in score.to_dict()
+
+
+def test_greptile_view_aggregate_is_mean_catch_fraction():
+    from scorer import compute_aggregate
+
+    expected = [
+        {
+            "title_pattern": "alpha",
+            "file_pattern": "a\\.py",
+            "line_range": [10, 20],
+            "severity": "high",
+            "category": "correctness",
+        },
+        {
+            "title_pattern": "beta",
+            "file_pattern": "b\\.py",
+            "line_range": [10, 20],
+            "severity": "high",
+            "category": "correctness",
+        },
+    ]
+    s1 = score_case(_case("c1", expected), [_finding("alpha", "a.py", 12, 14, "high")], [])  # 0.5
+    s2 = score_case(
+        _case("c2", expected), [_finding("alpha", "a.py", 12, 14, "high"), _finding("beta", "b.py", 12, 14, "high")], []
+    )  # 1.0
+    agg = compute_aggregate([s1, s2])
+    assert abs(agg["greptile_view"] - 0.75) < 1e-9  # mean(0.5, 1.0)
+    assert abs(agg["catch_fraction"] - 0.75) < 1e-9
+
+
+def test_syntax_behavioral_classifier():
+    """Import gate S4: only compile/behavior-affecting syntax: comments promote."""
+    sys.path.insert(0, _HERE)
+    from import_greptile import _syntax_is_behavioral
+
+    assert _syntax_is_behavioral("method is called with no args -> compile error")
+    assert _syntax_is_behavioral("cannot find symbol Foo")
+    assert _syntax_is_behavioral("Traditional characters in a Simplified zh_CN file")
+    assert not _syntax_is_behavioral("'Succesful' is misspelled")
+    assert not _syntax_is_behavioral("extra double  space after the operator")
+    assert not _syntax_is_behavioral("variable name has a typo: groupUuuids")

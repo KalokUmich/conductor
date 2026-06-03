@@ -1,37 +1,4 @@
 # Hand-annotated Greptile-benchmark cases for keycloak — see
 # greptile_sentry/manual_cases.yaml for the rationale and convention.
 
-cases:
-  - id: greptile-keycloak-004
-    patch: patches/004.patch
-    difficulty: medium
-    title: Add rolling-updates feature flag and compatibility framework
-    description: |
-      Greptile bot only left 1 ``style:`` comment about hardcoding
-      `--features=rolling-updates` in a template. The actual planted
-      bug must lie elsewhere in the 11 changed files (Profile.java,
-      operator config, Quarkus runtime CLI commands, integration
-      tests). Likely in the new `UpdateCompatibilityCheck` /
-      `AbstractUpdatesCommand` Java classes or how the operator
-      passes the feature flag to keycloak start.
-    source_dir: repos/greptile_bases/keycloak/004
-    base_sha: 690b0e4bef15654ea9037b0a26b3337e548c6b48
-    base_ref: feature-rolling-updates-baseline
-    head_ref: feature-rolling-updates-implementation
-    quality: human
-    expected_findings:
-      - title_pattern: RECREATE_UPGRADE_EXIT_CODE|exit code|FEATURE_DISABLED|breaking change|backwards compat
-        file_pattern: quarkus/runtime/src/main/java/org/keycloak/quarkus/runtime/compatibility/CompatibilityResult\.java
-        line_range: [28, 40]
-        severity: critical
-        category: correctness
-        recommendation: |
-          The PR silently changes ``RECREATE_UPGRADE_EXIT_CODE`` from ``4``
-          to ``3`` and reuses the value ``4`` for the new ``FEATURE_DISABLED``
-          constant. Exit codes are a documented public contract — any CI
-          script or operator that branches on ``exit 4`` to mean "recreate
-          upgrade required" will silently start treating it as
-          "feature disabled" instead. Either pick a fresh exit code
-          (e.g. ``5``) for ``FEATURE_DISABLED`` and leave
-          ``RECREATE_UPGRADE_EXIT_CODE = 4`` alone, or version-bump the
-          CLI and document the breaking change.
+cases: []

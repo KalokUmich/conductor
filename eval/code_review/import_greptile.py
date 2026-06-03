@@ -72,6 +72,52 @@ OUT_BASE = _THIS_DIR / "cases"
 _BUG_PREFIXES = {"logic", "syntax", "security", "performance"}
 _NOISE_PREFIXES = {"style", "nit", "praise"}
 
+# 2026-06-02 scoring audit: re-imports kept emitting title_patterns that were a
+# bare stopword (e.g. "this", "missing"), which match almost any finding and
+# inflate the deterministic scorer's title-match. Drop these generic tokens when
+# extracting keywords and never emit a pattern that is exactly one stopword.
+_KEYWORD_STOPWORDS = frozenset(
+    {
+        "this",
+        "that",
+        "line",
+        "still",
+        "uses",
+        "used",
+        "the",
+        "a",
+        "an",
+        "should",
+        "must",
+        "consider",
+        "using",
+        "add",
+        "added",
+        "test",
+        "same",
+        "method",
+        "missing",
+        "double",
+        "typo",
+        "for",
+        "with",
+        "string",
+        "time",
+        "multiple",
+        "inconsistent",
+        "returning",
+        "kind",
+        "will",
+        "here",
+        "when",
+        "where",
+        "which",
+        "code",
+        "value",
+        "function",
+    }
+)
+
 
 def _strip_prefix(body: str) -> Tuple[str, str]:
     """Split ``"logic: foo bar"`` into ``("logic", "foo bar")``.
@@ -101,6 +147,26 @@ _WARNING_RE = re.compile(
     r"if .* then|under .* conditions|edge case)\b",
     re.IGNORECASE,
 )
+
+# A ``syntax:``-tagged greptile comment is promoted to gold ONLY when its body
+# signals a compile/behavior break. Pure typo / format / naming / doc nits
+# ("Succesful", a double space, "santizeAnchors", javadoc "returns true") are NOT
+# bugs and were inflating the recall denominator. Route them to NOISE (skip). See
+# the 2026-06-03 gold audit (logic:-only filter still over-imported syntax nits).
+_SYNTAX_BEHAVIORAL_RE = re.compile(
+    r"\b(compil\w*|will not compile|build[- ]?break\w*|cannot (?:find|resolve)|"
+    r"undefined|no such (?:method|symbol|field)|missing (?:argument|parameter|import)|"
+    r"wrong (?:type|number of arguments)|type mismatch|nameerror|importerror|"
+    r"nosuchmethod|does not exist|won'?t build|fails? to compile|signature|"
+    r"overload|not defined|wrong locale|traditional|simplified)\b",
+    re.IGNORECASE,
+)
+
+
+def _syntax_is_behavioral(body: str) -> bool:
+    """True if a ``syntax:``-tagged comment describes a compile/behavior break (a
+    real bug), not a cosmetic typo/format/naming/doc nit."""
+    return bool(_SYNTAX_BEHAVIORAL_RE.search(body or ""))
 
 
 def _infer_severity(prefix: str, body: str) -> str:
@@ -136,12 +202,30 @@ def _infer_category(prefix: str, body: str) -> str:
     return "correctness"
 
 
+def _is_discriminating(tok: str) -> bool:
+    """True if ``tok`` is identifier-like enough to anchor a title match.
+
+    Discriminating = has a CamelCase boundary, an underscore, a dot, or is
+    length ≥ 6 — and is not a generic stopword (see ``_KEYWORD_STOPWORDS``).
+    """
+    if tok.lower() in _KEYWORD_STOPWORDS:
+        return False
+    if "_" in tok or "." in tok:
+        return True
+    if re.search(r"[a-z][A-Z]", tok):  # CamelCase boundary
+        return True
+    return len(tok) >= 6
+
+
 def _extract_keyword_pattern(body: str) -> str:
     """Build a loose regex (3-5 distinctive tokens) for ``title_pattern``.
 
     Greptile findings have specific symbol names ("OptimizedCursorPaginator")
     or distinctive phrases ("ImportError"). We pull the most concrete ones
     so the deterministic scorer's title-match has something to grab onto.
+
+    2026-06-02 scoring audit: generic stopwords (``_KEYWORD_STOPWORDS``) are
+    dropped so we never emit a loose pattern that is a bare stopword.
     """
     # Pull symbol-like tokens (CamelCase or snake_case, ≥4 chars)
     tokens: List[str] = []
@@ -149,13 +233,24 @@ def _extract_keyword_pattern(body: str) -> str:
         tok = m.group(1)
         if tok in tokens or tok.lower() in {"comment", "function", "method", "parameter"}:
             continue
+        if tok.lower() in _KEYWORD_STOPWORDS:
+            continue
         tokens.append(tok)
         if len(tokens) >= 4:
             break
     if not tokens:
-        # Fallback: take the first 5 words
-        words = re.findall(r"[A-Za-z][A-Za-z0-9_]{2,}", body)[:5]
-        tokens = words or ["bug"]
+        # Fallback: prefer discriminating (identifier-like) words, dropping
+        # generic stopwords entirely.
+        words = re.findall(r"[A-Za-z][A-Za-z0-9_.]{2,}", body)
+        tokens = [w for w in words if _is_discriminating(w)][:5]
+        if not tokens:
+            # Last resort: the most distinctive raw token (longest non-stopword)
+            # so we never emit a bare stopword as the whole pattern.
+            non_stop = [w for w in words if w.lower() not in _KEYWORD_STOPWORDS]
+            if non_stop:
+                tokens = [max(non_stop, key=len)]
+            else:
+                tokens = ["bug"]
     return "|".join(re.escape(t) for t in tokens)
 
 
@@ -170,6 +265,7 @@ def _summarise_fix(body: str) -> str:
 # ---------------------------------------------------------------------------
 # Per-PR conversion
 # ---------------------------------------------------------------------------
+
 
 def _difficulty_from_severities(severities: List[str]) -> str:
     """Map the maximum severity in a PR's findings to easy/medium/hard."""
@@ -200,12 +296,22 @@ def _convert_pr_to_case(pr: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         prefix, _ = _strip_prefix(c.get("body", ""))
         if prefix not in _BUG_PREFIXES:
             continue
+        # syntax-nit gate: only promote syntax comments that break compile/behavior.
+        if prefix == "syntax" and not _syntax_is_behavioral(c.get("body", "")):
+            logger.warning(
+                "  %s PR#%d dropping cosmetic syntax-nit (no compile/behavior signal): %s",
+                target,
+                pr_num,
+                str(c.get("body", ""))[:80].replace("\n", " "),
+            )
+            continue
         bug_comments.append(c)
 
     if not bug_comments:
         logger.warning(
             "  %s PR#%d has no logic-tagged greptile comments — skipping",
-            target, pr_num,
+            target,
+            pr_num,
         )
         return None
 
@@ -216,14 +322,16 @@ def _convert_pr_to_case(pr: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         prefix, content = _strip_prefix(body)
         line = c.get("line") or 1
         path = c.get("path", "")
-        expected.append({
-            "title_pattern": _extract_keyword_pattern(content),
-            "file_pattern": re.escape(path).replace(r"\/", "/"),
-            "line_range": [max(1, line - 5), line + 5],
-            "severity": _infer_severity(prefix, content),
-            "category": _infer_category(prefix, content),
-            "recommendation": _summarise_fix(content),
-        })
+        expected.append(
+            {
+                "title_pattern": _extract_keyword_pattern(content),
+                "file_pattern": re.escape(path).replace(r"\/", "/"),
+                "line_range": [max(1, line - 5), line + 5],
+                "severity": _infer_severity(prefix, content),
+                "category": _infer_category(prefix, content),
+                "recommendation": _summarise_fix(content),
+            }
+        )
 
     # Description = PR body + the first 2 logic comments (so a human can
     # eyeball the case file and see what bug it's testing without re-fetching)
@@ -264,6 +372,7 @@ def _convert_pr_to_case(pr: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Per-target driver
 # ---------------------------------------------------------------------------
+
 
 def _write_patch_file(
     out_dir: Path,
@@ -327,7 +436,11 @@ def import_target(target: str) -> Tuple[int, int, int]:
     )
     logger.info(
         "  %s -> %s  (%d cases, %d skipped, %d patches)",
-        target, out_path.name, len(cases), skipped, patches,
+        target,
+        out_path.name,
+        len(cases),
+        skipped,
+        patches,
     )
     return len(cases), skipped, patches
 
@@ -335,7 +448,8 @@ def import_target(target: str) -> Tuple[int, int, int]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Import Greptile JSON → cases.yaml")
     parser.add_argument(
-        "--target", help="Convert only this target (default: all)",
+        "--target",
+        help="Convert only this target (default: all)",
     )
     args = parser.parse_args()
 
@@ -344,15 +458,12 @@ def main() -> int:
     else:
         # All targets that have a raw dump
         targets = sorted(
-            p.stem.replace("_", ".") if "." not in p.stem and p.stem == "cal_com"
-            else p.stem.replace("_", ".")
+            p.stem.replace("_", ".") if "." not in p.stem and p.stem == "cal_com" else p.stem.replace("_", ".")
             for p in RAW_DIR.glob("*.json")
         )
         # Re-canonicalise: sentry stays sentry, cal_com becomes cal.com
         canonical = {"cal_com": "cal.com"}
-        targets = [
-            canonical.get(p.stem, p.stem) for p in RAW_DIR.glob("*.json")
-        ]
+        targets = [canonical.get(p.stem, p.stem) for p in RAW_DIR.glob("*.json")]
 
     total_cases = total_skipped = total_patches = 0
     for target in targets:
@@ -363,7 +474,9 @@ def main() -> int:
 
     logger.info(
         "\nTotal: %d cases written, %d skipped, %d patch files",
-        total_cases, total_skipped, total_patches,
+        total_cases,
+        total_skipped,
+        total_patches,
     )
     return 0
 

@@ -91,6 +91,9 @@ class CaseScore:
     catch_rate: float = 0.0  # 1.0 if ANY expected finding was matched on
     # title+file+line, else 0.0 — Greptile-style
     # binary "did the reviewer catch the bug"
+    catch_fraction: float = 0.0  # fraction of expected bugs caught (file+line) — the
+    # honest per-bug catch on multi-finding cases, where
+    # the binary catch_rate over-states (1 of 5 == 5 of 5)
     composite: float = 0.0
     matches: List[FindingMatch] = field(default_factory=list)
     expected_count: int = 0
@@ -107,6 +110,7 @@ class CaseScore:
             "recommendation_score": round(self.recommendation_score, 3),
             "context_depth": round(self.context_depth, 3),
             "catch_rate": round(self.catch_rate, 3),
+            "catch_fraction": round(self.catch_fraction, 3),
             "composite": round(self.composite, 3),
             "expected_count": self.expected_count,
             "actual_count": self.actual_count,
@@ -154,8 +158,15 @@ def score_case(case: CaseConfig, findings: list, files_reviewed: list) -> CaseSc
     matches = _match_findings(expected, findings)
     score.matches = matches
 
-    # Recall: fraction of expected findings that were matched
-    matched_expected = set(m.expected_index for m in matches)
+    # Recall: fraction of expected findings matched WITH A REAL LOCATION SIGNAL.
+    # A pairing counts as "found the bug" only if it lands in the right file and
+    # corroborates with either the line range or the title. A title-only hit in
+    # the wrong file, or a bare severity+category coincidence (both of which stay
+    # eligible for *assignment*), no longer inflates recall — they carry zero
+    # location agreement. See the 2026-06-02 scoring audit: loose stopword
+    # title_patterns + sev+cat eligibility let a reviewer who located nothing
+    # score recall up to 1.0 while catch_rate honestly stayed 0.
+    matched_expected = set(m.expected_index for m in matches if m.file_match and (m.line_match or m.title_match))
     score.recall = len(matched_expected) / len(expected)
 
     # Catch rate (Greptile-style): 1.0 if AT LEAST ONE expected finding was
@@ -165,6 +176,12 @@ def score_case(case: CaseConfig, findings: list, files_reviewed: list) -> CaseSc
     # that points to the faulty code". A finding that points at the right
     # file:line counts even if the title is generic.
     score.catch_rate = 1.0 if any(m.file_match and m.line_match for m in matches) else 0.0
+
+    # Catch FRACTION (honest per-bug catch): the share of EXPECTED bugs caught
+    # with a real line-level pointer. On a 5-bug case, finding 1 scores 0.2 here
+    # vs 1.0 on the binary catch_rate above. This is the number to trust on
+    # multi-finding cases and the basis of the greptile_view aggregate.
+    score.catch_fraction = len({m.expected_index for m in matches if m.file_match and m.line_match}) / len(expected)
 
     # Precision: fraction of actual findings that matched an expected finding
     # Findings that don't match any expected finding are considered false positives,
@@ -176,7 +193,7 @@ def score_case(case: CaseConfig, findings: list, files_reviewed: list) -> CaseSc
         # Praise / positive-feedback findings are NOT bug claims, so they are
         # excluded from the denominator — they can't be false positives.
         true_positives = len(matched_actual)
-        total = sum(1 for f in findings if not _is_praise(f))
+        total = sum(1 for f in findings if not _is_praise(f) and not _is_dismissal(f))
         # Cap false positive penalty: at most 50% of extra findings count against precision
         false_positives = max(0, total - true_positives)
         effective_fp = false_positives * 0.5
@@ -261,6 +278,12 @@ def compute_aggregate(scores: List[CaseScore]) -> Dict[str, float]:
         "recommendation_score": round(sum(s.recommendation_score for s in valid) / n, 3),
         "context_depth": round(sum(s.context_depth for s in valid) / n, 3),
         "catch_rate": round(sum(s.catch_rate for s in valid) / n, 3),
+        "catch_fraction": round(sum(s.catch_fraction for s in valid) / n, 3),
+        # greptile_view: the metric most comparable to Greptile's own benchmark —
+        # mean per-bug catch (line-level), severity/precision excluded. HEADLINE
+        # this when comparing to Greptile; the 6-axis composite is our internal
+        # product metric, not comparable to Greptile's ~82%.
+        "greptile_view": round(sum(s.catch_fraction for s in valid) / n, 3),
         "composite": round(sum(s.composite for s in valid) / n, 3),
         "cases_total": len(scores),
         "cases_scored": n,
@@ -278,6 +301,42 @@ def _is_praise(finding) -> bool:
     sev = getattr(finding, "severity", None)
     val = getattr(sev, "value", sev)
     return str(val).lower() == "praise"
+
+
+# Phrases where a reviewer DENIES a defect rather than asserting one. The
+# fixed-width negation lookbehinds keep real findings safe — "not correctly
+# guarded" / "isn't a false positive" must NOT register as dismissals.
+_DISMISSAL_RE = re.compile(
+    # Fixed-width negation lookbehinds (incl. article-tolerant "not a "/"n't a ")
+    # so a genuine defect phrased as a negation ("not correctly guarded",
+    # "isn't a false positive") is NOT treated as a dismissal. Markers are kept
+    # unambiguous on purpose — e.g. "is not an issue" (not bare "not an issue",
+    # which would mis-fire on "not an issue-free path").
+    r"(?<!not )(?<!n't )(?<!isn't )(?<!aren't )(?<!without )(?<!not a )(?<!n't a )"
+    r"(?:"
+    r"correctly guarded|properly guarded|"
+    r"is mitigated|already mitigated|bug is mitigated|"
+    r"not a bug|no bug here|false positive|already handled|"
+    r"no fix needed|no fix required|no issue here|"
+    r"no actual bug|no real bug|no vulnerability|not vulnerable"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _is_dismissal(finding) -> bool:
+    """True if the finding DENIES a defect rather than asserting one.
+
+    A reviewer who writes "integer overflow is correctly guarded — planted bug
+    is mitigated" has NOT caught the bug; they argued it does not exist. Such a
+    finding must not satisfy catch_rate / recall just because it points at the
+    right file:line while claiming there is nothing to fix. Excluded from
+    matching and from the precision denominator, mirroring _is_praise().
+    See the 2026-06-02 scoring audit (keycloak-003 ASN1 case, where a
+    "correctly guarded — mitigated" denial was credited as a catch).
+    """
+    text = " ".join(str(getattr(finding, attr, "") or "") for attr in ("title", "description", "suggested_fix"))
+    return bool(_DISMISSAL_RE.search(text))
 
 
 def _line_proximity(exp: dict, finding) -> float:
@@ -324,8 +383,11 @@ def _match_findings(expected: list, findings: list) -> List[FindingMatch]:
     Praise / positive-feedback findings are excluded from matching — they can
     never be the answer to an expected defect.
     """
-    # Candidate actuals = non-praise findings, keyed by their original index.
-    cand = [(act_idx, f) for act_idx, f in enumerate(findings) if not _is_praise(f)]
+    # Candidate actuals = non-praise, non-dismissal findings, keyed by original
+    # index. Dismissals (explicit "this is NOT a bug" findings) are excluded like
+    # praise: they must never satisfy a catch / recall by pointing at the right
+    # file:line while denying any defect exists.
+    cand = [(act_idx, f) for act_idx, f in enumerate(findings) if not _is_praise(f) and not _is_dismissal(f)]
     if not cand or not expected:
         return []
 
@@ -340,11 +402,21 @@ def _match_findings(expected: list, findings: list) -> List[FindingMatch]:
             if keep_score < 2:  # require at least a title or file match
                 continue
             catch_pair = 1.0 if (m.file_match and m.line_match) else 0.0
+            title_and_file = 1.0 if (m.title_match and m.file_match) else 0.0
+            title_only = 1.0 if (m.title_match and not m.file_match) else 0.0
+            # LOCATION-FIRST identity. An exact file+line CATCH is the definitive
+            # signal that this finding IS the expected bug, so it must outrank a
+            # title match — a title_pattern can be a common word (e.g. "should")
+            # that hits an unrelated finding and would otherwise steal a correctly
+            # located finding's match (observed: keycloak-009). A title match only
+            # counts as strong identity when corroborated by the file; a bare title
+            # hit in a different file is weak.
             assign_score = (
-                m.title_match * 1000.0
-                + catch_pair * 100.0
-                + m.file_match * 10.0
-                + m.line_match * 5.0
+                catch_pair * 1000.0  # exact location = the bug
+                + title_and_file * 300.0  # specific title corroborated by file
+                + m.file_match * 50.0
+                + m.line_match * 10.0
+                + title_only * 5.0  # bare title in a different file = weak
                 + m.severity_match * 1.0
                 + m.category_match * 0.5
                 + _line_proximity(exp, finding) * 0.01  # tiebreak only, < cat weight
@@ -414,7 +486,7 @@ def _evaluate_match(exp_idx: int, act_idx: int, expected: dict, finding) -> Find
         exp_start, exp_end = line_range
         # Check if there's any overlap between expected and actual line ranges
         act_start = finding.start_line
-        act_end = finding.end_line if finding.end_line > 0 else finding.start_line
+        act_end = finding.end_line if (getattr(finding, "end_line", 0) or 0) > 0 else finding.start_line
         m.line_match = act_start <= exp_end and act_end >= exp_start
 
     # Severity match — graded score on the 4-level scale. Handles the
