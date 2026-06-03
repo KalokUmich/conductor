@@ -37,7 +37,16 @@ from app.agent_loop.existence_scanners import (
     _DIFF_HUNK_HEADER_RE as _DIFF_HUNK_HEADER_RE,
 )
 from app.agent_loop.existence_scanners import (
+    _added_lines_by_file as _added_lines_by_file,
+)
+from app.agent_loop.existence_scanners import (
+    _collect_pr_defined_symbols as _collect_pr_defined_symbols,
+)
+from app.agent_loop.existence_scanners import (
     _dedup_findings_by_location as _dedup_findings_by_location,
+)
+from app.agent_loop.existence_scanners import (
+    _extract_anchor_token as _extract_anchor_token,
 )
 from app.agent_loop.existence_scanners import (
     _extract_batch_verdicts as _extract_batch_verdicts,
@@ -62,6 +71,9 @@ from app.agent_loop.existence_scanners import (
 )
 from app.agent_loop.existence_scanners import (
     _filter_findings_to_diff_scope as _filter_findings_to_diff_scope,
+)
+from app.agent_loop.existence_scanners import (
+    _finding_anchor_on_added_line as _finding_anchor_on_added_line,
 )
 from app.agent_loop.existence_scanners import (
     _finding_claims_symbol_missing as _finding_claims_symbol_missing,
@@ -92,6 +104,9 @@ from app.agent_loop.existence_scanners import (
 )
 from app.agent_loop.existence_scanners import (
     _java_source_set_peers as _java_source_set_peers,
+)
+from app.agent_loop.existence_scanners import (
+    _language_for_path as _language_for_path,
 )
 from app.agent_loop.existence_scanners import (
     _module_is_first_party as _module_is_first_party,
@@ -127,6 +142,9 @@ from app.agent_loop.existence_scanners import (
     _scan_new_python_imports_for_missing as _scan_new_python_imports_for_missing,
 )
 from app.agent_loop.existence_scanners import (
+    _snap_findings_to_evidence as _snap_findings_to_evidence,
+)
+from app.agent_loop.existence_scanners import (
     _split_import_names as _split_import_names,
 )
 from app.agent_loop.lifecycle import fire_hook
@@ -140,6 +158,7 @@ from app.code_review.risk_classifier import classify_risk
 from app.code_review.shared import (
     build_impact_context,
     compute_budget_multiplier,
+    is_generated_path,
     prefetch_diffs,
     should_reject_pr,
 )
@@ -790,6 +809,24 @@ class PRBrainOrchestrator:
         # ------------------------------------------------------------------
 
         pr_context = parse_diff(self._workspace_path, self._diff_spec)
+
+        # Drop machine-generated / vendored files (swagger/openapi specs,
+        # lockfiles, minified bundles, snapshots) from the review surface.
+        # They are not human-reviewable and a single large one (a swagger
+        # spec can be 10K+ lines) otherwise dominates the diff and crowds
+        # the real change out of the reviewer's context. See is_generated_path.
+        _generated = [f for f in pr_context.files if is_generated_path(f.path)]
+        if _generated:
+            pr_context.files = [f for f in pr_context.files if not is_generated_path(f.path)]
+            pr_context.total_additions = sum(f.additions for f in pr_context.files)
+            pr_context.total_deletions = sum(f.deletions for f in pr_context.files)
+            pr_context.total_changed_lines = pr_context.total_additions + pr_context.total_deletions
+            logger.info(
+                "PR Brain: excluded %d generated/vendored file(s) from review (%s)",
+                len(_generated),
+                ", ".join(f.path for f in _generated[:5]) + ("…" if len(_generated) > 5 else ""),
+            )
+
         # Attach PR intent so downstream agents see "what this PR is
         # supposed to do" not just raw diff bytes. See __init__.
         pr_context.title = self._pr_title
@@ -829,6 +866,9 @@ class PRBrainOrchestrator:
 
         risk_profile = classify_risk(pr_context)
         file_diffs = prefetch_diffs(self._workspace_path, self._diff_spec)
+        # Keep the prefetched diffs in sync with the generated-file exclusion
+        # above so no worker is ever handed a swagger/lockfile diff to review.
+        file_diffs = {p: d for p, d in file_diffs.items() if not is_generated_path(p)}
         impact_context = build_impact_context(self._workspace_path, pr_context)
         budget_multiplier = compute_budget_multiplier(pr_context)
 
@@ -957,8 +997,12 @@ class PRBrainOrchestrator:
         logger.info("[PR Brain v2] Budget plan: %s", budget_plan.to_dict())
         yield WorkflowEvent("budget_plan", budget_plan.to_dict())
 
+        # USD economy: the budget pool, per-leaf reservation, and per-leaf cap all
+        # come from the BudgetEconomics plan (diff-scaled). No token口径 anywhere.
         budget_mgr = BrainBudgetManager(
-            self._config.limits.total_session_tokens,
+            budget_plan.total_cap_usd,
+            default_leaf_usd=budget_plan.per_leaf_default_usd,
+            max_leaf_usd=budget_plan.per_leaf_max_usd,
         )
         llm_semaphore = asyncio.Semaphore(self._config.limits.llm_concurrency_limit)
 
@@ -985,6 +1029,9 @@ class PRBrainOrchestrator:
             sub_agent_timeout=self._config.limits.sub_agent_timeout,
             # BudgetEconomics per-leaf cap → every SDK leaf dispatched in this review.
             leaf_max_usd=budget_plan.per_leaf_max_usd,
+            # Generous coordinator ceiling (whole-task total) → in-house orchestrator
+            # sub-agents won't FORCE_CONCLUDE early. See _run_worker_inhouse.
+            coordinator_max_usd=budget_plan.total_cap_usd,
         )
 
         executor = AgentToolExecutor(
@@ -2031,6 +2078,21 @@ class PRBrainOrchestrator:
         """
         findings = review_output.get("findings", [])
 
+        # Step 0-pre: snap each finding's anchor onto the EXACT offending line.
+        # Workers sometimes report a line a few rows off the real defect (the
+        # method header instead of the bad statement), which costs location/recall
+        # in eval and makes inline PR comments land imprecisely. Content-grounded:
+        # only moves the anchor when a distinctive code token from the finding's
+        # own text appears on a nearby ADDED line — never a blind nudge. Runs
+        # FIRST so every downstream pass (dedup, own-fix polarity gate, diff-scope,
+        # eval scoring) sees the corrected anchors.
+        findings, snapped_count = _snap_findings_to_evidence(findings, file_diffs)
+        if snapped_count:
+            logger.info(
+                "[PR Brain v2] Snapped %d finding anchor(s) to the exact offending line",
+                snapped_count,
+            )
+
         # Step 0: dedup by (file, line±5). When two findings point at
         # (approximately) the same location, keep the one with highest
         # confidence. Deterministic tiebreak: critical > high > medium >
@@ -2165,7 +2227,9 @@ class PRBrainOrchestrator:
         # finding whose own text self-contradicts ("the PR correctly fixes this"
         # / "old code" + "new code"). The coordinator skill is the primary guard;
         # this is the mechanical backstop. (Real bug: PR 14442 NatWest finding.)
-        final_findings, fix_demoted, fix_demoted_count = _filter_findings_describing_own_fix(final_findings)
+        final_findings, fix_demoted, fix_demoted_count = _filter_findings_describing_own_fix(
+            final_findings, added_by_file=_added_lines_by_file(file_diffs)
+        )
         if fix_demoted_count:
             logger.info(
                 "[PR Brain v2] Fix-as-defect filter demoted %d finding(s) "
@@ -2202,6 +2266,25 @@ class PRBrainOrchestrator:
         merge_rec = _recompute_merge_recommendation(
             final_findings, review_output.get("merge_recommendation", "comment")
         )
+
+        # Stability signal (harness): a 0-finding review on a SUBSTANTIAL PR is a
+        # known high-variance failure mode — the coordinator investigates the right
+        # areas but UNDER-COMMITS in synthesis (keycloak-005 emitted 0 findings one
+        # run, 11 the next). Surface it loudly so it is never silently mistaken for
+        # "clean PR". Long-term fix (empty-result retry / self-consistency / leaf
+        # robustness) is planned but not yet auto-applied — see ROADMAP / memory.
+        if not final_findings:
+            try:
+                _added_total = sum(len(s) for s in _added_lines_by_file(file_diffs).values())
+            except Exception:
+                _added_total = 0
+            if _added_total >= 80:
+                logger.warning(
+                    "[PR Brain v2] ZERO findings on a substantial PR (%d added lines across %d files) "
+                    "— likely synthesis under-commitment, NOT necessarily a clean PR. Re-review advised.",
+                    _added_total,
+                    len(file_diffs or {}),
+                )
 
         return {
             **review_output,

@@ -17,6 +17,14 @@ class AzureDevOpsReviewRequest(BaseModel):
     source_branch: str = Field("", description="Source branch (optional, read from PR if empty)")
     target_branch: str = Field("", description="Target branch (optional, read from PR if empty)")
     max_agents: int = Field(default=6, ge=1, le=8, description="Max review agents (incl. correctness_b)")
+    dry_run: bool = Field(
+        default=False,
+        description=(
+            "If true: run the full review but post NOTHING to the PR (no inline "
+            "threads, no summary, no vote) and bypass the size gate; return the "
+            "findings in the response for local inspection."
+        ),
+    )
 
 
 class AzureDevOpsReviewResponse(BaseModel):
@@ -29,6 +37,8 @@ class AzureDevOpsReviewResponse(BaseModel):
     merge_recommendation: str = ""
     vote: int = 0
     error: Optional[str] = None
+    # Populated only on dry_run=True: the findings that WOULD have been posted.
+    findings: list = Field(default_factory=list)
 
 
 class AzureDevOpsRecheckResponse(BaseModel):

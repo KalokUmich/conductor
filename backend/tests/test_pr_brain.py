@@ -217,6 +217,33 @@ class TestInjectMissingSymbolFindings:
         assert synth["start_line"] == 42
         assert synth["_injected_from"] == "phase2_existence_missing"
 
+    def test_java_missing_symbol_uses_compile_error_wording(self, monkeypatch):
+        """A Java reference fails at COMPILE time — the injected finding must
+        say 'cannot find symbol', not Python's 'ImportError at runtime'."""
+        import app.scratchpad as scratch_mod
+        from app.agent_loop import pr_brain as mod
+
+        store = self._fake_store([{"name": "BankInfoQuery", "referenced_at": "src/main/java/com/foo/UseIt.java:12"}])
+        monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
+        findings, n = mod._inject_missing_symbol_findings([])
+        assert n == 1
+        synth = findings[0]
+        assert "BankInfoQuery" in synth["title"]
+        assert "cannot find symbol" in synth["title"].lower()
+        assert "importerror" not in (synth["title"] + synth["risk"]).lower()
+
+    def test_go_missing_symbol_uses_undefined_wording(self, monkeypatch):
+        import app.scratchpad as scratch_mod
+        from app.agent_loop import pr_brain as mod
+
+        store = self._fake_store([{"name": "doThing", "referenced_at": "pkg/svc.go:9"}])
+        monkeypatch.setattr(scratch_mod, "current_factstore", lambda: store)
+        findings, n = mod._inject_missing_symbol_findings([])
+        assert n == 1
+        synth = findings[0]
+        assert "undefined" in synth["title"].lower()
+        assert "go build" in synth["risk"].lower()
+
     def test_skips_when_finding_already_mentions_symbol(self, monkeypatch):
         import app.scratchpad as scratch_mod
         from app.agent_loop import pr_brain as mod
@@ -1473,6 +1500,249 @@ class TestScanNewJavaReferencesForMissing:
         assert "int" not in names
         assert "boolean" not in names
 
+    def test_same_package_record_not_flagged(self, tmp_path):
+        """Regression (PR 14407): a Java ``record`` defined in the same
+        package must NOT be flagged. The type-decl grep's trailing char
+        class previously excluded `(` — and a record header is always
+        `record Name(...)` — so `record BankInfoQuery(...)` never matched
+        and surfaced as a false CRITICAL 'cannot find symbol'."""
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/BankInfoQuery.java",
+            "package com.foo;\n\n" "public record BankInfoQuery(String sortCode, String accountNumber) {}\n",
+        )
+        self._make_pkg_file(
+            tmp_path,
+            "src/main/java/com/foo/UseIt.java",
+            "package com.foo;\n\n" "public class UseIt {\n" '    void run() { new BankInfoQuery("1", "2"); }\n' "}\n",
+        )
+        diff = self._diff(
+            "src/main/java/com/foo/UseIt.java",
+            ["package com.foo;", "", "public class UseIt {", '    void run() { new BankInfoQuery("1", "2"); }', "}"],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path),
+            {"src/main/java/com/foo/UseIt.java": diff},
+        )
+        assert [f["name"] for f in found] == []
+
+    def test_symbol_defined_in_new_sibling_file_not_flagged(self, tmp_path):
+        """Regression (PR 14407): a class/record DEFINED in a brand-new
+        sibling file ADDED by the same PR, referenced from another diff
+        file, must NOT be flagged. The same-package on-disk grep can miss a
+        just-added file; the PR-defined skip-list (scanned from `+` lines
+        across the whole diff) is the language-agnostic backstop."""
+        from app.agent_loop.pr_brain import (
+            _scan_new_java_references_for_missing,
+        )
+
+        # DisbursalPayeeSnapshot is a NEW record added by this PR in a
+        # different package dir than the referencing service.
+        snap_path = "src/main/java/com/foo/model/DisbursalPayeeSnapshot.java"
+        svc_path = "src/main/java/com/foo/service/ThirdPartyDisbursalService.java"
+        self._make_pkg_file(
+            tmp_path,
+            snap_path,
+            "package com.foo.model;\n\n" "public record DisbursalPayeeSnapshot(String name) {}\n",
+        )
+        self._make_pkg_file(
+            tmp_path,
+            svc_path,
+            "package com.foo.service;\n\n"
+            "import com.foo.model.DisbursalPayeeSnapshot;\n\n"
+            "public class ThirdPartyDisbursalService {\n"
+            '    void run() { new DisbursalPayeeSnapshot("x"); }\n'
+            "}\n",
+        )
+        snap_diff = self._diff(
+            snap_path,
+            ["package com.foo.model;", "", "public record DisbursalPayeeSnapshot(String name) {}"],
+        )
+        svc_diff = self._diff(
+            svc_path,
+            [
+                "package com.foo.service;",
+                "",
+                "import com.foo.model.DisbursalPayeeSnapshot;",
+                "",
+                "public class ThirdPartyDisbursalService {",
+                '    void run() { new DisbursalPayeeSnapshot("x"); }',
+                "}",
+            ],
+        )
+        found = _scan_new_java_references_for_missing(
+            str(tmp_path),
+            {snap_path: snap_diff, svc_path: svc_diff},
+        )
+        assert [f["name"] for f in found] == []
+
+
+class TestCollectPrDefinedSymbols:
+    """The cross-language PR-defined skip-list backing the phantom scanners."""
+
+    def _diff(self, path: str, new_lines: list[str]) -> str:
+        body_plus = "\n".join(f"+{ln}" for ln in new_lines)
+        return f"--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{len(new_lines)} @@\n{body_plus}"
+
+    def test_collects_java_record_class_enum(self):
+        from app.agent_loop.pr_brain import _collect_pr_defined_symbols
+
+        diff = self._diff(
+            "A.java",
+            ["public record BankInfoQuery(String s) {}", "class Helper {}", "enum Color { RED }"],
+        )
+        defined = _collect_pr_defined_symbols({"A.java": diff})
+        assert {"BankInfoQuery", "Helper", "Color"} <= defined
+
+    def test_collects_go_and_python_defs(self):
+        from app.agent_loop.pr_brain import _collect_pr_defined_symbols
+
+        go_diff = self._diff("a.go", ["func DoThing() {}", "type Widget struct {}"])
+        py_diff = self._diff("a.py", ["class Foo:", "def bar():"])
+        defined = _collect_pr_defined_symbols({"a.go": go_diff, "a.py": py_diff})
+        assert {"DoThing", "Widget", "Foo", "bar"} <= defined
+
+    def test_definition_removed_on_minus_line_not_collected(self):
+        from app.agent_loop.pr_brain import _collect_pr_defined_symbols
+
+        # A definition the PR DELETES (only on a `-` line) must stay
+        # missing — never enters the skip-list.
+        diff = "--- a/A.java\n+++ b/A.java\n@@ -1,1 +0,0 @@\n-public class Gone {}\n"
+        defined = _collect_pr_defined_symbols({"A.java": diff})
+        assert "Gone" not in defined
+
+
+class TestSnapFindingsToEvidence:
+    """Anchor-precision snap: move a finding's start_line onto the exact offending
+    ADDED line when a distinctive token from the finding appears nearby."""
+
+    def _diff(self, path: str, new_lines: list[str]) -> str:
+        body = "\n".join(f"+{ln}" for ln in new_lines)
+        return f"--- a/{path}\n+++ b/{path}\n@@ -0,0 +1,{len(new_lines)} @@\n{body}"
+
+    def test_snaps_to_token_line(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = self._diff(
+            "A.java",
+            [
+                "package com.foo;",  # 1
+                "",  # 2
+                "public class UseIt {",  # 3
+                "    void run() {}",  # 4
+                "    int helper() { return badCall(); }",  # 5
+                "}",  # 6
+            ],
+        )
+        # Finding anchored at the class header (line 3), 2 rows off the real defect.
+        findings = [
+            {
+                "title": "Phantom call to `badCall`",
+                "file": "A.java",
+                "start_line": 3,
+                "end_line": 3,
+                "evidence": ["`badCall()` is undefined"],
+            }
+        ]
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 1
+        assert out[0]["start_line"] == 5
+        assert out[0]["end_line"] == 5
+        assert out[0]["_snapped_from"] == 3
+
+    def test_no_snap_when_token_already_on_line(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = self._diff("A.java", ["public class UseIt {", "    int helper() { return badCall(); }", "}"])
+        findings = [{"title": "`badCall` undefined", "file": "A.java", "start_line": 2, "end_line": 2}]
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 0
+        assert out[0]["start_line"] == 2
+
+    def test_skips_injected_findings(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = self._diff("A.java", ["x", "y", "    z = badCall();"])
+        findings = [
+            {"title": "`badCall`", "file": "A.java", "start_line": 1, "end_line": 1, "_injected_from": "phase2"}
+        ]
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 0
+        assert out[0]["start_line"] == 1
+
+    def test_no_token_no_snap(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = self._diff("A.java", ["public class UseIt {", "    return value;", "}"])
+        # Only generic stopwords → no distinctive anchor token.
+        findings = [{"title": "should return value", "file": "A.java", "start_line": 1, "end_line": 1}]
+        _out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 0
+
+    def test_preserves_span(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        lines = ["l1"] * 9 + ["    callDangerous(x, y);"] + ["l11"]  # token on line 10
+        diff = self._diff("A.java", lines)
+        findings = [{"title": "`callDangerous` risk", "file": "A.java", "start_line": 7, "end_line": 9}]  # span 2
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 1
+        assert out[0]["start_line"] == 10
+        assert out[0]["end_line"] == 12  # span preserved
+
+    def test_out_of_window_not_snapped(self):
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        lines = ["l1"] * 19 + ["    farAwayCall();"]  # token on line 20
+        diff = self._diff("A.java", lines)
+        findings = [{"title": "`farAwayCall` bug", "file": "A.java", "start_line": 2, "end_line": 2}]  # 18 > window 6
+        _out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 0
+
+    def test_extract_anchor_token_prefers_backtick(self):
+        from app.agent_loop.pr_brain import _extract_anchor_token
+
+        tok = _extract_anchor_token({"title": "the method should return", "evidence": ["calls `computeHash` wrongly"]})
+        assert tok == "computeHash"
+
+    def test_falls_back_to_context_line(self):
+        """When no ADDED line in the window carries the token, snap to the nearest
+        CONTEXT line that does (bug on an unchanged line the PR affects)."""
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = (
+            "--- a/A.java\n+++ b/A.java\n@@ -8,5 +8,6 @@\n"
+            " public class UseIt {\n"  # ctx line 8
+            "     int x = oldHelper();\n"  # ctx line 9 (token on a CONTEXT line)
+            "+    int y = newThing();\n"  # added line 10
+            "     return x;\n"  # ctx line 11
+            " }\n"  # ctx line 12
+        )
+        findings = [{"title": "`oldHelper` returns stale value", "file": "A.java", "start_line": 12, "end_line": 12}]
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 1
+        assert out[0]["start_line"] == 9  # context line carrying oldHelper
+
+    def test_prefers_added_over_context(self):
+        """When BOTH an added and a context line carry the token, prefer the added."""
+        from app.agent_loop.pr_brain import _snap_findings_to_evidence
+
+        diff = (
+            "--- a/A.java\n+++ b/A.java\n@@ -8,4 +8,5 @@\n"
+            "     callX();\n"  # ctx line 8 (token on context, nearer)
+            "     y = 1;\n"  # ctx line 9
+            "+    callX();\n"  # added line 10 (token on ADDED, farther)
+            " }\n"  # ctx line 11
+        )
+        findings = [{"title": "`callX` is wrong", "file": "A.java", "start_line": 9, "end_line": 9}]
+        out, n = _snap_findings_to_evidence(findings, {"A.java": diff})
+        assert n == 1
+        assert out[0]["start_line"] == 10  # added preferred even though context (line 8) is nearer
+
 
 # ---------------------------------------------------------------------------
 # _scan_for_stub_call_sites (P14 — mechanical stub detector)
@@ -2176,6 +2446,43 @@ class TestFixAsDefectFilter:
         findings = [{"title": "x", "risk": "this PR fixes this", "_injected_from": "phantom"}]
         kept, _, count = _filter_findings_describing_own_fix(findings)
         assert count == 0 and len(kept) == 1
+
+    def test_plus_line_bug_not_demoted_even_with_fix_phrasing(self):
+        # keycloak-009 regression: a real bug on a '+' ADDED line whose prose
+        # mentions the PR's refactor must NOT be demoted as an "own fix".
+        from app.agent_loop.pr_brain import (
+            _added_lines_by_file,
+            _filter_findings_describing_own_fix,
+        )
+
+        diff = (
+            "@@ -10,3 +10,4 @@\n"
+            " context\n"
+            "-old = something\n"
+            "+val = credentialModelOpt.get()  # unsafe\n"
+            "+use(val)\n"
+            " more\n"
+        )
+        added = _added_lines_by_file({"Recovery.java": diff})
+        assert 11 in added["Recovery.java"] and 12 in added["Recovery.java"]
+        findings = [
+            {
+                "title": "Unsafe Optional.get() introduced by the refactor",
+                "risk": "The change refactors to Optional but the PR corrects the old "
+                "null path while introducing an unchecked get() here.",
+                "severity": "high",
+                "file": "Recovery.java",
+                "start_line": 11,
+                "end_line": 11,
+            }
+        ]
+        # Legacy (no diff info) demotes on the 'PR corrects' phrasing...
+        _, _d_legacy, c_legacy = _filter_findings_describing_own_fix(findings)
+        assert c_legacy == 1
+        # ...but with the polarity gate the '+'-line bug is KEPT.
+        kept, _demoted, count = _filter_findings_describing_own_fix(findings, added_by_file=added)
+        assert count == 0, "a bug on a '+' added line must never be demoted as own-fix"
+        assert len(kept) == 1
 
     def test_empty(self):
         from app.agent_loop.pr_brain import _filter_findings_describing_own_fix

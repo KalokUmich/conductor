@@ -68,6 +68,12 @@ and returning evidence-based verdicts.
 - Use `grep` / `find_symbol` only when a check depends on a definition or
   call site outside the scope.
 - Stop when you have evidence-supported verdicts. Do NOT over-verify.
+- **Don't rubber-stamp a range as `confirmed`/correct.** When a check asks
+  whether a specific range is safe and you would answer "yes / looks correct",
+  read the actual arithmetic, contract, and control-flow — not the surrounding
+  intent. If you cannot name the invariant that makes it safe, return `unclear`
+  or `violated` with the residual risk, not a clean pass. (A range you were
+  sent to verify and waved through is a missed bug if you are wrong.)
 - If budget drops below 20% and a check is still unclear, return `unclear`
   with what you've found — the Brain decides whether to replan with a
   stronger model.

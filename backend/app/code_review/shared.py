@@ -364,6 +364,65 @@ def should_reject_pr(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Generated / vendored file detection (2026-06-02)
+# ---------------------------------------------------------------------------
+# Machine-generated / vendored files (API specs, lockfiles, minified bundles,
+# snapshots, generated protobuf/dart) are not human-reviewable, and a single
+# large one (a swagger spec can be 10K+ lines) otherwise dominates a PR's line
+# count — it trips the "too large to review" size gate and crowds the real
+# change out of the reviewer's context. Excluded from BOTH the size gate and
+# the review surface. See the 2026-06-02 ADO session (abound-server PR 14407:
+# an 11.9K-line natwest swagger spec = 80% of the diff).
+GENERATED_PATH_GLOBS = (
+    "*swagger*.json",
+    "*swagger*.yaml",
+    "*swagger*.yml",
+    "*openapi*.json",
+    "*openapi*.yaml",
+    "*openapi*.yml",
+    "*.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "go.sum",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
+    "*.snap",
+    "*.pb.go",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
+    "*.g.dart",
+)
+GENERATED_DIR_MARKERS = (
+    "/__snapshots__/",
+    "/node_modules/",
+    "/vendor/",
+    "/generated/",
+    "/.gen/",
+)
+
+
+def is_generated_path(path: str) -> bool:
+    """True if ``path`` is a machine-generated / vendored file that should be
+    excluded from code review (API specs, lockfiles, minified bundles,
+    snapshots, generated protobuf/dart, etc.).
+
+    Matches the basename against ``GENERATED_PATH_GLOBS`` plus a few directory
+    markers. See the module note above for the rationale.
+    """
+    import fnmatch
+
+    if not path:
+        return False
+    p = "/" + path.replace("\\", "/").lstrip("/").lower()
+    if any(marker in p for marker in GENERATED_DIR_MARKERS):
+        return True
+    base = p.rsplit("/", 1)[-1]
+    return any(fnmatch.fnmatch(base, g) for g in GENERATED_PATH_GLOBS)
+
+
 def prefetch_diffs(workspace_path: str, diff_spec: str) -> Dict[str, str]:
     """Fetch all file diffs in a single ``git diff`` call and split by file.
 

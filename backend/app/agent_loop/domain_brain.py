@@ -102,8 +102,8 @@ class DomainBrainOrchestrator:
 
     def __init__(
         self,
-        provider: AIProvider,                  # strong (Sonnet) — coordinator
-        explorer_provider: AIProvider,         # explorer (Haiku) — workers
+        provider: AIProvider,  # strong (Sonnet) — coordinator
+        explorer_provider: AIProvider,  # explorer (Haiku) — workers
         workspace_path: str,
         agent_registry: Dict[str, Any],
         tool_executor: ToolExecutor,
@@ -161,12 +161,21 @@ class DomainBrainOrchestrator:
             domain_config = _BrainConfig(**domain_data)
         except Exception as exc:
             logger.warning(
-                "[Domain Brain] failed to load brains/domain.yaml (%s) — "
-                "falling back to default Brain config", exc,
+                "[Domain Brain] failed to load brains/domain.yaml (%s) — " "falling back to default Brain config",
+                exc,
             )
             domain_config = load_brain_config()
 
-        budget_mgr = BrainBudgetManager(domain_config.limits.total_session_tokens)
+        # Budget manager (USD economy): business/domain flows get a loose BUSINESS
+        # total; per-leaf reservation + cap come from the same plan.
+        from app.agent_loop.budget_economics import get_budget_economics
+
+        budget_plan = get_budget_economics().estimate("business")
+        budget_mgr = BrainBudgetManager(
+            budget_plan.total_cap_usd,
+            default_leaf_usd=budget_plan.per_leaf_default_usd,
+            max_leaf_usd=budget_plan.per_leaf_max_usd,
+        )
 
         executor_cfg = BrainExecutorConfig(
             workspace_path=self._workspace_path,
@@ -174,6 +183,8 @@ class DomainBrainOrchestrator:
             max_depth=domain_config.limits.max_depth,
             max_concurrent=domain_config.limits.max_concurrent_agents,
             sub_agent_timeout=domain_config.limits.sub_agent_timeout,
+            leaf_max_usd=budget_plan.per_leaf_max_usd,
+            coordinator_max_usd=budget_plan.total_cap_usd,
         )
 
         # Domain Brain doesn't use swarm presets — pass empty registry.

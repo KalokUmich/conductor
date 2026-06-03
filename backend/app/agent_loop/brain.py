@@ -41,9 +41,12 @@ logger = logging.getLogger(__name__)
 _SUMMARY_TRUNCATE_LEN = 120  # max chars per tool-call summary in condense_result
 _MAX_CONTEXT_CHUNKS = 10  # cap on context chunks returned to Brain (prevents bloat)
 _MAX_TOOLS_SUMMARY = 15  # cap on tool-call summary lines returned to Brain
-_MAX_BRAIN_RESERVE = 100_000  # upper bound on tokens Brain reserves for its own calls
-_MIN_AGENT_BUDGET = 50_000  # floor budget allocated to any sub-agent
-_MAX_AGENT_BUDGET = 800_000  # ceiling budget allocated to any sub-agent
+# USD budget economy (P1d → full USD). BrainBudgetManager allocates DOLLARS, not
+# tokens — the leaf cap rides the SDK via max_budget_usd, the coordinator cap via
+# BudgetConfig.max_usd. These are loose safety ceilings, not targets.
+_DEFAULT_LEAF_USD = 2.0  # default per-leaf reservation when a brain passes no plan (generous)
+_PER_LEAF_MIN_USD = 0.5  # floor per-leaf reservation — never starve a leaf below $0.50
+_DEFAULT_BRAIN_TOTAL_USD = 5.0  # fallback total session budget when no plan is passed
 
 # Step 06c — dispatch-engine discriminator. A dispatched agent holding ANY of these
 # tools is an *orchestrator* (Domain/PR Brain coordinator) that must fan out to its
@@ -54,7 +57,6 @@ _MAX_AGENT_BUDGET = 800_000  # ceiling budget allocated to any sub-agent
 _ORCHESTRATION_TOOLS = frozenset(
     {"dispatch_explore", "dispatch_verify", "dispatch_sweep", "create_plan", "transfer_to_brain"}
 )
-_DEFAULT_AGENT_BUDGET = 100_000  # minimum guaranteed budget even when pool is generous
 
 # USD budget economy (P1d): the SDK leaf path can't enforce a token cap — the
 # leaf is an independent `claude` subprocess whose only budget knobs are max_turns
@@ -210,6 +212,28 @@ def _compose_role_system_prompt(
         "~7 strongest if you find more."
     )
     sys_parts.append("")
+    sys_parts.append("## Recognition discipline")
+    sys_parts.append("")
+    sys_parts.append(
+        "- **No bare praise at a bug-candidate site.** When the Brain dispatched "
+        "you to a specific range and you conclude it 'looks correct', do NOT just "
+        "praise it — either flag the residual risk OR state precisely WHY it is "
+        "safe (the invariant that holds). A praised range you were sent to verify "
+        "is a missed bug if you are wrong. Read the actual arithmetic/contract/"
+        "control-flow, not the surrounding intent."
+    )
+    sys_parts.append(
+        "- **One finding per occurrence.** If the same defect appears at multiple "
+        "line locations, emit a SEPARATE finding for each site (each is its own "
+        "review comment) — do not collapse them into one 'N places affected'."
+    )
+    sys_parts.append(
+        "- **Anchor on the definition, not the symptom.** For a changed "
+        "constant / contract / signature, anchor the finding on the `+`/`-` line "
+        "that DEFINES the changed value, not a downstream test or call site. Cite "
+        "the symptom site as supporting evidence."
+    )
+    sys_parts.append("")
     sys_parts.append("## Hard boundaries")
     sys_parts.append("")
     sys_parts.append(
@@ -292,16 +316,62 @@ class AgentFindings:
     error: Optional[str] = None
 
 
+_SUBAGENT_ENVELOPE_KEYS = ("checks", "findings", "unexpected_observations")
+
+
+def _balanced_json_spans(raw: str) -> List[str]:
+    """Return every top-level balanced ``{...}`` substring of ``raw``, in
+    source order. String-aware: braces inside JSON string literals (and
+    escaped quotes) are ignored, so a finding whose text contains ``}`` does
+    not prematurely close the span. Used to recover JSON embedded in prose."""
+    spans: List[str] = []
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(raw):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                spans.append(raw[start : i + 1])
+                start = -1
+    return spans
+
+
 def _parse_subagent_json(raw: str) -> Optional[Dict[str, Any]]:
     """Best-effort parse of a PR Brain v2 sub-agent's final answer.
 
-    Accepts:
-      * A plain JSON object with {checks, findings, unexpected_observations}.
-      * JSON wrapped in a ```json ... ``` fenced block (one or more blocks —
-        the last fenced block is preferred since models often restate their
-        answer near the end).
-      * JSON embedded in prose — falls back to finding the last balanced
-        ``{...}`` that contains the "checks" key.
+    Accepts (candidates tried last-first — models tend to restate the real
+    answer near the end):
+      * A ```json ... ``` fenced block.
+      * A bare / prose-embedded JSON object recovered via balanced,
+        string-aware ``{...}`` scanning (so a ``}`` inside a finding's text
+        does not truncate the object).
+
+    A candidate is accepted when it parses to a dict carrying ANY of the
+    contract keys (``checks`` / ``findings`` / ``unexpected_observations``).
+
+    The previous implementation required ``checks`` specifically, which
+    discarded a worker that emitted a perfectly good ``{"findings": [...]}``
+    (no ``checks``) — the dominant cause of the "did not emit parseable JSON,
+    returning raw answer" path. A raw-answer fallback bypasses dedup /
+    ranking / P11 precision filter / role-tagging, so those real findings
+    silently lost their structured treatment. We now keep any envelope that
+    carries findings.
 
     Returns the dict on success, ``None`` if no usable JSON was found.
     """
@@ -311,37 +381,22 @@ def _parse_subagent_json(raw: str) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
 
-    # Prefer the LAST ```json fenced block — models tend to restate at end.
+    candidates: List[str] = []
+    # 1. Fenced ```json blocks — last first.
     fenced = _re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw)
-    candidates: list = list(reversed(fenced))
-
-    # Fallback: any top-level {...} that contains "checks".
-    if not candidates:
-        # Greedy match from last `{` backwards to first `}` containing "checks"
-        for start in range(len(raw) - 1, -1, -1):
-            if raw[start] != "{":
-                continue
-            depth = 0
-            for end in range(start, len(raw)):
-                if raw[end] == "{":
-                    depth += 1
-                elif raw[end] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        snippet = raw[start : end + 1]
-                        if '"checks"' in snippet:
-                            candidates.append(snippet)
-                        break
-            if candidates:
-                break
+    candidates.extend(reversed(fenced))
+    # 2. Every balanced top-level {...} span — last first. Robust to JSON
+    #    embedded in prose and to a non-greedy fence capture that truncated
+    #    on a nested brace.
+    candidates.extend(reversed(_balanced_json_spans(raw)))
 
     for candidate in candidates:
         try:
             parsed = _json.loads(candidate)
-            if isinstance(parsed, dict) and "checks" in parsed:
-                return parsed
         except (ValueError, _json.JSONDecodeError):
             continue
+        if isinstance(parsed, dict) and any(k in parsed for k in _SUBAGENT_ENVELOPE_KEYS):
+            return parsed
     return None
 
 
@@ -439,35 +494,44 @@ def condense_result(result) -> Dict[str, Any]:
 
 
 class BrainBudgetManager:
-    """Manages token budget across Brain and its sub-agents.
+    """Manages a per-session **USD** budget across the Brain and its sub-agents.
 
-    Brain reserves a portion for its own LLM calls (thinking, synthesis).
-    Remaining budget is allocated to sub-agents on demand.
+    All accounting is in DOLLARS (P1d → full USD; tokens are display-only). The
+    Brain reserves a fraction of the total for its own coordinator LLM calls; the
+    rest is allocated to sub-agents on demand.
 
-    Allocations are pre-deducted from the pool at ``allocate()`` time so
-    that parallel sub-agent dispatches see a correctly draining pool. The
-    reservation is moved to ``used`` when ``report()`` is called with the
-    actual token consumption — overruns and underruns both reconcile via
-    the ``used`` total.
+    ``allocate()`` pre-deducts a per-leaf USD reservation so parallel dispatches
+    see the pool drain correctly. ``report()`` releases the reservation and
+    records the ACTUAL dollars spent — authoritative for SDK leaves via
+    ``ResultMessage.total_cost_usd``, computed-from-tokens for in-house runs.
+    Underruns return budget to the pool; overruns consume future capacity.
+
+    The leaf hard-cap rides the SDK worker (``max_budget_usd``) and the
+    coordinator hard-cap rides ``BudgetConfig.max_usd`` — both set by the caller;
+    this manager only owns the shared *pool* + the session cost/usage rollup.
     """
 
-    def __init__(self, total_tokens: int, brain_reserve_ratio: float = 0.15):
-        self.total = total_tokens
-        self.brain_reserve = min(_MAX_BRAIN_RESERVE, int(total_tokens * brain_reserve_ratio))
-        self.used: Dict[str, int] = {}  # agent_name → actual tokens consumed (post-report)
-        self.reserved: Dict[str, int] = {}  # agent_name → tokens held at allocate() time
-        # USD economy: accumulate real dollar spend per agent as runs report. This
-        # is the reliable aggregate for "what did this review cost" — the leaf SDK
-        # workers run as separate subprocesses, so their cost never lands in the
-        # coordinator's own budget_summary; it only shows up here, via report().
-        self.cost_used: Dict[str, float] = {}  # agent_name → cumulative USD (post-report)
-        self.tokens_total: Dict[str, int] = {}  # agent_name → cumulative total tokens (in+out)
+    def __init__(
+        self,
+        total_usd: float,
+        *,
+        default_leaf_usd: float = _DEFAULT_LEAF_USD,
+        max_leaf_usd: float = _SDK_LEAF_MAX_USD,
+        brain_reserve_ratio: float = 0.15,
+    ):
+        self.total = float(total_usd)
+        self.default_leaf_usd = float(default_leaf_usd)
+        self.max_leaf_usd = float(max_leaf_usd)
+        self.brain_reserve = self.total * brain_reserve_ratio
+        self.used: Dict[str, float] = {}  # agent_name → reconciled USD spend (post-report)
+        self.reserved: Dict[str, float] = {}  # agent_name → USD held at allocate() time
+        self.tokens_total: Dict[str, int] = {}  # agent_name → cumulative total tokens (display only)
         self._lock = asyncio.Lock()
 
     @property
     def total_cost_usd(self) -> float:
         """Total USD spent across all reported sub-agents this session."""
-        return sum(self.cost_used.values())
+        return sum(self.used.values())
 
     @property
     def total_tokens_used(self) -> int:
@@ -475,45 +539,45 @@ class BrainBudgetManager:
         return sum(self.tokens_total.values())
 
     @property
-    def remaining(self) -> int:
+    def remaining(self) -> float:
+        """Unreserved, unspent USD available to allocate (after the brain reserve)."""
         committed = sum(self.used.values()) + sum(self.reserved.values())
-        return max(0, self.total - committed - self.brain_reserve)
+        return max(0.0, self.total - committed - self.brain_reserve)
 
-    async def allocate(self, agent_name: str, weight: float = 1.0) -> int:
-        """Allocate tokens for a sub-agent.
+    async def allocate(self, agent_name: str, weight: float = 1.0) -> float:
+        """Reserve a per-leaf USD allocation for a sub-agent.
 
-        Pre-deducts the allocation from the pool so concurrent dispatches
-        see the pool drain correctly. Guarantees at least
-        ``_MIN_AGENT_BUDGET`` tokens even when the pool is nearly
-        exhausted, to prevent agents from starting with too small a budget.
+        Pre-deducts the reservation from the pool so concurrent dispatches see it
+        drain correctly. The amount is ``default_leaf_usd * weight`` clamped to
+        ``[_PER_LEAF_MIN_USD, max_leaf_usd]`` and capped by what's left; a nearly
+        exhausted pool still yields the ``_PER_LEAF_MIN_USD`` floor so an agent is
+        never starved to $0.
 
         Args:
-            agent_name: Name of the sub-agent requesting tokens (used for logging).
+            agent_name: Name of the sub-agent requesting budget (used for logging).
             weight: Relative budget multiplier (e.g. 1.5 for a heavyweight agent).
 
         Returns:
-            Number of input tokens allocated to the agent.
+            USD reserved for the agent.
         """
         async with self._lock:
             available = self.remaining
-            if available < _MIN_AGENT_BUDGET:
-                allocated = _MIN_AGENT_BUDGET
+            want = max(_PER_LEAF_MIN_USD, min(self.default_leaf_usd * weight, self.max_leaf_usd))
+            if available < _PER_LEAF_MIN_USD:
+                allocated = _PER_LEAF_MIN_USD
                 logger.warning(
-                    "Budget low (%d remaining), allocating minimum %d to %s",
+                    "Budget low ($%.2f remaining), allocating floor $%.2f to %s",
                     available,
                     allocated,
                     agent_name,
                 )
             else:
-                # Give sub-agents enough budget to work properly.
-                # Old system: ~460K per agent. Don't starve them.
-                allocated = min(int(available * 0.6 * weight), _MAX_AGENT_BUDGET)
-                allocated = max(allocated, _DEFAULT_AGENT_BUDGET)
-            # Pre-deduct: hold this allocation in reserved until report() arrives.
+                allocated = min(want, available)
+            # Pre-deduct: hold this reservation until report() arrives.
             # Cumulative per-agent so a single agent dispatched twice gets summed.
-            self.reserved[agent_name] = self.reserved.get(agent_name, 0) + allocated
+            self.reserved[agent_name] = self.reserved.get(agent_name, 0.0) + allocated
             logger.info(
-                "Budget allocated %d tokens to %s (remaining: %d)",
+                "Budget allocated $%.2f to %s (remaining: $%.2f)",
                 allocated,
                 agent_name,
                 self.remaining,
@@ -523,34 +587,34 @@ class BrainBudgetManager:
     async def report(
         self,
         agent_name: str,
-        tokens_used: int,
         cost_usd: float = 0.0,
+        *,
         total_tokens: int = 0,
     ) -> None:
-        """Record actual token usage after a sub-agent completes.
+        """Record actual USD spend after a sub-agent completes.
 
-        Releases the agent's reservation and moves the actual usage into
-        ``used``. Underruns return budget to the pool; overruns are recorded
-        as-is and consume future capacity. Cumulative per-agent — calling
-        this multiple times for the same agent name adds to the previously
-        reported total.
+        Releases the agent's reservation and accumulates the actual dollars into
+        ``used`` (the session cost rollup). Underruns return budget to the pool;
+        overruns are recorded as-is and consume future capacity. Cumulative
+        per-agent — calling this twice for the same name adds to the prior total.
 
         Args:
             agent_name: Name of the sub-agent that completed.
-            tokens_used: Number of input tokens consumed by that run (pool accounting).
-            cost_usd: Actual USD spend for that run (authoritative for SDK leaves via
-                ResultMessage.total_cost_usd; computed for in-house). Accumulated for
-                the session-wide cost total reported in the PR review stats.
+            cost_usd: Actual USD spend for that run (authoritative for SDK leaves
+                via ResultMessage.total_cost_usd; computed for in-house).
             total_tokens: Total tokens (in+out) for that run, for the displayed total.
         """
         async with self._lock:
-            self.used[agent_name] = self.used.get(agent_name, 0) + tokens_used
             if cost_usd:
-                self.cost_used[agent_name] = self.cost_used.get(agent_name, 0.0) + float(cost_usd)
+                self.used[agent_name] = self.used.get(agent_name, 0.0) + float(cost_usd)
+            else:
+                # Ensure the agent appears in `used` (at $0) so reservation release
+                # is recorded even for a zero-cost run.
+                self.used.setdefault(agent_name, 0.0)
             if total_tokens:
                 self.tokens_total[agent_name] = self.tokens_total.get(agent_name, 0) + int(total_tokens)
-            # Release the reservation — the actual usage in `used` now
-            # represents this agent's pool consumption.
+            # Release the reservation — the actual spend in `used` now represents
+            # this agent's pool consumption.
             self.reserved.pop(agent_name, None)
 
 
@@ -629,6 +693,11 @@ class AgentToolExecutor(ToolExecutor):
         # BudgetEconomics per-leaf USD cap (None → static _SDK_LEAF_MAX_USD). Propagated
         # to deeper executors so a PR Brain's computed cap reaches every SDK leaf.
         self._leaf_max_usd = getattr(config, "leaf_max_usd", None)
+        # Coordinator-level USD cap for in-house orchestrator sub-agents. A GENEROUS
+        # ceiling (the whole-task total_cap_usd) — NOT the per-leaf allocation — so a
+        # dispatched coordinator isn't FORCE_CONCLUDE'd at 90% of a $1 leaf budget.
+        # None → fall back to a loose default; max_iterations is the always-present bound.
+        self._coordinator_max_usd = getattr(config, "coordinator_max_usd", None)
 
         self._code_context: Optional[Dict[str, Any]] = None
         self._plan: Optional[Dict[str, Any]] = None
@@ -1402,11 +1471,9 @@ class AgentToolExecutor(ToolExecutor):
         # worker bounds its own loop by max_turns, so this value is for accounting
         # only — actual spend is reported back after the run (see below).
         if self._budget_manager:
-            pool_tokens = await self._budget_manager.allocate(agent_name, weight)
-            agent_cap = agent_config.limits.budget_tokens
-            budget_tokens = min(pool_tokens, agent_cap) if agent_cap else pool_tokens
+            leaf_usd = await self._budget_manager.allocate(agent_name, weight)
         else:
-            budget_tokens = agent_config.limits.budget_tokens
+            leaf_usd = self._leaf_max_usd or _SDK_LEAF_MAX_USD
 
         # Build sub-executor (recursive: depth + 1)
         # Telemetry (06d): each dispatch is one task node. Self-seed a tree root if
@@ -1482,7 +1549,6 @@ class AgentToolExecutor(ToolExecutor):
                     provider=provider,
                     agent_tool_names=agent_tool_names,
                     sub_executor=sub_executor,
-                    budget_tokens=budget_tokens,
                     query=query,
                 )
             else:
@@ -1492,22 +1558,20 @@ class AgentToolExecutor(ToolExecutor):
                     provider=provider,
                     agent_tool_names=agent_tool_names,
                     sub_executor=sub_executor,
-                    budget_tokens=budget_tokens,
+                    leaf_usd=leaf_usd,
                     query=query,
                 )
 
             elapsed = (time.monotonic() - start) * 1000
 
-            # Report budget usage — tokens for pool accounting, plus USD + total
-            # tokens for the session cost/usage rollup (SDK-leaf cost is authoritative
-            # via total_cost_usd; this is the only place leaf spend is aggregated).
+            # Report actual USD spend back to the shared pool (releases the
+            # allocate() reservation). SDK-leaf cost is authoritative via
+            # total_cost_usd; this is the only place leaf spend is aggregated.
             if self._budget_manager and result.budget_summary:
                 bs = result.budget_summary
-                tokens = bs.get("total_input_tokens", 0)
                 await self._budget_manager.report(
                     agent_name,
-                    tokens,
-                    cost_usd=float(bs.get("total_cost_usd") or 0.0),
+                    float(bs.get("total_cost_usd") or 0.0),
                     total_tokens=int(bs.get("total_tokens", 0) or 0),
                 )
 
@@ -1641,7 +1705,7 @@ class AgentToolExecutor(ToolExecutor):
         provider: Any,
         agent_tool_names: List[str],
         sub_executor: AgentToolExecutor,
-        budget_tokens: int,
+        leaf_usd: float,
         query: str,
     ):
         """Run a leaf sub-agent on the Claude Agent SDK.
@@ -1651,14 +1715,19 @@ class AgentToolExecutor(ToolExecutor):
         (behind the SAME CachedToolExecutor via ``sub_executor`` → Fact Vault dedup
         survives across parallel sub-agents), the post-call evidence gate, and the
         ``llm_semaphore``. Returns an AgentResult-shaped object.
+
+        ``leaf_usd`` is the pool reservation (for logging/accounting); the leaf's
+        HARD cap is the loose ``max_budget_usd`` below, and its loop is bounded by
+        ``max_turns`` — so the reservation never throttles a legitimate leaf.
         """
         from .prompts import build_sub_agent_system_prompt  # lazy: circular import (brain ↔ prompts)
         from .sdk_worker import SdkWorkerRunner  # lazy: defers claude_agent_sdk import
 
         logger.debug(
-            "[Brain] '%s' SDK worker: budget pool=%d tokens (loop bounded by max_turns=%d)",
+            "[Brain] '%s' SDK worker: budget reserved=$%.2f (cap $%.2f, loop bounded by max_turns=%d)",
             agent_name,
-            budget_tokens,
+            leaf_usd,
+            self._leaf_max_usd or _SDK_LEAF_MAX_USD,
             agent_config.limits.max_iterations,
         )
 
@@ -1711,7 +1780,6 @@ class AgentToolExecutor(ToolExecutor):
         provider: Any,
         agent_tool_names: List[str],
         sub_executor: AgentToolExecutor,
-        budget_tokens: int,
         query: str,
     ):
         """Run an orchestrator sub-agent (Domain/PR Brain coordinator) on the in-house
@@ -1726,17 +1794,18 @@ class AgentToolExecutor(ToolExecutor):
         from .config import AgentLoopConfig
         from .service import AgentLoopService  # lazy: avoids circular import (brain ↔ service)
 
+        # FORCE_CONCLUDE-safe USD cap: BudgetConfig.max_usd IS hard-enforced (the loop
+        # force-concludes at 90% of it, budget.py). So an in-house coordinator gets a
+        # GENEROUS ceiling — the whole-task ``coordinator_max_usd`` (total_cap_usd),
+        # NOT a per-leaf $1 allocation — or it would conclude almost immediately. Its
+        # own loop spend (~$0.5-2) sits well under this; max_iterations is the tight bound.
+        coord_max_usd = self._coordinator_max_usd or _DEFAULT_BRAIN_TOTAL_USD
         svc = AgentLoopService(
             provider=provider,
             config=AgentLoopConfig(
                 max_iterations=agent_config.limits.max_iterations,
                 max_evidence_retries=1,
-                # P1d interim: the BrainBudgetManager still allocates in tokens, so the
-                # token count is passed as a loose USD ceiling here (effectively a no-op
-                # cap — in-house coordinators stay bounded by max_iterations). SDK leaf
-                # workers get a real per-leaf USD cap via max_budget_usd. Full USD
-                # allocation lands when BrainBudgetManager is converted (deferred).
-                budget_config=BudgetConfig(max_usd=float(budget_tokens)),
+                budget_config=BudgetConfig(max_usd=coord_max_usd),
                 is_sub_agent=True,
                 perspective=agent_config.instructions,
                 forced_tools=agent_tool_names,

@@ -118,8 +118,16 @@ class WorkflowEngine:
             qa_cache=qa_cache,
         )
 
-        # Budget manager
-        budget_mgr = BrainBudgetManager(brain_config.limits.total_session_tokens)
+        # Budget manager (USD economy): general code-exploration tasks get a loose
+        # GENERIC total; per-leaf reservation + cap come from the same plan.
+        from app.agent_loop.budget_economics import get_budget_economics
+
+        budget_plan = get_budget_economics().estimate("generic")
+        budget_mgr = BrainBudgetManager(
+            budget_plan.total_cap_usd,
+            default_leaf_usd=budget_plan.per_leaf_default_usd,
+            max_leaf_usd=budget_plan.per_leaf_max_usd,
+        )
 
         # Build the Brain's tool executor
         workspace_path = context.get("workspace_path", "")
@@ -139,6 +147,8 @@ class WorkflowEngine:
                 max_depth=brain_config.limits.max_depth,
                 max_concurrent=brain_config.limits.max_concurrent_agents,
                 sub_agent_timeout=brain_config.limits.sub_agent_timeout,
+                leaf_max_usd=budget_plan.per_leaf_max_usd,
+                coordinator_max_usd=budget_plan.total_cap_usd,
             ),
             brain_config=brain_config,
             trace_writer=self._trace_writer,

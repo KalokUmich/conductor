@@ -49,3 +49,48 @@ Evidence: The new aggregate column sets `result_dtype="number"`. Surrounding agg
 Severity hint: medium
 Suggested fix: Change to `result_dtype="integer"` at line 88; update the unit test to assert the integer type round-trips.
 </example>
+
+## Idiomatic bugs that read as "looks correct" — recognize, don't praise
+
+These arithmetic/contract/control-flow patterns repeatedly get praised as safe on
+review (especially in Java/Go). When your range contains one, flag it or prove the
+invariant — never emit a bare praise.
+
+<example>
+Finding: Integer overflow accumulating a length via bit-shift (high)
+
+File: `.../ASN1Decoder.java` (readLength)
+Evidence: `length = (length << 8) + next;` accumulates a DER length byte-by-byte into an
+`int`. A crafted multi-byte length overflows `int` and wraps. A later `if (length < 0)`
+sign check does NOT prove safety — overflow can land positive. "Handles negatives" is not
+"handles overflow".
+Severity hint: high
+Suggested fix: bound the byte count before shifting, accumulate into `long` and range-check
+against a max length, or use `Math.addExact`/`multiplyExact`.
+</example>
+
+<example>
+Finding: Cache provider re-enters itself instead of delegating (high)
+
+File: `.../Infinispan*Provider.java`
+Evidence: Inside the caching provider, `session.identityProviders().getById(id)` resolves
+back through the session factory to THIS same cache provider, instead of calling the wrapped
+`idpDelegate.getById(id)`. It re-queries itself rather than the real store (stale/again-cached
+or self-referential lookup), defeating the delegation the class exists for.
+Severity hint: high
+Suggested fix: call the wrapped `delegate`/`idpDelegate` directly; never re-resolve the same
+provider type from `session` inside its own method.
+</example>
+
+<example>
+Finding: Renumbering a documented public exit/status constant breaks the contract (high)
+
+File: `.../CompatibilityResult.java` (ExitCode)
+Evidence: a published exit-code constant's value is changed (e.g. `4 -> 3`) where `3` already
+denotes a different outcome. Callers/CI that `switch` on the code now mis-route. A constant
+whose value is part of a public contract is not a free-to-renumber internal — reusing an
+existing value across releases is a backwards-compat break.
+Severity hint: high
+Suggested fix: keep the existing value; allocate a new unused code for the new outcome and
+document it. Anchor the finding on the constant DEFINITION line, not a test that asserts it.
+</example>

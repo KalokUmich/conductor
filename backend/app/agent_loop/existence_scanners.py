@@ -185,8 +185,47 @@ def _inject_missing_symbol_findings(
             continue
         ref_file, ref_line = _parse_reference_location(m.referenced_at or "")
         evidence_detail = (m.evidence or "").strip()[:300]
+        lang = _language_for_path(ref_file)
+        # Language-appropriate failure framing — Java/Go fail at COMPILE
+        # time ("cannot find symbol" / "undefined: X"); Python/TS fail at
+        # runtime (ImportError / ReferenceError). Saying "ImportError" on a
+        # Java diff (as the old hardcoded wording did) reads as a tool bug
+        # and undermines author trust.
+        if lang == "java":
+            title = f"Compile error: cannot find symbol `{m.symbol_name}`"
+            risk = (
+                f"`{ref_file}` will not compile — `cannot find symbol: "
+                f"{m.symbol_name}`. The build fails, so the PR is unshippable as-is."
+            )
+            fix = (
+                f"Either add the missing import / define `{m.symbol_name}` "
+                f"in the package, or remove the reference at "
+                f"{m.referenced_at or ref_file}."
+            )
+        elif lang == "go":
+            title = f"Compile error: undefined `{m.symbol_name}`"
+            risk = (
+                f"`go build` fails on `{ref_file}` with `undefined: "
+                f"{m.symbol_name}`. The package will not compile, so the PR "
+                f"is unshippable as-is."
+            )
+            fix = (
+                f"Either define `{m.symbol_name}` in the package, or remove "
+                f"the reference at {m.referenced_at or ref_file}."
+            )
+        else:
+            # Python / TS / unknown — runtime resolution failure.
+            title = f"Undefined symbol at runtime: `{m.symbol_name}` not defined"
+            risk = (
+                f"Every code path that loads `{ref_file}` raises "
+                f"ImportError/NameError at runtime — the PR is unshippable as-is."
+            )
+            fix = (
+                f"Either define `{m.symbol_name}` in the imported module, or "
+                f"remove the reference at {m.referenced_at or ref_file}."
+            )
         synthetic = {
-            "title": (f"ImportError at runtime: {m.symbol_name} " f"not defined in codebase"),
+            "title": title,
             "severity": "critical",
             "confidence": 0.99,
             "file": ref_file,
@@ -197,15 +236,8 @@ def _inject_missing_symbol_findings(
                 f"({m.symbol_kind}) anywhere in the workspace.",
                 evidence_detail or "grep/find_symbol returned 0 matches.",
             ],
-            "risk": (
-                f"Every call path that loads `{ref_file}` raises "
-                f"ImportError/NameError at runtime — the PR is unshippable "
-                f"as-is."
-            ),
-            "suggested_fix": (
-                f"Either define `{m.symbol_name}` in the imported module, "
-                f"or remove the reference at {m.referenced_at or ref_file}."
-            ),
+            "risk": risk,
+            "suggested_fix": fix,
             "category": "correctness",
             "_injected_from": "phase2_existence_missing",
         }
@@ -261,12 +293,78 @@ _PYTHON_BARE_IMPORT_RE = re.compile(
 _DIFF_HUNK_HEADER_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)")
 
 
+# ---------------------------------------------------------------------------
+# Cross-language: symbols DEFINED by this PR (across every added file).
+# A reference to one of these is never a phantom — the definition ships in
+# the SAME PR, possibly in a brand-new file the per-language same-package
+# grep / tree-sitter index can't see yet. Scanning only `+` (added) lines is
+# deliberate: a definition the PR REMOVES (a `-` line) stays flagged missing.
+#
+# Regression target: PR 14407 added `BankInfoQuery` / `DisbursalPayeeSnapshot`
+# as new Java `record` files and referenced them from sibling files in the
+# same PR. The per-package grep missed them (record headers + new files), so
+# both surfaced as false CRITICAL "not defined" → spurious Request Changes.
+# ---------------------------------------------------------------------------
+_JAVA_DEF_RE = re.compile(r"\b(?:class|interface|enum|record|@interface)\s+([A-Z][A-Za-z0-9_]*)")
+_GO_DEF_RE = re.compile(
+    r"^\s*(?:func\s+(?:\(\s*\w+\s+[*\w\[\].]+\s*\)\s+)?|type\s+|var\s+|const\s+)([A-Za-z_]\w*)",
+)
+_PY_DEF_RE = re.compile(r"^\s*(?:class|def)\s+([A-Za-z_]\w*)|^([A-Za-z_]\w*)\s*[:=]")
+
+
+def _collect_pr_defined_symbols(file_diffs: Dict[str, str]) -> set[str]:
+    """Names of top-level symbols DEFINED on this PR's `+` (added) lines.
+
+    Language-aware across Java / Go / Python. Used as a phantom-scan
+    skip-list: a symbol the PR itself defines — even in a brand-new file
+    the same-package grep / symbol index never sees — must never be
+    reported as undefined. Only `+` lines are scanned, so a definition the
+    PR REMOVES (a `-` line) is correctly still treated as missing.
+    """
+    defined: set[str] = set()
+    for file_path, diff_text in (file_diffs or {}).items():
+        if file_path.endswith(".java"):
+            dre = _JAVA_DEF_RE
+        elif file_path.endswith(".go"):
+            dre = _GO_DEF_RE
+        elif file_path.endswith(".py"):
+            dre = _PY_DEF_RE
+        else:
+            continue
+        for raw in diff_text.splitlines():
+            if not raw.startswith("+") or raw.startswith("+++"):
+                continue
+            body = raw[1:]
+            for m in dre.finditer(body):
+                name = next((g for g in m.groups() if g), None)
+                if name:
+                    defined.add(name)
+    return defined
+
+
+def _language_for_path(path: str) -> str:
+    """Map a referenced-at file path to a coarse language tag for crafting
+    language-appropriate finding wording (Java/Go say *compile error*, not
+    Python's *ImportError at runtime*)."""
+    p = (path or "").lower()
+    if p.endswith(".java"):
+        return "java"
+    if p.endswith(".go"):
+        return "go"
+    if p.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs")):
+        return "ts"
+    if p.endswith(".py"):
+        return "python"
+    return ""
+
+
 def _scan_new_python_imports_for_missing(
     workspace_path: str,
     file_diffs: Dict[str, str],
     *,
     max_symbols_checked: int = 24,
     grep_timeout_s: float = 8.0,
+    pr_defined_symbols: Optional[set] = None,
 ) -> List[Dict[str, str]]:
     """P13 — Deterministic Python import verifier.
 
@@ -291,6 +389,7 @@ def _scan_new_python_imports_for_missing(
     if not workspace_path or not file_diffs:
         return []
 
+    pr_defined = pr_defined_symbols if pr_defined_symbols is not None else _collect_pr_defined_symbols(file_diffs)
     found: List[Dict[str, str]] = []
     checked = 0
     seen_names: set = set()
@@ -328,6 +427,10 @@ def _scan_new_python_imports_for_missing(
                         names_chunk = from_match.group(2)
                         for name in _split_import_names(names_chunk):
                             if name in seen_names:
+                                continue
+                            # Defined by this PR (e.g. a new sibling module
+                            # added in the same diff) → not a phantom import.
+                            if name in pr_defined:
                                 continue
                             if checked >= max_symbols_checked:
                                 break
@@ -950,6 +1053,7 @@ def _scan_new_go_references_for_missing(
     *,
     max_symbols_checked: int = 24,
     grep_timeout_s: float = 8.0,
+    pr_defined_symbols: Optional[set] = None,
 ) -> List[Dict[str, str]]:
     """P13-Go — Deterministic Go phantom bare-identifier detector.
 
@@ -969,6 +1073,7 @@ def _scan_new_go_references_for_missing(
     if not workspace_path or not file_diffs:
         return []
 
+    pr_defined = pr_defined_symbols if pr_defined_symbols is not None else _collect_pr_defined_symbols(file_diffs)
     found: List[Dict[str, str]] = []
     checked = 0
     seen_names: set = set()
@@ -988,6 +1093,9 @@ def _scan_new_go_references_for_missing(
             skip_names=locals_set,
         ):
             if name in seen_names:
+                continue
+            # Defined by this PR (incl. a new sibling file) → not a phantom.
+            if name in pr_defined:
                 continue
             if checked >= max_symbols_checked:
                 break
@@ -1246,7 +1354,7 @@ def _java_class_defined_in_package(
     pattern = (
         rf"^[[:space:]]*(public[[:space:]]+|private[[:space:]]+|protected[[:space:]]+)?"
         rf"(abstract[[:space:]]+|final[[:space:]]+|static[[:space:]]+|sealed[[:space:]]+)*"
-        rf"(class|interface|enum|record|@interface)[[:space:]]+{esc}([[:space:]]|<|\{{|$)"
+        rf"(class|interface|enum|record|@interface)[[:space:]]+{esc}([[:space:]]|<|\(|\{{|$)"
         rf"|^[[:space:]]*(public|private|protected|static|final|volatile|transient)[[:space:]].*"
         rf"[[:space:]]{esc}[[:space:]]*="
     )
@@ -1311,12 +1419,15 @@ def _scan_new_java_references_for_missing(
     *,
     max_symbols_checked: int = 24,
     grep_timeout_s: float = 8.0,
+    pr_defined_symbols: Optional[set] = None,
 ) -> List[Dict[str, str]]:
     """P13-Java — Deterministic Java phantom class reference detector.
 
     Scans `.java` file diffs for newly-referenced class names (via
     `new X(`, `X var =`, `X.staticMethod(`, `<X>`, `extends X`, etc.).
     A class name is a phantom if it is NOT:
+      * defined by THIS PR on a `+` line (incl. a new sibling file —
+        ``pr_defined_symbols``);
       * imported in the file (parsed from actual file content);
       * covered by a `com.foo.*` star import (conservative: we skip
         these, cannot verify without FQN resolution);
@@ -1333,6 +1444,7 @@ def _scan_new_java_references_for_missing(
     if not workspace_path or not file_diffs:
         return []
 
+    pr_defined = pr_defined_symbols if pr_defined_symbols is not None else _collect_pr_defined_symbols(file_diffs)
     found: List[Dict[str, str]] = []
     checked = 0
     # Dedup globally across the PR — same (file, name) reported only
@@ -1359,7 +1471,10 @@ def _scan_new_java_references_for_missing(
             if checked >= max_symbols_checked:
                 break
             seen.add(key)
-            # Filter: java.lang, explicitly imported, or same-package
+            # Filter: defined-by-this-PR, java.lang, explicitly imported,
+            # or same-package
+            if name in pr_defined:
+                continue
             if name in _JAVA_LANG_CLASSES:
                 continue
             if name in imported:
@@ -1880,8 +1995,277 @@ def _recompute_merge_recommendation(findings: List[Dict[str, Any]], fallback: st
     return "approve"
 
 
+def _added_lines_by_file(file_diffs: Dict[str, str]) -> Dict[str, set]:
+    """Map file path -> set of NEW-file line numbers this PR ADDED ('+' lines).
+
+    Lets a caller tell whether a finding's anchor sits on a line the PR added
+    (a PR-INTRODUCED defect) vs a line it only removed or left unchanged.
+    """
+    out: Dict[str, set] = {}
+    for path, diff_text in (file_diffs or {}).items():
+        added: set = set()
+        new_ln = 0
+        for raw in (diff_text or "").splitlines():
+            m = _DIFF_HUNK_HEADER_RE.match(raw)
+            if m:
+                new_ln = int(m.group(1))
+                continue
+            if raw.startswith("+++") or raw.startswith("---"):
+                continue
+            if raw.startswith("+"):
+                added.add(new_ln)
+                new_ln += 1
+            elif raw.startswith("-"):
+                continue  # removed line — not present in the new file
+            else:
+                new_ln += 1  # context line advances the new-file counter
+        out[path] = added
+    return out
+
+
+def _finding_anchor_on_added_line(f: Dict[str, Any], added_by_file: Dict[str, set]) -> bool:
+    """True if finding ``f``'s anchored line range overlaps a '+' added line.
+
+    Protects PR-INTRODUCED bugs from the fix-as-defect demotion. Matches the
+    finding's file by full path or basename (the coordinator may report a short
+    path). Returns False when there is no diff info for the file — we cannot prove
+    the line was added, so the caller falls back to the text heuristic.
+    """
+    if not added_by_file:
+        return False
+    file_claim = str(f.get("file", "") or "").strip()
+    if not file_claim:
+        return False
+    added = added_by_file.get(file_claim)
+    if added is None:
+        base = file_claim.rsplit("/", 1)[-1]
+        for p, s in added_by_file.items():
+            if p.rsplit("/", 1)[-1] == base:
+                added = s
+                break
+    if not added:
+        return False
+    try:
+        start = int(f.get("start_line") or f.get("line") or 0)
+        end = int(f.get("end_line") or start or 0)
+    except (TypeError, ValueError):
+        return False
+    if start <= 0:
+        return False
+    if end < start:
+        end = start
+    return any(ln in added for ln in range(start, end + 1))
+
+
+# ---------------------------------------------------------------------------
+# Anchor-precision snap. Workers/coordinator sometimes report a finding's line a
+# few rows off the actual offending statement (e.g. the method header instead of
+# the bad call), which costs location/recall in eval and makes inline PR comments
+# land imprecisely. This nudges the anchor onto the exact line — but ONLY when a
+# distinctive code token from the finding's OWN text appears on a nearby ADDED
+# line. Content-grounded, never a blind nudge.
+# ---------------------------------------------------------------------------
+
+# Generic words that are not distinctive enough to anchor on (appear on many
+# lines). Identifier-shaped but semantically common.
+_SNAP_STOPWORDS = {
+    "return",
+    "value",
+    "values",
+    "error",
+    "errors",
+    "result",
+    "results",
+    "null",
+    "none",
+    "true",
+    "false",
+    "data",
+    "string",
+    "object",
+    "method",
+    "function",
+    "class",
+    "field",
+    "param",
+    "params",
+    "argument",
+    "arguments",
+    "variable",
+    "import",
+    "public",
+    "private",
+    "static",
+    "final",
+    "void",
+    "this",
+    "self",
+    "should",
+    "would",
+    "could",
+    "without",
+    "before",
+    "after",
+    "which",
+    "there",
+    "where",
+    "while",
+    "missing",
+    "undefined",
+    "runtime",
+    "exception",
+    "throws",
+    "throw",
+    "catch",
+    "added",
+    "removed",
+    "changed",
+}
+
+
+def _diff_line_content_by_file(file_diffs: Dict[str, str]) -> Dict[str, Dict[int, tuple[str, bool]]]:
+    """Map file path → {new-file line number → (stripped content, is_added)} for
+    the PR's ``+`` ADDED lines AND surrounding context lines.
+
+    Added lines are the PREFERRED snap target (a PR comment belongs on changed
+    code); context lines are a FALLBACK for a bug that sits on an unchanged line
+    the PR newly affects (e.g. a new caller of an existing buggy statement, which
+    is where greptile often anchors its gold). Same new-file line counting as
+    ``_added_lines_by_file``."""
+    out: Dict[str, Dict[int, tuple[str, bool]]] = {}
+    for path, diff_text in (file_diffs or {}).items():
+        m: Dict[int, tuple[str, bool]] = {}
+        new_ln = 0
+        for raw in (diff_text or "").splitlines():
+            hm = _DIFF_HUNK_HEADER_RE.match(raw)
+            if hm:
+                new_ln = int(hm.group(1))
+                continue
+            if raw.startswith("+++") or raw.startswith("---"):
+                continue
+            if raw.startswith("+"):
+                m[new_ln] = (raw[1:].strip(), True)
+                new_ln += 1
+            elif raw.startswith("-"):
+                continue
+            else:  # context line (leading space, or bare)
+                m[new_ln] = (raw[1:].strip() if raw[:1] == " " else raw.strip(), False)
+                new_ln += 1
+        out[path] = m
+    return out
+
+
+def _extract_anchor_token(finding: Dict[str, Any]) -> str:
+    """Pull ONE distinctive code token from a finding to locate its exact line.
+
+    Prefers an identifier inside backticks in the title/risk/evidence — that is
+    almost always the exact symbol the finding is about. Falls back to the
+    longest identifier-shaped token. Returns ``""`` when nothing distinctive is
+    found (caller then leaves the anchor untouched).
+    """
+    texts: List[str] = [str(finding.get("title", "") or ""), str(finding.get("risk", "") or "")]
+    ev = finding.get("evidence")
+    if isinstance(ev, list):
+        texts.extend(str(e) for e in ev)
+    elif isinstance(ev, str):
+        texts.append(ev)
+    blob = " ".join(texts)
+
+    # 1. Backticked code spans → first distinctive identifier inside.
+    for span in re.findall(r"`([^`]{2,80})`", blob):
+        for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}", span):
+            if tok.lower() not in _SNAP_STOPWORDS:
+                return tok
+    # 2. Fallback: the longest identifier-shaped token (>=5 chars), non-stopword.
+    cands = [t for t in re.findall(r"[A-Za-z_][A-Za-z0-9_]{4,}", blob) if t.lower() not in _SNAP_STOPWORDS]
+    if cands:
+        return max(cands, key=len)
+    return ""
+
+
+def _snap_findings_to_evidence(
+    findings: List[Dict[str, Any]],
+    file_diffs: Dict[str, str],
+    *,
+    window: int = 12,
+) -> tuple[List[Dict[str, Any]], int]:
+    """Snap each finding's ``start_line`` onto the exact offending line.
+
+    For a finding whose claimed ``start_line`` does NOT contain its own anchor
+    token, search ±``window`` lines for the line that does and move the anchor
+    there (preserving the start→end span). Conservative:
+      * injected/synthetic findings (``_injected_from``) are already precise — skip
+      * requires a distinctive token match — never a blind nudge
+      * PREFERS an ADDED (``+``) line (a PR comment belongs on changed code); only
+        falls back to a context line when no added line in the window carries the
+        token (the bug sits on an unchanged line the PR affects)
+      * bounded to ±window so it corrects drift, not relocates a finding
+
+    The ±12 window + context fallback (vs the original ±6 added-only) closes the
+    `catch=0 / recall=1.0` gap seen in eval — reviewer finds the right
+    file+concept but anchors >5 lines off greptile's gold window.
+
+    Returns ``(findings, snapped_count)``.
+    """
+    if not findings or not file_diffs:
+        return (findings, 0)
+
+    content_by_file = _diff_line_content_by_file(file_diffs)
+    by_base: Dict[str, Dict[int, tuple[str, bool]]] = {}
+    for p, m in content_by_file.items():
+        by_base.setdefault(p.rsplit("/", 1)[-1], m)
+
+    out: List[Dict[str, Any]] = []
+    snapped = 0
+    for f in findings:
+        if f.get("_injected_from"):
+            out.append(f)
+            continue
+        file_claim = str(f.get("file", "") or "").strip()
+        cmap = content_by_file.get(file_claim)
+        if cmap is None:
+            cmap = by_base.get(file_claim.rsplit("/", 1)[-1])
+        if not cmap:
+            out.append(f)
+            continue
+        try:
+            start = int(f.get("start_line") or 0)
+        except (TypeError, ValueError):
+            out.append(f)
+            continue
+        if start <= 0:
+            out.append(f)
+            continue
+        token = _extract_anchor_token(f)
+        cur = cmap.get(start)
+        if not token or (cur is not None and token in cur[0]):
+            out.append(f)
+            continue
+        # Collect in-window token hits, split by added vs context. Prefer the
+        # nearest ADDED line; fall back to the nearest context line.
+        added_hits: List[tuple[int, int]] = []  # (distance, line)
+        ctx_hits: List[tuple[int, int]] = []
+        for ln, (content, is_added) in cmap.items():
+            if token in content and abs(ln - start) <= window:
+                (added_hits if is_added else ctx_hits).append((abs(ln - start), ln))
+        pool = added_hits or ctx_hits
+        best = min(pool)[1] if pool else None
+        if best is not None and best != start:
+            try:
+                end = int(f.get("end_line") or start)
+            except (TypeError, ValueError):
+                end = start
+            span = max(0, end - start)
+            out.append({**f, "start_line": best, "end_line": best + span, "_snapped_from": start})
+            snapped += 1
+        else:
+            out.append(f)
+    return (out, snapped)
+
+
 def _filter_findings_describing_own_fix(
     findings: List[Dict[str, Any]],
+    added_by_file: Optional[Dict[str, set]] = None,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], int]:
     """Demote findings that describe the PR's OWN fix as a defect.
 
@@ -1895,6 +2279,13 @@ def _filter_findings_describing_own_fix(
     this" phrase (optionally corroborated by old-vs-new framing). A genuine defect
     never says the PR already fixes it, so false-demotes are highly unlikely. The
     coordinator skill is the primary guard; this is the mechanical backstop.
+
+    POLARITY GATE (``added_by_file``): a finding anchored on a `+` ADDED line is a
+    PR-INTRODUCED bug and is NEVER demoted, even if its prose mentions the PR's
+    refactor — the docstring's "lives only on `-` lines" intent made explicit.
+    Without this gate the text heuristic wrongly dropped a real `+`-line bug whose
+    finding happened to mention the surrounding refactor (keycloak-009). When
+    ``added_by_file`` is None the gate is inactive (legacy text-only behavior).
 
     Injected findings (Phase 2 existence facts) are never touched. Returns
     (kept, demoted, demoted_count); demoted go to secondary observations.
@@ -1931,7 +2322,13 @@ def _filter_findings_describing_own_fix(
             + " "
             + " ".join(str(e) for e in (f.get("evidence") or []))
         )
-        if _fix_claim.search(blob) or _fix_claim_rev.search(blob):
+        claims_own_fix = bool(_fix_claim.search(blob) or _fix_claim_rev.search(blob))
+        # NEVER demote a bug anchored on a '+' added line — the PR introduced it,
+        # so it is an outstanding defect regardless of how the prose reads.
+        if claims_own_fix and _finding_anchor_on_added_line(f, added_by_file or {}):
+            kept.append(f)
+            continue
+        if claims_own_fix:
             logger.info(
                 "[PR Brain v2] Fix-as-defect drop: finding %r asserts the PR "
                 "already fixes the problem — not an outstanding defect",

@@ -504,6 +504,15 @@ the line they wrote; cite the implementation file as supporting evidence in the
 finding body, but pin the location to the diff. (This is location only — it does
 not change which findings you emit or their severity.)
 
+**Pin each finding to the EXACT offending line, not a few rows off.** Within the
+changed file, anchor `line` on the specific statement that is wrong — the bad
+call, the unguarded `.get()`, the missing-null check — NOT the method/class
+header above it. Before emitting, re-read the line you are about to cite and
+confirm the defect is on that exact row. A 2-3 row drift lands the inline comment
+on the wrong code and is scored as a location miss. (A deterministic post-pass
+can only correct small drift when your finding text **names the offending symbol**
+— so always name it in the title/evidence.)
+
 **Findings vs. secondary observations — be disciplined about what enters
 the `findings` array.**
 

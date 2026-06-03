@@ -126,6 +126,38 @@ Actually let me reconsider...
         raw = '```json\n{"summary": "all good"}\n```'
         assert _parse_subagent_json(raw) is None
 
+    def test_findings_only_envelope_accepted(self):
+        """Regression: a worker that emits findings WITHOUT a `checks` key was
+        being thrown away as 'did not emit parseable JSON', so its real
+        findings bypassed dedup / ranking / P11 / role-tagging. Accept any
+        envelope carrying findings."""
+        raw = '```json\n{"findings": [{"title": "NPE in handler", "file": "A.java"}]}\n```'
+        parsed = _parse_subagent_json(raw)
+        assert parsed is not None
+        assert parsed["findings"][0]["title"] == "NPE in handler"
+
+    def test_prose_findings_only_recovered(self):
+        raw = 'After review: {"findings": [{"title": "leak"}], "unexpected_observations": []}'
+        parsed = _parse_subagent_json(raw)
+        assert parsed is not None
+        assert parsed["findings"][0]["title"] == "leak"
+
+    def test_brace_inside_string_does_not_truncate(self):
+        """A `}` inside a finding's text must not prematurely close the span."""
+        raw = (
+            'Result: {"findings": [{"title": "bad map literal map[string]int{} usage", '
+            '"suggested_fix": "remove the } here"}], "checks": []}'
+        )
+        parsed = _parse_subagent_json(raw)
+        assert parsed is not None
+        assert parsed["findings"][0]["title"].startswith("bad map literal")
+
+    def test_unexpected_observations_only_envelope_accepted(self):
+        raw = '```json\n{"unexpected_observations": ["the migration drops a column"]}\n```'
+        parsed = _parse_subagent_json(raw)
+        assert parsed is not None
+        assert parsed["unexpected_observations"]
+
     def test_empty_input_returns_none(self):
         assert _parse_subagent_json("") is None
         assert _parse_subagent_json(None) is None  # type: ignore
@@ -171,11 +203,13 @@ class TestDepthWall:
     @pytest.mark.asyncio
     async def test_depth_2_rejected(self):
         executor = self._make_executor(depth=2)
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "depth" in r.error.lower()
 
@@ -183,32 +217,38 @@ class TestDepthWall:
     async def test_depth_3_rejected(self):
         """Even if somehow invoked at depth 3 (bug), the wall still holds."""
         executor = self._make_executor(depth=3)
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
 
     @pytest.mark.asyncio
     async def test_scope_too_large_rejected(self):
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_verify({
-            "scope": [{"file": f"f{i}.py"} for i in range(6)],  # 6 > 5
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": f"f{i}.py"} for i in range(6)],  # 6 > 5
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "scope" in r.error.lower()
 
     @pytest.mark.asyncio
     async def test_wrong_check_count_rejected(self):
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "checks": ["q1", "q2"],  # 2 != 3
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "checks": ["q1", "q2"],  # 2 != 3
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "3 checks" in r.error
 
@@ -216,11 +256,13 @@ class TestDepthWall:
     async def test_missing_template_reports_error(self):
         """If pr_subagent_checks agent isn't registered, a clear error."""
         executor = self._make_executor(depth=0)
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "pr_subagent_checks" in r.error
 
@@ -297,11 +339,13 @@ class TestSeverityNullEnforcement:
 
         monkeypatch.setattr(executor, "_dispatch_explore", _fake_dispatch_explore)
 
-        result = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "answer each",
-        })
+        result = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "answer each",
+            }
+        )
         assert result.success
         assert result.data["findings"][0]["severity"] is None  # NULLED
         assert result.data["findings"][0]["title"] == "bug"
@@ -371,9 +415,7 @@ class TestLoadRoleTemplate:
         assert "tools_hint" in fm
         body = tpl["body"]
         # 4-section convention
-        for section in ("## Lens", "## Typical concerns",
-                        "## Investigation approach",
-                        "## Finding-shape examples"):
+        for section in ("## Lens", "## Typical concerns", "## Investigation approach", "## Finding-shape examples"):
             assert section in body, f"missing {section!r} in security template"
 
     def test_all_7_factory_roles_parseable(self):
@@ -472,17 +514,29 @@ class TestComposeRoleSystemPrompt:
     def test_may_subdispatch_only_emitted_when_true(self):
         from app.agent_loop.brain import _compose_role_system_prompt
 
-        off = "\n".join(_compose_role_system_prompt(
-            role="security", role_template=self._template_stub(),
-            scope_block="- x.py", direction_hint="d", checks=None,
-            brain_context=None, may_subdispatch=False,
-        ))
+        off = "\n".join(
+            _compose_role_system_prompt(
+                role="security",
+                role_template=self._template_stub(),
+                scope_block="- x.py",
+                direction_hint="d",
+                checks=None,
+                brain_context=None,
+                may_subdispatch=False,
+            )
+        )
         assert "may_subdispatch=true" not in off
-        on = "\n".join(_compose_role_system_prompt(
-            role="security", role_template=self._template_stub(),
-            scope_block="- x.py", direction_hint="d", checks=None,
-            brain_context=None, may_subdispatch=True,
-        ))
+        on = "\n".join(
+            _compose_role_system_prompt(
+                role="security",
+                role_template=self._template_stub(),
+                scope_block="- x.py",
+                direction_hint="d",
+                checks=None,
+                brain_context=None,
+                may_subdispatch=True,
+            )
+        )
         assert "may_subdispatch=true" in on
 
 
@@ -526,10 +580,12 @@ class TestDispatchSubagentRoleMode:
                 tool_name="dispatch_explore",
                 success=True,
                 data={
-                    "answer": json.dumps({
-                        "summary": "nothing found",
-                        "findings": [],
-                    }),
+                    "answer": json.dumps(
+                        {
+                            "summary": "nothing found",
+                            "findings": [],
+                        }
+                    ),
                     "iterations": 2,
                     "total_input_tokens": 500,
                     "total_output_tokens": 100,
@@ -539,13 +595,15 @@ class TestDispatchSubagentRoleMode:
 
         monkeypatch.setattr(executor, "_dispatch_explore", _fake_dispatch_explore)
 
-        result = await executor._dispatch_verify({
-            "scope": [{"file": "src/auth/oauth.py", "start": 100, "end": 150}],
-            "role": "security",
-            "direction_hint": "new PKCE support — look for token leaks",
-            "context": "PR adds OAuth PKCE",
-            "success_criteria": "answer with evidence",
-        })
+        result = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "src/auth/oauth.py", "start": 100, "end": 150}],
+                "role": "security",
+                "direction_hint": "new PKCE support — look for token leaks",
+                "context": "PR adds OAuth PKCE",
+                "success_criteria": "answer with evidence",
+            }
+        )
 
         assert result.success
         # Dynamic mode: perspective is set, not template
@@ -565,21 +623,25 @@ class TestDispatchSubagentRoleMode:
     @pytest.mark.asyncio
     async def test_unknown_role_rejected(self):
         executor = self._make_executor()
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "role": "not_a_real_role",
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "role": "not_a_real_role",
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "Unknown role" in r.error
 
     @pytest.mark.asyncio
     async def test_neither_role_nor_checks_rejected(self):
         executor = self._make_executor()
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "success_criteria": "...",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "success_criteria": "...",
+            }
+        )
         assert not r.success
         assert "either" in r.error.lower()
 
@@ -629,19 +691,24 @@ class TestModelTierOverride:
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "src/auth/oauth.py"}],
-            "role": "security",
-            "direction_hint": "cross-file token lifecycle",
-            "success_criteria": "any exposure",
-            "model_tier": "strong",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "src/auth/oauth.py"}],
+                "role": "security",
+                "direction_hint": "cross-file token lifecycle",
+                "success_criteria": "any exposure",
+                "model_tier": "strong",
+            }
+        )
         assert r.success
         assert captured["model"] == "strong"
 
@@ -658,18 +725,23 @@ class TestModelTierOverride:
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "src/auth/oauth.py"}],
-            "role": "security",
-            "direction_hint": "normal review",
-            "success_criteria": "any exposure",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "src/auth/oauth.py"}],
+                "role": "security",
+                "direction_hint": "normal review",
+                "success_criteria": "any exposure",
+            }
+        )
         assert r.success
         # security role defaults to explorer in config/agent_factory/security.md
         assert captured["model"] == "explorer"
@@ -688,18 +760,23 @@ class TestModelTierOverride:
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "", "findings": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "x.py"}],
-            "role": "correctness",
-            "direction_hint": "check invariants",
-            "success_criteria": "any defect",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "x.py"}],
+                "role": "correctness",
+                "direction_hint": "check invariants",
+                "success_criteria": "any defect",
+            }
+        )
         assert r.success
         assert captured["model"] == "strong"
 
@@ -773,19 +850,23 @@ class TestPlanMemory:
                 tool_name="dispatch_explore",
                 success=True,
                 data={
-                    "answer": json.dumps({"checks": [], "findings": [],
-                                           "unexpected_observations": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "answer": json.dumps({"checks": [], "findings": [], "unexpected_observations": []}),
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "a.py", "start": 10, "end": 30}],
-            "checks": ["q1", "q2", "q3"],
-            "success_criteria": "answer each check with evidence",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "a.py", "start": 10, "end": 30}],
+                "checks": ["q1", "q2", "q3"],
+                "success_criteria": "answer each check with evidence",
+            }
+        )
         assert r.success
         entries = store_bound.iter_plan_entries()
         assert len(entries) == 1
@@ -803,20 +884,24 @@ class TestPlanMemory:
                 tool_name="dispatch_explore",
                 success=True,
                 data={
-                    "answer": json.dumps({"checks": [], "findings": [],
-                                           "unexpected_observations": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "answer": json.dumps({"checks": [], "findings": [], "unexpected_observations": []}),
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
         for i in range(2):
-            r = await executor._dispatch_verify({
-                "scope": [{"file": f"f{i}.py"}],
-                "checks": ["q1", "q2", "q3"],
-                "success_criteria": "answer each check with evidence",
-            })
+            r = await executor._dispatch_verify(
+                {
+                    "scope": [{"file": f"f{i}.py"}],
+                    "checks": ["q1", "q2", "q3"],
+                    "success_criteria": "answer each check with evidence",
+                }
+            )
             assert r.success
             assert "_plan_recap" not in r.data
 
@@ -829,20 +914,24 @@ class TestPlanMemory:
                 tool_name="dispatch_explore",
                 success=True,
                 data={
-                    "answer": json.dumps({"checks": [], "findings": [],
-                                           "unexpected_observations": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "answer": json.dumps({"checks": [], "findings": [], "unexpected_observations": []}),
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
         for i in range(3):
-            r = await executor._dispatch_verify({
-                "scope": [{"file": f"f{i}.py"}],
-                "checks": ["q1", "q2", "q3"],
-                "success_criteria": f"criteria-{i}-payload-meaningful",
-            })
+            r = await executor._dispatch_verify(
+                {
+                    "scope": [{"file": f"f{i}.py"}],
+                    "checks": ["q1", "q2", "q3"],
+                    "success_criteria": f"criteria-{i}-payload-meaningful",
+                }
+            )
             assert r.success
 
         assert "_plan_recap" in r.data
@@ -861,18 +950,23 @@ class TestPlanMemory:
                 success=True,
                 data={
                     "answer": json.dumps({"summary": "ok", "findings": []}),
-                    "iterations": 1, "total_input_tokens": 100,
-                    "total_output_tokens": 50, "files_accessed": [],
+                    "iterations": 1,
+                    "total_input_tokens": 100,
+                    "total_output_tokens": 50,
+                    "files_accessed": [],
                 },
             )
+
         monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-        r = await executor._dispatch_verify({
-            "scope": [{"file": "src/auth/oauth.py"}],
-            "role": "security",
-            "direction_hint": "token leaks in refresh flow",
-            "success_criteria": "any token exposure or bypass",
-        })
+        r = await executor._dispatch_verify(
+            {
+                "scope": [{"file": "src/auth/oauth.py"}],
+                "role": "security",
+                "direction_hint": "token leaks in refresh flow",
+                "success_criteria": "any token exposure or bypass",
+            }
+        )
         assert r.success
         entries = store_bound.iter_plan_entries()
         assert len(entries) == 1
@@ -885,6 +979,7 @@ class TestPlanMemory:
         """Depth-0 dispatches with no bound FactStore should succeed silently —
         plan_memory is an enhancement, not a gate."""
         from app.scratchpad.context import _current_store
+
         tok = _current_store.set(None)
         try:
             executor = self._make_executor_with_registry()
@@ -894,19 +989,23 @@ class TestPlanMemory:
                     tool_name="dispatch_explore",
                     success=True,
                     data={
-                        "answer": json.dumps({"checks": [], "findings": [],
-                                               "unexpected_observations": []}),
-                        "iterations": 1, "total_input_tokens": 100,
-                        "total_output_tokens": 50, "files_accessed": [],
+                        "answer": json.dumps({"checks": [], "findings": [], "unexpected_observations": []}),
+                        "iterations": 1,
+                        "total_input_tokens": 100,
+                        "total_output_tokens": 50,
+                        "files_accessed": [],
                     },
                 )
+
             monkeypatch.setattr(executor, "_dispatch_explore", _fake)
 
-            r = await executor._dispatch_verify({
-                "scope": [{"file": "x.py"}],
-                "checks": ["q1", "q2", "q3"],
-                "success_criteria": "answer each check",
-            })
+            r = await executor._dispatch_verify(
+                {
+                    "scope": [{"file": "x.py"}],
+                    "checks": ["q1", "q2", "q3"],
+                    "success_criteria": "answer each check",
+                }
+            )
             assert r.success
             assert "_plan_recap" not in r.data
         finally:
