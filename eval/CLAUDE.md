@@ -10,6 +10,42 @@ eval/
 └── tool_parity/        Python vs TS tool output comparison
 ```
 
+## Fresh-machine setup — the greptile bases are GITIGNORED
+
+**`git pull` is NOT enough to run the greptile suites.** What's tracked vs not:
+
+| Tracked (comes with `git pull`)                          | Gitignored — must regenerate locally                       |
+|----------------------------------------------------------|------------------------------------------------------------|
+| `cases/greptile_*/cases.yaml` + `manual_cases.yaml` (gold) | `repos/<target>-greptile/` (full fork clones, ~2 GB)       |
+| `cases/greptile_*/patches/*.patch`                       | `repos/greptile_bases/<target>/<NNN>/` (base snapshots, ~6 GB) |
+| all scorer / importer / runner code                      | `cases/greptile_raw/*.json` (scraped JSON; re-import only)  |
+
+So on any new box (or after a teammate adds cases), run the **one-time setup**
+before the first eval — it clones the 5 forks and `git archive`s each case's
+merge-base snapshot onto disk:
+
+```bash
+make greptile-setup     # clone forks + materialize bases (fresh machine)
+make greptile-repair    # re-extract bases --force, reuse clones (fix corruption)
+make greptile-repair TARGET=keycloak   # one target only
+```
+
+These wrap the underlying scripts (run directly if you prefer):
+```bash
+cd backend   # so PYTHONPATH picks up app.*
+python ../eval/code_review/setup_greptile_dataset.py            # = greptile-setup
+python ../eval/code_review/materialize_greptile_bases.py --skip-clone --force  # = greptile-repair
+```
+
+Public repos → **no GitHub token** needed. Idempotent. Success looks like
+`Done. materialized=50 patches_regenerated=50 ...`. **`make greptile-repair`** is
+the fix when an eval case ERRORs on `git apply ... patch does not apply`: the
+bases are rebuilt fresh from `git archive merge_base`, so any local base
+corruption (e.g. the hardlink-inode class of bug — runner.py breaks hardlinks
+before `git apply` to prevent it) is wiped, and it never transfers between
+machines. Full detail, the merge-base trick, and the hardlink/atomic-write
+design: **`code_review/GREPTILE_BENCHMARK.md`** §2-3, §7-8.
+
 ## Commands
 
 ```bash

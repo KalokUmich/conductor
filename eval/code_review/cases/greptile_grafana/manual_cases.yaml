@@ -22,22 +22,33 @@ cases:
     head_ref: authz-service-improve-caching-pr
     quality: human
     expected_findings:
-      - title_pattern: permDenialCache|denial cache|stale|invalidat|negative cache|permission
+      # Severity recalibrated 2026-06-04 critical/security -> warning/correctness
+      # after adversarial re-verification (3-agent panel, unanimous): the
+      # permDenialCache is strictly FAIL-CLOSED — every path returns
+      # Allowed:false, so it can only WRONGLY DENY, never wrongly grant. No
+      # privilege-escalation/auth-bypass is possible, and the stale window
+      # self-heals in <=shortCacheTTL (30s), mirroring the pre-existing
+      # positive permCache's already-accepted TTL-only staleness. Real defect,
+      # limited blast radius => warning/correctness.
+      - title_pattern: permDenialCache|denial cache|stale|invalidat|negative cache|fail.?closed|wrongly denied
         file_pattern: pkg/services/authz/rbac/service\.go
         line_range: [108, 160]
-        severity: critical
-        category: security
+        severity: warning
+        category: correctness
         recommendation: |
-          The new ``permDenialCache`` (cacheWrap[bool] for denied
-          permission checks) has no invalidation path. Once a (user,
-          action, name, parent_folder) tuple is denied, the result is
-          cached for ``shortCacheTTL`` and returned immediately without
-          re-checking the source of truth. If an admin GRANTS the user
-          permission inside the TTL window, the user remains locked out
-          until the cache entry expires — a stale-auth security issue.
-          Either drop the negative cache, or wire ``permDenialCache.Delete``
-          into every code path that mutates user permissions / role
-          assignments / team memberships.
+          The new ``permDenialCache`` (cacheWrap[bool] for denied permission
+          checks, shortCacheTTL=30s) has no invalidation path — cacheWrap
+          exposes only Get/Set and no Delete/Evict is wired into any
+          permission-mutation path. Once a (user, action, name, parent_folder)
+          tuple is denied, the deny is cached and returned immediately (the
+          deny cache is checked FIRST, before the positive cache). If an admin
+          GRANTS the user permission inside the TTL window, the user stays
+          wrongly LOCKED OUT until the entry expires. This is fail-closed
+          (stale-deny / availability), NOT a security hole — it can never grant
+          unauthorized access. Fix: wire a namespace/user-scoped
+          ``permDenialCache.Delete`` flush into the grant / role-assign /
+          team-membership-change paths, or drop the negative cache and rely on
+          the positive ``permCache`` (same TTL bound).
 
   - id: greptile-grafana-004
     patch: patches/004.patch
@@ -77,3 +88,50 @@ cases:
           the interpolation function is non-idempotent (e.g. mutates the
           query in place or substitutes already-substituted markers), the
           shards will see different expressions than intended.
+
+  # ---------------------------------------------------------------------------
+  # grafana-008 — CONTESTED RESTORATION (2026-06-04). Re-added here as a manual
+  # case after the 2026-06-02 audit deleted it from cases.yaml as a "mislabeled
+  # critical race". Adversarial re-verification (judge + 2 skeptics) split 2:1:
+  #   • REAL, info/performance: post-patch webassets.go takes RLock/copy/RUnlock,
+  #     fast-paths return-if-non-nil, then Lock()/defer Unlock() and recomputes
+  #     UNCONDITIONALLY — a textbook INCOMPLETE double-checked-locking (no second
+  #     nil-check after the write lock). Two goroutines racing a cold cache each
+  #     redo the file-read + JSON-decode. greptile-apps[bot] flagged exactly this
+  #     line (webassets.go:49).
+  #   • DISSENT (1 skeptic): greptile MISLABELED it as a critical *race* (it is
+  #     not — all access is now mutex-guarded); the real thing is a benign micro-
+  #     optimization gap a competent reviewer may legitimately not flag, so it is
+  #     arguably not gold-worthy. ground_truth_comments was EMPTY.
+  # Kept at the honest severity FLOOR (info/performance), NOT critical/concurrency.
+  # >>> If you side with the dissent, delete this whole entry. <<<
+  - id: greptile-grafana-008
+    patch: patches/008.patch
+    difficulty: hard
+    title: Frontend Asset Optimization
+    description: |
+      Switches the package-global entryPointAssetsCache to a sync.RWMutex-guarded
+      cache in pkg/api/webassets/webassets.go. Bug area: the write path does not
+      re-check the cache after acquiring the write lock (incomplete double-checked
+      locking) — redundant recompute under cold-cache concurrency.
+    source_dir: repos/greptile_bases/grafana/008
+    base_sha: 0a870e6a8855cee9c8ae391767da40dbb1c16cc6
+    base_ref: asset-loading-baseline
+    head_ref: asset-loading-optimized
+    quality: human
+    expected_findings:
+      - title_pattern: double.?check|second check|re.?check|recheck|entryPointAssetsCache|DCL|missing.*nil
+        file_pattern: pkg/api/webassets/webassets\.go
+        line_range: [44, 54]
+        severity: info
+        category: performance
+        recommendation: |
+          After acquiring the write lock, re-read entryPointAssetsCache and
+          return early if it became non-nil while blocked, completing the
+          double-checked-locking pattern:
+          ``if cfg.Env != setting.Dev && entryPointAssetsCache != nil { return entryPointAssetsCache, nil }``
+          immediately after ``Lock()/defer Unlock()``. This avoids redundant
+          manifest reads / JSON decodes when multiple goroutines race on a cold
+          cache. NOT a data race (all access is mutex-guarded) and NOT a
+          correctness bug (the recompute is deterministic) — purely a cold-start
+          micro-optimization, hence info/performance.

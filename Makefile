@@ -254,6 +254,30 @@ eval-brain-regression: ensure-backend-deps
 	   exit 1; \
 	 fi
 
+.PHONY: greptile-setup greptile-repair
+## Greptile benchmark fixtures — clone the 5 forks + materialize per-case base
+## trees. REQUIRED on a fresh machine: repos/ and the base snapshots are
+## gitignored, so `git pull` alone cannot run the greptile-* eval suites.
+## Idempotent; public repos, no GitHub token needed.
+##   make greptile-setup            # first run, or after a teammate adds cases
+greptile-setup: ensure-backend-deps
+	@echo "=== Greptile setup: clone forks + materialize base trees ==="
+	cd backend && $(PYTHON) ../eval/code_review/setup_greptile_dataset.py
+	@echo "[ok] greptile dataset ready — e.g. make eval-brain-regression TAG=local"
+
+## Repair greptile base trees in place — re-extract every per-case snapshot from
+## the local fork clones with --force (fixes hardlink-inode corruption or a
+## failed `git apply` that mutated a shared base inode). Reuses existing clones
+## and does NOT touch committed patches. Run if an eval case ERRORs on
+## `git apply ... patch does not apply`.
+##   make greptile-repair                 # all targets
+##   make greptile-repair TARGET=keycloak # one target only
+greptile-repair: ensure-backend-deps
+	@echo "=== Greptile repair: re-materialize base trees (--force, reuse clones) ==="
+	cd backend && $(PYTHON) ../eval/code_review/materialize_greptile_bases.py \
+	  --skip-clone --force $(if $(TARGET),--target $(TARGET),)
+	@echo "[ok] base trees re-materialized pristine"
+
 ## Validate Python↔TS tool parity (shared contract + cross-language tests)
 test-parity: ensure-backend-deps ensure-extension-deps
 	@echo "Step 1: Check contract matches Python schemas..."
