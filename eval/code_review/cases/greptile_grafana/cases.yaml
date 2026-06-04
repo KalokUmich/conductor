@@ -3,120 +3,63 @@ cases:
   patch: patches/001.patch
   difficulty: hard
   title: 'Anonymous: Add configurable device limit'
-  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:118]\
-    \ logic: Race condition: Multiple concurrent requests could pass the device count check simultaneously and create devices\
-    \ beyond the limit. Consider using a database transaction or lock.\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:82]\
-    \ logic: Time window calculation inconsistency: Using `device.UpdatedAt.UTC().Add(-anonymousDeviceExpiration)` as the\
-    \ lower bound but device.UpdatedAt as the current time may not match the intended logi\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:97]\
-    \ logic: Misleading error: Returning `ErrDeviceLimitReached` when no rows are affected in updateDevice is confusing since\
-    \ the device might not exist rather than limit being reached."
+  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:118] logic: Race condition: Multiple concurrent requests could pass the device count check simultaneously and create devices beyond the limit. Consider using a database transaction or lock.\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:82] logic: Time window calculation inconsistency: Using `device.UpdatedAt.UTC().Add(-anonymousDeviceExpiration)` as the lower bound but device.UpdatedAt as the current time may not match the intended logi\n  - [pkg/services/anonymous/anonimpl/anonstore/database.go:97] logic: Misleading error: Returning `ErrDeviceLimitReached` when no rows are affected in updateDevice is confusing since the device might not exist rather than limit being reached."
   source_dir: repos/greptile_bases/grafana/001
   base_sha: ed865831071a0c0a63c75ad0cfa6661107dabcaf
   base_ref: enhance-anonymous-access
   head_ref: implement-device-limits
   expected_findings:
-  - title_pattern: Race|Multiple|Consider
+  - title_pattern: Race|TOCTOU|concurrent
     file_pattern: pkg/services/anonymous/anonimpl/anonstore/database\.go
     line_range:
     - 113
     - 123
     severity: critical
     category: concurrency
-    recommendation: 'Race condition: Multiple concurrent requests could pass the device count check simultaneously and create
-      devices beyond the limit.'
-  - title_pattern: Time|Using|UpdatedAt|Consider
+    recommendation: 'Race condition: Multiple concurrent requests could pass the device count check simultaneously and create devices beyond the limit.'
+  - title_pattern: UpdatedAt|time window|inconsisten
     file_pattern: pkg/services/anonymous/anonimpl/anonstore/database\.go
     line_range:
     - 77
     - 87
     severity: warning
     category: correctness
-    recommendation: 'Time window calculation inconsistency: Using `device.UpdatedAt.UTC().Add(-anonymousDeviceExpiration)`
-      as the lower bound but device.UpdatedAt as the current time may not match the intended logic.'
+    recommendation: 'Time window calculation inconsistency: Using `device.UpdatedAt.UTC().Add(-anonymousDeviceExpiration)` as the lower bound but device.UpdatedAt as the current time may not match the intended logic.'
   - title_pattern: Misleading|Returning|ErrDeviceLimitReached
     file_pattern: pkg/services/anonymous/anonimpl/anonstore/database\.go
     line_range:
     - 92
     - 102
-    severity: critical
+    severity: warning
     category: correctness
-    recommendation: 'Misleading error: Returning `ErrDeviceLimitReached` when no rows are affected in updateDevice is confusing
-      since the device might not exist rather than limit being reached.'
-  - title_pattern: Inconsistent|Minute|UpdatedAt|This
+    recommendation: 'Misleading error: Returning `ErrDeviceLimitReached` when no rows are affected in updateDevice is confusing since the device might not exist rather than limit being reached.'
+  - title_pattern: Inconsisten|time window|UpdatedAt
     file_pattern: pkg/services/anonymous/anonimpl/anonstore/database\.go
     line_range:
     - 105
     - 115
     severity: warning
     category: correctness
-    recommendation: 'Inconsistent time windows: The count query uses `time.Now().UTC().Add(time.Minute)` as upper bound, but
-      updateDevice uses `device.UpdatedAt.UTC().Add(time.Minute)`.'
+    recommendation: 'Inconsistent time windows: The count query uses `time.Now().UTC().Add(time.Minute)` as upper bound, but updateDevice uses `device.UpdatedAt.UTC().Add(time.Minute)`.'
   - title_pattern: Test|ClientIP|UserAgent
     file_pattern: pkg/services/anonymous/anonimpl/anonstore/database_test\.go
     line_range:
-    - 63
+    - 55
     - 73
     severity: warning
     category: correctness
     recommendation: 'Test may not accurately validate device limit: both devices use the same ClientIP and UserAgent.'
-- id: greptile-grafana-003
-  patch: patches/003.patch
-  difficulty: hard
-  title: 'Plugins: Chore: Renamed instrumentation middleware to metrics middleware'
-  description: "Test 3\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go:40]\
-    \ logic: endpointQueryData is not defined in this file or imported. This will cause a compilation error.\n  - [pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go:45]\
-    \ logic: endpointCallResource is not defined in this file or imported. This will cause a compilation error.\n  - [pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware.go:50]\
-    \ logic: endpointCheckHealth is not defined in this file or imported. This will cause a compilation error."
-  source_dir: repos/greptile_bases/grafana/003
-  base_sha: 5dac6731cbb99f3374898cf6a1558edb222d323b
-  base_ref: main
-  head_ref: plugins/rename-instrumentation-middleware-to-metrics-middleware
-  expected_findings:
-  - title_pattern: This
-    file_pattern: pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware\.go
-    line_range:
-    - 35
-    - 45
-    severity: critical
-    category: correctness
-    recommendation: endpointQueryData is not defined in this file or imported.
-  - title_pattern: This
-    file_pattern: pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware\.go
-    line_range:
-    - 40
-    - 50
-    severity: critical
-    category: correctness
-    recommendation: endpointCallResource is not defined in this file or imported.
-  - title_pattern: This
-    file_pattern: pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware\.go
-    line_range:
-    - 45
-    - 55
-    severity: critical
-    category: correctness
-    recommendation: endpointCheckHealth is not defined in this file or imported.
-  - title_pattern: This
-    file_pattern: pkg/services/pluginsintegration/clientmiddleware/contextual_logger_middleware\.go
-    line_range:
-    - 50
-    - 60
-    severity: critical
-    category: correctness
-    recommendation: endpointCollectMetrics is not defined in this file or imported.
 - id: greptile-grafana-005
   patch: patches/005.patch
   difficulty: medium
   title: Notification Rule Processing Engine
-  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [public/app/features/alerting/unified/rule-list/FilterView.tsx:162]\
-    \ logic: Missing `key` prop for list item. Should be `key={key}` to prevent React rendering issues.\n\n```suggestion\n\
-    \                <GrafanaRuleListItem\n                  key={key}\n                  rule"
+  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [public/app/features/alerting/unified/rule-list/FilterView.tsx:162] logic: Missing `key` prop for list item. Should be `key={key}` to prevent React rendering issues.\n\n```suggestion\n                <GrafanaRuleListItem\n                  key={key}\n                  rule"
   source_dir: repos/greptile_bases/grafana/005
   base_sha: acdb0e151c9a2abd6e691353de6cc515d316ee76
   base_ref: notification-rule-baseline
   head_ref: notification-rule-enhancements
   expected_findings:
-  - title_pattern: Missing|Should|React|GrafanaRuleListItem
+  - title_pattern: Missing.*key|key prop|GrafanaRuleListItem
     file_pattern: public/app/features/alerting/unified/rule\-list/FilterView\.tsx
     line_range:
     - 157
@@ -128,185 +71,78 @@ cases:
   patch: patches/006.patch
   difficulty: hard
   title: Dual Storage Architecture
-  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/apiserver/rest/dualwriter_mode3.go:45] logic:\
-    \ Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\
-    \t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n`\n  - [pkg/apiserver/rest/dualwriter_mode3.go:106]\
-    \ logic: Inconsistency: using `name` instead of `options.Kind` for metrics recording differs from other methods\n\n```suggestion\n\
-    \td.recordStorageDuration(false, mode3Str, options.Kind, method, startStorag\n  - [pkg/apiserver/rest/dualwriter_mode3.go:129]\
-    \ logic: Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\
-    \t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n`"
+  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/apiserver/rest/dualwriter_mode3.go:45] logic: Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n`\n  - [pkg/apiserver/rest/dualwriter_mode3.go:106] logic: Inconsistency: using `name` instead of `options.Kind` for metrics recording differs from other methods\n\n```suggestion\n\td.recordStorageDuration(false, mode3Str, options.Kind, method, startStorag\n  - [pkg/apiserver/rest/dualwriter_mode3.go:129] logic: Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n`"
   source_dir: repos/greptile_bases/grafana/006
   base_sha: 5e3a5b355ef7478d7be86923749e25aebef5226a
   base_ref: dual-storage-baseline
   head_ref: dual-storage-enhanced
   expected_findings:
-  - title_pattern: Kind
+  - title_pattern: recordLegacyDuration|recordStorageDuration
     file_pattern: pkg/apiserver/rest/dualwriter_mode3\.go
     line_range:
     - 40
     - 50
     severity: warning
     category: correctness
-    recommendation: "Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n\
-      ```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n```"
-  - title_pattern: Inconsistency|Kind
+    recommendation: "Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n```"
+  - title_pattern: Inconsistency|recordStorageDuration|options.Kind
     file_pattern: pkg/apiserver/rest/dualwriter_mode3\.go
     line_range:
     - 101
     - 111
     severity: warning
     category: correctness
-    recommendation: "Inconsistency: using `name` instead of `options.Kind` for metrics recording differs from other methods\n\
-      \n```suggestion\n\td.recordStorageDuration(false, mode3Str, options.Kind, method, startStorage)\n```"
-  - title_pattern: Kind
+    recommendation: "Inconsistency: using `name` instead of `options.Kind` for metrics recording differs from other methods\n\n```suggestion\n\td.recordStorageDuration(false, mode3Str, options.Kind, method, startStorage)\n```"
+  - title_pattern: recordLegacyDuration|recordStorageDuration
     file_pattern: pkg/apiserver/rest/dualwriter_mode3\.go
     line_range:
     - 124
     - 134
     severity: warning
     category: correctness
-    recommendation: "Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n\
-      ```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n```"
+    recommendation: "Bug: calling `recordLegacyDuration` when storage operation fails should be `recordStorageDuration`\n\n```suggestion\n\t\td.recordStorageDuration(true, mode3Str, options.Kind, method, startStorage)\n```"
   - title_pattern: Context|NewContext
     file_pattern: pkg/apiserver/rest/dualwriter_mode3\.go
     line_range:
     - 92
     - 102
-    severity: critical
+    severity: warning
     category: correctness
-    recommendation: "Context issue: passing `d.Log` instead of the enriched `log` variable breaks logging consistency\n\n\
-      ```suggestion\n\tctx = klog.NewContext(ctx, log)\n```"
-  - title_pattern: Kind
+    recommendation: "Context issue: passing `d.Log` instead of the enriched `log` variable breaks logging consistency\n\n```suggestion\n\tctx = klog.NewContext(ctx, log)\n```"
+  - title_pattern: recordLegacyDuration|recordStorageDuration
     file_pattern: pkg/apiserver/rest/dualwriter_mode3\.go
     line_range:
     - 161
     - 171
     severity: warning
     category: correctness
-    recommendation: "Bug: calling `recordStorageDuration` in legacy operation goroutine should be `recordLegacyDuration`\n\
-      \n```suggestion\n\t\td.recordLegacyDuration(err != nil, mode3Str, options.Kind, method, startLegacy)\n```"
-  - title_pattern: Variable|Should|NewRegistry|NewDualWriter
-    file_pattern: pkg/apiserver/rest/dualwriter_mode3_test\.go
-    line_range:
-    - 58
-    - 68
-    severity: critical
-    category: correctness
-    recommendation: Variable `p` is undefined.
-  - title_pattern: Mock
-    file_pattern: pkg/apiserver/rest/dualwriter_mode3_test\.go
-    line_range:
-    - 49
-    - 59
-    severity: critical
-    category: correctness
-    recommendation: Mock types `legacyStoreMock` and `storageMock` are undefined - need to be defined or imported
-  - title_pattern: Type
-    file_pattern: pkg/apiserver/rest/dualwriter_mode3_test\.go
-    line_range:
-    - 340
-    - 350
-    severity: critical
-    category: correctness
-    recommendation: Type `updatedObjInfoObj` is undefined - should be defined or use existing mock
-  - title_pattern: Missing
-    file_pattern: pkg/apiserver/rest/dualwriter_mode3_test\.go
-    line_range:
-    - 37
-    - 47
-    severity: critical
-    category: correctness
-    recommendation: Missing setupStorageFn call in error test case - unified storage should also be mocked
-- id: greptile-grafana-007
-  patch: patches/007.patch
-  difficulty: medium
-  title: Database Performance Optimizations
-  description: "Test 7\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/services/annotations/annotationsimpl/cleanup_test.go:270]\
-    \ logic: Missing definition for `annotationTag` struct - ensure this type is properly imported or defined\n  - [pkg/services/annotations/annotationsimpl/cleanup_test.go:270]\
-    \ logic: Missing definition for `annotationTag` struct - ensure this type is properly imported or defined"
-  source_dir: repos/greptile_bases/grafana/007
-  base_sha: f84c8f685310cc41b52831c130e700a01b225b58
-  base_ref: db-cleanup-baseline
-  head_ref: db-cleanup-optimized
-  expected_findings:
-  - title_pattern: Missing
-    file_pattern: pkg/services/annotations/annotationsimpl/cleanup_test\.go
-    line_range:
-    - 265
-    - 275
-    severity: warning
-    category: correctness
-    recommendation: Missing definition for `annotationTag` struct - ensure this type is properly imported or defined
-  - title_pattern: Missing
-    file_pattern: pkg/services/annotations/annotationsimpl/cleanup_test\.go
-    line_range:
-    - 265
-    - 275
-    severity: warning
-    category: correctness
-    recommendation: Missing definition for `annotationTag` struct - ensure this type is properly imported or defined
-- id: greptile-grafana-008
-  patch: patches/008.patch
-  difficulty: hard
-  title: Frontend Asset Optimization
-  description: "Test 8\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/api/webassets/webassets.go:49] logic: Missing\
-    \ double-checked locking validation - should re-check cache after acquiring write lock to prevent race condition where\
-    \ another goroutine populated cache between lock upgrade\n\n```suggestio"
-  source_dir: repos/greptile_bases/grafana/008
-  base_sha: 0a870e6a8855cee9c8ae391767da40dbb1c16cc6
-  base_ref: asset-loading-baseline
-  head_ref: asset-loading-optimized
-  expected_findings:
-  - title_pattern: Missing|Lock|Unlock|Double
-    file_pattern: pkg/api/webassets/webassets\.go
-    line_range:
-    - 44
-    - 54
-    severity: critical
-    category: concurrency
-    recommendation: "Missing double-checked locking validation - should re-check cache after acquiring write lock to prevent\
-      \ race condition where another goroutine populated cache between lock upgrade\n\n```suggestion\n\tentr"
+    recommendation: "Bug: calling `recordStorageDuration` in legacy operation goroutine should be `recordLegacyDuration`\n\n```suggestion\n\t\td.recordLegacyDuration(err != nil, mode3Str, options.Kind, method, startLegacy)\n```"
 - id: greptile-grafana-009
   patch: patches/009.patch
   difficulty: hard
   title: Advanced SQL Analytics Framework
-  description: "Test 9\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/expr/sql/parser.go:23] logic: This now calls\
-    \ a stub implementation that always returns 'not implemented' error, breaking SQL parsing functionality\n  - [pkg/expr/sql/parser.go:23]\
-    \ logic: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing functionality\n\
-    \  - [pkg/expr/sql/db.go:22] logic: This method is called directly by SQLCommand.Execute() but always fails, breaking\
-    \ SQL expressions when enabled"
+  description: "Test 9\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/expr/sql/parser.go:23] logic: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing functionality\n  - [pkg/expr/sql/parser.go:23] logic: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing functionality\n  - [pkg/expr/sql/db.go:22] logic: This method is called directly by SQLCommand.Execute() but always fails, breaking SQL expressions when enabled"
   source_dir: repos/greptile_bases/grafana/009
   base_sha: cbe1e7d63f098e306058c0fbcab2f5c30602fa7d
   base_ref: data-analysis-features
   head_ref: advanced-sql-analytics
   expected_findings:
-  - title_pattern: This
+  - title_pattern: stub|not implemented|always returns
     file_pattern: pkg/expr/sql/parser\.go
     line_range:
     - 18
     - 28
     severity: critical
     category: correctness
-    recommendation: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing
-      functionality
-  - title_pattern: This
-    file_pattern: pkg/expr/sql/parser\.go
-    line_range:
-    - 18
-    - 28
-    severity: critical
-    category: correctness
-    recommendation: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing
-      functionality
-  - title_pattern: This|SQLCommand|Execute
+    recommendation: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing functionality
+  - title_pattern: stub|not implemented|always fails|TablesList|QueryFramesInto
     file_pattern: pkg/expr/sql/db\.go
     line_range:
-    - 17
+    - 12
     - 27
     severity: warning
     category: correctness
-    recommendation: This method is called directly by SQLCommand.Execute() but always fails, breaking SQL expressions when
-      enabled
+    recommendation: 'The new internal sql.DB is a non-functional stub: TablesList (db.go:12-14) and QueryFramesInto (db.go:20-22) both return errors.New("not implemented"). These are called by sql.TablesList() in parser.go and SQLCommand.Execute(), so SQL expression parsing/execution always fail when the feature is reached.'
   - title_pattern: Logic|IsEnabledGlobally|FlagSqlExpressions
     file_pattern: pkg/expr/reader\.go
     line_range:
@@ -314,25 +150,7 @@ cases:
     - 200
     severity: critical
     category: correctness
-    recommendation: "Logic error: The double negation here means `enabled` will be true when the feature flag is OFF, which\
-      \ is counterintuitive\n\n```suggestion\n\tenabled := h.features.IsEnabledGlobally(featuremgmt.FlagSqlEx"
-  - title_pattern: This
-    file_pattern: pkg/expr/sql/parser\.go
-    line_range:
-    - 18
-    - 28
-    severity: critical
-    category: correctness
-    recommendation: This now calls a stub implementation that always returns 'not implemented' error, breaking SQL parsing
-      functionality
-  - title_pattern: This
-    file_pattern: pkg/expr/reader\.go
-    line_range:
-    - 194
-    - 204
-    severity: warning
-    category: correctness
-    recommendation: This function always returns false regardless of feature flag state.
+    recommendation: "Logic error: The double negation here means `enabled` will be true when the feature flag is OFF, which is counterintuitive\n\n```suggestion\n\tenabled := h.features.IsEnabledGlobally(featuremgmt.FlagSqlEx"
   - title_pattern: json_serialize_sql|DuckDB
     file_pattern: pkg/expr/sql/parser\.go
     line_range:
@@ -341,42 +159,21 @@ cases:
     severity: warning
     category: correctness
     recommendation: The `json_serialize_sql` function is specific to DuckDB and won't work with the stub implementation
-  - title_pattern: This|TablesList
-    file_pattern: pkg/expr/sql/db\.go
-    line_range:
-    - 9
-    - 19
-    severity: warning
-    category: correctness
-    recommendation: This method is called by sql.TablesList() in parser.go but always fails, preventing SQL query validation
 - id: greptile-grafana-010
   patch: patches/010.patch
   difficulty: hard
   title: Unified Storage Performance Optimizations
-  description: "Test 10\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/storage/unified/search/bleve.go:87] logic:\
-    \ Race condition: Multiple goroutines can now build the same index simultaneously, causing duplicate work and potential\
-    \ cache inconsistency\n  - [pkg/storage/unified/search/bleve.go:87] logic: Race condition: Multiple goroutines can now\
-    \ build the same index simultaneously, causing duplicate work and potential cache inconsistency"
+  description: "Test 10\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [pkg/storage/unified/search/bleve.go:87] logic: Race condition: Multiple goroutines can now build the same index simultaneously, causing duplicate work and potential cache inconsistency\n  - [pkg/storage/unified/search/bleve.go:87] logic: Race condition: Multiple goroutines can now build the same index simultaneously, causing duplicate work and potential cache inconsistency"
   source_dir: repos/greptile_bases/grafana/010
   base_sha: 871af07203177ce59a24e742107119409274f48a
   base_ref: performance-optimization-baseline
   head_ref: unified-storage-enhancements
   expected_findings:
-  - title_pattern: Race|Multiple
+  - title_pattern: cacheMu|race|BuildIndex|lock
     file_pattern: pkg/storage/unified/search/bleve\.go
     line_range:
     - 82
     - 92
     severity: critical
     category: concurrency
-    recommendation: 'Race condition: Multiple goroutines can now build the same index simultaneously, causing duplicate work
-      and potential cache inconsistency'
-  - title_pattern: Race|Multiple
-    file_pattern: pkg/storage/unified/search/bleve\.go
-    line_range:
-    - 82
-    - 92
-    severity: critical
-    category: concurrency
-    recommendation: 'Race condition: Multiple goroutines can now build the same index simultaneously, causing duplicate work
-      and potential cache inconsistency'
+    recommendation: BuildIndex removed the function-level cacheMu write lock, re-introducing a concurrent-build race for the same index key (getOrCreateIndex does an unlocked check-then-act). Restore per-key locking around the build.

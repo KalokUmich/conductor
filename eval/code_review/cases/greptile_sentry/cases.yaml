@@ -3,82 +3,51 @@ cases:
   patch: patches/001.patch
   difficulty: hard
   title: Enhanced Pagination Performance for High-Volume Audit Logs
-  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/api/endpoints/organization_auditlogs.py:11]\
-    \ logic: `OptimizedCursorPaginator` doesn't exist in the codebase - this import will cause an ImportError\n  - [src/sentry/api/endpoints/organization_auditlogs.py:82]\
-    \ logic: `enable_advanced_features` parameter doesn't exist in the paginate method signature"
+  description: "Test 1\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/api/endpoints/organization_auditlogs.py:11] logic: `OptimizedCursorPaginator` doesn't exist in the codebase - this import will cause an ImportError\n  - [src/sentry/api/endpoints/organization_auditlogs.py:82] logic: `enable_advanced_features` parameter doesn't exist in the paginate method signature"
   source_dir: repos/greptile_bases/sentry/001
   base_sha: a5d290951def84afdcc4c88d2f1f20023fc36e2a
   base_ref: master
   head_ref: performance-enhancement-complete
   expected_findings:
-  - title_pattern: OptimizedCursorPaginator|ImportError
-    file_pattern: src/sentry/api/endpoints/organization_auditlogs\.py
+  - title_pattern: negative|offset|slic|Django|queryset|ORM|indexing
+    file_pattern: src/sentry/api/paginator\.py
     line_range:
-    - 6
-    - 16
+    - 815
+    - 910
     severity: critical
     category: correctness
-    recommendation: '`OptimizedCursorPaginator` doesn''t exist in the codebase - this import will cause an ImportError'
-  - title_pattern: enable_advanced_features
-    file_pattern: src/sentry/api/endpoints/organization_auditlogs\.py
-    line_range:
-    - 77
-    - 87
-    severity: warning
-    category: correctness
-    recommendation: '`enable_advanced_features` parameter doesn''t exist in the paginate method signature'
+    recommendation: OptimizedCursorPaginator.get_result passes a negative cursor.offset into `queryset[start_offset:stop]`; Django QuerySets do not support negative indexing/slicing and this raises ValueError at runtime. The comment claiming the ORM handles negative slicing is incorrect. Reject/clamp negative offsets or implement real keyset (range) pagination.
 - id: greptile-sentry-002
   patch: patches/002.patch
   difficulty: hard
   title: Optimize spans buffer insertion with eviction during insert
-  description: "Test 2\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/api/endpoints/organization_auditlogs.py:11]\
-    \ logic: `OptimizedCursorPaginator` is imported but does not exist in the codebase - this will cause ImportError at runtime\n\
-    \  - [src/sentry/api/endpoints/organization_auditlogs.py:82] logic: `enable_advanced_features` parameter is not supported\
-    \ by the paginator interface - check the `self.paginate` method signature\n  - [src/sentry/spans/consumers/process/factory.py:141]\
-    \ logic: Direct dictionary access to `end_timestamp_precise` will raise KeyError if field is missing. Consider using `.get()`\
-    \ with a default value for backward compatibility."
+  description: "Test 2\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/api/endpoints/organization_auditlogs.py:11] logic: `OptimizedCursorPaginator` is imported but does not exist in the codebase - this will cause ImportError at runtime\n  - [src/sentry/api/endpoints/organization_auditlogs.py:82] logic: `enable_advanced_features` parameter is not supported by the paginator interface - check the `self.paginate` method signature\n  - [src/sentry/spans/consumers/process/factory.py:141] logic: Direct dictionary access to `end_timestamp_precise` will raise KeyError if field is missing. Consider using `.get()` with a default value for backward compatibility."
   source_dir: repos/greptile_bases/sentry/002
   base_sha: 28e3db2520d4ea28c57b08da57b83917ba7b2e15
   base_ref: performance-optimization-baseline
   head_ref: performance-enhancement-complete
   expected_findings:
-  - title_pattern: OptimizedCursorPaginator|ImportError
-    file_pattern: src/sentry/api/endpoints/organization_auditlogs\.py
-    line_range:
-    - 6
-    - 16
-    severity: critical
-    category: correctness
-    recommendation: '`OptimizedCursorPaginator` is imported but does not exist in the codebase - this will cause ImportError
-      at runtime'
-  - title_pattern: enable_advanced_features
-    file_pattern: src/sentry/api/endpoints/organization_auditlogs\.py
-    line_range:
-    - 77
-    - 87
-    severity: warning
-    category: correctness
-    recommendation: '`enable_advanced_features` parameter is not supported by the paginator interface - check the `self.paginate`
-      method signature'
-  - title_pattern: Direct|end_timestamp_precise|KeyError|Consider
+  - title_pattern: end_timestamp_precise|KeyError|\.get\(
     file_pattern: src/sentry/spans/consumers/process/factory\.py
     line_range:
-    - 136
-    - 146
-    severity: warning
+    - 134
+    - 142
+    severity: info
     category: correctness
-    recommendation: Direct dictionary access to `end_timestamp_precise` will raise KeyError if field is missing.
+    recommendation: Direct dict access `val["end_timestamp_precise"]` matches the existing required-field idiom and the cast(SpanEvent) annotation; only a concern if the field can legitimately be absent in older producers. Optional `.get()` hedge.
+  - title_pattern: negative (offset|index|slic)|Negative indexing|queryset\[start_offset
+    file_pattern: src/sentry/api/paginator\.py
+    line_range:
+    - 868
+    - 886
+    severity: critical
+    category: correctness
+    recommendation: OptimizedCursorPaginator.get_result slices the Django queryset with a negative start (`start_offset = cursor.offset` when offset < 0, then `queryset[start_offset:stop]`). Django QuerySet does not support negative indexing and raises AssertionError 'Negative indexing is not supported.' The comment claiming the ORM handles this automatically is incorrect. Clamp offsets to >= 0 or reject negative cursors.
 - id: greptile-sentry-003
   patch: patches/003.patch
   difficulty: medium
   title: feat(upsampling) - Support upsampled error count with performance optimizations
-  description: "Test 3\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/testutils/factories.py:353] logic:\
-    \ The condition `if client_sample_rate:` will be False for valid sample rate of 0.0. Consider using `if client_sample_rate\
-    \ is not None:` to handle zero sample rates correctly.\n\n```suggestion\n    \n  - [src/sentry/search/events/datasets/discover.py:1051]\
-    \ logic: The `default_result_type` is set to \"number\" but the comment and typical count operations suggest this should\
-    \ be \"integer\". This could cause type inconsistencies in query results.\n  - [src/sentry/api/helpers/error_upsampling.py:95]\
-    \ logic: The transformation assumes `upsampled_count()` function exists in the database schema. This could cause query\
-    \ failures if the function isn't available."
+  description: "Test 3\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/testutils/factories.py:353] logic: The condition `if client_sample_rate:` will be False for valid sample rate of 0.0. Consider using `if client_sample_rate is not None:` to handle zero sample rates correctly.\n\n```suggestion\n    \n  - [src/sentry/search/events/datasets/discover.py:1051] logic: The `default_result_type` is set to \"number\" but the comment and typical count operations suggest this should be \"integer\". This could cause type inconsistencies in query results.\n  - [src/sentry/api/helpers/error_upsampling.py:95] logic: The transformation assumes `upsampled_count()` function exists in the database schema. This could cause query failures if the function isn't available."
   source_dir: repos/greptile_bases/sentry/003
   base_sha: a5d290951def84afdcc4c88d2f1f20023fc36e2a
   base_ref: master
@@ -99,8 +68,7 @@ cases:
     - 1056
     severity: warning
     category: correctness
-    recommendation: The `default_result_type` is set to "number" but the comment and typical count operations suggest this
-      should be "integer".
+    recommendation: The `default_result_type` is set to "number" but the comment and typical count operations suggest this should be "integer".
   - title_pattern: upsampled_count|This
     file_pattern: src/sentry/api/helpers/error_upsampling\.py
     line_range:
@@ -109,26 +77,11 @@ cases:
     severity: warning
     category: correctness
     recommendation: The transformation assumes `upsampled_count()` function exists in the database schema.
-  - title_pattern: Caching
-    file_pattern: src/sentry/api/helpers/error_upsampling\.py
-    line_range:
-    - 27
-    - 37
-    severity: warning
-    category: correctness
-    recommendation: Caching eligibility but not the dataset/request check could lead to inconsistent behavior - eligibility
-      might be cached as `true` but dataset check could return different results between calls.
 - id: greptile-sentry-005
   patch: patches/005.patch
   difficulty: medium
   title: Replays Self-Serve Bulk Delete System
-  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/workflow_engine/endpoints/validators/base/detector.py:64]\
-    \ logic: Bug: Using 'detector_type' key but field is named 'type'. Should be `validated_data.get('type', instance.group_type).slug`\n\
-    \n```suggestion\n        instance.type = validated_data.get(\"type\", inst\n  - [src/sentry/integrations/source_code_management/commit_context.py:601]\
-    \ logic: The method calls `PRCommentWorkflow._truncate_title(title)` but could use the passed `max_length` parameter from\
-    \ the method signature for consistency\n  - [src/sentry/issues/endpoints/browser_reporting_collector.py:60] logic: The\
-    \ mutual exclusion validation between `age` and `timestamp` correctly handles the two W3C specification versions, but\
-    \ both fields are optional which means reports with neither field would pas"
+  description: "Test 5\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/workflow_engine/endpoints/validators/base/detector.py:64] logic: Bug: Using 'detector_type' key but field is named 'type'. Should be `validated_data.get('type', instance.group_type).slug`\n\n```suggestion\n        instance.type = validated_data.get(\"type\", inst\n  - [src/sentry/integrations/source_code_management/commit_context.py:601] logic: The method calls `PRCommentWorkflow._truncate_title(title)` but could use the passed `max_length` parameter from the method signature for consistency\n  - [src/sentry/issues/endpoints/browser_reporting_collector.py:60] logic: The mutual exclusion validation between `age` and `timestamp` correctly handles the two W3C specification versions, but both fields are optional which means reports with neither field would pas"
   source_dir: repos/greptile_bases/sentry/005
   base_sha: 49a275847631e231672d01b5dcd66558c069d25b
   base_ref: replays-delete-vulnerable
@@ -142,32 +95,19 @@ cases:
     severity: warning
     category: correctness
     recommendation: 'Bug: Using ''detector_type'' key but field is named ''type''.'
-  - title_pattern: PRCommentWorkflow|_truncate_title
-    file_pattern: src/sentry/integrations/source_code_management/commit_context\.py
-    line_range:
-    - 596
-    - 606
-    severity: warning
-    category: correctness
-    recommendation: The method calls `PRCommentWorkflow._truncate_title(title)` but could use the passed `max_length` parameter
-      from the method signature for consistency
-  - title_pattern: Consider
+  - title_pattern: age|timestamp|optional|required|neither|mutual
     file_pattern: src/sentry/issues/endpoints/browser_reporting_collector\.py
     line_range:
     - 55
     - 65
     severity: warning
     category: correctness
-    recommendation: The mutual exclusion validation between `age` and `timestamp` correctly handles the two W3C specification
-      versions, but both fields are optional which means reports with neither field would pass valid
+    recommendation: BrowserReportSerializer makes both `age` and `timestamp` optional (required=False); the old dataclass structurally required `timestamp`. A report with neither field now passes validation. Consider requiring at least one of age/timestamp.
 - id: greptile-sentry-006
   patch: patches/006.patch
   difficulty: medium
   title: Span Buffer Multiprocess Enhancement with Health Monitoring
-  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/spans/consumers/process/flusher.py:199]\
-    \ syntax: Inconsistent metric tag naming: line 185 uses 'shard' but line 199 uses 'shards' for the same shard_tag value\n\
-    \n```suggestion\n                with metrics.timer(\"spans.buffer.flusher.produce\", \n  - [src/sentry/spans/consumers/process/flusher.py:347]\
-    \ logic: Process termination only handles multiprocessing.Process but not threading.Thread cleanup"
+  description: "Test 6\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/spans/consumers/process/flusher.py:199] syntax: Inconsistent metric tag naming: line 185 uses 'shard' but line 199 uses 'shards' for the same shard_tag value\n\n```suggestion\n                with metrics.timer(\"spans.buffer.flusher.produce\", \n  - [src/sentry/spans/consumers/process/flusher.py:347] logic: Process termination only handles multiprocessing.Process but not threading.Thread cleanup"
   source_dir: repos/greptile_bases/sentry/006
   base_sha: c2c41b0db17dafbcf901412623e874b48ae37a6e
   base_ref: span-flusher-stable
@@ -180,39 +120,25 @@ cases:
     - 204
     severity: warning
     category: correctness
-    recommendation: "Inconsistent metric tag naming: line 185 uses 'shard' but line 199 uses 'shards' for the same shard_tag\
-      \ value\n\n```suggestion\n                with metrics.timer(\"spans.buffer.flusher.produce\", tags={\"s"
-  - title_pattern: Process|Thread
+    recommendation: "Inconsistent metric tag naming: line 185 uses 'shard' but line 199 uses 'shards' for the same shard_tag value\n\n```suggestion\n                with metrics.timer(\"spans.buffer.flusher.produce\", tags={\"s"
+  - title_pattern: terminate|Thread|join|process
     file_pattern: src/sentry/spans/consumers/process/flusher\.py
     line_range:
-    - 342
-    - 352
+    - 336
+    - 347
     severity: warning
     category: concurrency
-    recommendation: Process termination only handles multiprocessing.Process but not threading.Thread cleanup
+    recommendation: 'join() iterates processes with `if remaining_time <= 0: break` (flusher.py:340-341); on a shutdown timeout this break exits before reaching `process.terminate()` (:346-347) for the remaining multiprocessing.Process workers, leaking them. Restructure so every started process is terminated even after the deadline expires.'
 - id: greptile-sentry-007
   patch: patches/007.patch
   difficulty: medium
   title: 'feat(ecosystem): Implement cross-system issue synchronization'
-  description: "Test 7\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [tests/sentry/integrations/services/test_assignment_source.py:13]\
-    \ syntax: Typo in method name: 'inalid' should be 'invalid'\n\n```suggestion\n    def test_from_dict_invalid_data(self):\n\
-    ```\n  - [src/sentry/integrations/services/assignment_source.py:18] logic: Using `timezone.now()` as a default creates\
-    \ a timestamp at class definition time, not instance creation time. Consider using `field(default_factory=timezone.now)`\
-    \ for proper per-instance timest"
+  description: "Test 7\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [tests/sentry/integrations/services/test_assignment_source.py:13] syntax: Typo in method name: 'inalid' should be 'invalid'\n\n```suggestion\n    def test_from_dict_invalid_data(self):\n```\n  - [src/sentry/integrations/services/assignment_source.py:18] logic: Using `timezone.now()` as a default creates a timestamp at class definition time, not instance creation time. Consider using `field(default_factory=timezone.now)` for proper per-instance timest"
   source_dir: repos/greptile_bases/sentry/007
   base_sha: 19c92a4345beecc750245775de2b3ab9f4f59473
   base_ref: ecosystem-sync-integration-before
   head_ref: ecosystem-sync-integration-after
   expected_findings:
-  - title_pattern: Typo|test_from_dict_invalid_data
-    file_pattern: tests/sentry/integrations/services/test_assignment_source\.py
-    line_range:
-    - 8
-    - 18
-    severity: warning
-    category: correctness
-    recommendation: "Typo in method name: 'inalid' should be 'invalid'\n\n```suggestion\n    def test_from_dict_invalid_data(self):\n\
-      ```"
   - title_pattern: Using|Consider|default_factory
     file_pattern: src/sentry/integrations/services/assignment_source\.py
     line_range:
@@ -220,31 +146,17 @@ cases:
     - 23
     severity: warning
     category: correctness
-    recommendation: Using `timezone.now()` as a default creates a timestamp at class definition time, not instance creation
-      time.
+    recommendation: Using `timezone.now()` as a default creates a timestamp at class definition time, not instance creation time.
 - id: greptile-sentry-008
   patch: patches/008.patch
   difficulty: medium
   title: 'ref(crons): Reorganize incident creation / issue occurrence logic'
-  description: "Test 8\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/monitors/logic/incident_occurrence.py:132]\
-    \ syntax: 'humam' is misspelled, should be 'human'\n\n```suggestion\n    Builds a human readible string from a list of\
-    \ failed check-ins.\n```\n  - [src/sentry/monitors/logic/incident_occurrence.py:168] logic: Using `monitor_environment.monitor.config`\
-    \ instead of the modified `config` variable defeats the purpose of the schedule_type transformation on line 162\n\n```suggestion\n\
-    \        \"config\": config,"
+  description: "Test 8\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/monitors/logic/incident_occurrence.py:132] syntax: 'humam' is misspelled, should be 'human'\n\n```suggestion\n    Builds a human readible string from a list of failed check-ins.\n```\n  - [src/sentry/monitors/logic/incident_occurrence.py:168] logic: Using `monitor_environment.monitor.config` instead of the modified `config` variable defeats the purpose of the schedule_type transformation on line 162\n\n```suggestion\n        \"config\": config,"
   source_dir: repos/greptile_bases/sentry/008
   base_sha: 5fc9f67c1bd6a50d6c6eb3270b1e6fb7938c5865
   base_ref: monitor-incident-refactor-before
   head_ref: monitor-incident-refactor-after
   expected_findings:
-  - title_pattern: Builds
-    file_pattern: src/sentry/monitors/logic/incident_occurrence\.py
-    line_range:
-    - 127
-    - 137
-    severity: warning
-    category: correctness
-    recommendation: "'humam' is misspelled, should be 'human'\n\n```suggestion\n    Builds a human readible string from a\
-      \ list of failed check-ins."
   - title_pattern: Using|monitor_environment|schedule_type
     file_pattern: src/sentry/monitors/logic/incident_occurrence\.py
     line_range:
@@ -252,49 +164,12 @@ cases:
     - 173
     severity: warning
     category: correctness
-    recommendation: "Using `monitor_environment.monitor.config` instead of the modified `config` variable defeats the purpose\
-      \ of the schedule_type transformation on line 162\n\n```suggestion\n        \"config\": config,\n```"
-- id: greptile-sentry-009
-  patch: patches/009.patch
-  difficulty: hard
-  title: 'feat(uptime): Add ability to use queues to manage parallelism'
-  description: "Test 9\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/remote_subscriptions/consumers/queue_consumer.py:133]\
-    \ logic: Exception handling assumes `queue.ShutDown` exists, but standard library `queue` module doesn't have this exception\n\
-    \  - [src/sentry/remote_subscriptions/consumers/queue_consumer.py:238] logic: Standard library `queue.Queue` doesn't have\
-    \ a `shutdown()` method with `immediate` parameter"
-  source_dir: repos/greptile_bases/sentry/009
-  base_sha: 5c94383dd49b567fb086ad594b40af066f426858
-  base_ref: kafka-consumer-parallel-before
-  head_ref: kafka-consumer-parallel-after
-  expected_findings:
-  - title_pattern: Exception|ShutDown
-    file_pattern: src/sentry/remote_subscriptions/consumers/queue_consumer\.py
-    line_range:
-    - 128
-    - 138
-    severity: critical
-    category: reliability
-    recommendation: Exception handling assumes `queue.ShutDown` exists, but standard library `queue` module doesn't have this
-      exception
-  - title_pattern: Standard|Queue
-    file_pattern: src/sentry/remote_subscriptions/consumers/queue_consumer\.py
-    line_range:
-    - 233
-    - 243
-    severity: warning
-    category: reliability
-    recommendation: Standard library `queue.Queue` doesn't have a `shutdown()` method with `immediate` parameter
+    recommendation: "Using `monitor_environment.monitor.config` instead of the modified `config` variable defeats the purpose of the schedule_type transformation on line 162\n\n```suggestion\n        \"config\": config,\n```"
 - id: greptile-sentry-010
   patch: patches/010.patch
   difficulty: hard
   title: 'feat(workflow_engine): Add in hook for producing occurrences from the stateful detector'
-  description: "Test [new PR number opened]\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/incidents/grouptype.py:12]\
-    \ logic: StatefulDetectorHandler is an abstract base class that requires implementing several abstract methods: `counter_names`,\
-    \ `get_dedupe_value`, `get_group_key_values`, and `build_occurrence_and_eve\n  - [tests/sentry/workflow_engine/processors/test_detector.py:191]\
-    \ logic: The hardcoded value 6 for group_2 seems inconsistent - the test data shows group_2 has value 10, but the expected\
-    \ occurrence is built with value 6\n\n```suggestion\n        occurrence_2, event_dat\n  - [tests/sentry/workflow_engine/processors/test_detector.py:537]\
-    \ logic: The test builds an expected result using build_mock_occurrence_and_event with 'val1' and value 6, but this doesn't\
-    \ match the test's group_key parameter 'group_key' - potential test logic error"
+  description: "Test [new PR number opened]\n\nPlanted bugs (per greptile-apps[bot] review):\n  - [src/sentry/incidents/grouptype.py:12] logic: StatefulDetectorHandler is an abstract base class that requires implementing several abstract methods: `counter_names`, `get_dedupe_value`, `get_group_key_values`, and `build_occurrence_and_eve\n  - [tests/sentry/workflow_engine/processors/test_detector.py:191] logic: The hardcoded value 6 for group_2 seems inconsistent - the test data shows group_2 has value 10, but the expected occurrence is built with value 6\n\n```suggestion\n        occurrence_2, event_dat\n  - [tests/sentry/workflow_engine/processors/test_detector.py:537] logic: The test builds an expected result using build_mock_occurrence_and_event with 'val1' and value 6, but this doesn't match the test's group_key parameter 'group_key' - potential test logic error"
   source_dir: repos/greptile_bases/sentry/010
   base_sha: 7249010ca8fea2bbc9ae58e7352861c2d17c2ef2
   base_ref: workflow-engine-stateful-detector-before
@@ -307,8 +182,7 @@ cases:
     - 17
     severity: warning
     category: correctness
-    recommendation: 'StatefulDetectorHandler is an abstract base class that requires implementing several abstract methods:
-      `counter_names`, `get_dedupe_value`, `get_group_key_values`, and `build_occurrence_and_event_data'
+    recommendation: 'StatefulDetectorHandler is an abstract base class that requires implementing several abstract methods: `counter_names`, `get_dedupe_value`, `get_group_key_values`, and `build_occurrence_and_event_data'
   - title_pattern: group_2|occurrence_2|event_data_2|build_mock_occurrence_and_event
     file_pattern: tests/sentry/workflow_engine/processors/test_detector\.py
     line_range:
@@ -316,14 +190,12 @@ cases:
     - 196
     severity: warning
     category: correctness
-    recommendation: "The hardcoded value 6 for group_2 seems inconsistent - the test data shows group_2 has value 10, but\
-      \ the expected occurrence is built with value 6\n\n```suggestion\n        occurrence_2, event_data_2 = b"
-  - title_pattern: build_mock_occurrence_and_event|group_key
+    recommendation: "The hardcoded value 6 for group_2 seems inconsistent - the test data shows group_2 has value 10, but the expected occurrence is built with value 6\n\n```suggestion\n        occurrence_2, event_data_2 = b"
+  - title_pattern: build_mock_occurrence_and_event|group_key|val1
     file_pattern: tests/sentry/workflow_engine/processors/test_detector\.py
     line_range:
-    - 532
-    - 542
-    severity: critical
+    - 536
+    - 545
+    severity: warning
     category: correctness
-    recommendation: The test builds an expected result using build_mock_occurrence_and_event with 'val1' and value 6, but
-      this doesn't match the test's group_key parameter 'group_key' - potential test logic error
+    recommendation: 'Test data inconsistency: build_mock_occurrence_and_event is called with group_key ''val1'' while the expected_result and evaluate_group_key_value call use group_key ''group_key''. Currently harmless because IssueOccurrence.__eq__ compares only the constant id, but it is misleading and would mask a regression if equality semantics change. Align the group_key argument.'

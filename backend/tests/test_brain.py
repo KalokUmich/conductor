@@ -136,67 +136,85 @@ class TestBrainToolDefinitions:
 
 
 class TestBrainBudgetManager:
+    """USD-native budget pool (P1d → full USD). allocate() reserves dollars,
+    report() reconciles actual dollar spend; tokens are display-only."""
+
     @pytest.mark.asyncio
-    async def test_allocate_returns_bounded_amount(self):
-        mgr = BrainBudgetManager(total_tokens=500_000)
+    async def test_allocate_returns_bounded_usd(self):
+        mgr = BrainBudgetManager(10.0, default_leaf_usd=1.0, max_leaf_usd=5.0)
         allocated = await mgr.allocate("agent_a")
-        assert 50_000 <= allocated <= 300_000
+        assert 0.25 <= allocated <= 5.0
 
     @pytest.mark.asyncio
-    async def test_report_tracks_usage(self):
-        mgr = BrainBudgetManager(total_tokens=500_000)
-        await mgr.report("agent_a", 100_000)
-        assert mgr.used["agent_a"] == 100_000
-        assert mgr.remaining < 500_000
+    async def test_allocate_respects_weight_and_max_leaf(self):
+        mgr = BrainBudgetManager(100.0, default_leaf_usd=1.0, max_leaf_usd=3.0)
+        a = await mgr.allocate("a", weight=2.0)  # 1.0 * 2 = 2.0 ≤ max 3.0
+        assert abs(a - 2.0) < 1e-9
+        b = await mgr.allocate("b", weight=10.0)  # 10.0 clamped to max_leaf_usd 3.0
+        assert abs(b - 3.0) < 1e-9
 
     @pytest.mark.asyncio
-    async def test_remaining_decreases(self):
-        mgr = BrainBudgetManager(total_tokens=500_000)
-        initial = mgr.remaining
-        await mgr.report("agent_a", 200_000)
-        assert mgr.remaining < initial
+    async def test_report_tracks_usd_and_tokens(self):
+        mgr = BrainBudgetManager(10.0)
+        await mgr.report("agent_a", 1.50, total_tokens=12_345)
+        assert mgr.used["agent_a"] == 1.50
+        assert mgr.total_cost_usd == 1.50
+        assert mgr.total_tokens_used == 12_345
+        assert mgr.remaining < 10.0
 
     @pytest.mark.asyncio
-    async def test_brain_reserve(self):
-        mgr = BrainBudgetManager(total_tokens=500_000, brain_reserve_ratio=0.2)
-        assert mgr.brain_reserve == 100_000
+    async def test_brain_reserve_usd(self):
+        mgr = BrainBudgetManager(10.0, brain_reserve_ratio=0.2)
+        assert abs(mgr.brain_reserve - 2.0) < 1e-9
 
     @pytest.mark.asyncio
     async def test_allocate_pre_deducts_pool(self):
-        # Pool is shared across parallel agents — each allocate must
-        # immediately drain `remaining` so concurrent dispatches don't
-        # all see the full pool.
-        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+        # Pool is shared across parallel agents — each allocate must immediately
+        # drain `remaining` so concurrent dispatches don't all see the full pool.
+        mgr = BrainBudgetManager(100.0, default_leaf_usd=2.0, max_leaf_usd=8.0, brain_reserve_ratio=0.05)
         before = mgr.remaining
         first = await mgr.allocate("agent_a")
         after_first = mgr.remaining
-        assert after_first == before - first
+        assert abs(after_first - (before - first)) < 1e-9
 
         second = await mgr.allocate("agent_b")
-        after_second = mgr.remaining
-        assert after_second == after_first - second
+        assert abs(mgr.remaining - (after_first - second)) < 1e-9
 
     @pytest.mark.asyncio
-    async def test_report_releases_reservation(self):
-        # Underrun: agent uses less than reserved → pool gets the diff back.
-        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+    async def test_report_releases_reservation_underrun(self):
+        # Underrun: agent spends less than reserved → pool gets the diff back.
+        mgr = BrainBudgetManager(100.0, default_leaf_usd=2.0, max_leaf_usd=8.0, brain_reserve_ratio=0.05)
         allocated = await mgr.allocate("agent_a")
         after_allocate = mgr.remaining
-        # Agent reports it actually only used half its allocation
-        await mgr.report("agent_a", allocated // 2)
-        # Reservation released; only `used` consumes pool now
+        await mgr.report("agent_a", allocated / 2)
         assert mgr.remaining > after_allocate
-        assert mgr.used["agent_a"] == allocated // 2
+        assert mgr.used["agent_a"] == allocated / 2
         assert "agent_a" not in mgr.reserved
 
     @pytest.mark.asyncio
     async def test_report_handles_overrun(self):
-        # Overrun: agent uses MORE than reserved → recorded as-is.
-        mgr = BrainBudgetManager(total_tokens=2_000_000, brain_reserve_ratio=0.05)
+        # Overrun: agent spends MORE than reserved → recorded as-is.
+        mgr = BrainBudgetManager(100.0, default_leaf_usd=2.0, max_leaf_usd=8.0, brain_reserve_ratio=0.05)
         allocated = await mgr.allocate("agent_a")
         await mgr.report("agent_a", allocated * 2)
         assert mgr.used["agent_a"] == allocated * 2
         assert "agent_a" not in mgr.reserved
+
+    @pytest.mark.asyncio
+    async def test_floor_when_pool_nearly_exhausted(self):
+        # Available below the per-leaf floor → still get the floor, never less
+        # (the "never starve a leaf" guarantee), even if it briefly over-commits.
+        mgr = BrainBudgetManager(0.40, default_leaf_usd=2.0, max_leaf_usd=5.0, brain_reserve_ratio=0.0)
+        a = await mgr.allocate("a")  # available 0.40 < floor 0.50 → floor 0.50
+        assert abs(a - 0.50) < 1e-9
+
+    @pytest.mark.asyncio
+    async def test_report_zero_cost_still_releases_reservation(self):
+        mgr = BrainBudgetManager(10.0)
+        await mgr.allocate("agent_a")
+        await mgr.report("agent_a", 0.0)
+        assert "agent_a" not in mgr.reserved
+        assert mgr.used["agent_a"] == 0.0
 
 
 # ---------------------------------------------------------------------------

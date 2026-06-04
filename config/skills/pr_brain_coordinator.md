@@ -478,12 +478,40 @@ Max 2 replan rounds. Then synthesize.
 ### 5. Synthesize
 
 Deduplicate findings (same bug from multiple angles → merge, keep both evidence
-sources). Classify severity using the `## Severity rubric` section below —
-reserve `critical`/`high` for their listed categories and default borderline
-findings to `medium`. Write `suggested_fix` in the concrete, location-bearing
-shape shown in the `## Suggested_fix` section — specific beats gestural. If a
-finding's evidence feels thin, dispatch a strong-model verifier to rebut before
-keeping it.
+sources). Classify severity using the `## Severity rubric` section below. The
+rubric is applied through **two questions per finding** — answer both before you
+pick a label:
+1. **Provable?** Can a concrete trigger scenario be constructed from the code
+   alone (provable), or does it need conditions you can't point to (conditional)?
+2. **Blast radius?** Is the impact a security/auth/contract boundary, a
+   functional break, a data problem, or an edge case?
+`critical` requires *provable + security/auth/contract*. A provable functional
+break with no security angle is `high`. Conditional or edge-case bugs are
+`medium`/`low`. Reserve `critical`/`high` for their listed categories and default
+borderline findings to `medium`. Write `suggested_fix` in the concrete,
+location-bearing shape shown in the `## Suggested_fix` section — specific beats
+gestural. If a finding's evidence feels thin, dispatch a strong-model verifier to
+rebut before keeping it.
+
+**Anchor existence / availability / import findings at the diff site, not the
+implementation file.** When the defect is "symbol X doesn't exist", "param Y
+isn't supported", or "Z was imported/called but is wrong", set the finding's
+`file`/`line` at the **`+` line in the changed file that introduced the
+import or call** — e.g. the `from ... import OptimizedCursorPaginator` line in
+the endpoint being edited — NOT the implementation file where the crash would
+surface (e.g. the paginator's own source). The PR author reads the comment on
+the line they wrote; cite the implementation file as supporting evidence in the
+finding body, but pin the location to the diff. (This is location only — it does
+not change which findings you emit or their severity.)
+
+**Pin each finding to the EXACT offending line, not a few rows off.** Within the
+changed file, anchor `line` on the specific statement that is wrong — the bad
+call, the unguarded `.get()`, the missing-null check — NOT the method/class
+header above it. Before emitting, re-read the line you are about to cite and
+confirm the defect is on that exact row. A 2-3 row drift lands the inline comment
+on the wrong code and is scored as a location miss. (A deterministic post-pass
+can only correct small drift when your finding text **names the offending symbol**
+— so always name it in the title/evidence.)
 
 **Findings vs. secondary observations — be disciplined about what enters
 the `findings` array.**
@@ -526,6 +554,20 @@ RIGHT → no finding, or at most a one-line `praise`: "Correctly replaces the
 
 A review with 2 sharp findings reads as more credible than a review with
 2 sharp findings padded by 3 tangential extras. When in doubt, demote.
+
+**But zero findings on a substantial or mandatory-triggered PR is a red flag
+for under-commitment — not a clean bill of health.** "Demote when in doubt"
+trims *noise*; it must never collapse a real review to empty. If your synthesis
+is about to emit zero findings on a PR that (a) added many lines or (b) tripped
+a mandatory auth / security / migration requirement, stop and re-read your
+sub-agents' `findings` and `unexpected_observations` first — a worker that hit
+max-turns or returned unparseable output is *missing signal*, not *evidence of
+safety*. Then either surface the strongest real finding you can ground on a `+`
+or unchanged line, or — if you have genuinely verified there is no defect — say
+so explicitly in the synthesis prose ("Reviewed X, Y, Z; no defect because …")
+so a reader can distinguish a deliberate clean pass from a silent miss. An empty
+findings array with no stated justification is the one synthesis output you may
+not produce on a substantial/triggered PR.
 
 Generate the markdown review.
 
@@ -682,6 +724,16 @@ expensive failure is *under-grading* a real break — not just inflating nits.
 - Data corruption in production storage (dropped columns, bad migration, concurrent clobber).
 - Complete loss of availability on a critical path.
 
+**Symptom loudness is not the test — grade the blast radius.** A finding that
+*sounds* catastrophic ("crashes", "hangs forever", "won't start") is `critical`
+ONLY when its blast radius is one of the categories above (security/auth/contract,
+data corruption, or availability loss on a *critical* path). A provable crash,
+hang, or wrong result whose impact is internal/functional — no security boundary
+crossed, not a critical-path outage — is `high`, not `critical`. Don't let an
+alarming symptom auto-promote a functional bug. (E.g. a removed timeout that hangs
+an internal worker connection is `high`; the same removal on the auth login path
+that locks every user out is `critical`.)
+
 **`high`** — reserved for:
 - Always-reachable runtime crashes on typical inputs (`ImportError`, `NameError`, `TypeError`,
   unhandled `KeyError`/`AttributeError`).
@@ -722,6 +774,33 @@ it `medium` (or calling it a "scope gap") is the costliest miss — it buries an
 {"title": "Misleading variable name `tmp_x` in long function", "severity": "nit"}
 </example>
 Each label is defensible — and the two security breaks stay `critical`, not down-tiered.
+
+### Sanity-check "build / compilation will fail" claims before grading them
+
+Workers (and you) over-confidently assert "this won't compile" by pattern-matching
+rules from other languages. Most "looks fatal" patterns are legal and silently
+handled by the compiler. A "build will fail" claim is only valid if **at least
+one** holds:
+- it deletes a symbol referenced elsewhere in the same compilation unit, OR
+- it introduces a name collision between two DIFFERENT types with the same simple
+  name (e.g. `java.util.Date` AND `java.sql.Date` imported in one file), OR
+- it introduces a syntax error you can point to a specific column for, OR
+- you can cite a CI config (`pom.xml`, `pyproject.toml`) running a strict linter
+  (Spotless, ruff `--strict`) that rejects this exact pattern — and a linter
+  rejection is `medium`, not `critical` (it doesn't break the binary).
+
+If none hold, downgrade to the real severity (usually `nit`) or drop it.
+
+<example type="anti-pattern" name="false-compilation-failure">
+"Duplicate Java imports will fail compilation" — WRONG. JLS §7.5.1 allows duplicate
+single-type imports; javac silently dedupes them. Real severity: `nit` (redundant
+imports left from a merge artifact), never `critical`.
+</example>
+<example type="anti-pattern" name="false-overload-ambiguity">
+"Two methods with the same name will cause an ambiguity error" — WRONG when the
+parameter lists differ (`process(String)` vs `process(Integer)`): that is legal
+overloading, resolved at compile time by argument types. Not a defect — drop it.
+</example>
 
 ## Suggested_fix — concrete beats gestural
 

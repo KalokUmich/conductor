@@ -14,6 +14,8 @@ import time
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.code_review.shared import is_generated_path
+
 from .formatter import format_summary_markdown, recommendation_to_vote, split_finding_into_comments
 from .mcp_client import AzureDevOpsClient
 from .models import (
@@ -113,7 +115,7 @@ async def review_pull_request(
         # NOT review would be actively harmful — authors could be
         # misled into thinking the AI had checked the change and signed
         # off. vote=0 leaves the decision to human reviewers.
-        if _total_changed < _MIN_REVIEW_LINES:
+        if _total_changed < _MIN_REVIEW_LINES and not req.dry_run:
             logger.info(
                 "[AzureDevOps] PR #%d has %d lines — below %d, posting " "human-review nudge and skipping AI review",
                 req.pr_id,
@@ -144,7 +146,7 @@ async def review_pull_request(
                 vote=0,
             )
 
-        if _total_changed > _MAX_REVIEW_LINES:
+        if _total_changed > _MAX_REVIEW_LINES and not req.dry_run:
             logger.info(
                 "[AzureDevOps] PR #%d has %d lines — above %d, posting "
                 "split-recommended notice and skipping AI review",
@@ -224,18 +226,20 @@ async def review_pull_request(
             )
 
         try:
-            # Step 3: Generate PR summary (Haiku, ~5s — failure won't block review)
-            await _generate_and_post_summary(
-                client=client,
-                request=request,
-                project=req.project,
-                repo=req.repo,
-                pr_id=req.pr_id,
-                pr_title=pr_data.get("title", ""),
-                source_branch=source_branch,
-                worktree_path=worktree_path,
-                diff_spec=diff_spec,
-            )
+            # Step 3: Generate PR summary (Haiku, ~5s — failure won't block review).
+            # Skipped on dry_run — it posts to the PR.
+            if not req.dry_run:
+                await _generate_and_post_summary(
+                    client=client,
+                    request=request,
+                    project=req.project,
+                    repo=req.repo,
+                    pr_id=req.pr_id,
+                    pr_title=pr_data.get("title", ""),
+                    source_branch=source_branch,
+                    worktree_path=worktree_path,
+                    diff_spec=diff_spec,
+                )
 
             # Fetch Jira tickets + Confluence pages referenced by this PR
             # before invoking the Brain. Readonly clients are optional; if
@@ -341,6 +345,37 @@ async def review_pull_request(
                 len(result.findings),
                 result.merge_recommendation,
             )
+
+            # Dry-run: return findings WITHOUT posting anything to the PR.
+            if req.dry_run:
+                logger.info(
+                    "[AzureDevOps] DRY-RUN — not posting; returning %d findings for PR #%d",
+                    len(result.findings),
+                    req.pr_id,
+                )
+                return AzureDevOpsReviewResponse(
+                    status="dry_run",
+                    pr_id=req.pr_id,
+                    threads_created=0,
+                    findings_count=len(result.findings),
+                    merge_recommendation=result.merge_recommendation,
+                    vote=0,
+                    findings=[
+                        {
+                            "title": f.title,
+                            "severity": getattr(f.severity, "value", f.severity),
+                            "category": getattr(f.category, "value", f.category),
+                            "file": f.file,
+                            "start_line": f.start_line,
+                            "end_line": f.end_line,
+                            "confidence": f.confidence,
+                            "risk": f.risk,
+                            "suggested_fix": f.suggested_fix,
+                            "agent": f.agent,
+                        }
+                        for f in result.findings
+                    ],
+                )
 
             # Step 3: Post each finding as inline thread(s)
             threads_created = 0
@@ -723,27 +758,40 @@ def _large_pr_skip_message(changed_lines: int, ceiling: int) -> str:
 
 
 def _count_changed_lines(worktree_path: str, diff_spec: str) -> int:
-    """Count total insertions + deletions from git diff --shortstat."""
-    import re
+    """Count insertions + deletions from ``git diff --numstat``, EXCLUDING
+    machine-generated / vendored files (swagger specs, lockfiles, etc.).
+
+    Uses --numstat (per-file) rather than --shortstat (aggregate) so a single
+    huge generated file — e.g. an 11.9K-line swagger spec that is 80% of the
+    diff — does not trip the size gate and block review of the real change.
+    """
     import subprocess
 
     try:
         result = subprocess.run(
-            ["git", "diff", "--shortstat"] + diff_spec.split() + ["--"],
+            ["git", "diff", "--numstat"] + diff_spec.split() + ["--"],
             cwd=worktree_path,
             capture_output=True,
             text=True,
             timeout=15,
         )
-        # " 3 files changed, 12 insertions(+), 5 deletions(-)"
-        nums = re.findall(r"(\d+) insertion|(\d+) deletion", result.stdout)
-        return sum(int(n) for pair in nums for n in pair if n)
+        total = 0
+        for line in result.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            adds, dels, path = parts[0], parts[1], parts[2]
+            if is_generated_path(path):
+                continue
+            # Binary files show "-" for adds/dels — skip them.
+            total += (int(adds) if adds.isdigit() else 0) + (int(dels) if dels.isdigit() else 0)
+        return total
     except Exception:
         return 999  # fail open — run review if we can't count
 
 
 def _count_changed_files(worktree_path: str, diff_spec: str) -> int:
-    """Return number of changed files for a diff-spec."""
+    """Return number of changed files (excluding generated/vendored) for a diff-spec."""
     import subprocess
 
     try:
@@ -754,7 +802,9 @@ def _count_changed_files(worktree_path: str, diff_spec: str) -> int:
             text=True,
             timeout=15,
         )
-        return sum(1 for line in result.stdout.splitlines() if line.strip())
+        return sum(
+            1 for line in result.stdout.splitlines() if line.strip() and not is_generated_path(line.strip())
+        )
     except Exception:
         return 0
 

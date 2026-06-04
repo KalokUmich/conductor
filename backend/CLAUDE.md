@@ -17,7 +17,8 @@ backend/app/
 │   │   ├── verify.py        # DispatchVerifyParams/Scope + DISPATCH_VERIFY_TOOL_DEF (scope-bounded structured checks)
 │   │   └── sweep.py         # DispatchSweepParams + DISPATCH_SWEEP_TOOL_DEF (full-diff one-lens cross-file scan)
 │   ├── domain_brain.py      # Phase 9.19 DomainBrainOrchestrator — coordinator self-survey + parallel dispatch + synthesis
-│   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline
+│   ├── pr_brain.py          # PRBrainOrchestrator — v2 coordinator-worker PR review pipeline (LLM orchestration)
+│   ├── existence_scanners.py # Deterministic P13/P14 existence/phantom-symbol/stub scanners + post-processing (pure; re-exported by pr_brain)
 │   ├── forked.py            # Phase 9.16 fork_call primitive — cache-reuse verifier dispatch (bypasses AgentLoopService)
 │   ├── lifecycle.py         # Phase 9.17 hook registry — 4 extension points around the Brain pipeline
 │   ├── budget.py            # BudgetController — token-based budget management
@@ -97,7 +98,7 @@ Query → Brain (Sonnet, meta-tools: dispatch_explore, transfer_to_brain, ask_us
 **Sub-agent prompt assembly (4-layer):**
 - **Layer 1 (system prompt)**: Built per-agent from `.md` description + instructions — defines who this agent is. Includes anti-overexploration guidance ("commit to a direction, stop when you have enough evidence").
 - **Layer 2 (tools)**: `brains/default.yaml` core_tools ∪ agent `.md` tools ∪ signal_blocker. Tool descriptions enriched to 3-4 sentences each (when to use, when NOT to use, what it does NOT return).
-- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. PR review agents get `code_review_pr` skill. Business flow agents get 4-step investigation skill (identify targets → domain models → service code → separate mandatory vs conditional). Includes convergence guidance ("stop at iteration 6-7 if you have strong evidence").
+- **Layer 3 (skills)**: Workspace layout, project docs, investigation patterns, risk signals, budget — shared across agents. The PR Brain v2 coordinator gets the `pr_brain_coordinator` skill (severity rubric + 2-question framework lives there; the legacy `code_review_pr` entry is unused by the live dispatch). Business flow agents get 4-step investigation skill (identify targets → domain models → service code → separate mandatory vs conditional). Includes convergence guidance ("stop at iteration 6-7 if you have strong evidence").
 - **Layer 4 (user message)**: The query from Brain + optional code_context — no role injection
 
 **Context management:** Sub-agents clear old tool results after 3 turns to prevent context rot. Only the most recent 4 turn-pairs keep full tool output; older results are replaced with metadata-driven summaries (e.g., `grep 'auth' in src/: 12 matches`) via `ToolMetadata.summary_template` — falls back to first-line truncation if no template is available.

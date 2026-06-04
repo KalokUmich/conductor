@@ -133,9 +133,13 @@ greptile.com/  ┐
 ### Setup (one-time, ~5 min)
 
 ```bash
-cd backend  # so PYTHONPATH picks up app.*
-python ../eval/code_review/setup_greptile_dataset.py
+make greptile-setup     # from repo root — clone forks + materialize bases
+# (equivalently: cd backend && python ../eval/code_review/setup_greptile_dataset.py)
 ```
+
+> Base trees got corrupted or an eval case ERRORs on `git apply`? Run
+> **`make greptile-repair`** (re-extracts every base `--force` from the local
+> clones; `make greptile-repair TARGET=keycloak` for one).
 
 This is the **default mode** (Layer C only — see §5 for the layer model). It:
 
@@ -528,7 +532,7 @@ strict isolation".
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `git apply ... patch does not apply` | Base snapshot was extracted from the wrong SHA | `python setup_greptile_dataset.py --force` to re-extract |
+| `git apply ... patch does not apply` | Base snapshot was extracted from the wrong SHA (or a hardlink-inode corruption mutated it) | `make greptile-repair` (or `make greptile-repair TARGET=<t>`) to re-extract `--force` |
 | `git archive failed for ref=...` | Clone is stale (Greptile updated branches) | `rm -rf eval/code_review/repos/<target>-greptile && python setup_greptile_dataset.py` |
 | `FATAL: GITHUB_TOKEN required` | Used `--refresh-scrape` without a token | Set `GITHUB_TOKEN=ghp_...` (fine-grained PAT, public_repo:read) |
 | `Bedrock converse FAILED ... ExpiredTokenException` | AWS STS token expired mid-eval | Refresh credentials in `config/conductor.secrets.local.yaml` and re-run |

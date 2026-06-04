@@ -108,6 +108,12 @@ class BrainExecutorConfig:
             leaf workers (BudgetEconomics-computed). ``None`` → the brain's
             static ``_SDK_LEAF_MAX_USD`` default. A loose safety ceiling, not a
             target — it only stops a runaway leaf, never a normal one.
+        coordinator_max_usd: Optional GENEROUS USD ceiling for in-house orchestrator
+            sub-agents (the whole-task ``total_cap_usd``, NOT a per-leaf amount).
+            Becomes the dispatched coordinator's ``BudgetConfig.max_usd`` — which IS
+            hard-enforced (force-conclude at 90%), so it must be loose. ``None`` →
+            the brain's ``_DEFAULT_BRAIN_TOTAL_USD`` fallback; max_iterations is the
+            always-present bound.
     """
 
     workspace_path: str = ""
@@ -116,3 +122,4 @@ class BrainExecutorConfig:
     max_concurrent: int = 3
     sub_agent_timeout: float = 300.0
     leaf_max_usd: Optional[float] = None
+    coordinator_max_usd: Optional[float] = None

@@ -7,8 +7,14 @@ For Brain-dispatched sub-agents (primary path):
           plus an optional ``INVESTIGATION_SKILLS`` entry (e.g. ``code_review_pr``)
   Layer 4: User message — query only, no role injection
 
-PR review agents rely on the ``code_review_pr`` skill as their sole PR-review
-guidance; the previous ``CODE_REVIEW_STRATEGY`` constant has been removed.
+PR review (v2 PR Brain) is coordinator-driven: the strong-tier coordinator grades
+severity itself against the rubric in ``config/skills/pr_brain_coordinator.md``
+(the 2-question provability framework + worked classification examples), while
+role-template workers (``config/agent_factory/*.md``) emit only ``severity_hint``.
+The ``code_review_pr`` entry below is the legacy single-agent rubric (its richest
+classification examples now live in the coordinator skill); it is retained as a
+reference / for any future leaf-injection path and is NOT loaded by the live v2
+dispatch. The previous ``CODE_REVIEW_STRATEGY`` constant has been removed.
 """
 
 from __future__ import annotations
@@ -238,10 +244,7 @@ def _build_budget_section(max_iterations: int) -> str:
     phrasing that matches the size of the budget.
     """
     if max_iterations <= 1:
-        return (
-            "## Budget\n"
-            "You have 1 iteration — produce your final answer in a single pass."
-        )
+        return "## Budget\n" "You have 1 iteration — produce your final answer in a single pass."
     if max_iterations <= 5:
         return (
             "## Budget\n"
@@ -2100,10 +2103,15 @@ web_extract
     # dispatch a PR-only worker on a free-form query.
     _HIDDEN_TEMPLATES = {
         # Old v1 judges (kept for back-compat in registry but not user-callable)
-        "arbitrator", "review_synthesizer", "explore_synthesizer", "pr_arbitrator",
+        "arbitrator",
+        "review_synthesizer",
+        "explore_synthesizer",
+        "pr_arbitrator",
         # PR Brain v2 internal workers — only PRBrainOrchestrator dispatches these
-        "pr_existence_check", "pr_subagent_checks",
-        "pr_verification_single", "pr_verification_batch",
+        "pr_existence_check",
+        "pr_subagent_checks",
+        "pr_verification_single",
+        "pr_verification_batch",
     }
     template_lines = []
     for name, config in sorted(agent_registry.items()):
