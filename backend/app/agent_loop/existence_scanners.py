@@ -2393,13 +2393,60 @@ def _extract_batch_verdicts(raw: str, expected_count: int) -> List[str]:
     return ["unclear"] * expected_count
 
 
+def _balanced_json_spans(raw: str) -> list:
+    """Return every top-level balanced ``{...}`` substring of ``raw``, in
+    source order. String-aware: braces inside JSON string literals (and
+    escaped quotes) are ignored, so a value containing ``}`` does not
+    prematurely close the span.
+
+    Mirrors ``brain._balanced_json_spans`` — duplicated here to keep this
+    module dependency-free (no import of the orchestrator layer).
+    """
+    spans: list = []
+    depth = 0
+    start = -1
+    in_str = False
+    esc = False
+    for i, ch in enumerate(raw):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                spans.append(raw[start : i + 1])
+                start = -1
+    return spans
+
+
 def _parse_existence_json(raw: str) -> Optional[Dict[str, Any]]:
     """Best-effort extraction of the existence-worker's JSON output.
 
     Accepts:
-      * Fenced ```json {...} ``` blocks (prefer the LAST — models often
+      * Fenced ```json {...} ``` blocks (tried LAST-first — models often
         restate near the end)
-      * Bare JSON object with "symbols" key anywhere in the text
+      * Any balanced, string-aware top-level ``{...}`` span carrying a
+        ``symbols`` key (robust to JSON embedded in prose AND to nested
+        objects that a non-greedy fence regex would truncate)
+
+    The previous implementation matched fences with a NON-GREEDY
+    ``\\{[\\s\\S]*?\\}`` regex, which truncates a nested envelope like
+    ``{"symbols":[{"name":"x"}]}`` at the first ``}`` and then fails to
+    parse — the dominant cause of the existence worker's ``parse_failed``.
+    The balanced-span scan replaces both the buggy regex fallback and the
+    non-string-aware brace counter. (Same hardening as Fix C's
+    ``brain._parse_subagent_json``.)
 
     Returns the dict on success, ``None`` on failure.
     """
@@ -2409,26 +2456,15 @@ def _parse_existence_json(raw: str) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
 
+    candidates: list = []
+    # 1. Fenced ```json blocks — last first.
     fenced = _re.findall(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", raw)
-    candidates: list = list(reversed(fenced))
-    if not candidates:
-        # Fallback: find a top-level {..} with "symbols" key
-        for start in range(len(raw) - 1, -1, -1):
-            if raw[start] != "{":
-                continue
-            depth = 0
-            for end in range(start, len(raw)):
-                if raw[end] == "{":
-                    depth += 1
-                elif raw[end] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        snippet = raw[start : end + 1]
-                        if '"symbols"' in snippet:
-                            candidates.append(snippet)
-                        break
-            if candidates:
-                break
+    candidates.extend(reversed(fenced))
+    # 2. Every balanced top-level {...} span — last first. Robust to prose-
+    #    embedded JSON and to a non-greedy fence capture truncated on a
+    #    nested brace.
+    candidates.extend(reversed(_balanced_json_spans(raw)))
+
     for candidate in candidates:
         try:
             parsed = _json.loads(candidate)

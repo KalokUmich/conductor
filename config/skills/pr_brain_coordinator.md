@@ -555,6 +555,20 @@ RIGHT → no finding, or at most a one-line `praise`: "Correctly replaces the
 A review with 2 sharp findings reads as more credible than a review with
 2 sharp findings padded by 3 tangential extras. When in doubt, demote.
 
+**But zero findings on a substantial or mandatory-triggered PR is a red flag
+for under-commitment — not a clean bill of health.** "Demote when in doubt"
+trims *noise*; it must never collapse a real review to empty. If your synthesis
+is about to emit zero findings on a PR that (a) added many lines or (b) tripped
+a mandatory auth / security / migration requirement, stop and re-read your
+sub-agents' `findings` and `unexpected_observations` first — a worker that hit
+max-turns or returned unparseable output is *missing signal*, not *evidence of
+safety*. Then either surface the strongest real finding you can ground on a `+`
+or unchanged line, or — if you have genuinely verified there is no defect — say
+so explicitly in the synthesis prose ("Reviewed X, Y, Z; no defect because …")
+so a reader can distinguish a deliberate clean pass from a silent miss. An empty
+findings array with no stated justification is the one synthesis output you may
+not produce on a substantial/triggered PR.
+
 Generate the markdown review.
 
 ## The cardinal rule — never delegate understanding

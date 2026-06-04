@@ -169,6 +169,28 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Coordinator 0-findings stability knobs (module constants — promotable to
+# pr_review.yaml later). A 0-finding synthesis on a substantial PR is a known
+# high-variance UNDER-COMMITMENT failure mode (keycloak-005 emitted 0 findings
+# one run, 11 the next). See config/skills/pr_brain_coordinator.md "zero
+# findings ... red flag" for the prompt-side counterpart.
+# ---------------------------------------------------------------------------
+# Empty-result safety net: on a 0-finding synthesis for a substantial PR, do
+# ONE focused strong-model re-examination via fork_call. Conservative — the
+# prompt explicitly permits "no defect" (never manufactures one) and we only
+# adopt a finding grounded on file+line at confidence >= the bar.
+_EMPTY_RESULT_RETRY = True
+_EMPTY_RESULT_RETRY_MIN_CONF = 0.75
+# A 0-finding synthesis is "substantial" (and thus worth a retry / loud warning)
+# at or above this many added lines across the diff.
+_EMPTY_RESULT_SUBSTANTIAL_ADDED = 80
+# Self-consistency: run the empty-result re-examination twice and union the
+# grounded findings (variance ↓ at ~2x retry cost). OFF by default — opt-in
+# pending review, since it only matters on the already-rare retry path.
+_SELF_CONSISTENCY = False
+
+
+# ---------------------------------------------------------------------------
 # Tunable parameters are loaded from config/brains/pr_review.yaml via
 # PRBrainConfig.  Only true constants (regex, enum maps) stay here.
 # ---------------------------------------------------------------------------
@@ -1190,6 +1212,18 @@ class PRBrainOrchestrator:
                     "[PR Brain v2] Precision filter failed (non-fatal): %s",
                     exc,
                 )
+
+        # Empty-result safety net — MUST run here, outside the precision-filter
+        # guard above, so it fires on the PRIMARY 0-findings failure mode (a
+        # coordinator that emits zero findings directly, where the filter was
+        # skipped) as well as the all-demoted case. No-op when findings exist.
+        try:
+            review_output = await self._maybe_empty_result_retry(review_output, pr_context, file_diffs)
+        except Exception as exc:
+            logger.warning(
+                "[PR Brain v2] Empty-result retry failed (non-fatal): %s",
+                exc,
+            )
 
         yield WorkflowEvent(
             "v2_coordinator_complete",
@@ -2267,24 +2301,13 @@ class PRBrainOrchestrator:
             final_findings, review_output.get("merge_recommendation", "comment")
         )
 
-        # Stability signal (harness): a 0-finding review on a SUBSTANTIAL PR is a
-        # known high-variance failure mode — the coordinator investigates the right
-        # areas but UNDER-COMMITS in synthesis (keycloak-005 emitted 0 findings one
-        # run, 11 the next). Surface it loudly so it is never silently mistaken for
-        # "clean PR". Long-term fix (empty-result retry / self-consistency / leaf
-        # robustness) is planned but not yet auto-applied — see ROADMAP / memory.
-        if not final_findings:
-            try:
-                _added_total = sum(len(s) for s in _added_lines_by_file(file_diffs).values())
-            except Exception:
-                _added_total = 0
-            if _added_total >= 80:
-                logger.warning(
-                    "[PR Brain v2] ZERO findings on a substantial PR (%d added lines across %d files) "
-                    "— likely synthesis under-commitment, NOT necessarily a clean PR. Re-review advised.",
-                    _added_total,
-                    len(file_diffs or {}),
-                )
+        # NOTE: the 0-findings empty-result safety net is NOT triggered here.
+        # This method only runs when the coordinator emitted >=1 finding (the
+        # caller guards on ``review_output["findings"]``), so an in-filter trigger
+        # would miss the PRIMARY failure mode — a coordinator that emits ZERO
+        # findings directly (keycloak-005). The retry is invoked at the call site
+        # via ``_maybe_empty_result_retry`` AFTER this filter, which sees the
+        # genuinely-empty case AND the all-demoted case uniformly.
 
         return {
             **review_output,
@@ -2340,6 +2363,135 @@ class PRBrainOrchestrator:
             ticket_context=self._ticket_context,
         )
         return f"{skill_text}\n\n{ctx_prefix}".strip()
+
+    async def _maybe_empty_result_retry(
+        self,
+        review_output: Dict[str, Any],
+        pr_context: PRContext,
+        file_diffs: Dict[str, str],
+    ) -> Dict[str, Any]:
+        """Run the 0-findings safety net and merge recoveries into ``review_output``.
+
+        Called at the coordinator CALL SITE (after the precision filter), so it
+        fires uniformly for BOTH the primary failure mode — a coordinator that
+        emits zero findings directly, where the precision filter is skipped — AND
+        the secondary all-demoted case. No-op when findings are already present or
+        the PR is below the substantial-size threshold.
+        """
+        if review_output.get("findings"):
+            return review_output
+        try:
+            added_total = sum(len(s) for s in _added_lines_by_file(file_diffs).values())
+        except Exception:
+            added_total = 0
+        if added_total < _EMPTY_RESULT_SUBSTANTIAL_ADDED:
+            return review_output
+
+        logger.warning(
+            "[PR Brain v2] ZERO findings on a substantial PR (%d added lines across "
+            "%d files) — likely synthesis under-commitment, NOT necessarily a clean "
+            "PR. Re-examining.",
+            added_total,
+            len(file_diffs or {}),
+        )
+        recovered = await self._empty_result_retry(pr_context, file_diffs, added_lines=added_total)
+        if recovered:
+            review_output["findings"] = recovered
+            review_output["merge_recommendation"] = _recompute_merge_recommendation(
+                recovered, review_output.get("merge_recommendation", "comment")
+            )
+            review_output["synthesis"] = (
+                review_output.get("synthesis", "")
+                + "\n\n_(Empty-result safety net: a focused re-examination recovered "
+                + f"{len(recovered)} grounded finding(s) the first synthesis pass missed.)_"
+            )
+        return review_output
+
+    async def _empty_result_retry(
+        self,
+        pr_context: PRContext,
+        file_diffs: Dict[str, str],
+        *,
+        added_lines: int,
+    ) -> List[Dict[str, Any]]:
+        """Safety net for the 0-findings under-commitment failure mode.
+
+        When a review ends with ZERO findings on a *substantial* PR, do ONE
+        focused strong-model re-examination (``fork_call`` over the cache-stable
+        PR prefix). Conservative by construction: the prompt EXPLICITLY permits
+        "no defect" so it never manufactures a finding under pressure, and we
+        adopt only findings grounded on file+line at confidence >=
+        ``_EMPTY_RESULT_RETRY_MIN_CONF``. With ``_SELF_CONSISTENCY`` the pass
+        runs twice and grounded findings are unioned (variance ↓ at ~2x cost).
+
+        Recovered findings are normalized through the SAME
+        ``parse_findings`` → ``_finding_to_dict`` pipeline as the regular path
+        (severity/category enums + evidence shape match what the ADO consumers
+        expect), tagged ``agent="empty_result_retry"``. They bypass only the
+        precision/scope verifier passes (already confidence-gated + grounded).
+        Returns a (possibly empty) list of normalized finding dicts.
+        """
+        if not _EMPTY_RESULT_RETRY:
+            return []
+        from app.agent_loop.forked import fork_call
+        from app.code_review.models import FindingCategory
+        from app.code_review.shared import parse_findings
+
+        prefix = self._build_verifier_system_prefix(pr_context, file_diffs)
+        user_msg = (
+            "A full review of this PR just produced ZERO findings, but the PR "
+            f"is substantial ({added_lines} added lines). Zero findings on a "
+            "substantial PR is more often synthesis under-commitment than a "
+            "genuinely clean PR.\n\n"
+            "Re-examine the diff ONE more time for the single most likely REAL, "
+            "material defect introduced on a `+` or unchanged line. It is "
+            "completely acceptable to conclude there is no defect — do NOT "
+            "invent one; only report a finding you can ground on a specific "
+            "file:line with concrete evidence.\n\n"
+            "Output a bare JSON array in the standard finding format: "
+            '[{"title","severity","confidence","file","start_line","end_line",'
+            '"evidence","risk","suggested_fix"}] — or exactly [] if the PR is '
+            "genuinely clean. severity must be one of critical/high/medium/low/nit."
+        )
+
+        async def _one_pass(label: str) -> list:
+            try:
+                raw = await fork_call(
+                    provider=self._provider,
+                    system_prompt=prefix,
+                    user_message=user_msg,
+                    max_tokens=1200,
+                    label=label,
+                )
+            except Exception as exc:
+                logger.warning("[PR Brain v2] empty-result retry call failed: %s", exc)
+                return []
+            # Normalize through the canonical parser (severity/category enums +
+            # evidence → list) exactly like the regular worker path, so recovered
+            # findings serialize correctly for the ADO consumers.
+            findings = parse_findings(raw, "empty_result_retry", FindingCategory.CORRECTNESS)
+            return [
+                f for f in findings if f.file and f.start_line and (f.confidence or 0.0) >= _EMPTY_RESULT_RETRY_MIN_CONF
+            ]
+
+        recovered = await _one_pass("empty_result_retry")
+        if _SELF_CONSISTENCY:
+            second = await _one_pass("empty_result_retry_2")
+            seen = {(f.file, f.start_line) for f in recovered}
+            for f in second:
+                key = (f.file, f.start_line)
+                if key not in seen:
+                    seen.add(key)
+                    recovered.append(f)
+
+        if recovered:
+            logger.warning(
+                "[PR Brain v2] empty-result retry recovered %d grounded finding(s) "
+                "after a 0-finding review on a substantial PR (%d added lines)",
+                len(recovered),
+                added_lines,
+            )
+        return [_finding_to_dict(f) for f in recovered]
 
     async def _verify_single(
         self,
