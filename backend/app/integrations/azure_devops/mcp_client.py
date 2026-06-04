@@ -33,6 +33,9 @@ class AzureDevOpsClient:
         self.org_url = org_url.rstrip("/")
         self._auth = httpx.BasicAuth("", pat)
         self._api_version = "7.1"
+        # PAT owner's identity GUID — resolved lazily for vote() and cached
+        # (it never changes for a given PAT).
+        self._authenticated_user_id: Optional[str] = None
 
     def _url(self, project: str, path: str) -> str:
         return f"{self.org_url}/{project}/_apis/{path}"
@@ -208,23 +211,44 @@ class AzureDevOpsClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def _get_authenticated_user_id(self) -> Optional[str]:
+        """Resolve the PAT owner's identity GUID via the connectionData endpoint.
+
+        A vote can only be cast for the *authenticated* identity: the reviewer
+        GUID in the vote URL must be the PAT owner's own id. Using any other
+        reviewer's GUID makes ADO return ``400 Bad Request``. Cached after the
+        first lookup since it never changes for a given PAT.
+        """
+        if self._authenticated_user_id is not None:
+            return self._authenticated_user_id
+        url = f"{self.org_url}/_apis/connectionData"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, auth=self._auth)
+                resp.raise_for_status()
+                data = resp.json()
+            uid = (data.get("authenticatedUser") or {}).get("id")
+            self._authenticated_user_id = uid
+            return uid
+        except Exception as exc:  # network / auth / shape — never crash the review
+            logger.warning("Could not resolve authenticated user id for vote: %s", exc)
+            return None
+
     async def vote(self, project: str, repo: str, pr_id: int, vote: int) -> Dict[str, Any]:
-        """Set a vote on a PR.
+        """Set a vote on a PR as the authenticated PAT identity.
 
         Vote values: 10=approve, 5=approve_with_suggestions, 0=none, -5=wait, -10=reject
+
+        ADO only allows setting a vote for *yourself*: the reviewer GUID in the
+        URL must be the PAT owner's identity (the PUT also self-adds the bot as
+        a reviewer). The previous implementation grabbed the PR's first
+        reviewer, which is almost never the PAT owner — hence the 400.
         """
-        # Need reviewer ID — get current user from PR
-        pr = await self.get_pull_request(project, repo, pr_id)
-        reviewer_id = None
-        for reviewer in pr.get("reviewers", []):
-            # The PAT owner is typically the first non-required reviewer
-            # For now, we'll need the user to configure their reviewer ID
-            reviewer_id = reviewer.get("id")
-            break
+        reviewer_id = await self._get_authenticated_user_id()
 
         if not reviewer_id:
-            logger.warning("No reviewer ID found on PR %d — skipping vote", pr_id)
-            return {"status": "skipped", "reason": "no_reviewer_id"}
+            logger.warning("No authenticated reviewer id for PR %d — skipping vote", pr_id)
+            return {"status": "skipped", "reason": "no_authenticated_user_id"}
 
         url = self._url(
             project,
