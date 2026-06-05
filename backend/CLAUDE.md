@@ -264,6 +264,22 @@ pipeline was removed in favour of the v2 coordinator-worker design (agent
 as tool). Shared post-processing helpers live in ``code_review/shared.py``
 (parse_findings, evidence_gate, dedup, ranking).
 
+**Adversarial finding recheck** (Phase 7.8.7, `integrations/azure_devops/adversarial_recheck.py`):
+an optional SECOND pass over a PR's already-posted findings — distinct from `/recheck`
+(which re-reviews the diff after the author pushes fixes). `POST /api/integrations/azure-devops/adversarial-recheck`
+reconstructs the vote-driving (critical/high) findings from the posted threads (reusing
+`recheck.parse_review_threads`), then spawns a tool-using **Opus** judge (`SdkWorkerRunner`,
+`allow_builtins=False` so it routes all reads through the worktree-pointed MCP tools — see
+`reference_sdk_worker_allow_builtins`) with the adversarial prompt `config/agents/pr_adversarial_recheck.md`.
+The judge must grep the actual code (storage/write/definition sites, not just the diff) and may
+only **refute** a finding with concrete code-grounded evidence; refuted-with-evidence threads are
+resolved (closed + an evidence note) and the **vote is never changed**. Engine-agnostic core
+(`make_sdk_judge` for the endpoint / `make_inhouse_judge` for the host demo
+`backend/scripts/adversarial_recheck_demo.py`). Guardrail: absence-of-code is not evidence,
+errored/timed-out runs fail safe to `holds`, top-N cost cap, task_id path sanitization, FactStore
+cleanup. Verdicts logged to `~/.conductor/adversarial_recheck/<task>.jsonl` for future first-pass
+tuning. Born from the MD5-vs-bcrypt false-positive on PR 14471.
+
 ## Model A Git Workspace
 
 ```

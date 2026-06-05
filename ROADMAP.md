@@ -834,7 +834,9 @@ After investigate → apply completes, automatically create a git branch and pul
 - Phase 9 tool enhancements — ✅ COMPLETE
 - Token local persistence — ✅ COMPLETE
 
-### 7.8 Azure DevOps Auto Review (PLANNED — HIGH PRIORITY)
+### 7.8 Azure DevOps Auto Review (SHIPPED — live `POST /api/integrations/azure-devops/review` + `/recheck` + `/adversarial-recheck`)
+
+> **Status (2026-06-05):** shipped and in use. Size gates, AI summary, Atlassian enrichment (7.8.6), PR splitter (7.8.5), and the **adversarial finding recheck (7.8.7)** — a post-review Opus/SDK judge that refutes false-positive findings with code-grounded evidence and resolves their threads without ever changing the vote — are all live. See root `CLAUDE.md` "Recently shipped" + `docs/superpowers/specs/2026-06-05-adversarial-finding-recheck-design.md`. The checkboxes below are the original plan, partially superseded by the v2 coordinator-worker design.
 
 Expose PR Review pipeline as an Azure DevOps-callable service. When a PR is created, Azure DevOps pipeline calls Conductor backend; review is posted as PR thread comments with inline code quotes positioned at file:line.
 
