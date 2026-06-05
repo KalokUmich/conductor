@@ -57,6 +57,43 @@ class AzureDevOpsRecheckResponse(BaseModel):
     error: Optional[str] = None
 
 
+class AzureDevOpsAdversarialRecheckRequest(BaseModel):
+    """Request to adversarially recheck the vote-driving findings already posted on a PR."""
+
+    project: str = Field(..., description="Project name")
+    repo: str = Field(..., description="Repository name or ID")
+    pr_id: int = Field(..., description="Pull Request ID")
+    source_branch: str = Field("", description="Source branch (optional, read from PR if empty)")
+    apply: bool = Field(
+        default=False,
+        description=(
+            "If true: RESOLVE (close + post an evidence note on) threads whose "
+            "finding the Opus judge refutes with code-grounded evidence. The vote "
+            "is NEVER changed. If false: dry-run — judge and report only."
+        ),
+    )
+    judge_resolved: bool = Field(
+        default=False,
+        description="If true, also re-judge already-resolved threads (demo/audit). Never re-resolves them.",
+    )
+    concurrency: int = Field(default=3, ge=1, le=6, description="Max concurrent Opus judges")
+
+
+class AzureDevOpsAdversarialRecheckResponse(BaseModel):
+    """Response after an adversarial finding recheck."""
+
+    status: str = "ok"
+    pr_id: int = 0
+    findings_judged: int = 0  # vote-driving findings sent to the judge
+    refuted: int = 0  # judged false-positive WITH evidence
+    held: int = 0  # findings that stand
+    threads_resolved: int = 0  # threads actually closed (apply mode)
+    applied: bool = False
+    report: str = ""  # human-readable before/after
+    details: list = Field(default_factory=list)  # per-finding verdict records
+    error: Optional[str] = None
+
+
 class ThreadComment(BaseModel):
     """A single comment in a PR thread (for formatting)."""
 

@@ -19,6 +19,8 @@ from app.code_review.shared import is_generated_path
 from .formatter import format_summary_markdown, recommendation_to_vote, split_finding_into_comments
 from .mcp_client import AzureDevOpsClient
 from .models import (
+    AzureDevOpsAdversarialRecheckRequest,
+    AzureDevOpsAdversarialRecheckResponse,
     AzureDevOpsRecheckResponse,
     AzureDevOpsReviewRequest,
     AzureDevOpsReviewResponse,
@@ -802,9 +804,7 @@ def _count_changed_files(worktree_path: str, diff_spec: str) -> int:
             text=True,
             timeout=15,
         )
-        return sum(
-            1 for line in result.stdout.splitlines() if line.strip() and not is_generated_path(line.strip())
-        )
+        return sum(1 for line in result.stdout.splitlines() if line.strip() and not is_generated_path(line.strip()))
     except Exception:
         return 0
 
@@ -909,6 +909,121 @@ async def _generate_and_post_summary(
         logger.info("[AzureDevOps] PR #%d description updated with AI summary", pr_id)
     except Exception as exc:
         logger.warning("[AzureDevOps] Failed to update PR description: %s", exc)
+
+
+@router.post("/adversarial-recheck", response_model=AzureDevOpsAdversarialRecheckResponse)
+async def adversarial_recheck(
+    req: AzureDevOpsAdversarialRecheckRequest,
+    request: Request,
+) -> AzureDevOpsAdversarialRecheckResponse:
+    """Adversarial second pass over the vote-driving findings ALREADY posted on a PR.
+
+    For each critical/high finding, a tool-using **Opus** judge tries to REFUTE it
+    by grepping the actual code (storage/write/definition sites — not just the diff).
+    Findings refuted WITH code-grounded evidence get their thread resolved (apply
+    mode); everything else is kept. The vote is never changed — unverified findings
+    may still be real, so approval stays a human call.
+
+    This catches the overconfident false-positive class (e.g. PR 14471's
+    "bcrypt"-critical that was actually MD5 storage in an untouched file).
+    """
+    from .adversarial_recheck import (
+        extract_findings,
+        format_report,
+        make_sdk_judge,
+        run_adversarial_recheck,
+    )
+    from .recheck import parse_review_threads
+    from .workspace import cleanup_pr_worktree, create_pr_worktree, fetch_latest
+
+    client = _get_client(request)
+    try:
+        logger.info(
+            "[AzureDevOps] Adversarial recheck for PR #%d in %s/%s (apply=%s)",
+            req.pr_id,
+            req.project,
+            req.repo,
+            req.apply,
+        )
+        pr_data = await client.get_pull_request(req.project, req.repo, req.pr_id)
+        source_branch = req.source_branch or pr_data.get("sourceRefName", "").replace("refs/heads/", "")
+        target_branch = pr_data.get("targetRefName", "").replace("refs/heads/", "")
+        diff_spec = f"origin/{target_branch}...origin/{source_branch}"
+
+        main_workspace = getattr(request.app.state, "azure_devops_workspace", None)
+        if not main_workspace:
+            raise HTTPException(status_code=503, detail="Azure DevOps workspace not initialized.")
+
+        raw_threads = await client.list_threads(req.project, req.repo, req.pr_id)
+        priors = parse_review_threads(raw_threads)
+        findings = extract_findings(priors, include_resolved=req.judge_resolved)
+        logger.info(
+            "[AzureDevOps] adversarial recheck: %d vote-driving finding(s) of %d prior comment(s)",
+            len(findings),
+            len(priors),
+        )
+        if not findings:
+            return AzureDevOpsAdversarialRecheckResponse(
+                status="ok",
+                pr_id=req.pr_id,
+                findings_judged=0,
+                report="No vote-driving (critical/high) findings to recheck.",
+            )
+
+        await fetch_latest(main_workspace)
+        worktree_path = await create_pr_worktree(main_workspace, source_branch, req.pr_id)
+        if not worktree_path:
+            raise HTTPException(status_code=500, detail=f"Failed to create worktree for PR #{req.pr_id}")
+
+        try:
+            task_id = f"ado-{req.project}-pr-{req.pr_id}-adv"
+            # Single concurrency authority: run_adversarial_recheck's own semaphore
+            # gates how many judges run at once; the SDK judge uses its default
+            # internal cap as a secondary safety bound (review #19).
+            judge = make_sdk_judge(
+                worktree=worktree_path,
+                diff_spec=diff_spec,
+                task_id=task_id,
+            )
+            report = await run_adversarial_recheck(
+                judge=judge,
+                findings=findings,
+                task_id=task_id,
+                client=client,
+                project=req.project,
+                repo=req.repo,
+                pr_id=req.pr_id,
+                apply=req.apply,
+                concurrency=req.concurrency,
+            )
+        finally:
+            await cleanup_pr_worktree(main_workspace, worktree_path)
+
+        threads_resolved = sum(1 for r in report.get("resolved", []) if r.get("applied"))
+        logger.info(
+            "[AzureDevOps] adversarial recheck done: %d refuted, %d held, %d resolved",
+            report.get("resolved_count", 0),
+            report.get("kept_count", 0),
+            threads_resolved,
+        )
+        return AzureDevOpsAdversarialRecheckResponse(
+            status="ok",
+            pr_id=req.pr_id,
+            findings_judged=report.get("findings", 0),
+            refuted=report.get("resolved_count", 0),
+            held=report.get("kept_count", 0),
+            threads_resolved=threads_resolved,
+            applied=req.apply,
+            report=format_report(report),
+            details=report.get("resolved", []) + report.get("kept", []),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("[AzureDevOps] adversarial recheck failed for PR #%d", req.pr_id)
+        return AzureDevOpsAdversarialRecheckResponse(
+            status="error", pr_id=req.pr_id, error=f"{type(exc).__name__}: {exc}"
+        )
 
 
 @router.get("/status")
