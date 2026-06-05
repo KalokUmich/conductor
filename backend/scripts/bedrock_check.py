@@ -20,12 +20,12 @@ import time
 # package root is importable regardless of cwd.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.config import load_config
 from app.agent_loop.sdk_worker import bedrock_env
+from app.config import load_config
 
 try:
     from app.agent_loop.sdk_worker import _model_id_for_tier
-except Exception:  # noqa: BLE001 — keep the check usable if the helper moves
+except Exception:
     _model_id_for_tier = None  # type: ignore[assignment]
 
 _DEFAULT_MODEL = "eu.anthropic.claude-sonnet-4-6"
@@ -37,9 +37,7 @@ def _auth_mode(env: dict) -> str:
     if env.get("AWS_BEARER_TOKEN_BEDROCK"):
         return "bearer token (long-lived Bedrock API key)"
     if env.get("AWS_ACCESS_KEY_ID"):
-        return "static keys" + (
-            " + session token (TEMPORARY — expires)" if env.get("AWS_SESSION_TOKEN") else ""
-        )
+        return "static keys" + (" + session token (TEMPORARY — expires)" if env.get("AWS_SESSION_TOKEN") else "")
     if env.get("AWS_PROFILE"):
         return f"SSO profile ({env['AWS_PROFILE']}, auto-refresh)"
     return "IAM role / default chain (deployed mode)"
@@ -61,15 +59,13 @@ def main() -> int:
     region = env.get("AWS_REGION") or "eu-west-2"
     # Truthiness, not membership — bedrock_env sets cleared keys to None to UNSET
     # them, so `"AWS_ACCESS_KEY_ID" in env` is True even in profile/role mode.
-    has_creds = any(
-        env.get(k) for k in ("AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_PROFILE")
-    )
+    has_creds = any(env.get(k) for k in ("AWS_BEARER_TOKEN_BEDROCK", "AWS_ACCESS_KEY_ID", "AWS_PROFILE"))
 
     model = os.environ.get("BEDROCK_CHECK_MODEL")
     if not model and _model_id_for_tier is not None:
         try:
             model = _model_id_for_tier("strong", cfg)
-        except Exception:  # noqa: BLE001
+        except Exception:
             model = None
     model = model or _DEFAULT_MODEL
 
@@ -78,8 +74,10 @@ def main() -> int:
     print(f"model  : {model}")
 
     if not has_creds:
-        print("\n❌ FAIL — no local credentials resolved (deployed/IAM-role mode "
-              "has none here). Set a bearer token, static keys, or a profile.")
+        print(
+            "\n❌ FAIL — no local credentials resolved (deployed/IAM-role mode "
+            "has none here). Set a bearer token, static keys, or a profile."
+        )
         return 2
 
     import boto3
@@ -97,16 +95,17 @@ def main() -> int:
             messages=[{"role": "user", "content": [{"text": "Reply with one word: PONG"}]}],
             inferenceConfig={"maxTokens": 16, "temperature": 0},
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         elapsed = time.time() - t0
         print(f"\n❌ FAIL ({elapsed:.1f}s) — {type(exc).__name__}: {exc}")
         msg = str(exc)
         if "ExpiredToken" in msg or type(exc).__name__ == "ExpiredTokenException":
-            print("   → temporary creds expired. Refresh with `aws sso login` and re-paste, "
-                  "or switch to a long-lived bearer token (CONDUCTOR_AWS_BEARER_TOKEN).")
+            print(
+                "   → temporary creds expired. Refresh with `aws sso login` and re-paste, "
+                "or switch to a long-lived bearer token (CONDUCTOR_AWS_BEARER_TOKEN)."
+            )
         elif "AccessDenied" in msg or "UnrecognizedClient" in msg:
-            print("   → creds rejected. Check the IAM principal has bedrock:InvokeModel "
-                  "on this model + region.")
+            print("   → creds rejected. Check the IAM principal has bedrock:InvokeModel " "on this model + region.")
         elif "ThrottlingException" in msg:
             print("   → throttled. Bedrock is reachable; retry shortly.")
         return 3

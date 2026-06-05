@@ -177,15 +177,13 @@ def _build_user_message(
     diff_excerpt = diff_text
     if len(diff_text) > diff_budget_chars:
         diff_excerpt = (
-            diff_text[:diff_budget_chars]
-            + f"\n\n[...diff truncated at {diff_budget_chars} chars — "
+            diff_text[:diff_budget_chars] + f"\n\n[...diff truncated at {diff_budget_chars} chars — "
             f"full diff is {len(diff_text)} chars...]"
         )
     parts.append(f"## Diff\n```diff\n{diff_excerpt}\n```")
 
     parts.append(
-        "## Task\nPropose a split plan per the system prompt. Return "
-        "only the markdown — no preamble, no JSON."
+        "## Task\nPropose a split plan per the system prompt. Return " "only the markdown — no preamble, no JSON."
     )
     return "\n\n".join(parts)
 
@@ -249,8 +247,7 @@ async def generate_pr_split_plan(
         )
     except Exception as exc:
         logger.warning(
-            "generate_pr_split_plan: LLM call failed, returning None. "
-            "error=%s",
+            "generate_pr_split_plan: LLM call failed, returning None. " "error=%s",
             exc,
         )
         return None

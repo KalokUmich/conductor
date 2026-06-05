@@ -42,12 +42,14 @@ def store(tmp_path, monkeypatch):
 
 @pytest.fixture
 def inner():
-    return CountingInnerExecutor({
-        "grep": [{"file": "x.py", "line": 10, "text": "match"}],
-        "read_file": "line1\nline2\nline3\nline4\nline5",
-        "find_symbol": [{"name": "Foo", "file": "x.py", "line": 1}],
-        "file_outline": {"classes": ["Foo"], "functions": ["bar"]},
-    })
+    return CountingInnerExecutor(
+        {
+            "grep": [{"file": "x.py", "line": 10, "text": "match"}],
+            "read_file": "line1\nline2\nline3\nline4\nline5",
+            "find_symbol": [{"name": "Foo", "file": "x.py", "line": 1}],
+            "file_outline": {"classes": ["Foo"], "functions": ["bar"]},
+        }
+    )
 
 
 class TestCacheHitMiss:
@@ -61,8 +63,7 @@ class TestCacheHitMiss:
         assert r1.success and r2.success
         # Inner was called exactly once — second time was served from cache
         assert len(inner.call_log) == 1
-        assert exec_.stats == {"hits": 1, "misses": 1, "range_hits": 0,
-                               "negative_hits": 0, "skipped": 0}
+        assert exec_.stats == {"hits": 1, "misses": 1, "range_hits": 0, "negative_hits": 0, "skipped": 0}
         # Cached data byte-identical to fresh
         assert r1.data == r2.data
 
@@ -77,6 +78,7 @@ class TestCacheHitMiss:
     async def test_failed_result_not_cached(self, store):
         """Errors should NOT be stored — a transient failure shouldn't
         poison future calls."""
+
         class FailingInner(CountingInnerExecutor):
             async def execute(self, tool_name, params):
                 self.call_log.append((tool_name, params))
@@ -131,11 +133,14 @@ class TestRangeIntersection:
         inner = CountingInnerExecutor({"read_file": "SHOULD NOT SEE THIS"})
         exec_ = CachedToolExecutor(inner, store)
 
-        result = await exec_.execute("read_file", {
-            "path": real_path,
-            "start_line": 101,
-            "end_line": 130,
-        })
+        result = await exec_.execute(
+            "read_file",
+            {
+                "path": real_path,
+                "start_line": 101,
+                "end_line": 130,
+            },
+        )
 
         assert result.success
         assert len(inner.call_log) == 0  # no fall-through to inner
@@ -154,15 +159,21 @@ class TestRangeIntersection:
             tool="read_file",
             content="…",
             path=real_path,
-            range_start=10, range_end=50,
+            range_start=10,
+            range_end=50,
         )
         inner = CountingInnerExecutor({"read_file": "fresh content"})
         exec_ = CachedToolExecutor(inner, store)
 
         # Request 40-80 — partial overlap, not full coverage
-        result = await exec_.execute("read_file", {
-            "path": real_path, "start_line": 40, "end_line": 80,
-        })
+        result = await exec_.execute(
+            "read_file",
+            {
+                "path": real_path,
+                "start_line": 40,
+                "end_line": 80,
+            },
+        )
         assert result.success
         assert len(inner.call_log) == 1  # fell through
         assert result.data == "fresh content"
@@ -217,6 +228,7 @@ class TestVaultErrorIsolation:
     async def test_store_put_failure_does_not_fail_caller(self, store, inner, monkeypatch):
         """If FactStore.put raises, the caller STILL gets a clean result —
         caching is an optimisation, not a correctness dependency."""
+
         def boom(**kwargs):
             raise RuntimeError("sqlite locked up")
 

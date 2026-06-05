@@ -114,9 +114,7 @@ async def ensure_workspace(
     # out / early EOF"); blobless clones in ~3min and PR review is unaffected —
     # it only materialises blobs for the changed files (verified end-to-end).
     logger.info("[AzureDevOps] Cloning (blobless) %s → %s", repo_url, ws_str)
-    rc, _, stderr = await _run(
-        ["git", "clone", "--filter=blob:none", auth_url, ws_str]
-    )
+    rc, _, stderr = await _run(["git", "clone", "--filter=blob:none", auth_url, ws_str])
     if rc != 0:
         logger.error("[AzureDevOps] git clone failed: %s", stderr.strip())
         return None

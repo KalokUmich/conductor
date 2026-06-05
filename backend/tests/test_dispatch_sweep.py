@@ -86,8 +86,12 @@ class TestDispatchSweepParams:
 
     def test_all_factory_dimensions_accepted(self):
         for dim in [
-            "security", "correctness", "concurrency",
-            "reliability", "performance", "test_coverage",
+            "security",
+            "correctness",
+            "concurrency",
+            "reliability",
+            "performance",
+            "test_coverage",
             "api_contract",
         ]:
             p = DispatchSweepParams(
@@ -131,6 +135,7 @@ def _make_pr_context_with_files(paths):
         FileCategory,
         PRContext,
     )
+
     files = [
         ChangedFile(
             path=p,
@@ -158,8 +163,7 @@ class TestDetectDimensionTriggers:
                 tool_name="get_dependents",
                 success=True,
                 data=[
-                    {"file_path": "src/uses/caller_a.py",
-                     "symbols": ["foo_func"]},
+                    {"file_path": "src/uses/caller_a.py", "symbols": ["foo_func"]},
                 ],
             )
 
@@ -178,12 +182,9 @@ class TestDetectDimensionTriggers:
                 tool_name="get_dependents",
                 success=True,
                 data=[
-                    {"file_path": "src/ui/handler.py",
-                     "symbols": ["issue_token"]},
-                    {"file_path": "src/cli/admin.py",
-                     "symbols": ["issue_token", "refresh_token"]},
-                    {"file_path": "src/mobile/auth.py",
-                     "symbols": ["issue_token"]},
+                    {"file_path": "src/ui/handler.py", "symbols": ["issue_token"]},
+                    {"file_path": "src/cli/admin.py", "symbols": ["issue_token", "refresh_token"]},
+                    {"file_path": "src/mobile/auth.py", "symbols": ["issue_token"]},
                 ],
             )
 
@@ -208,10 +209,8 @@ class TestDetectDimensionTriggers:
                 tool_name="get_dependents",
                 success=True,
                 data=[
-                    {"file_path": "src/a.py",
-                     "symbols": ["f1", "f2", "f3"]},
-                    {"file_path": "src/b.py",
-                     "symbols": ["f4", "f5"]},
+                    {"file_path": "src/a.py", "symbols": ["f1", "f2", "f3"]},
+                    {"file_path": "src/b.py", "symbols": ["f4", "f5"]},
                 ],
             )
 
@@ -234,8 +233,7 @@ class TestDetectDimensionTriggers:
                 tool_name="get_dependents",
                 success=True,
                 data=[
-                    {"file_path": "src/core/api.py",
-                     "symbols": ["_helper"]},
+                    {"file_path": "src/core/api.py", "symbols": ["_helper"]},
                     {"file_path": "src/a.py", "symbols": ["api_fn"]},
                     {"file_path": "src/b.py", "symbols": ["api_fn"]},
                 ],
@@ -298,10 +296,12 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_sweep({
-            "dimension": "nonsense",
-            "success_criteria": "x" * 20,
-        })
+        result = await executor._dispatch_sweep(
+            {
+                "dimension": "nonsense",
+                "success_criteria": "x" * 20,
+            }
+        )
         assert not result.success
         assert "Unknown dimension" in result.error
 
@@ -315,10 +315,12 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_sweep({
-            "dimension": "security",
-            "success_criteria": "short",
-        })
+        result = await executor._dispatch_sweep(
+            {
+                "dimension": "security",
+                "success_criteria": "short",
+            }
+        )
         assert not result.success
         assert "success_criteria" in result.error
 
@@ -332,11 +334,13 @@ class TestDispatchDimensionWorkerExecutor:
             agent_provider=MagicMock(),
             max_depth=2,
         )
-        result = await executor._dispatch_sweep({
-            "dimension": "security",
-            "success_criteria": "x" * 20,
-            "budget_tokens": 50_000,
-        })
+        result = await executor._dispatch_sweep(
+            {
+                "dimension": "security",
+                "success_criteria": "x" * 20,
+                "budget_tokens": 50_000,
+            }
+        )
         assert not result.success
         assert "budget_tokens" in result.error
 
@@ -351,10 +355,12 @@ class TestDispatchDimensionWorkerExecutor:
             max_depth=2,
         )
         executor._current_depth = 2
-        result = await executor._dispatch_sweep({
-            "dimension": "security",
-            "success_criteria": "x" * 20,
-        })
+        result = await executor._dispatch_sweep(
+            {
+                "dimension": "security",
+                "success_criteria": "x" * 20,
+            }
+        )
         assert not result.success
         assert "depth" in result.error.lower()
 
@@ -370,21 +376,23 @@ class TestDispatchDimensionWorkerExecutor:
             max_depth=2,
         )
 
-        canned_answer = json.dumps({
-            "checks": [],
-            "findings": [
-                {
-                    "title": "Caller drops the refresh token",
-                    "file": "src/mobile/auth.py",
-                    "start_line": 42,
-                    "end_line": 42,
-                    "severity": "high",  # should be forced to null below
-                    "confidence": 0.9,
-                    "evidence": ["token = TokenService.issue(...)"],
-                },
-            ],
-            "unexpected_observations": [],
-        })
+        canned_answer = json.dumps(
+            {
+                "checks": [],
+                "findings": [
+                    {
+                        "title": "Caller drops the refresh token",
+                        "file": "src/mobile/auth.py",
+                        "start_line": 42,
+                        "end_line": 42,
+                        "severity": "high",  # should be forced to null below
+                        "confidence": 0.9,
+                        "evidence": ["token = TokenService.issue(...)"],
+                    },
+                ],
+                "unexpected_observations": [],
+            }
+        )
 
         async def fake_dispatch_explore(params):
             return ToolResult(
@@ -419,14 +427,16 @@ class TestDispatchDimensionWorkerExecutor:
         )
         monkeypatch.setattr(executor, "_dispatch_explore", fake_dispatch_explore)
 
-        result = await executor._dispatch_sweep({
-            "dimension": "api_contract",
-            "direction_hint": "verify callers destructure tuple",
-            "triggering_symbols": ["TokenService.issue"],
-            "success_criteria": "Report every caller's destructure correctness",
-            "budget_tokens": 150_000,
-            "model_tier": "explorer",
-        })
+        result = await executor._dispatch_sweep(
+            {
+                "dimension": "api_contract",
+                "direction_hint": "verify callers destructure tuple",
+                "triggering_symbols": ["TokenService.issue"],
+                "success_criteria": "Report every caller's destructure correctness",
+                "budget_tokens": 150_000,
+                "model_tier": "explorer",
+            }
+        )
 
         assert result.success
         assert result.data["_dispatch_mode"] == "dimension"

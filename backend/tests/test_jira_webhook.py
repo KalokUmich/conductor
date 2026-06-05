@@ -137,6 +137,7 @@ async def test_webhook_dispatches_background_task(webhook_setup):
     assert r.json()["scheduled"] == "DEV-1234"
     # Wait briefly for the create_task to fire
     import asyncio as _asyncio
+
     await _asyncio.sleep(0.05)
     mock_run.assert_called_once()
 
@@ -208,9 +209,7 @@ def test_flatten_description_truncates():
 def test_flatten_description_handles_adf():
     adf = {
         "type": "doc",
-        "content": [
-            {"type": "paragraph", "content": [{"type": "text", "text": "hi"}]}
-        ],
+        "content": [{"type": "paragraph", "content": [{"type": "text", "text": "hi"}]}],
     }
     assert "hi" in _flatten_description(adf)
 
@@ -238,9 +237,7 @@ async def test_investigate_and_comment_dry_run():
     jira.add_comment = AsyncMock()
 
     provider = MagicMock()
-    provider.call_model = MagicMock(
-        return_value="**Triage**: bug.\n**First investigation steps**: 1. grep retry."
-    )
+    provider.call_model = MagicMock(return_value="**Triage**: bug.\n**First investigation steps**: 1. grep retry.")
 
     result = await investigate_and_comment(
         "DEV-9999",
@@ -259,9 +256,7 @@ async def test_investigate_and_comment_dry_run():
 @pytest.mark.asyncio
 async def test_investigate_and_comment_posts_when_not_dry_run():
     jira = MagicMock()
-    jira.get_issue = AsyncMock(
-        return_value={"fields": {"summary": "x", "description": "y"}}
-    )
+    jira.get_issue = AsyncMock(return_value={"fields": {"summary": "x", "description": "y"}})
     jira.add_comment = AsyncMock(return_value={"id": "987654"})
 
     provider = MagicMock()
@@ -285,9 +280,7 @@ async def test_investigate_and_comment_posts_when_not_dry_run():
 @pytest.mark.asyncio
 async def test_investigate_and_comment_handles_add_comment_failure():
     jira = MagicMock()
-    jira.get_issue = AsyncMock(
-        return_value={"fields": {"summary": "x", "description": "y"}}
-    )
+    jira.get_issue = AsyncMock(return_value={"fields": {"summary": "x", "description": "y"}})
     jira.add_comment = AsyncMock(side_effect=RuntimeError("network down"))
 
     provider = MagicMock()
@@ -307,9 +300,7 @@ async def test_investigate_and_comment_handles_add_comment_failure():
 async def test_investigate_and_comment_skips_empty_triage():
     """If the LLM returns empty/whitespace, no comment is posted."""
     jira = MagicMock()
-    jira.get_issue = AsyncMock(
-        return_value={"fields": {"summary": "x", "description": "y"}}
-    )
+    jira.get_issue = AsyncMock(return_value={"fields": {"summary": "x", "description": "y"}})
     jira.add_comment = AsyncMock()
 
     provider = MagicMock()

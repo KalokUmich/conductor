@@ -23,8 +23,7 @@ from app.code_tools.tools import invalidate_graph_cache
 @pytest.fixture()
 def workspace(tmp_path: Path) -> Path:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "auth.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "auth.py").write_text(textwrap.dedent("""\
         import jwt
 
         def authenticate(token: str) -> bool:
@@ -37,10 +36,8 @@ def workspace(tmp_path: Path) -> Path:
         def get_user(token: str) -> dict:
             payload = jwt.decode(token, "secret", algorithms=["HS256"])
             return {"user_id": payload["sub"]}
-    """)
-    )
-    (tmp_path / "app" / "router.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
         from app.auth import authenticate
 
         def login_endpoint(request):
@@ -48,8 +45,7 @@ def workspace(tmp_path: Path) -> Path:
             if authenticate(token):
                 return {"status": "ok"}
             return {"status": "unauthorized"}
-    """)
-    )
+    """))
     invalidate_graph_cache()
     return tmp_path
 
@@ -676,8 +672,6 @@ class TestConverseToAnthropic:
         assert result[2]["content"][0]["type"] == "tool_result"
 
 
-
-
 # ---------------------------------------------------------------------------
 # Workspace layout scanning + prompt tests
 # ---------------------------------------------------------------------------
@@ -806,9 +800,9 @@ class TestBuildSystemPrompt:
         how_idx = prompt.index("How to investigate")
         ask_idx = prompt.index("ask_user")
         angles_idx = prompt.index("multiple angles")
-        assert how_idx < ask_idx < angles_idx, (
-            "ask_user guidance should be between 'How to investigate' and 'multiple angles'"
-        )
+        assert (
+            how_idx < ask_idx < angles_idx
+        ), "ask_user guidance should be between 'How to investigate' and 'multiple angles'"
 
     def test_non_interactive_no_ask_user(self, tmp_path: Path):
         """Non-interactive mode has no ask_user guidance."""

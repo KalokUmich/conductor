@@ -43,8 +43,7 @@ def workspace(tmp_path: Path) -> Path:
     # Python file
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
-    (tmp_path / "app" / "main.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "main.py").write_text(textwrap.dedent("""\
         from app.service import MyService
 
         class App:
@@ -53,10 +52,8 @@ def workspace(tmp_path: Path) -> Path:
 
             def run(self):
                 return self.service.process()
-    """)
-    )
-    (tmp_path / "app" / "service.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
         from app.utils import helper
 
         class MyService:
@@ -70,22 +67,18 @@ def workspace(tmp_path: Path) -> Path:
             result = helper("input")
             standalone_function()
             return result
-    """)
-    )
-    (tmp_path / "app" / "utils.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
         def helper(data: str) -> str:
             return data.upper()
 
         def unused_helper():
             return 42
-    """)
-    )
+    """))
 
     # TypeScript file
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "index.ts").write_text(textwrap.dedent("""\
         import { greet } from './utils';
 
         function main(): void {
@@ -97,21 +90,17 @@ def workspace(tmp_path: Path) -> Path:
                 main();
             }
         }
-    """)
-    )
-    (tmp_path / "src" / "utils.ts").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "src" / "utils.ts").write_text(textwrap.dedent("""\
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
-    """)
-    )
+    """))
 
     # Python test files
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "__init__.py").write_text("")
-    (tmp_path / "tests" / "test_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "tests" / "test_service.py").write_text(textwrap.dedent("""\
         from unittest.mock import patch, MagicMock
         from app.service import MyService, standalone_function
 
@@ -132,12 +121,10 @@ def workspace(tmp_path: Path) -> Path:
         def test_standalone():
             result = standalone_function()
             assert result is None
-    """)
-    )
+    """))
 
     # TypeScript test file
-    (tmp_path / "src" / "utils.test.ts").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "utils.test.ts").write_text(textwrap.dedent("""\
         import { greet } from './utils';
 
         describe('greet', () => {
@@ -150,13 +137,11 @@ def workspace(tmp_path: Path) -> Path:
                 expect(result).toBe('Hello, !');
             });
         });
-    """)
-    )
+    """))
 
     # Java source + test files
     (tmp_path / "src" / "main" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "main" / "java" / "AuthService.java").write_text(textwrap.dedent("""\
         package com.example;
 
         public class AuthService {
@@ -164,11 +149,9 @@ def workspace(tmp_path: Path) -> Path:
                 return user != null && pass != null;
             }
         }
-    """)
-    )
+    """))
     (tmp_path / "src" / "test" / "java").mkdir(parents=True)
-    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "test" / "java" / "AuthServiceTest.java").write_text(textwrap.dedent("""\
         package com.example;
 
         import org.junit.jupiter.api.Test;
@@ -197,22 +180,18 @@ def workspace(tmp_path: Path) -> Path:
                 verify(svc).authenticate("a", "b");
             }
         }
-    """)
-    )
+    """))
 
     # Go source + test files
     (tmp_path / "pkg").mkdir()
-    (tmp_path / "pkg" / "calc.go").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "pkg" / "calc.go").write_text(textwrap.dedent("""\
         package calc
 
         func Add(a, b int) int {
             return a + b
         }
-    """)
-    )
-    (tmp_path / "pkg" / "calc_test.go").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "pkg" / "calc_test.go").write_text(textwrap.dedent("""\
         package calc
 
         import (
@@ -237,20 +216,16 @@ def workspace(tmp_path: Path) -> Path:
                 Add(1, 2)
             }
         }
-    """)
-    )
+    """))
 
     # Rust source + test file
     (tmp_path / "rust_src").mkdir()
-    (tmp_path / "rust_src" / "lib.rs").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "rust_src" / "lib.rs").write_text(textwrap.dedent("""\
         pub fn multiply(a: i32, b: i32) -> i32 {
             a * b
         }
-    """)
-    )
-    (tmp_path / "rust_src" / "lib_test.rs").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "rust_src" / "lib_test.rs").write_text(textwrap.dedent("""\
         use super::*;
 
         #[test]
@@ -268,8 +243,7 @@ def workspace(tmp_path: Path) -> Path:
         async fn test_async_multiply() {
             assert!(multiply(2, 3) > 0);
         }
-    """)
-    )
+    """))
 
     # node_modules (should be excluded)
     (tmp_path / "node_modules").mkdir()
@@ -470,11 +444,13 @@ class TestSymbolIndexLRUCache:
     def setup_method(self):
         # Reset module-level cache state for each test
         from app.code_tools import tools as tools_module
+
         self._saved = dict(tools_module._symbol_index_cache)
         tools_module._symbol_index_cache.clear()
 
     def teardown_method(self):
         from app.code_tools import tools as tools_module
+
         tools_module._symbol_index_cache.clear()
         tools_module._symbol_index_cache.update(self._saved)
 
@@ -484,14 +460,17 @@ class TestSymbolIndexLRUCache:
         (ws / "x.py").write_text("class Foo: pass\n")
         # Init git so _get_git_head returns a stable sha
         import subprocess
+
         subprocess.run(["git", "init", "-q", "-b", "main"], cwd=ws, check=False)
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-             "add", "-A"], cwd=ws, check=False,
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"],
+            cwd=ws,
+            check=False,
         )
         subprocess.run(
-            ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-             "commit", "-q", "-m", "init"], cwd=ws, check=False,
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
+            cwd=ws,
+            check=False,
         )
         return str(ws)
 
@@ -522,11 +501,11 @@ class TestSymbolIndexLRUCache:
         ws_b = self._make_ws(tmp_path, "b")
         ws_c = self._make_ws(tmp_path, "c")
 
-        find_symbol(ws_a, "Foo")        # cache order: [a]
-        find_symbol(ws_b, "Foo")        # cache order: [a, b]
+        find_symbol(ws_a, "Foo")  # cache order: [a]
+        find_symbol(ws_b, "Foo")  # cache order: [a, b]
         # Access A again — it's now most-recently-used, B becomes LRU
-        find_symbol(ws_a, "Foo")        # cache order: [b, a]
-        find_symbol(ws_c, "Foo")        # cache order: [a, c] after b evicted
+        find_symbol(ws_a, "Foo")  # cache order: [b, a]
+        find_symbol(ws_c, "Foo")  # cache order: [a, c] after b evicted
 
         assert ws_a in tools_module._symbol_index_cache
         assert ws_b not in tools_module._symbol_index_cache
@@ -1172,8 +1151,7 @@ def dataflow_ws(tmp_path: Path) -> Path:
     (tmp_path / "app").mkdir()
 
     # -- Router layer (HTTP entry point) --
-    (tmp_path / "app" / "router.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
         from app.service import process_loan
 
         def create_loan(request):
@@ -1181,12 +1159,10 @@ def dataflow_ws(tmp_path: Path) -> Path:
             customer = request.json["customer"]
             result = process_loan(loan_id, customer)
             return {"status": "ok", "data": result}
-    """)
-    )
+    """))
 
     # -- Service layer (business logic, aliases the variable) --
-    (tmp_path / "app" / "service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
         from app.repository import get_loan, save_audit
 
         def process_loan(loan_id, customer_name):
@@ -1197,24 +1173,20 @@ def dataflow_ws(tmp_path: Path) -> Path:
 
         def helper():
             pass
-    """)
-    )
+    """))
 
     # -- Repository layer (ORM / SQL sink) --
-    (tmp_path / "app" / "repository.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "repository.py").write_text(textwrap.dedent("""\
         def get_loan(loan_identifier):
             return Loan.query.filter(Loan.id == loan_identifier).first()
 
         def save_audit(ref_id, action):
             db.execute("INSERT INTO audit (ref, action) VALUES (%s, %s)", (ref_id, action))
-    """)
-    )
+    """))
 
     # -- TypeScript variant --
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "handler.ts").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "handler.ts").write_text(textwrap.dedent("""\
         import { findLoan } from './loanRepo';
 
         export function handleRequest(req: Request): Response {
@@ -1222,15 +1194,12 @@ def dataflow_ws(tmp_path: Path) -> Path:
             const result = findLoan(loanId);
             return { status: 200, data: result };
         }
-    """)
-    )
-    (tmp_path / "src" / "loanRepo.ts").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "src" / "loanRepo.ts").write_text(textwrap.dedent("""\
         export function findLoan(id: string): Loan {
             return prisma.loan.findUnique({ where: { id } });
         }
-    """)
-    )
+    """))
 
     invalidate_graph_cache()
     return tmp_path
@@ -1658,7 +1627,18 @@ class TestToolMetadata:
     def test_metadata_categories_valid(self):
         from app.code_tools.schemas import TOOL_METADATA
 
-        valid = {"search", "navigate", "git", "analysis", "test", "browser", "integration", "edit", "scratchpad", "brain"}
+        valid = {
+            "search",
+            "navigate",
+            "git",
+            "analysis",
+            "test",
+            "browser",
+            "integration",
+            "edit",
+            "scratchpad",
+            "brain",
+        }
         for name, meta in TOOL_METADATA.items():
             assert meta.category in valid, f"Tool '{name}' has invalid category '{meta.category}'"
 

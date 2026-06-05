@@ -119,7 +119,7 @@ class TestGeneratePRSplitPlan:
         assert "Unique-Title-12345" in user_msg
         assert "Unique-Description-67890" in user_msg
         assert "1234" in user_msg  # total lines
-        assert "42" in user_msg   # file count
+        assert "42" in user_msg  # file count
 
     @pytest.mark.asyncio
     async def test_diff_truncated_at_budget(self):

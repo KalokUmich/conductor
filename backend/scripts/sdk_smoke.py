@@ -16,10 +16,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from app.code_tools.executor import LocalToolExecutor
-from app.scratchpad.store import FactStore
-from app.scratchpad.executor import CachedToolExecutor
 from app.agent_loop.sdk_worker import SdkWorkerRunner
+from app.code_tools.executor import LocalToolExecutor
+from app.scratchpad.executor import CachedToolExecutor
+from app.scratchpad.store import FactStore
 
 WORKSPACE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # the backend/ dir
 TOOLS = ["grep", "read_file", "list_files"]
@@ -64,7 +64,7 @@ async def _main() -> int:
             runner.run(system_prompt=SYSTEM_PROMPT, user_message=USER_MESSAGE),
             timeout=90.0,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("RESULT: FAIL — timed out after 90s (auth stall or CLI hang).")
         return 3
 
@@ -75,8 +75,10 @@ async def _main() -> int:
     print("--- answer ---")
     print(result.answer or "(empty)")
     print("--- stats ---")
-    print(f"tool_calls={result.tool_calls_made} iterations={result.iterations} "
-          f"files={result.files_accessed} duration_ms={result.duration_ms:.0f}")
+    print(
+        f"tool_calls={result.tool_calls_made} iterations={result.iterations} "
+        f"files={result.files_accessed} duration_ms={result.duration_ms:.0f}"
+    )
     print(f"budget={result.budget_summary}")
     print(f"vault stats={executor.stats}")
 

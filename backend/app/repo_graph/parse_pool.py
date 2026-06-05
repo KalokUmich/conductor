@@ -146,9 +146,7 @@ class ParsePool:
         child_conn.close()
         self._proc = proc
         self._conn = parent_conn
-        logger.info(
-            "ParsePool spawned worker pid=%d (method=%s)", proc.pid, _START_METHOD
-        )
+        logger.info("ParsePool spawned worker pid=%d (method=%s)", proc.pid, _START_METHOD)
 
     def _kill_current(self, reason: str) -> None:
         """SIGKILL the worker and release pipe handles. Caller holds the lock."""
@@ -229,9 +227,7 @@ class ParsePool:
                     return None
 
             if not self._conn.poll(timeout=timeout_s):
-                self._kill_current(
-                    reason=f"timeout after {timeout_s:.0f}s on {file_path}"
-                )
+                self._kill_current(reason=f"timeout after {timeout_s:.0f}s on {file_path}")
                 return None
 
             try:

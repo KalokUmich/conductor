@@ -550,9 +550,7 @@ def list_files(
 # (last=False)`` on overflow. ``MAX`` is deliberately small — the working
 # set is usually 1 (interactive review) or 2 (batch eval switching
 # between previous/next workspace). Override via env var.
-_SYMBOL_CACHE_MAX_WORKSPACES = int(
-    os.environ.get("CONDUCTOR_SYMBOL_CACHE_MAX", "2")
-)
+_SYMBOL_CACHE_MAX_WORKSPACES = int(os.environ.get("CONDUCTOR_SYMBOL_CACHE_MAX", "2"))
 _symbol_index_cache: OrderedDict[str, tuple] = OrderedDict()
 _CONDUCTOR_DIR = ".conductor"
 _SYMBOL_INDEX_FILE = "symbol_index.json"
@@ -1107,9 +1105,7 @@ def find_symbol(
     return ToolResult(tool_name="find_symbol", data=results)
 
 
-def _is_degraded_path(
-    workspace: str, rel_path: str, cache: Dict[str, bool]
-) -> bool:
+def _is_degraded_path(workspace: str, rel_path: str, cache: Dict[str, bool]) -> bool:
     """True if the given file is on the session's tree-sitter skip list.
 
     Used by AST tools to tag individual results with ``extracted_via:
@@ -5324,12 +5320,16 @@ def search_facts(
         where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         params.append(max(1, min(limit, 100)))
         try:
-            rows = store._conn().execute(
-                f"SELECT symbol_name, symbol_kind, referenced_at, exists_flag, "
-                f"evidence, signature_info, ts_written FROM existence_facts "
-                f"{where} ORDER BY ts_written DESC LIMIT ?",
-                params,
-            ).fetchall()
+            rows = (
+                store._conn()
+                .execute(
+                    f"SELECT symbol_name, symbol_kind, referenced_at, exists_flag, "
+                    f"evidence, signature_info, ts_written FROM existence_facts "
+                    f"{where} ORDER BY ts_written DESC LIMIT ?",
+                    params,
+                )
+                .fetchall()
+            )
         except Exception as e:
             logger.warning("search_facts (existence) failed: %s", e)
             return ToolResult(
@@ -5376,11 +5376,15 @@ def search_facts(
     params.append(max(1, min(limit, 100)))  # clamp
 
     try:
-        rows = store._conn().execute(
-            f"SELECT key, tool, path, range_start, range_end, agent, ts_written "
-            f"FROM facts {where} ORDER BY ts_written DESC LIMIT ?",
-            params,
-        ).fetchall()
+        rows = (
+            store._conn()
+            .execute(
+                f"SELECT key, tool, path, range_start, range_end, agent, ts_written "
+                f"FROM facts {where} ORDER BY ts_written DESC LIMIT ?",
+                params,
+            )
+            .fetchall()
+        )
     except Exception as e:
         logger.warning("search_facts query failed: %s", e)
         return ToolResult(

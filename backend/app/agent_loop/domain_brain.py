@@ -131,7 +131,6 @@ class DomainBrainOrchestrator:
         """
         from app.workflow.loader import (
             load_brain_config,
-            load_swarm_registry,
         )
 
         from .brain import AgentToolExecutor, BrainBudgetManager
@@ -149,11 +148,12 @@ class DomainBrainOrchestrator:
         # We deliberately reuse load_brain_config() with a domain.yaml override
         # rather than introducing a new loader — Domain Brain uses the same
         # BrainConfig schema as the general Brain (limits + core_tools).
-        from .config import BrainExecutorConfig as _Cfg  # noqa: F401
-        from app.workflow.loader import _resolve_path  # noqa: WPS437 — reuse
-
         import yaml as _yaml
+
+        from app.workflow.loader import _resolve_path
         from app.workflow.models import BrainConfig as _BrainConfig
+
+        from .config import BrainExecutorConfig as _Cfg  # noqa: F401
 
         try:
             domain_yaml = _resolve_path("brains/domain.yaml")

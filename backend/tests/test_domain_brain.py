@@ -12,16 +12,17 @@ tests cover:
    call (mirrors PR Brain v2 pattern)
 6. The General Brain prompt teaches Domain Brain handoff
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. transfer_to_brain accepts "domain"
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_transfer_to_brain_accepts_domain():
@@ -91,6 +92,7 @@ async def test_transfer_to_brain_rejects_unknown():
 # 2. Skill content loads
 # ---------------------------------------------------------------------------
 
+
 def test_domain_coordinator_skill_loads():
     """Skill file exists and contains the load-bearing rules."""
     from app.agent_loop.prompts import _load_skill
@@ -114,11 +116,13 @@ def test_domain_coordinator_skill_loads():
 # 3. domain.yaml loads
 # ---------------------------------------------------------------------------
 
+
 def test_domain_yaml_loads():
     """config/brains/domain.yaml parses via BrainConfig schema."""
+    import yaml as _yaml
+
     from app.workflow.loader import _resolve_path
     from app.workflow.models import BrainConfig
-    import yaml as _yaml
 
     path = _resolve_path("brains/domain.yaml")
     data = _yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -133,6 +137,7 @@ def test_domain_yaml_loads():
 # ---------------------------------------------------------------------------
 # 4. DomainBrainOrchestrator constructs cleanly
 # ---------------------------------------------------------------------------
+
 
 def test_domain_brain_constructs():
     """Orchestrator init takes the documented args and stores them."""
@@ -157,19 +162,21 @@ def test_domain_brain_constructs():
 # 5. Coordinator dispatch shape
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_orchestrator_dispatches_coordinator_as_dynamic_agent():
     """Domain Brain dispatches its coordinator via dispatch_explore (dynamic mode)
     with skill='domain_brain_coordinator' and a tool list that includes
     dispatch_explore (so the coordinator can dispatch workers)."""
-    from app.agent_loop.domain_brain import DomainBrainOrchestrator
     from app.agent_loop.brain import AgentToolExecutor
+    from app.agent_loop.domain_brain import DomainBrainOrchestrator
 
     captured_calls = []
 
     async def fake_execute(self, tool_name, params):  # bound method signature
         captured_calls.append((tool_name, params))
         from app.code_tools.executor import ToolResult
+
         return ToolResult(
             tool_name=tool_name,
             success=True,
@@ -209,9 +216,9 @@ async def test_orchestrator_dispatches_coordinator_as_dynamic_agent():
     assert params["skill"] == "domain_brain_coordinator"
     assert params["model"] == "strong"
     assert "perspective" in params and len(params["perspective"]) > 50
-    assert "dispatch_explore" in params["tools"], (
-        "Coordinator must have dispatch_explore in its tools so it can dispatch workers"
-    )
+    assert (
+        "dispatch_explore" in params["tools"]
+    ), "Coordinator must have dispatch_explore in its tools so it can dispatch workers"
     # Code-survey tools present so coordinator can do Phase 1 self-survey
     for t in ("read_file", "grep", "list_files", "module_summary"):
         assert t in params["tools"], f"coordinator missing {t}"
@@ -230,6 +237,7 @@ async def test_orchestrator_dispatches_coordinator_as_dynamic_agent():
 # ---------------------------------------------------------------------------
 # 6. General Brain prompt teaches the handoff
 # ---------------------------------------------------------------------------
+
 
 def test_general_brain_prompt_mentions_domain_handoff():
     """The General Brain's prompt must teach when to transfer to Domain Brain."""

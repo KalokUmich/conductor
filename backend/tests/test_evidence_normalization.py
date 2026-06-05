@@ -108,8 +108,8 @@ class TestNormalizeEvidence:
         from app.code_review.shared import parse_findings
 
         answer = (
-            'Here are my findings:\n\n'
-            '```json\n'
+            "Here are my findings:\n\n"
+            "```json\n"
             '[{"title":"Plaintext creds",'
             '"severity":"high",'
             '"confidence":0.9,'
@@ -120,10 +120,11 @@ class TestNormalizeEvidence:
             '"evidence":["@","V","a","l","u","e","(\\"x\\")"],'
             '"risk":"leak",'
             '"suggested_fix":"hash"}]'
-            '\n```\n'
+            "\n```\n"
         )
         findings = parse_findings(
-            answer, agent_name="test",
+            answer,
+            agent_name="test",
             category=FindingCategory.SECURITY,
         )
         assert len(findings) == 1

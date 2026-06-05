@@ -56,11 +56,16 @@ class DispatchExploreParams(BaseModel):
         description="'explorer' (Haiku, default) or 'strong' (Sonnet, for complex reasoning like root cause analysis).",
     )
     budget_tokens: Optional[int] = Field(
-        default=None, ge=50000, le=800000,
+        default=None,
+        ge=50000,
+        le=800000,
         description="Token budget override. Defaults based on skill type.",
     )
     max_iterations: Optional[int] = Field(
-        default=None, ge=5, le=30, description="Iteration limit override. Default: 20.",
+        default=None,
+        ge=5,
+        le=30,
+        description="Iteration limit override. Default: 20.",
     )
 
     # Shared

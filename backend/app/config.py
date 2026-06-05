@@ -744,9 +744,7 @@ def load_config(
         site_url=_env("CONDUCTOR_ATLASSIAN_READONLY_SITE_URL", atl_ro_sec.get("site_url", "")),
         email=_env("CONDUCTOR_ATLASSIAN_READONLY_EMAIL", atl_ro_sec.get("email", "")),
         api_token=_env("CONDUCTOR_ATLASSIAN_READONLY_TOKEN", atl_ro_sec.get("api_token", "")),
-        webhook_token=_env(
-            "CONDUCTOR_JIRA_WEBHOOK_TOKEN", atl_ro_sec.get("webhook_token", "")
-        ),
+        webhook_token=_env("CONDUCTOR_JIRA_WEBHOOK_TOKEN", atl_ro_sec.get("webhook_token", "")),
     )
 
     teams_data = raw.get("teams", {})

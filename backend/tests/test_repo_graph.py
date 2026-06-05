@@ -371,9 +371,7 @@ class TestBuildDependencyGraph:
             build_dependency_graph(str(tmp_path))
 
         msgs = [r.message for r in caplog.records]
-        assert any("_scan_workspace done" in m for m in msgs), (
-            f"expected summary log, got: {msgs}"
-        )
+        assert any("_scan_workspace done" in m for m in msgs), f"expected summary log, got: {msgs}"
 
     def test_scan_emits_slow_file_warning_when_threshold_set(self, tmp_path, caplog, monkeypatch):
         """With CONDUCTOR_SCAN_SLOW_MS set and extract_definitions mocked to
@@ -405,12 +403,8 @@ class TestBuildDependencyGraph:
             build_dependency_graph(str(tmp_path))
 
         msgs = [r.message for r in caplog.records]
-        assert any("slow tree-sitter parse" in m for m in msgs), (
-            f"expected per-file slow warning, got: {msgs}"
-        )
-        assert any("top-10 slow files" in m for m in msgs), (
-            f"expected top-N summary, got: {msgs}"
-        )
+        assert any("slow tree-sitter parse" in m for m in msgs), f"expected per-file slow warning, got: {msgs}"
+        assert any("top-10 slow files" in m for m in msgs), f"expected top-N summary, got: {msgs}"
 
     def test_scan_silent_when_threshold_not_set(self, tmp_path, caplog, monkeypatch):
         """Default (no CONDUCTOR_SCAN_SLOW_MS): no per-file warnings so we
@@ -425,9 +419,9 @@ class TestBuildDependencyGraph:
             build_dependency_graph(str(tmp_path))
 
         msgs = [r.message for r in caplog.records]
-        assert not any("slow tree-sitter parse" in m for m in msgs), (
-            f"unexpected warnings when threshold disabled: {msgs}"
-        )
+        assert not any(
+            "slow tree-sitter parse" in m for m in msgs
+        ), f"unexpected warnings when threshold disabled: {msgs}"
 
     def test_pre_computed_symbols(self):
         symbols = {

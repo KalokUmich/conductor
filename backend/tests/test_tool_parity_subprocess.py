@@ -591,9 +591,17 @@ class TestFileWriteParity:
     def test_cli_creates_file(self, tmp_path):
         fp = tmp_path / "via_cli.py"
         result = subprocess.run(
-            [PYTHON, "-m", "app.code_tools", "file_write", str(tmp_path),
-             json.dumps({"path": "via_cli.py", "content": "x = 1\n"})],
-            capture_output=True, text=True, timeout=10,
+            [
+                PYTHON,
+                "-m",
+                "app.code_tools",
+                "file_write",
+                str(tmp_path),
+                json.dumps({"path": "via_cli.py", "content": "x = 1\n"}),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
             cwd=str(REPO_ROOT / "backend"),
         )
         assert result.returncode == 0 or result.stdout, result.stderr
@@ -642,16 +650,24 @@ class TestFileEditParity:
         # — contract must be stable. We accept either but require the
         # CLI to agree with direct.
         result = subprocess.run(
-            [PYTHON, "-m", "app.code_tools", "file_edit", str(tmp_path),
-             json.dumps({
-                 "path": "stale.py",
-                 "old_string": "unchanged",
-                 "new_string": "modified",
-             })],
-            capture_output=True, text=True, timeout=10,
+            [
+                PYTHON,
+                "-m",
+                "app.code_tools",
+                "file_edit",
+                str(tmp_path),
+                json.dumps(
+                    {
+                        "path": "stale.py",
+                        "old_string": "unchanged",
+                        "new_string": "modified",
+                    }
+                ),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
             cwd=str(REPO_ROOT / "backend"),
         )
         c = json.loads(result.stdout)
-        assert d.success == c["success"], (
-            f"direct={d.success} cli={c['success']} — contract divergence"
-        )
+        assert d.success == c["success"], f"direct={d.success} cli={c['success']} — contract divergence"

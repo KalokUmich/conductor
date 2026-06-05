@@ -151,21 +151,21 @@ class TestParseFindings:
         # authoritative answer (per the prompt: ``If you find no issues,
         # output exactly: `[]```).
         from app.code_review.shared import parse_findings_with_status
+
         answer = """The performance dimension shows no issues here.
 
 ```json
 []
 ```
 """
-        findings, parsed_explicit = parse_findings_with_status(
-            answer, "performance", FindingCategory.PERFORMANCE
-        )
+        findings, parsed_explicit = parse_findings_with_status(answer, "performance", FindingCategory.PERFORMANCE)
         assert findings == []
         assert parsed_explicit is True
 
     def test_parse_findings_explicit_empty_bare_array(self):
         # Same as above, without the ```json fence.
         from app.code_review.shared import parse_findings_with_status
+
         findings, parsed_explicit = parse_findings_with_status(
             "No issues. []", "performance", FindingCategory.PERFORMANCE
         )
@@ -176,6 +176,7 @@ class TestParseFindings:
         # No JSON array of any kind → parse_explicit_array must be False so
         # callers know to attempt the repair fallback.
         from app.code_review.shared import parse_findings_with_status
+
         findings, parsed_explicit = parse_findings_with_status(
             "Pure prose, no JSON anywhere.",
             "correctness",
@@ -190,14 +191,13 @@ class TestParseFindings:
         # field of an object) parses but yields no findings, we must NOT
         # short-circuit on it — fall through to individual-object recovery.
         from app.code_review.shared import parse_findings_with_status
+
         answer = (
             'Some text. {"title": "Missing check", "severity": "medium", "confidence": 0.80, '
             '"file": "svc.py", "start_line": 3, "end_line": 3, "evidence": ["no validation"], '
             '"risk": "bad input", "suggested_fix": "validate"} more text.'
         )
-        findings, parsed_explicit = parse_findings_with_status(
-            answer, "correctness", FindingCategory.CORRECTNESS
-        )
+        findings, parsed_explicit = parse_findings_with_status(answer, "correctness", FindingCategory.CORRECTNESS)
         assert len(findings) == 1
         assert parsed_explicit is False  # recovered via OBJECT regex
 

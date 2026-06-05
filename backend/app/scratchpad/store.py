@@ -182,9 +182,9 @@ class PlanEntry:
     Plan→Synthesize drift as context fills."""
 
     dispatch_index: int
-    mode: str                      # 'role' | 'checks' | 'combined'
+    mode: str  # 'role' | 'checks' | 'combined'
     role: Optional[str]
-    scope: str                     # compact "file1:120-160, file2" descriptor
+    scope: str  # compact "file1:120-160, file2" descriptor
     success_criteria: str
     reason: Optional[str]
     ts_written: int
@@ -200,8 +200,8 @@ class ExistenceFact:
     """
 
     symbol_name: str
-    symbol_kind: str           # class | method | function | attribute | import
-    referenced_at: str         # "file.py:12"
+    symbol_kind: str  # class | method | function | attribute | import
+    referenced_at: str  # "file.py:12"
     exists_flag: bool
     evidence: Optional[str]
     signature_info: Optional[Dict[str, Any]]  # for kind=method: param mismatches
@@ -286,9 +286,12 @@ class FactStore:
         conn.execute(
             "INSERT OR REPLACE INTO meta (k, v) VALUES (?, ?), (?, ?), (?, ?)",
             (
-                "session_id", session_id,
-                "workspace", workspace or "",
-                "task_id", task_id or "",
+                "session_id",
+                session_id,
+                "workspace",
+                workspace or "",
+                "task_id",
+                task_id or "",
             ),
         )
         conn.execute(
@@ -298,7 +301,9 @@ class FactStore:
         conn.commit()
         logger.info(
             "FactStore opened: %s (session=%s, task=%s)",
-            db_path, session_id, task_id or "-",
+            db_path,
+            session_id,
+            task_id or "-",
         )
         return store
 
@@ -393,9 +398,7 @@ class FactStore:
 
     def get(self, key: str) -> Optional[Fact]:
         """Exact-key lookup. Returns None on miss."""
-        row = self._conn().execute(
-            "SELECT * FROM facts WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn().execute("SELECT * FROM facts WHERE key = ?", (key,)).fetchone()
         return _row_to_fact(row) if row else None
 
     def range_lookup(
@@ -416,8 +419,10 @@ class FactStore:
         """
         if start is None or end is None:
             return None
-        row = self._conn().execute(
-            """
+        row = (
+            self._conn()
+            .execute(
+                """
             SELECT * FROM facts
              WHERE tool = ? AND path = ?
                AND range_start IS NOT NULL AND range_end IS NOT NULL
@@ -425,8 +430,10 @@ class FactStore:
              ORDER BY (range_end - range_start) ASC
              LIMIT 1
             """,
-            (tool.lower(), path, start, end),
-        ).fetchone()
+                (tool.lower(), path, start, end),
+            )
+            .fetchone()
+        )
         return _row_to_fact(row) if row else None
 
     # --- negative facts ----------------------------------------------------
@@ -451,9 +458,7 @@ class FactStore:
         self._conn().commit()
 
     def get_negative(self, key: str) -> Optional[NegativeFact]:
-        row = self._conn().execute(
-            "SELECT * FROM negative_facts WHERE key = ?", (key,)
-        ).fetchone()
+        row = self._conn().execute("SELECT * FROM negative_facts WHERE key = ?", (key,)).fetchone()
         if not row:
             return None
         return NegativeFact(
@@ -479,9 +484,7 @@ class FactStore:
 
     def should_skip(self, abs_path: str) -> Optional[str]:
         """Return the skip reason if this file is on the skip-list, else None."""
-        row = self._conn().execute(
-            "SELECT reason FROM skip_facts WHERE abs_path = ?", (abs_path,)
-        ).fetchone()
+        row = self._conn().execute("SELECT reason FROM skip_facts WHERE abs_path = ?", (abs_path,)).fetchone()
         return row["reason"] if row else None
 
     # --- existence facts (PR Brain v2 Phase 2) --------------------------
@@ -519,39 +522,46 @@ class FactStore:
         self._conn().commit()
 
     def get_existence(
-        self, symbol_name: str, referenced_at: Optional[str] = None,
+        self,
+        symbol_name: str,
+        referenced_at: Optional[str] = None,
     ) -> Optional[ExistenceFact]:
         """Look up a single existence fact. ``referenced_at`` disambiguates
         when the same symbol is referenced in multiple places; when
         omitted, returns the most recent entry for the name."""
         if referenced_at is not None:
-            row = self._conn().execute(
-                "SELECT * FROM existence_facts WHERE symbol_name = ? AND referenced_at = ?",
-                (symbol_name, referenced_at),
-            ).fetchone()
+            row = (
+                self._conn()
+                .execute(
+                    "SELECT * FROM existence_facts WHERE symbol_name = ? AND referenced_at = ?",
+                    (symbol_name, referenced_at),
+                )
+                .fetchone()
+            )
         else:
-            row = self._conn().execute(
-                "SELECT * FROM existence_facts WHERE symbol_name = ? "
-                "ORDER BY ts_written DESC LIMIT 1",
-                (symbol_name,),
-            ).fetchone()
+            row = (
+                self._conn()
+                .execute(
+                    "SELECT * FROM existence_facts WHERE symbol_name = ? " "ORDER BY ts_written DESC LIMIT 1",
+                    (symbol_name,),
+                )
+                .fetchone()
+            )
         return _row_to_existence(row) if row else None
 
     def iter_existence(
-        self, exists: Optional[bool] = None,
+        self,
+        exists: Optional[bool] = None,
     ) -> Iterable[ExistenceFact]:
         """Iterate existence facts. When ``exists`` is set, filter to that
         side (handy: ``iter_existence(exists=False)`` = all missing
         symbols — these are the runtime-error findings the coordinator
         promotes directly)."""
         if exists is None:
-            rows = self._conn().execute(
-                "SELECT * FROM existence_facts ORDER BY ts_written DESC"
-            )
+            rows = self._conn().execute("SELECT * FROM existence_facts ORDER BY ts_written DESC")
         else:
             rows = self._conn().execute(
-                "SELECT * FROM existence_facts WHERE exists_flag = ? "
-                "ORDER BY ts_written DESC",
+                "SELECT * FROM existence_facts WHERE exists_flag = ? " "ORDER BY ts_written DESC",
                 (1 if exists else 0,),
             )
         for row in rows:
@@ -590,9 +600,7 @@ class FactStore:
 
     def iter_plan_entries(self) -> List[PlanEntry]:
         """All recorded plan entries, ordered by dispatch_index."""
-        rows = self._conn().execute(
-            "SELECT * FROM plan_memory ORDER BY dispatch_index ASC"
-        ).fetchall()
+        rows = self._conn().execute("SELECT * FROM plan_memory ORDER BY dispatch_index ASC").fetchall()
         return [
             PlanEntry(
                 dispatch_index=r["dispatch_index"],
@@ -607,9 +615,7 @@ class FactStore:
         ]
 
     def count_plan_entries(self) -> int:
-        row = self._conn().execute(
-            "SELECT COUNT(*) FROM plan_memory"
-        ).fetchone()
+        row = self._conn().execute("SELECT COUNT(*) FROM plan_memory").fetchone()
         return int(row[0]) if row else 0
 
     # --- Phase 9.9.3: sub-agent notes -------------------------------------
@@ -650,10 +656,14 @@ class FactStore:
         Tiebreaker ``id DESC`` ensures deterministic order when two
         notes happen to share a ms timestamp.
         """
-        rows = self._conn().execute(
-            "SELECT * FROM notes WHERE agent = ? ORDER BY ts_written DESC, id DESC",
-            (agent[:64],),
-        ).fetchall()
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT * FROM notes WHERE agent = ? ORDER BY ts_written DESC, id DESC",
+                (agent[:64],),
+            )
+            .fetchall()
+        )
         return [
             Note(
                 id=r["id"],
@@ -673,9 +683,7 @@ class FactStore:
         Tiebreaker ``id DESC`` ensures deterministic order when notes
         share a ms timestamp.
         """
-        rows = self._conn().execute(
-            "SELECT * FROM notes ORDER BY ts_written DESC, id DESC"
-        ).fetchall()
+        rows = self._conn().execute("SELECT * FROM notes ORDER BY ts_written DESC, id DESC").fetchall()
         return [
             Note(
                 id=r["id"],
@@ -698,19 +706,21 @@ class FactStore:
             "negative_facts": c.execute("SELECT COUNT(*) FROM negative_facts").fetchone()[0],
             "skip_facts": c.execute("SELECT COUNT(*) FROM skip_facts").fetchone()[0],
             "existence_facts": c.execute("SELECT COUNT(*) FROM existence_facts").fetchone()[0],
-            "missing_symbols": c.execute(
-                "SELECT COUNT(*) FROM existence_facts WHERE exists_flag = 0"
-            ).fetchone()[0],
+            "missing_symbols": c.execute("SELECT COUNT(*) FROM existence_facts WHERE exists_flag = 0").fetchone()[0],
             "plan_entries": c.execute("SELECT COUNT(*) FROM plan_memory").fetchone()[0],
             "notes": c.execute("SELECT COUNT(*) FROM notes").fetchone()[0],
         }
 
     def facts_by_tool(self, tool: str) -> List[Fact]:
         """All facts for a given tool, sorted by (path, range_start)."""
-        rows = self._conn().execute(
-            "SELECT * FROM facts WHERE tool = ? ORDER BY path, range_start",
-            (tool.lower(),),
-        ).fetchall()
+        rows = (
+            self._conn()
+            .execute(
+                "SELECT * FROM facts WHERE tool = ? ORDER BY path, range_start",
+                (tool.lower(),),
+            )
+            .fetchall()
+        )
         return [_row_to_fact(r) for r in rows]
 
     def iter_all_facts(self) -> Iterable[Fact]:

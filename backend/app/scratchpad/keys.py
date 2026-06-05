@@ -219,9 +219,7 @@ def build_key(tool: str, params: Dict[str, Any]) -> Optional[str]:
         )
 
     if t == "detect_patterns":
-        return ":".join(
-            [v, t, _abs(params.get("path") or params.get("file_path")), _norm_set(params.get("patterns"))]
-        )
+        return ":".join([v, t, _abs(params.get("path") or params.get("file_path")), _norm_set(params.get("patterns"))])
 
     if t in ("list_files", "glob"):
         return ":".join(
@@ -260,9 +258,7 @@ def build_key(tool: str, params: Dict[str, Any]) -> Optional[str]:
         )
 
     if t == "git_diff_files":
-        return ":".join(
-            [v, t, _norm_pattern(params.get("spec") or params.get("diff_spec") or "")]
-        )
+        return ":".join([v, t, _norm_pattern(params.get("spec") or params.get("diff_spec") or "")])
 
     if t == "git_show":
         return ":".join(
@@ -292,10 +288,22 @@ def extract_path(tool: str, params: Dict[str, Any]) -> Optional[str]:
     if t in ("read_file", "git_blame"):
         p = params.get("path") or params.get("file_path") or params.get("file")
         return _abs(p) if p else None
-    if t in ("file_outline", "test_outline", "get_dependencies", "get_dependents",
-             "extract_docstrings", "detect_patterns", "find_symbol", "find_references",
-             "get_callers", "get_callees", "trace_variable", "compressed_view",
-             "module_summary", "expand_symbol"):
+    if t in (
+        "file_outline",
+        "test_outline",
+        "get_dependencies",
+        "get_dependents",
+        "extract_docstrings",
+        "detect_patterns",
+        "find_symbol",
+        "find_references",
+        "get_callers",
+        "get_callees",
+        "trace_variable",
+        "compressed_view",
+        "module_summary",
+        "expand_symbol",
+    ):
         p = params.get("path") or params.get("file_path") or params.get("path_prefix")
         return _abs(p) if p else None
     return None

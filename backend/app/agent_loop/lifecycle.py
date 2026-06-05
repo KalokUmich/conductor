@@ -111,9 +111,7 @@ def register_hook(name: str, callback: HookCallback) -> None:
     registration time rather than silently dropping callbacks.
     """
     if name not in _HOOKS:
-        raise ValueError(
-            f"Unknown lifecycle hook '{name}'. Valid names: {HOOK_NAMES}"
-        )
+        raise ValueError(f"Unknown lifecycle hook '{name}'. Valid names: {HOOK_NAMES}")
     _HOOKS[name].append(callback)
 
 
@@ -171,7 +169,9 @@ def fire_hook(
         return
 
     ctx = LifecycleContext(
-        name=name, orchestrator=orchestrator, data=data or {},
+        name=name,
+        orchestrator=orchestrator,
+        data=data or {},
     )
     for cb in callbacks:
         try:
@@ -179,9 +179,11 @@ def fire_hook(
         except Exception as exc:
             cb_name = getattr(cb, "__qualname__", repr(cb))
             logger.warning(
-                "lifecycle hook '%s' callback %s raised %s: %s — "
-                "swallowed so the Brain keeps running",
-                name, cb_name, type(exc).__name__, exc,
+                "lifecycle hook '%s' callback %s raised %s: %s — " "swallowed so the Brain keeps running",
+                name,
+                cb_name,
+                type(exc).__name__,
+                exc,
             )
 
 

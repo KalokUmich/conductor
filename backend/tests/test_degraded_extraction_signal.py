@@ -31,9 +31,7 @@ class TestFileSymbolsExtractionMode:
     def test_regex_fallback_marks_extracted_via(self):
         """Direct call to the regex extractor — its output must carry the
         'regex' tag so any downstream caller can detect degradation."""
-        result = _extract_with_regex(
-            "def foo(): pass\n", "python", "/tmp/foo.py"
-        )
+        result = _extract_with_regex("def foo(): pass\n", "python", "/tmp/foo.py")
         assert result.extracted_via == "regex"
 
     def test_default_extraction_mode_is_tree_sitter(self):
@@ -61,9 +59,7 @@ class TestFileOutlineDegradedSignal:
         fp.write_text("def slow(): pass\n")
         # Pre-populate skip_facts so the wrapper's pre-check hits regex
         # directly, which sets extracted_via="regex" on the result.
-        isolated_vault.put_skip(
-            str(fp), reason="tree-sitter timeout after 60s", duration_ms=60100
-        )
+        isolated_vault.put_skip(str(fp), reason="tree-sitter timeout after 60s", duration_ms=60100)
         with bind_factstore(isolated_vault):
             result = file_outline(str(tmp_path), "slow.py")
         assert result.success
@@ -84,18 +80,14 @@ class TestFindSymbolDegradedSignal:
         for d in result.data:
             assert "extracted_via" not in d
 
-    def test_degraded_file_annotated_in_results(
-        self, tmp_path, isolated_vault
-    ):
+    def test_degraded_file_annotated_in_results(self, tmp_path, isolated_vault):
         """find_symbol must tag each result from a skip-listed file so the
         agent can route to grep for authoritative info."""
         # Two files: one clean, one flagged.
         (tmp_path / "clean.py").write_text("def target_fn(): pass\n")
         flagged = tmp_path / "flagged.py"
         flagged.write_text("def target_fn(): pass\n")
-        isolated_vault.put_skip(
-            str(flagged), reason="tree-sitter timeout", duration_ms=60100
-        )
+        isolated_vault.put_skip(str(flagged), reason="tree-sitter timeout", duration_ms=60100)
 
         # Force a cold build of the symbol index within the vault binding
         # so _get_symbol_index sees both files — the skip tag is only
@@ -108,12 +100,8 @@ class TestFindSymbolDegradedSignal:
         assert result.success
         # At least one result per file — the flagged one must carry the tag.
         flagged_marked = [
-            d for d in result.data
-            if d["file_path"] == "flagged.py" and d.get("extracted_via") == "regex"
+            d for d in result.data if d["file_path"] == "flagged.py" and d.get("extracted_via") == "regex"
         ]
-        clean_untagged = [
-            d for d in result.data
-            if d["file_path"] == "clean.py" and "extracted_via" not in d
-        ]
+        clean_untagged = [d for d in result.data if d["file_path"] == "clean.py" and "extracted_via" not in d]
         assert flagged_marked, f"flagged.py result missing tag: {result.data}"
         assert clean_untagged, f"clean.py result unexpectedly tagged: {result.data}"

@@ -83,8 +83,7 @@ def workspace(tmp_path: Path) -> Path:
     # Python files
     (tmp_path / "app").mkdir()
     (tmp_path / "app" / "__init__.py").write_text("")
-    (tmp_path / "app" / "main.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "main.py").write_text(textwrap.dedent("""\
         from app.service import MyService
 
         class App:
@@ -93,10 +92,8 @@ def workspace(tmp_path: Path) -> Path:
 
             def run(self):
                 return self.service.process()
-    """)
-    )
-    (tmp_path / "app" / "service.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
         from app.utils import helper
 
         class MyService:
@@ -110,22 +107,18 @@ def workspace(tmp_path: Path) -> Path:
             result = helper("input")
             standalone_function()
             return result
-    """)
-    )
-    (tmp_path / "app" / "utils.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
         def helper(data: str) -> str:
             return data.upper()
 
         def unused_helper():
             return 42
-    """)
-    )
+    """))
 
     # TypeScript files
     (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "index.ts").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "index.ts").write_text(textwrap.dedent("""\
         import { greet } from './utils';
 
         function main(): void {
@@ -137,21 +130,17 @@ def workspace(tmp_path: Path) -> Path:
                 main();
             }
         }
-    """)
-    )
-    (tmp_path / "src" / "utils.ts").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "src" / "utils.ts").write_text(textwrap.dedent("""\
         export function greet(name: string): string {
             return `Hello, ${name}!`;
         }
-    """)
-    )
+    """))
 
     # Python test files
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "__init__.py").write_text("")
-    (tmp_path / "tests" / "test_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "tests" / "test_service.py").write_text(textwrap.dedent("""\
         from unittest.mock import patch, MagicMock
         from app.service import MyService, standalone_function
 
@@ -172,12 +161,10 @@ def workspace(tmp_path: Path) -> Path:
         def test_standalone():
             result = standalone_function()
             assert result is None
-    """)
-    )
+    """))
 
     # TS test file
-    (tmp_path / "src" / "utils.test.ts").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "src" / "utils.test.ts").write_text(textwrap.dedent("""\
         import { greet } from './utils';
 
         describe('greet', () => {
@@ -190,8 +177,7 @@ def workspace(tmp_path: Path) -> Path:
                 expect(result).toBe('Hello, !');
             });
         });
-    """)
-    )
+    """))
 
     # Multi-language files (Java / Go / Rust) are sourced from the shared
     # tests/fixtures/parity_repo so there is a single source of truth for
@@ -227,8 +213,7 @@ def ws(workspace: Path) -> str:
 @pytest.fixture()
 def dataflow_ws(tmp_path: Path) -> str:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "router.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "router.py").write_text(textwrap.dedent("""\
         from app.service import process_loan
 
         def create_loan(request):
@@ -236,10 +221,8 @@ def dataflow_ws(tmp_path: Path) -> str:
             customer = request.json["customer"]
             result = process_loan(loan_id, customer)
             return {"status": "ok", "data": result}
-    """)
-    )
-    (tmp_path / "app" / "service.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "service.py").write_text(textwrap.dedent("""\
         from app.repository import get_loan, save_audit
 
         def process_loan(loan_id, customer_name):
@@ -250,17 +233,14 @@ def dataflow_ws(tmp_path: Path) -> str:
 
         def helper():
             pass
-    """)
-    )
-    (tmp_path / "app" / "repository.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "repository.py").write_text(textwrap.dedent("""\
         def get_loan(loan_identifier):
             return Loan.query.filter(Loan.id == loan_identifier).first()
 
         def save_audit(ref_id, action):
             db.execute("INSERT INTO audit (ref, action) VALUES (%s, %s)", (ref_id, action))
-    """)
-    )
+    """))
     return str(tmp_path)
 
 
@@ -268,8 +248,7 @@ def dataflow_ws(tmp_path: Path) -> str:
 @pytest.fixture()
 def effects_ws(tmp_path: Path) -> str:
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "payment.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "payment.py").write_text(textwrap.dedent("""\
         import requests
 
         class PaymentService:
@@ -287,18 +266,15 @@ def effects_ws(tmp_path: Path) -> str:
         @retry(max_retries=3)
         def with_retry():
             pass
-    """)
-    )
-    (tmp_path / "app" / "auth.py").write_text(
-        textwrap.dedent("""\
+    """))
+    (tmp_path / "app" / "auth.py").write_text(textwrap.dedent("""\
         def generate_token(user_id):
             token = jwt.encode({"sub": user_id})
             return token
 
         def validate_token(token):
             return jwt.decode(token)
-    """)
-    )
+    """))
     return str(tmp_path)
 
 
@@ -465,14 +441,12 @@ class TestCompressedViewPython:
 
     def test_raises_detected(self, ws):
         # Create a file with raise statements
-        (Path(ws) / "app" / "errors.py").write_text(
-            textwrap.dedent("""\
+        (Path(ws) / "app" / "errors.py").write_text(textwrap.dedent("""\
             def validate(x):
                 if x < 0:
                     raise ValueError("negative")
                 return x
-        """)
-        )
+        """))
         result = compressed_view(ws, "app/errors.py")
         content = result.data["content"]
         assert "raises:" in content

@@ -90,7 +90,9 @@ class DispatchSweepParams(BaseModel):
         ),
     )
     budget_tokens: int = Field(
-        default=150_000, ge=80_000, le=200_000,
+        default=150_000,
+        ge=80_000,
+        le=200_000,
         description=(
             "Token budget. Dimension dispatch reads the full diff + "
             "often traces callers across the repo, so budget is higher "

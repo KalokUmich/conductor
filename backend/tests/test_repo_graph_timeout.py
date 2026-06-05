@@ -68,9 +68,7 @@ def fake_pool(monkeypatch):
     """Replace ``get_parse_pool()`` with a fake. Unit-level tests never
     spawn a real subprocess."""
     fake = _FakePool()
-    monkeypatch.setattr(
-        "app.repo_graph.parse_pool.get_parse_pool", lambda: fake
-    )
+    monkeypatch.setattr("app.repo_graph.parse_pool.get_parse_pool", lambda: fake)
     return fake
 
 
@@ -80,6 +78,7 @@ def _shutdown_any_real_pool():
     test suite from leaking subprocesses if an assertion fails mid-test."""
     yield
     from app.repo_graph.parse_pool import shutdown_parse_pool
+
     shutdown_parse_pool()
 
 
@@ -158,18 +157,14 @@ class TestSkipFactsIntegration:
         assert reason is not None
         assert "timeout" in reason.lower() or "failure" in reason.lower()
 
-    def test_skip_fact_prevents_pool_dispatch(
-        self, fake_pool, isolated_vault, tmp_path
-    ):
+    def test_skip_fact_prevents_pool_dispatch(self, fake_pool, isolated_vault, tmp_path):
         """Pre-check short-circuits — the pool must NOT be called when
         the file is on the skip list."""
         target = tmp_path / "y.py"
         isolated_vault.put_skip(str(target), reason="prior timeout", duration_ms=200)
 
         with bind_factstore(isolated_vault):
-            result = extract_definitions_with_timeout(
-                str(target), source=b"def y(): pass\n", timeout_s=5.0
-            )
+            result = extract_definitions_with_timeout(str(target), source=b"def y(): pass\n", timeout_s=5.0)
         assert fake_pool.calls == 0
         assert any(d.name == "y" for d in result.definitions)
 
@@ -183,14 +178,13 @@ class TestSkipFactsIntegration:
         )
         assert any(d.name == "z" for d in result.definitions)
 
-    def test_vault_put_skip_error_does_not_propagate(
-        self, fake_pool, isolated_vault, tmp_path
-    ):
+    def test_vault_put_skip_error_does_not_propagate(self, fake_pool, isolated_vault, tmp_path):
         """A broken vault must not break extraction — caching is always
         best-effort."""
         fake_pool.returns = None
-        with bind_factstore(isolated_vault), patch.object(
-            isolated_vault, "put_skip", side_effect=RuntimeError("disk full")
+        with (
+            bind_factstore(isolated_vault),
+            patch.object(isolated_vault, "put_skip", side_effect=RuntimeError("disk full")),
         ):
             result = extract_definitions_with_timeout(
                 str(tmp_path / "w.py"),
@@ -212,9 +206,7 @@ class TestTimeoutConfig:
         that must not spawn a subprocess."""
         sentinel = FileSymbols(file_path="s", language="python")
         with patch("app.repo_graph.parser._extract_with_tree_sitter", lambda *a: sentinel):
-            result = extract_definitions_with_timeout(
-                str(tmp_path / "s.py"), source=b"pass\n", timeout_s=0
-            )
+            result = extract_definitions_with_timeout(str(tmp_path / "s.py"), source=b"pass\n", timeout_s=0)
         assert result is sentinel
         assert fake_pool.calls == 0
 
@@ -228,15 +220,11 @@ class TestTimeoutConfig:
         )
         assert fake_pool.last_call[1] == 0.1
 
-    def test_invalid_env_var_falls_back_to_60s_default(
-        self, fake_pool, tmp_path, monkeypatch
-    ):
+    def test_invalid_env_var_falls_back_to_60s_default(self, fake_pool, tmp_path, monkeypatch):
         monkeypatch.setenv("CONDUCTOR_PARSE_TIMEOUT_S", "not-a-number")
         sentinel = FileSymbols(file_path="n", language="python")
         fake_pool.returns = sentinel
-        result = extract_definitions_with_timeout(
-            str(tmp_path / "n.py"), source=b"pass\n"
-        )
+        result = extract_definitions_with_timeout(str(tmp_path / "n.py"), source=b"pass\n")
         assert result is sentinel
         assert fake_pool.last_call[1] == 60.0
 
@@ -274,9 +262,7 @@ class TestTsxJsxDepthHeuristic:
         src = b"<div><span><p>hi</p></span></div>"
         assert _estimate_jsx_depth(src) == 0
 
-    def test_heuristic_routes_deep_tsx_to_regex(
-        self, fake_pool, isolated_vault, tmp_path
-    ):
+    def test_heuristic_routes_deep_tsx_to_regex(self, fake_pool, isolated_vault, tmp_path):
         """Synthesise a .tsx file with 20 nested <Component> levels and
         size > 20 KB. Heuristic must send it to regex, skipping the pool
         entirely, and record a skip_fact with the heuristic's reason."""
@@ -290,9 +276,7 @@ class TestTsxJsxDepthHeuristic:
         fp.write_bytes(src)
 
         with bind_factstore(isolated_vault):
-            result = extract_definitions_with_timeout(
-                str(fp), source=src, timeout_s=30.0
-            )
+            result = extract_definitions_with_timeout(str(fp), source=src, timeout_s=30.0)
         # Pool NOT invoked — routed straight to regex.
         assert fake_pool.calls == 0
         assert result.extracted_via == "regex"
@@ -304,9 +288,7 @@ class TestTsxJsxDepthHeuristic:
     def test_heuristic_ignores_shallow_tsx(self, fake_pool, tmp_path):
         """Large .tsx with only 3-level nesting passes through to the
         pool — we don't want to degrade legitimate files."""
-        sentinel = FileSymbols(
-            file_path="shallow", language="typescript", extracted_via="tree_sitter"
-        )
+        sentinel = FileSymbols(file_path="shallow", language="typescript", extracted_via="tree_sitter")
         fake_pool.returns = sentinel
         # 25 KB of code with only 3-level nesting.
         shallow = b"<Foo><Bar><Baz>x</Baz></Bar></Foo>\n"
@@ -314,20 +296,14 @@ class TestTsxJsxDepthHeuristic:
         assert len(src) > 20_000
         fp = tmp_path / "shallow.tsx"
 
-        result = extract_definitions_with_timeout(
-            str(fp), source=src, timeout_s=30.0
-        )
+        result = extract_definitions_with_timeout(str(fp), source=src, timeout_s=30.0)
         assert fake_pool.calls == 1
         assert result is sentinel
 
-    def test_heuristic_ignores_small_tsx_even_if_deep(
-        self, fake_pool, tmp_path
-    ):
+    def test_heuristic_ignores_small_tsx_even_if_deep(self, fake_pool, tmp_path):
         """Size gate protects small files — a 200-byte file with deep
         JSX isn't pathological for tree-sitter in practice."""
-        sentinel = FileSymbols(
-            file_path="small", language="typescript", extracted_via="tree_sitter"
-        )
+        sentinel = FileSymbols(file_path="small", language="typescript", extracted_via="tree_sitter")
         fake_pool.returns = sentinel
         opens = b"".join(f"<L{i}>".encode() for i in range(20))
         closes = b"".join(f"</L{i}>".encode() for i in reversed(range(20)))
@@ -335,26 +311,20 @@ class TestTsxJsxDepthHeuristic:
         assert len(src) < 20_000
         fp = tmp_path / "small.tsx"
 
-        extract_definitions_with_timeout(
-            str(fp), source=src, timeout_s=30.0
-        )
+        extract_definitions_with_timeout(str(fp), source=src, timeout_s=30.0)
         assert fake_pool.calls == 1  # size gate passed, heuristic skipped
 
     def test_heuristic_ignores_python(self, fake_pool, tmp_path):
         """Python files with < chars in type hints or comparisons must
         not be routed to regex — heuristic is TSX/JSX only."""
-        sentinel = FileSymbols(
-            file_path="p", language="python", extracted_via="tree_sitter"
-        )
+        sentinel = FileSymbols(file_path="p", language="python", extracted_via="tree_sitter")
         fake_pool.returns = sentinel
         # Python generic-heavy code — lots of `<` in comparisons
         src = b"if x < 1 and y < 2:\n    pass\n" * 2000
         assert len(src) > 20_000
         fp = tmp_path / "p.py"
 
-        extract_definitions_with_timeout(
-            str(fp), source=src, timeout_s=30.0
-        )
+        extract_definitions_with_timeout(str(fp), source=src, timeout_s=30.0)
         assert fake_pool.calls == 1
 
 

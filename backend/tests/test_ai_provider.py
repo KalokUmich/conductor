@@ -2725,9 +2725,9 @@ class TestLoadStyleGuidelinesBugFix:
 
         result = _load_style_guidelines(room_code_style=None)
         # Should be a string (the universal style content), not a tuple
-        assert result is None or isinstance(result, str), (
-            f"Expected str or None, got {type(result)}: {repr(result)[:100]}"
-        )
+        assert result is None or isinstance(
+            result, str
+        ), f"Expected str or None, got {type(result)}: {repr(result)[:100]}"
 
     def test_load_style_guidelines_with_room_style(self):
         """_load_style_guidelines() with room style should return it directly."""

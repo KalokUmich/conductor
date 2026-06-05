@@ -91,7 +91,6 @@ def _sanitize_property(prop: Dict[str, Any]) -> None:
         _sanitize_property(prop["items"])
 
 
-
 class ClaudeBedrockProvider(AIProvider):
     """AIProvider implementation using Claude via AWS Bedrock Converse API.
 
@@ -178,16 +177,12 @@ class ClaudeBedrockProvider(AIProvider):
                     # the env and uses bearer auth (httpBearerAuth) instead of SigV4. Build
                     # the client with no explicit SigV4 creds so the token path is taken.
                     os.environ["AWS_BEARER_TOKEN_BEDROCK"] = self.aws_bearer_token
-                    self._client = boto3.client(
-                        "bedrock-runtime", region_name=self.region_name, config=boto_config
-                    )
+                    self._client = boto3.client("bedrock-runtime", region_name=self.region_name, config=boto_config)
                 elif self.aws_profile and not have_static:
                     # SSO named profile → boto3's SSO provider resolves the role creds
                     # and AUTO-REFRESHES them from the cached login (no hourly pasting).
                     session = boto3.Session(profile_name=self.aws_profile)
-                    self._client = session.client(
-                        "bedrock-runtime", region_name=self.region_name, config=boto_config
-                    )
+                    self._client = session.client("bedrock-runtime", region_name=self.region_name, config=boto_config)
                 else:
                     kwargs = {"region_name": self.region_name, "config": boto_config}
                     if have_static:

@@ -39,27 +39,21 @@ def _cmd_list(_args: argparse.Namespace) -> int:
     for path in files:
         session_id = path.stem
         size_kb = path.stat().st_size / 1024
-        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         # Open read-only via FactStore constructor (no schema init this time
         # — file already exists). Use .stats() for counts and pull task_id
         # from meta so the listing maps each file back to its source PR.
         try:
             store = FactStore(path, session_id)
             stats = store.stats()
-            task_row = store._conn().execute(
-                "SELECT v FROM meta WHERE k = 'task_id'"
-            ).fetchone()
+            task_row = store._conn().execute("SELECT v FROM meta WHERE k = 'task_id'").fetchone()
             task_id = (task_row["v"] if task_row else "") or "-"
             store.close()
             stats_str = ", ".join(f"{k}={v}" for k, v in stats.items())
         except Exception as e:  # corrupt or locked DB
             stats_str = f"<error: {e}>"
             task_id = "?"
-        print(
-            f"- {session_id}  task={task_id}  {size_kb:.1f} KB  mtime={mtime}  {stats_str}"
-        )
+        print(f"- {session_id}  task={task_id}  {size_kb:.1f} KB  mtime={mtime}  {stats_str}")
     return 0
 
 
@@ -99,20 +93,14 @@ def _cmd_dump(args: argparse.Namespace) -> int:
             out.append("| Time | Tool | Path | Range | Agent |")
             out.append("|---|---|---|---|---|")
             for f in recent:
-                range_str = (
-                    f"{f.range_start}-{f.range_end}" if f.range_start is not None else ""
-                )
-                out.append(
-                    f"| {_fmt_ts(f.ts_written)} | {f.tool} | {f.path or ''} | {range_str} | {f.agent or ''} |"
-                )
+                range_str = f"{f.range_start}-{f.range_end}" if f.range_start is not None else ""
+                out.append(f"| {_fmt_ts(f.ts_written)} | {f.tool} | {f.path or ''} | {range_str} | {f.agent or ''} |")
             out.append("")
 
         # Group by tool
         if stats["facts"]:
             by_tool: dict = {}
-            for row in conn.execute(
-                "SELECT tool, COUNT(*) AS n FROM facts GROUP BY tool ORDER BY n DESC"
-            ):
+            for row in conn.execute("SELECT tool, COUNT(*) AS n FROM facts GROUP BY tool ORDER BY n DESC"):
                 by_tool[row["tool"]] = row["n"]
             out.extend(["## Facts by tool", ""])
             for tool, count in by_tool.items():
@@ -131,15 +119,13 @@ def _cmd_dump(args: argparse.Namespace) -> int:
             for r in neg_rows:
                 conf = f"{r['confidence']:.2f}" if r["confidence"] is not None else ""
                 out.append(
-                    f"| {_fmt_ts(r['ts_written'])} | {r['tool']} | "
-                    f"{r['query']} | {r['reason'] or ''} | {conf} |"
+                    f"| {_fmt_ts(r['ts_written'])} | {r['tool']} | " f"{r['query']} | {r['reason'] or ''} | {conf} |"
                 )
             out.append("")
 
         # Skip facts
         skip_rows = conn.execute(
-            "SELECT abs_path, reason, duration_ms, ts_written "
-            "FROM skip_facts ORDER BY ts_written DESC"
+            "SELECT abs_path, reason, duration_ms, ts_written " "FROM skip_facts ORDER BY ts_written DESC"
         ).fetchall()
         if skip_rows:
             out.extend(["## Skipped files (expensive-to-parse blacklist)", ""])
@@ -147,9 +133,7 @@ def _cmd_dump(args: argparse.Namespace) -> int:
             out.append("|---|---|---|---|")
             for r in skip_rows:
                 dur = f"{r['duration_ms']}ms" if r["duration_ms"] is not None else ""
-                out.append(
-                    f"| {_fmt_ts(r['ts_written'])} | {r['abs_path']} | {r['reason']} | {dur} |"
-                )
+                out.append(f"| {_fmt_ts(r['ts_written'])} | {r['abs_path']} | {r['reason']} | {dur} |")
             out.append("")
 
         print("\n".join(out))

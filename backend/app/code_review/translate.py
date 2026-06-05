@@ -170,8 +170,7 @@ async def translate_pr_summary(
     system_prompt = _PLATFORM_STYLES.get(platform)
     if system_prompt is None:
         logger.debug(
-            "translate_pr_summary: platform=%r has no style rule — "
-            "returning original synthesis unchanged.",
+            "translate_pr_summary: platform=%r has no style rule — " "returning original synthesis unchanged.",
             platform,
         )
         return synthesis
@@ -194,17 +193,16 @@ async def translate_pr_summary(
         )
     except Exception as exc:
         logger.warning(
-            "translate_pr_summary: LLM call failed for platform=%s, "
-            "returning original synthesis. error=%s",
-            platform, exc,
+            "translate_pr_summary: LLM call failed for platform=%s, " "returning original synthesis. error=%s",
+            platform,
+            exc,
         )
         return synthesis
 
     text = (text or "").strip()
     if not text:
         logger.warning(
-            "translate_pr_summary: LLM returned empty text for "
-            "platform=%s, returning original synthesis.",
+            "translate_pr_summary: LLM returned empty text for " "platform=%s, returning original synthesis.",
             platform,
         )
         return synthesis

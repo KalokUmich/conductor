@@ -589,16 +589,14 @@ def extract_definitions_with_timeout(
     # (big TSX with wide-but-shallow JSX misrouted to regex) degrade to
     # the same signal the ``extracted_via: "regex"`` tag already carries,
     # so the agent knows to grep.
-    if (
-        timeout_s > 0
-        and file_path.endswith((".tsx", ".jsx"))
-        and len(source) > 20_000
-    ):
+    if timeout_s > 0 and file_path.endswith((".tsx", ".jsx")) and len(source) > 20_000:
         depth = _estimate_jsx_depth(source)
         if depth > 15:
             logger.info(
                 "TSX heuristic skip: %s (jsx_depth~%d, size=%d) — regex only",
-                file_path, depth, len(source),
+                file_path,
+                depth,
+                len(source),
             )
             store_h = _current_factstore_safe()
             if store_h is not None:
@@ -610,9 +608,7 @@ def extract_definitions_with_timeout(
                     )
                 except Exception as exc:
                     logger.debug("skip-fact write failed for %s: %s", file_path, exc)
-            return _extract_with_regex(
-                source.decode("utf-8", errors="replace"), language, file_path
-            )
+            return _extract_with_regex(source.decode("utf-8", errors="replace"), language, file_path)
 
     # Pre-check: if an earlier call in this session already flagged this
     # path as pathological, don't re-trigger tree-sitter. Regex fallback
@@ -621,9 +617,7 @@ def extract_definitions_with_timeout(
     if store is not None:
         try:
             if store.should_skip(file_path):
-                return _extract_with_regex(
-                    source.decode("utf-8", errors="replace"), language, file_path
-                )
+                return _extract_with_regex(source.decode("utf-8", errors="replace"), language, file_path)
         except Exception as exc:  # best-effort; never block extraction on vault errors
             logger.debug("skip-list pre-check failed for %s: %s", file_path, exc)
 
@@ -635,9 +629,7 @@ def extract_definitions_with_timeout(
             return _extract_with_tree_sitter(source, language, file_path)
         except Exception as exc:
             logger.debug("tree-sitter extraction failed for %s: %s", file_path, exc)
-            return _extract_with_regex(
-                source.decode("utf-8", errors="replace"), language, file_path
-            )
+            return _extract_with_regex(source.decode("utf-8", errors="replace"), language, file_path)
 
     from .parse_pool import get_parse_pool
 
@@ -653,7 +645,9 @@ def extract_definitions_with_timeout(
         logger.warning(
             "tree-sitter parse failed after %.1fs (limit=%.1fs): %s — "
             "falling back to regex, file skipped for rest of session",
-            elapsed_ms / 1000, timeout_s, file_path,
+            elapsed_ms / 1000,
+            timeout_s,
+            file_path,
         )
         if store is not None:
             try:
@@ -664,9 +658,7 @@ def extract_definitions_with_timeout(
                 )
             except Exception as exc:
                 logger.debug("skip-fact write failed for %s: %s", file_path, exc)
-        return _extract_with_regex(
-            source.decode("utf-8", errors="replace"), language, file_path
-        )
+        return _extract_with_regex(source.decode("utf-8", errors="replace"), language, file_path)
 
     return result
 

@@ -29,11 +29,13 @@ class DispatchVerifyScope(BaseModel):
 
     file: str = Field(..., description="Repo-relative path, e.g. 'src/auth/session.py'.")
     start: Optional[int] = Field(
-        default=None, ge=1,
+        default=None,
+        ge=1,
         description="1-indexed first line of the scope. Omit to cover the whole file.",
     )
     end: Optional[int] = Field(
-        default=None, ge=1,
+        default=None,
+        ge=1,
         description="1-indexed last line (inclusive). Omit to cover until EOF.",
     )
 
@@ -123,7 +125,9 @@ class DispatchVerifyParams(BaseModel):
         ),
     )
     budget_tokens: int = Field(
-        default=120_000, ge=40_000, le=400_000,
+        default=120_000,
+        ge=40_000,
+        le=400_000,
         description="Token budget for this sub-agent. 80–150K typical.",
     )
     model_tier: str = Field(
@@ -155,7 +159,7 @@ class DispatchVerifyParams(BaseModel):
     )
 
     @model_validator(mode="after")
-    def _require_checks_or_role(self) -> "DispatchVerifyParams":
+    def _require_checks_or_role(self) -> DispatchVerifyParams:
         """Exactly-one-mode validator — must have at least one of {checks, role}."""
         if not self.checks and not self.role:
             raise ValueError(
@@ -164,10 +168,7 @@ class DispatchVerifyParams(BaseModel):
                 "Got neither."
             )
         if self.checks is not None and len(self.checks) != 3:
-            raise ValueError(
-                f"When provided, 'checks' must have exactly 3 entries "
-                f"(got {len(self.checks)})."
-            )
+            raise ValueError(f"When provided, 'checks' must have exactly 3 entries " f"(got {len(self.checks)}).")
         return self
 
 
@@ -183,9 +184,9 @@ DISPATCH_VERIFY_TOOL_DEF: Dict[str, Any] = {
         "on a specific slice of code. Each dispatch should target a "
         "single semantic unit — breadth (more focused dispatches) beats "
         "depth (one kitchen-sink dispatch).\n\n"
-        "Good check shape: invariant-at-location (\"At line 138, is "
-        "`amount` validated >0 before the INSERT?\"). Bad: role-shaped "
-        "(\"Review for correctness\") — that's delegated synthesis.\n\n"
+        'Good check shape: invariant-at-location ("At line 138, is '
+        '`amount` validated >0 before the INSERT?"). Bad: role-shaped '
+        '("Review for correctness") — that\'s delegated synthesis.\n\n'
         "Set `may_subdispatch=true` only when a check genuinely requires "
         "subdivision (e.g. 'for each of the 3 call sites, verify…'). "
         "Depth 2 is a hard wall — sub-sub-agents cannot dispatch further."

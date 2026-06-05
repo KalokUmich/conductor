@@ -232,4 +232,3 @@ class SwarmConfig(BaseModel):
     mode: Literal["parallel", "sequential"] = "parallel"
     agents: List[str] = Field(default_factory=list)  # agent names
     synthesis_guide: str = ""  # synthesis instructions for Brain
-

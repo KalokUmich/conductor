@@ -253,13 +253,13 @@ class TestCompressedView:
 
         assert py.success and t["success"]
         # Same total_lines
-        assert py.data["total_lines"] == t["data"]["total_lines"], (
-            f"Python={py.data['total_lines']}, TS={t['data']['total_lines']}"
-        )
+        assert (
+            py.data["total_lines"] == t["data"]["total_lines"]
+        ), f"Python={py.data['total_lines']}, TS={t['data']['total_lines']}"
         # Same symbol_count
-        assert py.data["symbol_count"] == t["data"]["symbol_count"], (
-            f"Python={py.data['symbol_count']}, TS={t['data']['symbol_count']}"
-        )
+        assert (
+            py.data["symbol_count"] == t["data"]["symbol_count"]
+        ), f"Python={py.data['symbol_count']}, TS={t['data']['symbol_count']}"
 
     def test_service_signatures(self):
         py = compressed_view(WS, "app/service.py")
@@ -321,9 +321,9 @@ class TestModuleSummary:
 
         assert py.success and t["success"]
         # Same file count
-        assert py.data["file_count"] == t["data"]["file_count"], (
-            f"Python={py.data['file_count']}, TS={t['data']['file_count']}"
-        )
+        assert (
+            py.data["file_count"] == t["data"]["file_count"]
+        ), f"Python={py.data['file_count']}, TS={t['data']['file_count']}"
         # Same total LOC
         assert py.data["loc"] == t["data"]["loc"], f"Python={py.data['loc']}, TS={t['data']['loc']}"
 
@@ -489,9 +489,9 @@ class TestDetectPatterns:
 
         assert py.success and t["success"]
         # Same number of files scanned
-        assert py.data["files_scanned"] == t["data"]["files_scanned"], (
-            f"Python={py.data['files_scanned']}, TS={t['data']['files_scanned']}"
-        )
+        assert (
+            py.data["files_scanned"] == t["data"]["files_scanned"]
+        ), f"Python={py.data['files_scanned']}, TS={t['data']['files_scanned']}"
 
     def test_retry_count(self):
         py = detect_patterns(WS, categories=["retry"])
@@ -549,6 +549,6 @@ class TestDetectPatterns:
         for cat in all_cats:
             py_locs = {(m["file"], m["line"]) for m in py.data["matches"].get(cat, [])}
             ts_locs = {(m["file"], m["line"]) for m in t["data"]["matches"].get(cat, [])}
-            assert py_locs == ts_locs, (
-                f"Category '{cat}' line mismatch:\n  Python: {sorted(py_locs)}\n  TS:     {sorted(ts_locs)}"
-            )
+            assert (
+                py_locs == ts_locs
+            ), f"Category '{cat}' line mismatch:\n  Python: {sorted(py_locs)}\n  TS:     {sorted(ts_locs)}"

@@ -132,9 +132,7 @@ async def test_run_sanitizes_prompt_before_spawn(monkeypatch):
 
     monkeypatch.setattr(sdk_worker, "query", fake_query)
     monkeypatch.setattr(sdk_worker, "bedrock_env", lambda: {})
-    await _runner(ex, max_evidence_retries=0).run(
-        system_prompt="Doc:\x00 F\x00i\x00n", user_message="q\x00uery"
-    )
+    await _runner(ex, max_evidence_retries=0).run(system_prompt="Doc:\x00 F\x00i\x00n", user_message="q\x00uery")
     assert "\x00" not in captured["system_prompt"]
     assert "\x00" not in captured["prompt"]
 

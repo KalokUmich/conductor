@@ -76,7 +76,12 @@ def extract_confluence_urls(*sources: str, max_pages: int = 3) -> list[str]:
 # Mapping node-type → how to wrap its concatenated children.
 # Anything not listed here delegates to children; unknown nodes are dropped.
 _ADF_BLOCK_NODES = {
-    "heading", "paragraph", "codeBlock", "blockquote", "rule", "hardBreak",
+    "heading",
+    "paragraph",
+    "codeBlock",
+    "blockquote",
+    "rule",
+    "hardBreak",
 }
 
 
@@ -315,7 +320,10 @@ async def fetch_pr_atlassian_context(
     unconditionally into the coordinator's prompt.
     """
     ticket_keys = extract_ticket_keys(
-        source_branch, pr_title, pr_description, max_tickets=max_tickets,
+        source_branch,
+        pr_title,
+        pr_description,
+        max_tickets=max_tickets,
     )
     page_urls = extract_confluence_urls(pr_description, max_pages=max_pages)
 

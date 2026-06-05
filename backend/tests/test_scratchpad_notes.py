@@ -63,7 +63,9 @@ class TestUpdateNotesParams:
 
     def test_file_hint_optional(self):
         p = UpdateNotesParams(
-            topic="auth_flow", content="x" * 20, file_hint="src/auth.py",
+            topic="auth_flow",
+            content="x" * 20,
+            file_hint="src/auth.py",
         )
         assert p.file_hint == "src/auth.py"
 
@@ -115,8 +117,10 @@ class TestFactStoreNotes:
 
     def test_file_hint_round_trips(self, store):
         store.put_note(
-            agent="a1", topic="t1",
-            content="x" * 20, file_hint="src/core/auth.py",
+            agent="a1",
+            topic="t1",
+            content="x" * 20,
+            file_hint="src/core/auth.py",
         )
         note = store.iter_notes_by_agent("a1")[0]
         assert note.file_hint == "src/core/auth.py"
@@ -155,8 +159,7 @@ class TestUpdateNotesTool:
             result = update_notes(
                 workspace=str(tmp_path),
                 topic="auth_mapping",
-                content="Traced OAuth flow through callback at src/auth.py:42. "
-                        "State param missing validation.",
+                content="Traced OAuth flow through callback at src/auth.py:42. " "State param missing validation.",
             )
         assert result.success
         assert result.data["agent"] == "pr_subagent_checks"

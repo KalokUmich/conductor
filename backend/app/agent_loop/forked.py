@@ -99,7 +99,8 @@ async def fork_call(
     except Exception as exc:
         logger.warning(
             "fork_call[%s] failed: %s — caller should treat as 'unclear' verdict",
-            label or "?", exc,
+            label or "?",
+            exc,
         )
         return ""
 
@@ -151,10 +152,7 @@ def build_pr_context_prefix(
 
     diff_excerpt = file_diffs_text or ""
     if len(diff_excerpt) > diff_budget_chars:
-        diff_excerpt = (
-            diff_excerpt[:diff_budget_chars]
-            + f"\n\n[...PR diff truncated at {diff_budget_chars} chars...]"
-        )
+        diff_excerpt = diff_excerpt[:diff_budget_chars] + f"\n\n[...PR diff truncated at {diff_budget_chars} chars...]"
     if diff_excerpt:
         parts.append(f"## PR diff\n{diff_excerpt}")
 

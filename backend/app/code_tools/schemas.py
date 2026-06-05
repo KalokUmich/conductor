@@ -395,9 +395,8 @@ class CreatePlanParams(BaseModel):
 # from app.code_tools.schemas import Dispatch... callers.
 from app.agent_loop.dispatch import (  # noqa: E402
     DispatchExploreParams,
-    DispatchVerifyParams,
-    DispatchVerifyScope,
     DispatchSweepParams,
+    DispatchVerifyParams,
 )
 
 
@@ -876,7 +875,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "If you get 0 results, the name may be misspelled or use a different convention. "
             "Try grep with a partial name to discover the correct spelling.\n\n"
             "**Degraded results**: individual results may include "
-            "`extracted_via: \"regex\"` when tree-sitter timed out on that file "
+            '`extracted_via: "regex"` when tree-sitter timed out on that file '
             "(common on deeply-nested TSX). Regex fallback can miss nested defs, "
             "arrow functions, and JSX components. For authoritative structural "
             "info on those paths, use `grep` or `read_file`."
@@ -911,8 +910,8 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "- Use module_summary instead if you need an overview of an entire directory.\n\n"
             "Useful for answering 'what methods does this class have?' in one call.\n\n"
             "**Degraded results**: when tree-sitter times out on a file the response "
-            "shape changes to `{\"definitions\": [...], \"extracted_via\": \"regex\", "
-            "\"note\": \"...\"}`. Regex-based outline can miss nested defs, arrow "
+            'shape changes to `{"definitions": [...], "extracted_via": "regex", '
+            '"note": "..."}`. Regex-based outline can miss nested defs, arrow '
             "functions, and JSX. In that case prefer `grep` or `read_file` for "
             "authoritative structural info."
         ),
@@ -1735,9 +1734,9 @@ BRAIN_TOOL_DEFINITIONS: List[Dict[str, Any]] = [
             "on a specific slice of code. Each dispatch should target a "
             "single semantic unit — breadth (more focused dispatches) beats "
             "depth (one kitchen-sink dispatch).\n\n"
-            "Good check shape: invariant-at-location (\"At line 138, is "
-            "`amount` validated >0 before the INSERT?\"). Bad: role-shaped "
-            "(\"Review for correctness\") — that's delegated synthesis.\n\n"
+            'Good check shape: invariant-at-location ("At line 138, is '
+            '`amount` validated >0 before the INSERT?"). Bad: role-shaped '
+            '("Review for correctness") — that\'s delegated synthesis.\n\n'
             "Set `may_subdispatch=true` only when a check genuinely requires "
             "subdivision (e.g. 'for each of the 3 call sites, verify…'). "
             "Depth 2 is a hard wall — sub-sub-agents cannot dispatch further."
@@ -1889,21 +1888,42 @@ WORKER_BUILTIN_TOOLS: frozenset[str] = frozenset({"Bash"})  # covers git_*, run-
 # Our MCP tools a dispatched worker may use (vault-aware file family + genuine
 # additions). Excludes git_* (→ built-in Bash), browser/jira are opt-in per
 # agent via its .md tool list, and all orchestration tools.
-WORKER_MCP_TOOLS: frozenset[str] = frozenset({
-    # vault-aware file read/search (kept as MCP to preserve Fact Vault dedup)
-    "read_file", "grep", "list_files", "glob",
-    # AST / symbol graph (no built-in equivalent)
-    "find_symbol", "find_references", "file_outline", "get_dependencies",
-    "get_dependents", "ast_search", "get_callees", "get_callers",
-    "trace_variable", "compressed_view", "module_summary", "expand_symbol",
-    # code inspection
-    "detect_patterns", "list_endpoints", "extract_docstrings", "db_schema",
-    # tests
-    "find_tests", "test_outline", "run_test",
-    # file edit (vault-aware)
-    "file_edit", "file_write",
-    # Fact Vault / notes
-    "search_facts", "update_notes",
-    # sub-agent uplink to the coordinator
-    "signal_blocker",
-})
+WORKER_MCP_TOOLS: frozenset[str] = frozenset(
+    {
+        # vault-aware file read/search (kept as MCP to preserve Fact Vault dedup)
+        "read_file",
+        "grep",
+        "list_files",
+        "glob",
+        # AST / symbol graph (no built-in equivalent)
+        "find_symbol",
+        "find_references",
+        "file_outline",
+        "get_dependencies",
+        "get_dependents",
+        "ast_search",
+        "get_callees",
+        "get_callers",
+        "trace_variable",
+        "compressed_view",
+        "module_summary",
+        "expand_symbol",
+        # code inspection
+        "detect_patterns",
+        "list_endpoints",
+        "extract_docstrings",
+        "db_schema",
+        # tests
+        "find_tests",
+        "test_outline",
+        "run_test",
+        # file edit (vault-aware)
+        "file_edit",
+        "file_write",
+        # Fact Vault / notes
+        "search_facts",
+        "update_notes",
+        # sub-agent uplink to the coordinator
+        "signal_blocker",
+    }
+)

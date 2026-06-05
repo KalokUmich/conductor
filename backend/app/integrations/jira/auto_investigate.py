@@ -184,10 +184,7 @@ async def investigate_and_comment(
         logger.warning("[Jira webhook] empty triage text for %s — skipping comment", issue_key)
         return {"issue_key": issue_key, "triage_text": "", "commented": False}
 
-    body = (
-        "🤖 **Conductor auto-triage** _(initial pass — confirm before acting)_\n\n"
-        + triage_text
-    )
+    body = "🤖 **Conductor auto-triage** _(initial pass — confirm before acting)_\n\n" + triage_text
 
     if dry_run:
         return {"issue_key": issue_key, "triage_text": triage_text, "commented": False}

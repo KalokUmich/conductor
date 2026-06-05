@@ -78,9 +78,7 @@ class TestListEndpoints:
         assert isinstance(r.data["endpoints"], list)
 
     def test_nonexistent_path_error(self):
-        r = execute_tool(
-            "list_endpoints", FIXTURE_REPO, {"path": "does/not/exist"}
-        )
+        r = execute_tool("list_endpoints", FIXTURE_REPO, {"path": "does/not/exist"})
         assert not r.success
         assert "not found" in (r.error or "").lower()
 

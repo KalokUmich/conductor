@@ -24,8 +24,7 @@ def workspace(tmp_path: Path) -> Path:
     """Create a workspace with various architectural patterns."""
     # Webhook handler
     (tmp_path / "app").mkdir()
-    (tmp_path / "app" / "webhook_handler.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "webhook_handler.py").write_text(textwrap.dedent("""\
         from fastapi import APIRouter
 
         router = APIRouter()
@@ -35,12 +34,10 @@ def workspace(tmp_path: Path) -> Path:
             verify_signature(payload)
             process_payment_event(payload)
             send_notification(payload["user_id"], "Payment received")
-    """)
-    )
+    """))
 
     # Queue consumer
-    (tmp_path / "app" / "consumer.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "consumer.py").write_text(textwrap.dedent("""\
         import pika
 
         def on_message(channel, method, properties, body):
@@ -49,12 +46,10 @@ def workspace(tmp_path: Path) -> Path:
             channel.basic_ack(delivery_tag=method.delivery_tag)
 
         channel.basic_consume(queue="orders", on_message_callback=on_message)
-    """)
-    )
+    """))
 
     # Retry logic
-    (tmp_path / "app" / "retry_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "retry_service.py").write_text(textwrap.dedent("""\
         from tenacity import retry, stop_after_attempt, wait_exponential
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential())
@@ -65,12 +60,10 @@ def workspace(tmp_path: Path) -> Path:
 
         retry_count = 0
         max_retry_attempts = 5
-    """)
-    )
+    """))
 
     # Lock usage
-    (tmp_path / "app" / "lock_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "lock_service.py").write_text(textwrap.dedent("""\
         import threading
 
         _lock = threading.Lock()
@@ -82,12 +75,10 @@ def workspace(tmp_path: Path) -> Path:
 
         def db_lock():
             cursor.execute("SELECT id FROM accounts WHERE user_id = %s FOR UPDATE", [uid])
-    """)
-    )
+    """))
 
     # Check-then-act anti-pattern
-    (tmp_path / "app" / "user_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "user_service.py").write_text(textwrap.dedent("""\
         def create_user_if_not_exists(email):
             existing = User.objects.filter(email=email).exists()
             if not existing:
@@ -97,12 +88,10 @@ def workspace(tmp_path: Path) -> Path:
         def safe_create(email):
             user, created = User.objects.get_or_create(email=email)
             return user
-    """)
-    )
+    """))
 
     # Transaction boundaries
-    (tmp_path / "app" / "payment_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "payment_service.py").write_text(textwrap.dedent("""\
         from django.db import transaction
 
         @transaction.atomic
@@ -119,12 +108,10 @@ def workspace(tmp_path: Path) -> Path:
                 connection.commit()
             except Exception:
                 connection.rollback()
-    """)
-    )
+    """))
 
     # Token lifecycle
-    (tmp_path / "app" / "auth_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "auth_service.py").write_text(textwrap.dedent("""\
         import jwt
 
         def generate_token(user_id):
@@ -141,30 +128,25 @@ def workspace(tmp_path: Path) -> Path:
             blacklist.add(token)
 
         token_expiry = 3600
-    """)
-    )
+    """))
 
     # Side-effect chain
-    (tmp_path / "app" / "order_service.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "order_service.py").write_text(textwrap.dedent("""\
         def complete_order(order):
             charge(order.total)
             send_email(order.user.email, "Order confirmed")
             audit_log("order_completed", order.id)
             requests.post("https://analytics.example.com/event", json={"event": "order"})
-    """)
-    )
+    """))
 
     # Clean file (no patterns)
-    (tmp_path / "app" / "utils.py").write_text(
-        textwrap.dedent("""\
+    (tmp_path / "app" / "utils.py").write_text(textwrap.dedent("""\
         def format_currency(amount):
             return f"${amount:,.2f}"
 
         def slugify(text):
             return text.lower().replace(" ", "-")
-    """)
-    )
+    """))
 
     return tmp_path
 

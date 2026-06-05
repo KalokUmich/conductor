@@ -275,9 +275,7 @@ class ClaudeDirectProvider(AIProvider):
         if system:
             if cache_eligible:
                 # List-of-blocks form so we can attach cache_control to the last block.
-                kwargs["system"] = [
-                    {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
-                ]
+                kwargs["system"] = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
             else:
                 kwargs["system"] = system
 

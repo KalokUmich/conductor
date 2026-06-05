@@ -869,9 +869,7 @@ def parse_findings(
     New callers should prefer ``parse_findings_with_status`` so they can
     distinguish a real parse failure from a legitimate empty answer.
     """
-    findings, _ = parse_findings_with_status(
-        answer, agent_name, category, warn_on_empty=warn_on_empty
-    )
+    findings, _ = parse_findings_with_status(answer, agent_name, category, warn_on_empty=warn_on_empty)
     return findings
 
 

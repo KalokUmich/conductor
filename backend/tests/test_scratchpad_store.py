@@ -84,29 +84,24 @@ class TestRangeLookup:
     def test_prefers_narrowest_superset(self, store):
         """Multiple candidates — should return the tightest fit so caller
         slices less wasted content."""
-        store.put("k_wide", tool="read_file", content="wide",
-                  path="/abs/x.py", range_start=0, range_end=1000)
-        store.put("k_tight", tool="read_file", content="tight",
-                  path="/abs/x.py", range_start=95, range_end=155)
+        store.put("k_wide", tool="read_file", content="wide", path="/abs/x.py", range_start=0, range_end=1000)
+        store.put("k_tight", tool="read_file", content="tight", path="/abs/x.py", range_start=95, range_end=155)
         hit = store.range_lookup("read_file", "/abs/x.py", 100, 150)
         assert hit is not None
         assert hit.content == "tight"
 
     def test_no_cover_returns_none(self, store):
         """Cached range that partially overlaps but doesn't cover is a miss."""
-        store.put("k1", tool="read_file", content="…",
-                  path="/abs/x.py", range_start=10, range_end=50)
+        store.put("k1", tool="read_file", content="…", path="/abs/x.py", range_start=10, range_end=50)
         assert store.range_lookup("read_file", "/abs/x.py", 40, 80) is None
         assert store.range_lookup("read_file", "/abs/x.py", 60, 100) is None
 
     def test_wrong_path_is_miss(self, store):
-        store.put("k1", tool="read_file", content="…",
-                  path="/abs/x.py", range_start=1, range_end=100)
+        store.put("k1", tool="read_file", content="…", path="/abs/x.py", range_start=1, range_end=100)
         assert store.range_lookup("read_file", "/abs/other.py", 10, 50) is None
 
     def test_wrong_tool_is_miss(self, store):
-        store.put("k1", tool="read_file", content="…",
-                  path="/abs/x.py", range_start=1, range_end=100)
+        store.put("k1", tool="read_file", content="…", path="/abs/x.py", range_start=1, range_end=100)
         assert store.range_lookup("git_blame", "/abs/x.py", 10, 50) is None
 
 
@@ -167,6 +162,7 @@ class TestConcurrency:
         monkeypatch.setattr("app.scratchpad.store.SCRATCHPAD_ROOT", tmp_path)
         store = FactStore.open(f"ct-{uuid.uuid4().hex[:8]}")
         try:
+
             def writer(tid: int):
                 for i in range(100):
                     store.put(
@@ -200,9 +196,7 @@ class TestTaskIdMeta:
         monkeypatch.setattr("app.scratchpad.store.SCRATCHPAD_ROOT", tmp_path)
         s = FactStore.open("task-001", workspace="/ws", task_id="ado-proj-pr-42")
         try:
-            row = s._conn().execute(
-                "SELECT v FROM meta WHERE k = 'task_id'"
-            ).fetchone()
+            row = s._conn().execute("SELECT v FROM meta WHERE k = 'task_id'").fetchone()
             assert row["v"] == "ado-proj-pr-42"
         finally:
             s.delete()
@@ -211,9 +205,7 @@ class TestTaskIdMeta:
         monkeypatch.setattr("app.scratchpad.store.SCRATCHPAD_ROOT", tmp_path)
         s = FactStore.open("task-002", workspace="/ws")
         try:
-            row = s._conn().execute(
-                "SELECT v FROM meta WHERE k = 'task_id'"
-            ).fetchone()
+            row = s._conn().execute("SELECT v FROM meta WHERE k = 'task_id'").fetchone()
             assert row["v"] == ""
         finally:
             s.delete()
@@ -283,12 +275,20 @@ class TestPlanMemory:
 
     def test_replace_on_same_dispatch_index(self, store):
         store.put_plan_entry(
-            dispatch_index=1, mode="checks", role=None,
-            scope="v1", success_criteria="c1", reason=None,
+            dispatch_index=1,
+            mode="checks",
+            role=None,
+            scope="v1",
+            success_criteria="c1",
+            reason=None,
         )
         store.put_plan_entry(
-            dispatch_index=1, mode="role", role="correctness",
-            scope="v2", success_criteria="c2", reason="updated",
+            dispatch_index=1,
+            mode="role",
+            role="correctness",
+            scope="v2",
+            success_criteria="c2",
+            reason="updated",
         )
         entries = store.iter_plan_entries()
         assert len(entries) == 1
@@ -297,20 +297,32 @@ class TestPlanMemory:
 
     def test_stats_includes_plan_entries(self, store):
         store.put_plan_entry(
-            dispatch_index=1, mode="role", role="security",
-            scope="s", success_criteria="c", reason=None,
+            dispatch_index=1,
+            mode="role",
+            role="security",
+            scope="s",
+            success_criteria="c",
+            reason=None,
         )
         store.put_plan_entry(
-            dispatch_index=2, mode="checks", role=None,
-            scope="s", success_criteria="c", reason=None,
+            dispatch_index=2,
+            mode="checks",
+            role=None,
+            scope="s",
+            success_criteria="c",
+            reason=None,
         )
         assert store.stats()["plan_entries"] == 2
 
     def test_long_fields_truncated(self, store):
         long = "x" * 1000
         store.put_plan_entry(
-            dispatch_index=1, mode="role", role=None,
-            scope=long, success_criteria=long, reason=long,
+            dispatch_index=1,
+            mode="role",
+            role=None,
+            scope=long,
+            success_criteria=long,
+            reason=long,
         )
         entries = store.iter_plan_entries()
         assert len(entries[0].scope) == 500

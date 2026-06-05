@@ -25,15 +25,25 @@ from app.db.models import Base
 def test_usage_from_budget_maps_both_engines():
     # SDK path (has cache keys)
     assert usage_from_budget(
-        {"total_input_tokens": 200, "total_output_tokens": 40, "cache_read_input_tokens": 9000,
-         "cache_creation_input_tokens": 12}
+        {
+            "total_input_tokens": 200,
+            "total_output_tokens": 40,
+            "cache_read_input_tokens": 9000,
+            "cache_creation_input_tokens": 12,
+        }
     ) == {"input_tokens": 200, "output_tokens": 40, "cache_read_tokens": 9000, "cache_creation_tokens": 12}
     # in-house path (no cache keys) + None
     assert usage_from_budget({"total_input_tokens": 5, "total_output_tokens": 1}) == {
-        "input_tokens": 5, "output_tokens": 1, "cache_read_tokens": 0, "cache_creation_tokens": 0,
+        "input_tokens": 5,
+        "output_tokens": 1,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
     }
     assert usage_from_budget(None) == {
-        "input_tokens": 0, "output_tokens": 0, "cache_read_tokens": 0, "cache_creation_tokens": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
     }
 
 
@@ -65,13 +75,22 @@ async def svc():
 async def test_start_complete_and_usage_rollup(svc):
     await svc.start_task(task_id="root1", root_task_id="root1", kind="root", agent_name="brain")
     await svc.start_task(
-        task_id="c1", parent_task_id="root1", root_task_id="root1",
-        kind="sub_agent", agent_name="explore_x", depth=1, engine="sdk", model="haiku",
+        task_id="c1",
+        parent_task_id="root1",
+        root_task_id="root1",
+        kind="sub_agent",
+        agent_name="explore_x",
+        depth=1,
+        engine="sdk",
+        model="haiku",
     )
     await svc.complete_task(
-        task_id="c1", status="done",
+        task_id="c1",
+        status="done",
         budget_summary={"total_input_tokens": 200, "total_output_tokens": 40, "cache_read_input_tokens": 9000},
-        tool_calls=5, iterations=3, duration_ms=1234.0,
+        tool_calls=5,
+        iterations=3,
+        duration_ms=1234.0,
     )
 
     tree = await svc.get_tree("root1")
@@ -94,13 +113,15 @@ async def test_cost_source_discriminates_sdk_vs_computed(svc):
     # SDK leaf: authoritative cost + raw_usage block
     await svc.start_task(task_id="sdk1", root_task_id="r", kind="sub_agent", engine="sdk")
     await svc.complete_task(
-        task_id="sdk1", status="done",
+        task_id="sdk1",
+        status="done",
         budget_summary={"total_input_tokens": 100, "total_cost_usd": 0.05, "raw_usage": {"x": 1}},
     )
     # in-house coordinator: computed cost, usd_usage_ratio, no raw_usage
     await svc.start_task(task_id="ih1", root_task_id="r", kind="coordinator", engine="in_house")
     await svc.complete_task(
-        task_id="ih1", status="done",
+        task_id="ih1",
+        status="done",
         budget_summary={"total_input_tokens": 5000, "total_cost_usd": 0.02, "usd_usage_ratio": 0.1},
     )
     # no cost info at all → NULL source, 0 cost
@@ -133,7 +154,8 @@ async def test_record_helpers_write_via_singleton(svc):
     try:
         await record_start(task_id="r", root_task_id="r", kind="root")
         await record_complete(
-            task_id="r", status="done",
+            task_id="r",
+            status="done",
             budget_summary={"total_input_tokens": 10, "total_output_tokens": 2},
         )
         tree = await svc.get_tree("r")

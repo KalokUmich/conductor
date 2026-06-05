@@ -107,6 +107,7 @@ class TestFireHook:
 
     def test_swallows_callback_exception(self):
         """A throwing hook must not propagate."""
+
         def throwing(ctx):
             raise RuntimeError("boom")
 
@@ -128,10 +129,7 @@ class TestFireHook:
         # registerable for an unknown name)
         fire_hook("nonexistent_hook", orchestrator=MagicMock())
         # Confirm a warning landed in the logger
-        assert any(
-            "unknown hook name" in rec.message.lower()
-            for rec in caplog.records
-        )
+        assert any("unknown hook name" in rec.message.lower() for rec in caplog.records)
 
     def test_data_defaults_to_empty_dict(self):
         captured = []

@@ -128,8 +128,12 @@ class CachedToolExecutor(ToolExecutor):
                         # subsequent identical requests hit directly (no
                         # re-slice cost). This is a cheap write.
                         self._safe_put(
-                            key=key, tool=tool_name, content=sliced,
-                            path=path, range_start=start, range_end=end,
+                            key=key,
+                            tool=tool_name,
+                            content=sliced,
+                            path=path,
+                            range_start=start,
+                            range_end=end,
                         )
                         return _fact_to_result(tool_name, sliced)
 
@@ -146,9 +150,7 @@ class CachedToolExecutor(ToolExecutor):
                 return ToolResult(
                     tool_name=tool_name,
                     success=False,
-                    error=(
-                        f"Cached negative (confidence={neg.confidence}): {neg.reason or 'symbol not found'}"
-                    ),
+                    error=(f"Cached negative (confidence={neg.confidence}): {neg.reason or 'symbol not found'}"),
                     data=None,
                 )
 
@@ -159,15 +161,27 @@ class CachedToolExecutor(ToolExecutor):
         if result.success:
             start, end = extract_range(tool_name, params)
             self._safe_put(
-                key=key, tool=tool_name, content=result.data,
-                path=path, range_start=start, range_end=end,
+                key=key,
+                tool=tool_name,
+                content=result.data,
+                path=path,
+                range_start=start,
+                range_end=end,
             )
         return result
 
     # --- helpers -----------------------------------------------------------
 
-    def _safe_put(self, *, key: str, tool: str, content: Any, path: Optional[str],
-                  range_start: Optional[int], range_end: Optional[int]) -> None:
+    def _safe_put(
+        self,
+        *,
+        key: str,
+        tool: str,
+        content: Any,
+        path: Optional[str],
+        range_start: Optional[int],
+        range_end: Optional[int],
+    ) -> None:
         try:
             self._store.put(
                 key,
@@ -219,7 +233,7 @@ def _slice_range_content(
             # Cached content didn't actually cover the range we thought —
             # trust the cache structure less than the SQL row, skip the slice.
             return None
-        return "\n".join(lines[offset:offset + length])
+        return "\n".join(lines[offset : offset + length])
 
     if isinstance(content, dict):
         inner = content.get("content")
@@ -228,7 +242,7 @@ def _slice_range_content(
             if len(lines) < offset + length:
                 return None
             new = copy.deepcopy(content)
-            new["content"] = "\n".join(lines[offset:offset + length])
+            new["content"] = "\n".join(lines[offset : offset + length])
             new["start_line"] = want_start
             new["end_line"] = want_end
             return new

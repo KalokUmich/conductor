@@ -60,10 +60,7 @@ async def receive_webhook(
         # as a misconfiguration on our side, not a security event.
         raise HTTPException(
             status_code=503,
-            detail=(
-                "Jira webhook receiver not configured — set "
-                "atlassian_readonly.webhook_token in secrets."
-            ),
+            detail=("Jira webhook receiver not configured — set " "atlassian_readonly.webhook_token in secrets."),
         )
 
     if not _verify_token(token, expected_token):
@@ -92,18 +89,14 @@ async def receive_webhook(
         # so the site admin notices.
         raise HTTPException(
             status_code=503,
-            detail=(
-                "jira_readonly_client not configured — cannot fetch ticket "
-                "or post comment."
-            ),
+            detail=("jira_readonly_client not configured — cannot fetch ticket " "or post comment."),
         )
 
     # Prefer the strong-tier provider (PR Brain's, when ADO is enabled),
     # else fall back to the generic agent provider. Both are Claude
     # Sonnet by default, so the triage call is consistent either way.
-    provider = (
-        getattr(request.app.state, "pr_brain_strong_provider", None)
-        or getattr(request.app.state, "agent_provider", None)
+    provider = getattr(request.app.state, "pr_brain_strong_provider", None) or getattr(
+        request.app.state, "agent_provider", None
     )
     if provider is None:
         raise HTTPException(
